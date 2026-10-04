@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 import hashlib
 import math
@@ -17,6 +18,7 @@ import time
 from typing import Any
 
 from google.api_core import exceptions as google_exceptions
+from google.cloud import firestore
 
 from aster_close_guard import CloseEvidence
 from aster_dynamic_hedge import DynamicHedgeConfig
@@ -30,6 +32,8 @@ SPOT_TRANSFER_HISTORY_TYPE = "TRANSFER_FUTURE_TO_SPOT"
 TRANSFER_KIND = "FUTURE_SPOT"
 DEFAULT_TRANSFER_ASSET = "USDT"
 SUPPORTED_TRANSFER_ASSETS = {"USDT", "USDC"}
+DEFAULT_MINIMUM_TRANSFER = Decimal("1.00")
+LOCAL_DAY_TZ = ZoneInfo("Europe/Amsterdam")
 _AMOUNT_QUANTUM = Decimal("0.00000001")
 
 
@@ -43,6 +47,8 @@ class PreparedSweep:
     position_side: str
     sweep_percent: Decimal
     transfer_asset: str
+    minimum_transfer: Decimal
+    user_ref: Any
     ledger_ref: Any
     open_quantity: Decimal
     entry_commission_pool: Decimal
@@ -509,6 +515,9 @@ def recover_failed_sweep(
     transfer_asset = str(ledger.get("asset", DEFAULT_TRANSFER_ASSET)).upper().strip()
     if transfer_asset not in SUPPORTED_TRANSFER_ASSETS:
         transfer_asset = DEFAULT_TRANSFER_ASSET
+    minimum_transfer = _d(settings.get("minimumTransfer", DEFAULT_MINIMUM_TRANSFER))
+    if minimum_transfer <= 0:
+        minimum_transfer = DEFAULT_MINIMUM_TRANSFER
     submitted_at = ledger.get("submittedAt") or ledger.get("updatedAt") or ledger.get("completedAt")
     if contribution <= 0 or _timestamp_ms(submitted_at) <= 0:
         return {"status": "INVALID_RECOVERY_EVIDENCE"}
@@ -885,6 +894,8 @@ def prepare_close_sweep(
             position_side=position_side.upper(),
             sweep_percent=percent,
             transfer_asset=transfer_asset,
+            minimum_transfer=minimum_transfer,
+            user_ref=user_ref,
             ledger_ref=ledger_ref,
             open_quantity=open_qty,
             entry_commission_pool=fee_pool,
@@ -899,6 +910,299 @@ def prepare_close_sweep(
         return None
 
 
+
+def _local_day_key(value: datetime | None = None) -> str:
+    current = value or _now()
+    return current.astimezone(LOCAL_DAY_TZ).date().isoformat()
+
+
+def _buffer_client_tran_id(uid: str, sequence: int) -> str:
+    return "tmpp2-" + hashlib.sha256(f"{uid}:buffer:{sequence}".encode()).hexdigest()[:26]
+
+
+def _state_snapshot(prepared: PreparedSweep) -> tuple[Any, dict[str, Any]]:
+    ref = prepared.user_ref.collection("asterProfitSweepState").document("current")
+    return ref, (ref.get().to_dict() or {})
+
+
+def _book_contribution(prepared: PreparedSweep, contribution: Decimal) -> dict[str, Any]:
+    """Idempotently credit one realized-profit contribution to the persistent buffer."""
+    state_ref = prepared.user_ref.collection("asterProfitSweepState").document("current")
+    ledger_ref = prepared.ledger_ref
+    client = getattr(state_ref, "_client", None)
+
+    def apply(transaction: Any | None = None) -> dict[str, Any]:
+        if transaction is None:
+            ledger = ledger_ref.get().to_dict() or {}
+            state = state_ref.get().to_dict() or {}
+        else:
+            ledger = ledger_ref.get(transaction=transaction).to_dict() or {}
+            state = state_ref.get(transaction=transaction).to_dict() or {}
+        pending = _d(state.get("pendingSavings"))
+        today_key = _local_day_key()
+        stored_day = str(state.get("todayKey", ""))
+        today_total = _d(state.get("todayTransferred")) if stored_day == today_key else Decimal("0")
+        if ledger.get("bufferBooked") is True:
+            return {
+                "pendingSavings": pending,
+                "todayTransferred": today_total,
+                "alreadyBooked": True,
+            }
+        next_pending = pending + contribution
+        state_update = {
+            "pendingSavings": _plain(next_pending),
+            "todayTransferred": _plain(today_total),
+            "todayKey": today_key,
+            "minimumTransfer": _plain(prepared.minimum_transfer),
+            "asset": prepared.transfer_asset,
+            "updatedAt": _now(),
+        }
+        ledger_update = {
+            "bufferBooked": True,
+            "bufferBookedAmount": _plain(contribution),
+            "bufferBookedAt": _now(),
+            "status": "BUFFERED",
+        }
+        if transaction is None:
+            state_ref.set(state_update, merge=True)
+            ledger_ref.set(ledger_update, merge=True)
+        else:
+            transaction.set(state_ref, state_update, merge=True)
+            transaction.set(ledger_ref, ledger_update, merge=True)
+        return {
+            "pendingSavings": next_pending,
+            "todayTransferred": today_total,
+            "alreadyBooked": False,
+        }
+
+    if client is None:
+        return apply()
+    @firestore.transactional
+    def run(transaction: Any) -> dict[str, Any]:
+        return apply(transaction)
+    return run(client.transaction())
+
+
+def _claim_threshold_transfer(prepared: PreparedSweep) -> dict[str, Any] | None:
+    """Atomically reserve exactly one threshold block without reducing the buffer."""
+    state_ref = prepared.user_ref.collection("asterProfitSweepState").document("current")
+    transfers = prepared.user_ref.collection("asterProfitSweepTransfers")
+    client = getattr(state_ref, "_client", None)
+
+    def apply(transaction: Any | None = None) -> dict[str, Any] | None:
+        state = (state_ref.get().to_dict() or {}) if transaction is None else (state_ref.get(transaction=transaction).to_dict() or {})
+        existing = state.get("inFlight")
+        if isinstance(existing, dict) and existing.get("claimId"):
+            return dict(existing)
+        pending = _d(state.get("pendingSavings"))
+        threshold = prepared.minimum_transfer
+        if pending + _AMOUNT_QUANTUM < threshold:
+            return None
+        sequence = int(state.get("transferSequence", 0) or 0) + 1
+        claim_id = hashlib.sha256(f"{prepared.uid}:{sequence}:{prepared.transfer_asset}:{_plain(threshold)}".encode()).hexdigest()
+        claim = {
+            "claimId": claim_id,
+            "sequence": sequence,
+            "amount": _plain(threshold),
+            "asset": prepared.transfer_asset,
+            "clientTranId": _buffer_client_tran_id(prepared.uid, sequence),
+            "status": "CLAIMED",
+            "createdAt": _now(),
+        }
+        update = {
+            "inFlight": claim,
+            "transferSequence": sequence,
+            "minimumTransfer": _plain(threshold),
+            "asset": prepared.transfer_asset,
+            "updatedAt": _now(),
+        }
+        transfer_ref = transfers.document(claim_id)
+        transfer_row = {
+            "uid": prepared.uid,
+            "claimId": claim_id,
+            "sequence": sequence,
+            "amount": _plain(threshold),
+            "asset": prepared.transfer_asset,
+            "kindType": TRANSFER_KIND,
+            "clientTranId": claim["clientTranId"],
+            "status": "CLAIMED",
+            "createdAt": claim["createdAt"],
+        }
+        if transaction is None:
+            state_ref.set(update, merge=True)
+            transfer_ref.set(transfer_row, merge=True)
+        else:
+            transaction.set(state_ref, update, merge=True)
+            transaction.set(transfer_ref, transfer_row, merge=True)
+        return claim
+
+    if client is None:
+        return apply()
+    @firestore.transactional
+    def run(transaction: Any) -> dict[str, Any] | None:
+        return apply(transaction)
+    return run(client.transaction())
+
+
+def _mark_claim(prepared: PreparedSweep, claim: dict[str, Any], *, status: str, **fields: Any) -> dict[str, Any]:
+    state_ref = prepared.user_ref.collection("asterProfitSweepState").document("current")
+    transfer_ref = prepared.user_ref.collection("asterProfitSweepTransfers").document(str(claim["claimId"]))
+    current_state = state_ref.get().to_dict() or {}
+    current = current_state.get("inFlight")
+    if not isinstance(current, dict) or current.get("claimId") != claim.get("claimId"):
+        return claim
+    next_claim = {**current, "status": status, **fields, "updatedAt": _now()}
+    state_ref.set({"inFlight": next_claim, "updatedAt": _now()}, merge=True)
+    transfer_ref.set({"status": status, **fields, "updatedAt": _now()}, merge=True)
+    return next_claim
+
+
+def _complete_claim(prepared: PreparedSweep, claim: dict[str, Any], *, tran_id: str, reconciled: bool = False) -> dict[str, Any]:
+    """Only after exchange-confirmed success: subtract one block and raise today's total."""
+    state_ref = prepared.user_ref.collection("asterProfitSweepState").document("current")
+    transfer_ref = prepared.user_ref.collection("asterProfitSweepTransfers").document(str(claim["claimId"]))
+    client = getattr(state_ref, "_client", None)
+    amount = _d(claim.get("amount"))
+
+    def apply(transaction: Any | None = None) -> dict[str, Any]:
+        state = (state_ref.get().to_dict() or {}) if transaction is None else (state_ref.get(transaction=transaction).to_dict() or {})
+        current = state.get("inFlight")
+        if not isinstance(current, dict) or current.get("claimId") != claim.get("claimId"):
+            return state
+        pending = _d(state.get("pendingSavings"))
+        next_pending = max(Decimal("0"), pending - amount)
+        today_key = _local_day_key()
+        today_total = _d(state.get("todayTransferred")) if str(state.get("todayKey", "")) == today_key else Decimal("0")
+        next_today = today_total + amount
+        update = {
+            "pendingSavings": _plain(next_pending),
+            "todayTransferred": _plain(next_today),
+            "todayKey": today_key,
+            "inFlight": None,
+            "lastTransferAt": _now(),
+            "lastTransferAmount": _plain(amount),
+            "updatedAt": _now(),
+        }
+        transfer_update = {
+            "status": "SUCCEEDED",
+            "providerTransactionId": str(tran_id),
+            "providerStatus": "SUCCESS",
+            "reconciledFromHistory": bool(reconciled),
+            "completedAt": _now(),
+        }
+        if transaction is None:
+            state_ref.set(update, merge=True)
+            transfer_ref.set(transfer_update, merge=True)
+        else:
+            transaction.set(state_ref, update, merge=True)
+            transaction.set(transfer_ref, transfer_update, merge=True)
+        return {**state, **update}
+
+    if client is None:
+        return apply()
+    @firestore.transactional
+    def run(transaction: Any) -> dict[str, Any]:
+        return apply(transaction)
+    return run(client.transaction())
+
+
+def _execute_buffer_claim(prepared: PreparedSweep, claim: dict[str, Any], *, client: Any) -> dict[str, Any]:
+    amount = _d(claim.get("amount"))
+    submitted_at = claim.get("submittedAt")
+    if submitted_at is not None:
+        state, record = reconcile_transfer_history(
+            client=client,
+            amount=amount,
+            submitted_at=submitted_at,
+            asset=prepared.transfer_asset,
+            poll_attempts=2,
+            poll_delay_seconds=0.25,
+        )
+        if record is not None:
+            next_state = _complete_claim(
+                prepared, claim, tran_id=str(record.get("tranId", "")), reconciled=True,
+            )
+            return {"status": "SUCCEEDED", "state": next_state, "reconciled": True}
+        if state in {"AMBIGUOUS", "AMBIGUOUS_SPOT", "HISTORY_UNAVAILABLE", "SPOT_HISTORY_TRUNCATED", "FUTURES_HISTORY_TRUNCATED"}:
+            _mark_claim(prepared, claim, status="UNCERTAIN", reconciliationStatus=state)
+            return {"status": "UNCERTAIN", "reconciliationStatus": state}
+
+    account = client.account_information()
+    safe, reason, projection = transfer_safety(account, amount)
+    if not safe:
+        _mark_claim(prepared, claim, status="BLOCKED_MARGIN", reason=reason, marginSafety=projection)
+        return {"status": "BLOCKED_MARGIN", "reason": reason}
+
+    if not live_enabled():
+        _mark_claim(prepared, claim, status="BLOCKED_GLOBAL_GATE")
+        return {"status": "BLOCKED_GLOBAL_GATE"}
+
+    submitted_at = _now()
+    claim = _mark_claim(prepared, claim, status="SUBMITTING", submittedAt=submitted_at)
+    try:
+        payload = client.signed_spot_request("POST", TRANSFER_PATH, {
+            "asset": prepared.transfer_asset,
+            "amount": _plain(amount),
+            "clientTranId": str(claim.get("clientTranId")),
+            "kindType": TRANSFER_KIND,
+        })
+    except (AsterSubmissionUncertain, AsterApiError) as exc:
+        message = str(exc)
+        state, record = reconcile_transfer_history(
+            client=client,
+            amount=amount,
+            submitted_at=submitted_at,
+            asset=prepared.transfer_asset,
+            poll_attempts=3,
+            poll_delay_seconds=0.35,
+        )
+        if record is not None:
+            next_state = _complete_claim(
+                prepared, claim, tran_id=str(record.get("tranId", "")), reconciled=True,
+            )
+            return {"status": "SUCCEEDED", "state": next_state, "reconciled": True}
+        retry_status = "UNCERTAIN" if isinstance(exc, AsterSubmissionUncertain) or _unknown_execution_reason(message) else "RETRYABLE"
+        _mark_claim(
+            prepared, claim, status=retry_status, reason=message[:500], reconciliationStatus=state,
+        )
+        return {"status": retry_status, "reconciliationStatus": state}
+
+    if not isinstance(payload, dict) or str(payload.get("status", "")).upper() != "SUCCESS" or payload.get("tranId") in (None, ""):
+        _mark_claim(prepared, claim, status="UNCERTAIN", reason="Aster bevestigde geen SUCCESS + tranId")
+        return {"status": "UNCERTAIN"}
+
+    next_state = _complete_claim(prepared, claim, tran_id=str(payload.get("tranId")))
+    return {"status": "SUCCEEDED", "state": next_state, "tranId": str(payload.get("tranId"))}
+
+
+def drain_profit_savings_buffer(prepared: PreparedSweep, *, client: Any, max_blocks: int = 20) -> dict[str, Any]:
+    """Drain whole threshold blocks; the remainder stays persistent."""
+    transferred = Decimal("0")
+    transfer_count = 0
+    last_status = "BUFFERED"
+    for _ in range(max(1, int(max_blocks))):
+        claim = _claim_threshold_transfer(prepared)
+        if claim is None:
+            break
+        result = _execute_buffer_claim(prepared, claim, client=client)
+        last_status = str(result.get("status", "BUFFERED"))
+        if last_status != "SUCCEEDED":
+            break
+        amount = _d(claim.get("amount"))
+        transferred += amount
+        transfer_count += 1
+    _, state = _state_snapshot(prepared)
+    today_key = _local_day_key()
+    today_total = _d(state.get("todayTransferred")) if str(state.get("todayKey", "")) == today_key else Decimal("0")
+    return {
+        "status": "SUCCEEDED" if transfer_count else last_status,
+        "transferred": _plain(transferred),
+        "transferCount": transfer_count,
+        "pendingSavings": _plain(_d(state.get("pendingSavings"))),
+        "todayTransferred": _plain(today_total),
+    }
+
+
 def finalize_close_sweep(
     prepared: PreparedSweep | None,
     *,
@@ -906,7 +1210,7 @@ def finalize_close_sweep(
     confirmed_order: dict[str, Any],
     evidence: CloseEvidence | None = None,
 ) -> dict[str, Any] | None:
-    """Transfer only after Aster confirmed the close and every safety gate passes."""
+    """Book a positive realized-profit share and transfer only complete threshold blocks."""
     if prepared is None:
         return None
     ref = prepared.ledger_ref
@@ -947,6 +1251,7 @@ def finalize_close_sweep(
             "exchangeOrderId": order_id,
             "netRealizedProfit": _plain(net),
             "sweepContribution": _plain(contribution),
+            "minimumTransfer": _plain(prepared.minimum_transfer),
             "calculation": detail,
             "calculatedAt": _now(),
         }, merge=True)
@@ -954,163 +1259,20 @@ def finalize_close_sweep(
             ref.set({"status": "SKIPPED_NONPOSITIVE", "completedAt": _now()}, merge=True)
             return {"status": "SKIPPED_NONPOSITIVE", "contribution": "0"}
 
-        account = client.account_information()
-        safe, reason, projection = transfer_safety(account, contribution)
-        ref.set({"marginSafety": projection, "marginSafetyReason": reason, "updatedAt": _now()}, merge=True)
-        if not safe:
-            ref.set({"status": "BLOCKED_MARGIN", "completedAt": _now()}, merge=True)
-            return {"status": "BLOCKED_MARGIN", "reason": reason}
-        if not live_enabled():
-            ref.set({"status": "BLOCKED_GLOBAL_GATE", "completedAt": _now()}, merge=True)
-            return {"status": "BLOCKED_GLOBAL_GATE"}
-
-        submitted_at = _now()
-        ref.set({"status": "SUBMITTING", "submittedAt": submitted_at}, merge=True)
-        try:
-            # Aster documents perp->spot as a Spot TRADE endpoint. Using the
-            # Futures host produced repeated -1006 unknown-execution responses.
-            # Submit through the approved API-wallet signer on Spot V3.
-            payload = client.signed_spot_request("POST", TRANSFER_PATH, {
-                "asset": prepared.transfer_asset,
-                "amount": _plain(contribution),
-                "clientTranId": prepared.client_tran_id,
-                "kindType": TRANSFER_KIND,
-            })
-        except AsterSubmissionUncertain as exc:
-            # -1006, -1007 and HTTP 503 mean execution status is unknown.
-            # Reconcile authoritative history first. If the transfer is still
-            # NOT_FOUND, replay exactly once with the same deterministic
-            # clientTranId. This preserves idempotency and avoids abandoning a
-            # valid Profit Sweep forever after one ambiguous exchange response.
-            first = _uncertain_result(
-                ref=ref,
-                reason=str(exc),
-                client=client,
-                contribution=contribution,
-                submitted_at=submitted_at,
-                asset=prepared.transfer_asset,
-            )
-            if str(first.get("status", "")).upper() == "SUCCEEDED":
-                return first
-            if str(first.get("reconciliationStatus", "")).upper() != "NOT_FOUND":
-                return first
-
-            replay_submitted_at = _now()
-            ref.set({
-                "status": "RESUBMITTING_SAME_ID",
-                "replayClientTranId": prepared.client_tran_id,
-                "replaySubmittedAt": replay_submitted_at,
-                "updatedAt": _now(),
-            }, merge=True)
-            try:
-                replay = client.signed_spot_request("POST", TRANSFER_PATH, {
-                    "asset": prepared.transfer_asset,
-                    "amount": _plain(contribution),
-                    "clientTranId": prepared.client_tran_id,
-                    "kindType": TRANSFER_KIND,
-                })
-            except AsterSubmissionUncertain as replay_exc:
-                return _uncertain_result(
-                    ref=ref,
-                    reason=str(replay_exc),
-                    client=client,
-                    contribution=contribution,
-                    submitted_at=submitted_at,
-                    asset=prepared.transfer_asset,
-                )
-            except AsterApiError as replay_exc:
-                replay_message = str(replay_exc)
-                if "-4115" in replay_message:
-                    duplicate_state, duplicate_record = reconcile_transfer_history(
-                        client=client,
-                        amount=contribution,
-                        submitted_at=submitted_at,
-                        asset=prepared.transfer_asset,
-                        poll_attempts=4,
-                        poll_delay_seconds=0.5,
-                    )
-                    if duplicate_record is not None:
-                        return _reconciled_result(
-                            ref=ref,
-                            contribution=contribution,
-                            record=duplicate_record,
-                        )
-                    ref.set({
-                        "status": "UNCERTAIN",
-                        "reason": "DUPLICATED_CLIENT_TRAN_ID_AFTER_UNKNOWN",
-                        "reconciliationStatus": duplicate_state,
-                        "updatedAt": _now(),
-                    }, merge=True)
-                    return {"status": "UNCERTAIN", "reconciliationStatus": duplicate_state}
-                ref.set({
-                    "status": "FAILED_EXCHANGE",
-                    "reason": replay_message[:500],
-                    "completedAt": _now(),
-                }, merge=True)
-                return {"status": "FAILED_EXCHANGE"}
-
-            if (
-                isinstance(replay, dict)
-                and str(replay.get("status", "")).upper() == "SUCCESS"
-                and replay.get("tranId") not in (None, "")
-            ):
-                tran_id = str(replay.get("tranId"))
-                ref.set({
-                    "status": "SUCCEEDED",
-                    "providerTransactionId": tran_id,
-                    "providerStatus": "SUCCESS",
-                    "replayedSameClientTranId": True,
-                    "completedAt": _now(),
-                }, merge=True)
-                return {
-                    "status": "SUCCEEDED",
-                    "contribution": _plain(contribution),
-                    "tranId": tran_id,
-                    "replayed": True,
-                }
-
-            return _uncertain_result(
-                ref=ref,
-                reason="Aster Spot replay bevestigde geen SUCCESS + tranId",
-                client=client,
-                contribution=contribution,
-                submitted_at=submitted_at,
-                asset=prepared.transfer_asset,
-            )
-        except AsterApiError as exc:
-            # Defensive compatibility for older clients that still surface
-            # Aster's unknown-execution codes as a regular API error.
-            message = str(exc)
-            if "-1006" in message or "-1007" in message or "execution status unknown" in message.lower():
-                return _uncertain_result(
-                    ref=ref,
-                    reason=message,
-                    client=client,
-                    contribution=contribution,
-                    submitted_at=submitted_at,
-                    asset=prepared.transfer_asset,
-                )
-            ref.set({"status": "FAILED_EXCHANGE", "reason": message[:500], "completedAt": _now()}, merge=True)
-            return {"status": "FAILED_EXCHANGE"}
-
-        if not isinstance(payload, dict) or str(payload.get("status", "")).upper() != "SUCCESS" or payload.get("tranId") in (None, ""):
-            return _uncertain_result(
-                ref=ref,
-                reason="Aster bevestigde geen SUCCESS + tranId",
-                client=client,
-                contribution=contribution,
-                submitted_at=submitted_at,
-            )
+        booked = _book_contribution(prepared, contribution)
+        drained = drain_profit_savings_buffer(prepared, client=client)
         ref.set({
-            "status": "SUCCEEDED",
-            "providerTransactionId": str(payload.get("tranId")),
-            "providerStatus": "SUCCESS",
-            "completedAt": _now(),
+            "status": "BUFFERED",
+            "pendingSavingsAfter": drained.get("pendingSavings"),
+            "todayTransferredAfter": drained.get("todayTransferred"),
+            "thresholdTransferStatus": drained.get("status"),
+            "updatedAt": _now(),
         }, merge=True)
         return {
-            "status": "SUCCEEDED",
+            "status": "BUFFERED",
             "contribution": _plain(contribution),
-            "tranId": str(payload.get("tranId")),
+            "alreadyBooked": bool(booked.get("alreadyBooked")),
+            **drained,
         }
     except Exception as exc:
         ref.set({"status": "FAILED_INTERNAL", "reason": str(exc)[:500], "updatedAt": _now()}, merge=True)
