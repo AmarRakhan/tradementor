@@ -20,11 +20,14 @@ test("Profit Pot settings support percentage plus persistent transfer threshold"
   assert.match(settingsBridge, /Opnieuw proberen bij mislukte transfer/);
 });
 
-test("Portfolio Snapshot Profit Pot shows today's successful sweep transfers and opens settings", () => {
+test("Portfolio Snapshot Profit Pot shows today's transferred amount plus current pending savings", () => {
   assert.match(profitPotBridge, /payload\.todayTransferred/);
+  assert.match(profitPotBridge, /payload\.pendingSavings/);
+  assert.match(profitPotBridge, /profitPotTodayDisplay/);
+  assert.match(profitPotBridge, /todayTransferred \+ pendingSavings/);
+  assert.match(profitPotBridge, />Vandaag<\/em>/);
   assert.match(profitPotBridge, /aster-profit-pot-open/);
   assert.match(profitPotBridge, /onClick=/);
-  assert.match(profitPotBridge, /Vandaag succesvol naar Spot overgezet/);
   assert.doesNotMatch(profitPotBridge, /existingProfitPotValue/);
   assert.doesNotMatch(profitPotBridge, /spot-balance/);
   assert.match(css, /\.aps-profit-pot-card\{[\s\S]*pointer-events:auto/);
@@ -32,9 +35,12 @@ test("Portfolio Snapshot Profit Pot shows today's successful sweep transfers and
   assert.match(layout, /AsterProfitSweepSettingsBridge/);
 });
 
-test("settings card exposes pending buffer separately from today's transferred total", () => {
+test("settings card exposes buffer, today's transfers and live USDC Spot balance separately", () => {
   assert.match(settingsBridge, /pendingSavings/);
   assert.match(settingsBridge, /todayTransferred/);
+  assert.match(settingsBridge, /Spot saldo \(USDC\)/);
+  assert.match(settingsBridge, /spotUsdcBalance/);
+  assert.match(settingsBridge, /\/api\/exchanges\/aster\/spot-balance\?asset=USDC/);
   assert.match(settingsBridge, /transferInFlight/);
   assert.match(settingsBridge, /aster-profit-sweep-settings-updated/);
   assert.match(settingsBridge, /één drempelbedrag automatisch naar Spot overgezet/);

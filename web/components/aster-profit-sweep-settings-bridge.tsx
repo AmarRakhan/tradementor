@@ -21,6 +21,7 @@ export function AsterProfitSweepSettingsBridge() {
   const [minimumTransfer, setMinimumTransfer] = useState("1");
   const [pendingSavings, setPendingSavings] = useState<number | null>(null);
   const [todayTransferred, setTodayTransferred] = useState<number | null>(null);
+  const [spotUsdcBalance, setSpotUsdcBalance] = useState<number | null>(null);
   const [transferInFlight, setTransferInFlight] = useState(false);
   const [automaticTransferEnabled, setAutomaticTransferEnabled] = useState(false);
   const [transferAsset, setTransferAsset] = useState<"USDT" | "USDC">("USDT");
@@ -46,18 +47,31 @@ export function AsterProfitSweepSettingsBridge() {
     setTransferAsset(result.transferAsset === "USDC" ? "USDC" : "USDT");
   }, []);
 
+  const loadSpotBalance = useCallback(async () => {
+    try {
+      const result = await authenticatedRequest("/api/exchanges/aster/spot-balance?asset=USDC", { cache: "no-store" });
+      const total = Number(result.total ?? 0);
+      setSpotUsdcBalance(Number.isFinite(total) ? total : 0);
+    } catch {
+      setSpotUsdcBalance(null);
+    }
+  }, []);
+
   const loadSettings = useCallback(async () => {
     setLoadingSettings(true);
     setSettingsError("");
     try {
-      const result = await authenticatedRequest("/api/exchanges/aster/profit-sweep-settings", { cache: "no-store" });
-      applySettings(result);
+      const [settingsResult] = await Promise.all([
+        authenticatedRequest("/api/exchanges/aster/profit-sweep-settings", { cache: "no-store" }),
+        loadSpotBalance(),
+      ]);
+      applySettings(settingsResult);
     } catch (reason) {
       setSettingsError(reason instanceof Error ? reason.message : "Profit sparen kon niet worden geladen");
     } finally {
       setLoadingSettings(false);
     }
-  }, [applySettings]);
+  }, [applySettings, loadSpotBalance]);
 
   useEffect(() => {
     let alive = true;
@@ -186,6 +200,14 @@ export function AsterProfitSweepSettingsBridge() {
             <strong>{money(pendingSavings)}</strong>
           </div>
           <div className="aps-profit-pot-setting-row">
+            <span>Vandaag naar Spot</span>
+            <strong>{money(todayTransferred)}</strong>
+          </div>
+          <div className="aps-profit-pot-setting-row">
+            <span>Spot saldo (USDC)</span>
+            <strong>{money(spotUsdcBalance)}</strong>
+          </div>
+          <div className="aps-profit-pot-setting-row">
             <span>Transfer naar</span>
             <strong>Spot wallet · {transferAsset}</strong>
           </div>
@@ -207,7 +229,6 @@ export function AsterProfitSweepSettingsBridge() {
           {draft || "0"}% van iedere positieve gesloten nettowinst wordt toegevoegd aan de spaarbuffer. Zodra de spaarpot {money(safeThreshold)} bereikt, wordt één drempelbedrag automatisch naar Spot overgezet.
         </div>
         {transferInFlight && <div className="aps-profit-pot-message">Een drempeltransfer wordt veilig verwerkt.</div>}
-        {todayTransferred !== null && <div className="aps-profit-pot-day-total">Vandaag naar Spot: <strong>{money(todayTransferred)}</strong></div>}
         {loadingSettings && <div className="aps-profit-pot-message">Instellingen laden…</div>}
         {settingsError && <div className="aps-profit-pot-error" role="alert">{settingsError}</div>}
         {savedMessage && <div className="aps-profit-pot-success">{savedMessage}</div>}
