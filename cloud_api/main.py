@@ -2226,11 +2226,11 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
                 if runtime_equity>0:
                     _persist_portfolio_chart_sample({"uid":uid},equity=runtime_equity,source_at_ms=source_at_ms)
 
-                # Build 487: Active Trades history is a server-side analytics stream,
-                # not a browser-side side effect. Persist the exchange-confirmed open-
-                # position basket from this same scheduler snapshot once per minute so
-                # 1m/5m/15m history keeps growing while the app is closed or another
-                # Portfolio Koers tab is selected.
+                # Active Trades 2.0 remains a server-side analytics stream. Persist
+                # the exchange-confirmed open-position market basket from this same
+                # scheduler snapshot once per minute so the normalized 1m/5m/15m/
+                # 1h/4h/24h index keeps growing while the app is closed or another
+                # Portfolio Koers tab is selected. No trading decision consumes it.
                 active_basket=active_trades_snapshot({"positions":positions})
                 _persist_active_trades_chart_sample(
                     {"uid":uid},basket=active_basket,source_at_ms=source_at_ms
@@ -6288,14 +6288,20 @@ def _persist_active_trades_chart_sample(
             day_low = adjusted
         state_value = {
             "value": adjusted,
+            "rawCompositeIndex": safe_float(basket.get("compositeIndex")) or 100.0,
+            "indexBase": 100.0,
+            "indexVersion": 2,
+            "indexName": "Active Trades Market Index",
+            "weighting": "ENTRY_NOTIONAL",
             "sourceAtMs": source_at_ms,
             "positions": basket.get("positions", []),
+            # Open P&L remains display metadata only; it does not drive candles.
             "openPnl": safe_float(basket.get("openPnl")),
             "dayKey": local_day,
             "dayHigh": day_high,
             "dayLow": day_low,
             "updatedAt": now,
-            "source": "ASTER_API_READ_ONLY",
+            "source": "ASTER_API_READ_ONLY_MARKET_INDEX_V2",
         }
         candle_rows: list[tuple[Any, str, dict[str, Any]]] = []
         for timeframe in PORTFOLIO_CHART_TIMEFRAME_MS:
@@ -6488,7 +6494,10 @@ def aster_portfolio_chart_active_trades(
         "entryExitAdjusted": True,
         "readOnly": True,
         "ordersSent": 0,
-        "source": "Aster exchange-confirmed open positions + confirmed fills",
+        "indexBase": 100.0,
+        "indexName": "Active Trades Market Index",
+        "weighting": "ENTRY_NOTIONAL",
+        "source": "Aster exchange-confirmed active-position market index + confirmed fills",
     }
 
 
