@@ -7,38 +7,57 @@ import { authenticatedRequest } from "@/lib/cloud-client";
 const SETTINGS_HOST_ID = "aster-profit-sweep-settings-host";
 const PRESETS = [5, 10, 25, 50] as const;
 
+function money(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "US$ —";
+  return `US$ ${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+}
+
 export function AsterProfitSweepSettingsBridge() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [percent, setPercent] = useState<number | null>(null);
+  const [draft, setDraft] = useState("5");
+  const [minimumTransfer, setMinimumTransfer] = useState("1");
+  const [pendingSavings, setPendingSavings] = useState<number | null>(null);
+  const [todayTransferred, setTodayTransferred] = useState<number | null>(null);
+  const [transferInFlight, setTransferInFlight] = useState(false);
   const [automaticTransferEnabled, setAutomaticTransferEnabled] = useState(false);
   const [transferAsset, setTransferAsset] = useState<"USDT" | "USDC">("USDT");
-  const [draft, setDraft] = useState("25");
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [saving, setSaving] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
   const settingsAttempted = useRef(false);
 
+  const applySettings = useCallback((result: any) => {
+    const next = Number(result.sweepPercent);
+    const minimum = Number(result.minimumTransfer ?? 1);
+    if (!Number.isFinite(next) || next < 0 || next > 100) throw new Error("Ongeldig spaarpercentage ontvangen");
+    if (!Number.isFinite(minimum) || minimum <= 0) throw new Error("Ongeldige minimale transfer ontvangen");
+    setEnabled(result.enabled === true);
+    setPercent(next);
+    setDraft(String(next));
+    setMinimumTransfer(String(minimum));
+    setPendingSavings(Number.isFinite(Number(result.pendingSavings)) ? Number(result.pendingSavings) : 0);
+    setTodayTransferred(Number.isFinite(Number(result.todayTransferred)) ? Number(result.todayTransferred) : 0);
+    setTransferInFlight(result.transferInFlight === true);
+    setAutomaticTransferEnabled(result.automaticTransferEnabled === true);
+    setTransferAsset(result.transferAsset === "USDC" ? "USDC" : "USDT");
+  }, []);
+
   const loadSettings = useCallback(async () => {
     setLoadingSettings(true);
     setSettingsError("");
     try {
-      const result = await authenticatedRequest("/api/exchanges/aster/profit-sweep-settings");
-      const next = Number(result.sweepPercent);
-      if (!Number.isFinite(next) || next < 0 || next > 100) throw new Error("Ongeldig spaarpercentage ontvangen");
-      setEnabled(result.enabled === true);
-      setPercent(next);
-      setDraft(String(next));
-      setAutomaticTransferEnabled(result.automaticTransferEnabled === true);
-      setTransferAsset(result.transferAsset === "USDC" ? "USDC" : "USDT");
+      const result = await authenticatedRequest("/api/exchanges/aster/profit-sweep-settings", { cache: "no-store" });
+      applySettings(result);
     } catch (reason) {
       setSettingsError(reason instanceof Error ? reason.message : "Profit sparen kon niet worden geladen");
     } finally {
       setLoadingSettings(false);
     }
-  }, []);
+  }, [applySettings]);
 
   useEffect(() => {
     let alive = true;
@@ -64,6 +83,17 @@ export function AsterProfitSweepSettingsBridge() {
     void loadSettings();
   }, [host, loadSettings]);
 
+  useEffect(() => {
+    const openFromProfitPot = () => {
+      setSavedMessage("");
+      setSettingsError("");
+      setOpen(true);
+      void loadSettings();
+    };
+    window.addEventListener("aster-profit-pot-open", openFromProfitPot);
+    return () => window.removeEventListener("aster-profit-pot-open", openFromProfitPot);
+  }, [loadSettings]);
+
   const openSettings = () => {
     setSavedMessage("");
     setSettingsError("");
@@ -73,8 +103,13 @@ export function AsterProfitSweepSettingsBridge() {
 
   const save = async () => {
     const next = Number(draft.replace(",", "."));
+    const threshold = Number(minimumTransfer.replace(",", "."));
     if (!Number.isFinite(next) || next < 0 || next > 100) {
       setSettingsError("Vul een percentage tussen 0% en 100% in.");
+      return;
+    }
+    if (!Number.isFinite(threshold) || threshold < 0.01 || threshold > 1000) {
+      setSettingsError("Vul een minimale transfer tussen US$ 0,01 en US$ 1.000 in.");
       return;
     }
     setSaving(true);
@@ -83,23 +118,12 @@ export function AsterProfitSweepSettingsBridge() {
     try {
       const result = await authenticatedRequest("/api/exchanges/aster/profit-sweep-settings", {
         method: "PUT",
-        body: JSON.stringify({ enabled, sweepPercent: next, transferAsset }),
+        body: JSON.stringify({ enabled, sweepPercent: next, minimumTransfer: threshold, transferAsset }),
       });
-      const saved = Number(result.sweepPercent);
-      if (!Number.isFinite(saved)) throw new Error("Opslaan is niet bevestigd");
-      const automatic = result.automaticTransferEnabled === true;
-      setEnabled(result.enabled === true);
-      setPercent(saved);
-      setDraft(String(saved));
-      setAutomaticTransferEnabled(automatic);
-      setTransferAsset(result.transferAsset === "USDC" ? "USDC" : "USDT");
-      setSavedMessage(
-        result.enabled === true
-          ? automatic
-            ? `Opgeslagen · automatisch sparen actief op ${saved}%`
-            : `Opgeslagen · nieuwe winstboekingen gebruiken ${saved}%`
-          : "Opgeslagen · Profit sparen staat uit",
-      );
+      applySettings(result);
+      setSavedMessage(result.enabled === true ? "Opgeslagen · Profit sparen actief" : "Opgeslagen · Profit sparen staat uit");
+      window.dispatchEvent(new CustomEvent("aster-profit-sweep-settings-updated"));
+      window.setTimeout(() => setOpen(false), 500);
     } catch (reason) {
       setSettingsError(reason instanceof Error ? reason.message : "Opslaan is mislukt");
     } finally {
@@ -116,53 +140,82 @@ export function AsterProfitSweepSettingsBridge() {
     host,
   ) : null;
 
-  const examplePercent = Number(draft.replace(",", "."));
-  const exampleAmount = Number.isFinite(examplePercent) ? Math.max(0, Math.min(100, examplePercent)) * 0.1 : 0;
+  const thresholdValue = Number(minimumTransfer.replace(",", "."));
+  const safeThreshold = Number.isFinite(thresholdValue) && thresholdValue > 0 ? thresholdValue : 1;
 
   const modal = open && typeof document !== "undefined" ? createPortal(
-    <div className="aps-profit-pot-modal" role="presentation" onClick={() => setOpen(false)}>
-      <section className="aps-profit-pot-dialog" role="dialog" aria-modal="true" aria-labelledby="aps-profit-pot-title" onClick={(event) => event.stopPropagation()}>
+    <div className="aps-profit-pot-modal aps-profit-pot-flip-scene" role="presentation" onClick={() => setOpen(false)}>
+      <section className="aps-profit-pot-dialog aps-profit-pot-flip-back" role="dialog" aria-modal="true" aria-labelledby="aps-profit-pot-title" onClick={(event) => event.stopPropagation()}>
         <div className="aps-profit-pot-dialog-head">
           <div>
-            <small>PROFIT POT</small>
-            <h2 id="aps-profit-pot-title">Profit sparen</h2>
+            <small>PROFIT POT INSTELLINGEN</small>
+            <h2 id="aps-profit-pot-title">Automatisch sparen naar Spot</h2>
           </div>
           <button type="button" className="aps-profit-pot-close" onClick={() => setOpen(false)} aria-label="Sluiten">×</button>
         </div>
 
-        <div className="aps-profit-pot-toggle-row">
-          <div><strong>Profit sparen</strong><small>Alleen positieve gerealiseerde nettowinst</small></div>
-          <button type="button" className={`aps-profit-pot-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled} onClick={() => setEnabled((current) => !current)} disabled={saving}>
-            <span />
-          </button>
+        <div className="aps-profit-pot-setting-list">
+          <div className="aps-profit-pot-setting-row">
+            <span>Profit Sparen</span>
+            <button type="button" className={`aps-profit-pot-switch ${enabled ? "on" : ""}`} role="switch" aria-checked={enabled} onClick={() => setEnabled((current) => !current)} disabled={saving}>
+              <span />
+            </button>
+          </div>
+
+          <label className="aps-profit-pot-setting-row aps-profit-pot-setting-edit">
+            <span>Spaarpercentage</span>
+            <span className="aps-profit-pot-compact-input">
+              <input type="number" min="0" max="100" step="0.1" inputMode="decimal" value={draft} onChange={(event) => setDraft(event.target.value)} disabled={saving} />
+              <b>%</b>
+            </span>
+          </label>
+          <div className="aps-profit-pot-presets" aria-label="Snelle percentages">
+            {PRESETS.map((preset) => <button key={preset} type="button" onClick={() => setDraft(String(preset))} disabled={saving}>{preset}%</button>)}
+          </div>
+
+          <label className="aps-profit-pot-setting-row aps-profit-pot-setting-edit">
+            <span>Minimale transfer</span>
+            <span className="aps-profit-pot-compact-input money">
+              <b>US$</b>
+              <input type="number" min="0.01" max="1000" step="0.01" inputMode="decimal" value={minimumTransfer} onChange={(event) => setMinimumTransfer(event.target.value)} disabled={saving} />
+            </span>
+          </label>
+
+          <div className="aps-profit-pot-setting-row">
+            <span>Huidig opgespaard</span>
+            <strong>{money(pendingSavings)}</strong>
+          </div>
+          <div className="aps-profit-pot-setting-row">
+            <span>Transfer naar</span>
+            <strong>Spot wallet · {transferAsset}</strong>
+          </div>
+          <div className="aps-profit-pot-setting-row">
+            <span>Alleen positieve winsttrades</span>
+            <span className="aps-profit-pot-fixed-on">AAN</span>
+          </div>
+          <div className="aps-profit-pot-setting-row">
+            <span>Kleine bedragen opsparen</span>
+            <span className="aps-profit-pot-fixed-on">AAN</span>
+          </div>
+          <div className="aps-profit-pot-setting-row">
+            <span>Opnieuw proberen bij mislukte transfer</span>
+            <span className="aps-profit-pot-fixed-on">AAN</span>
+          </div>
         </div>
 
-        <p className="aps-profit-pot-explainer">Het gekozen percentage geldt alleen voor <strong>nieuwe positieve gerealiseerde nettowinst</strong>. Inleg, positieomvang, margin en ongerealiseerde PnL tellen niet mee.</p>
-
-        <label className="aps-profit-pot-field">
-          <span>Spaarpercentage</span>
-          <span className="aps-profit-pot-input-wrap">
-            <input type="number" min="0" max="100" step="0.1" inputMode="decimal" value={draft} onChange={(event) => setDraft(event.target.value)} disabled={saving} />
-            <b>%</b>
-          </span>
-        </label>
-
-        <div className="aps-profit-pot-presets" aria-label="Snelle percentages">
-          {PRESETS.map((preset) => <button key={preset} type="button" onClick={() => setDraft(String(preset))} disabled={saving}>{preset}%</button>)}
+        <div className="aps-profit-pot-simple-info">
+          {draft || "0"}% van iedere positieve gesloten nettowinst wordt toegevoegd aan de spaarbuffer. Zodra de spaarpot {money(safeThreshold)} bereikt, wordt één drempelbedrag automatisch naar Spot overgezet.
         </div>
-
-        <div className="aps-profit-pot-formula">Voorbeeld: bij US$10 nettowinst en {draft || "0"}% sparen wordt US${exampleAmount.toFixed(2)} gereserveerd voor de Profit Pot.</div>
-        <div className="aps-profit-pot-config-only"><strong>Spaarasset: {transferAsset}</strong> · winst wordt van Futures naar Spot verplaatst in dit asset.</div>
-        {enabled && automaticTransferEnabled ? (
-          <div className="aps-profit-pot-config-only"><strong>Automatisch actief.</strong> Na een bevestigde winstgevende Aster-sluiting wordt het ingestelde percentage veilig van Futures naar Spot verplaatst. Bij verlies, onvoldoende vrije margin of onzekere transfer wordt niets opnieuw verstuurd.</div>
-        ) : (
-          <div className="aps-profit-pot-config-only">Automatische Futures → Spot-transfer is nog niet actief voor deze instelling. Opslaan bewaart wel jouw percentage voor toekomstige winstboekingen.</div>
-        )}
-        {loadingSettings && <div className="aps-profit-pot-message">Instelling laden…</div>}
+        {transferInFlight && <div className="aps-profit-pot-message">Een drempeltransfer wordt veilig verwerkt.</div>}
+        {todayTransferred !== null && <div className="aps-profit-pot-day-total">Vandaag naar Spot: <strong>{money(todayTransferred)}</strong></div>}
+        {loadingSettings && <div className="aps-profit-pot-message">Instellingen laden…</div>}
         {settingsError && <div className="aps-profit-pot-error" role="alert">{settingsError}</div>}
         {savedMessage && <div className="aps-profit-pot-success">{savedMessage}</div>}
 
-        <button className="aps-profit-pot-save" type="button" onClick={save} disabled={saving || loadingSettings}>{saving ? "Opslaan…" : "Instelling opslaan"}</button>
+        <div className="aps-profit-pot-actions">
+          <button className="aps-profit-pot-cancel" type="button" onClick={() => setOpen(false)} disabled={saving}>Annuleren</button>
+          <button className="aps-profit-pot-save" type="button" onClick={save} disabled={saving || loadingSettings}>{saving ? "Opslaan…" : "Opslaan"}</button>
+        </div>
       </section>
     </div>,
     document.body,
