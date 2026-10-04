@@ -3,6 +3,7 @@ from pathlib import Path
 from aster_portfolio_chart import (
     active_zone,
     active_trades_collection_for_timeframe,
+    active_trades_composite_index,
     active_trades_continuity_value,
     active_trades_snapshot,
     aggregate_trade_activity,
@@ -256,25 +257,94 @@ def test_active_trades_snapshot_uses_exchange_open_positions_and_side_correct_pn
     assert round(basket["pnlPercent"], 6) == round(12 / 350 * 100, 6)
 
 
-def test_active_trades_continuity_neutralizes_entry_exit_dca_and_partial_close_jumps():
+def test_active_trades_single_long_follows_underlying_market_shape():
+    first = active_trades_snapshot({
+        "positions": [{"symbol": "BTCUSDT", "side": "LONG", "quantity": 1, "entryPrice": 100, "markPrice": 100}]
+    })
+    second = active_trades_snapshot({
+        "positions": [{"symbol": "BTCUSDT", "side": "LONG", "quantity": 1, "entryPrice": 100, "markPrice": 103}]
+    })
+    assert first["compositeIndex"] == 100
+    assert second["compositeIndex"] == 103
     previous = {
-        "value": -10.0,
-        "positions": [
-            {"key": "BTCUSDT|LONG", "quantity": 2.0, "entryPrice": 100.0, "pnl": -8.0},
-            {"key": "ETHUSDT|SHORT", "quantity": 4.0, "entryPrice": 50.0, "pnl": -2.0},
-        ],
+        "value": first["compositeIndex"],
+        "rawCompositeIndex": first["compositeIndex"],
+        "indexVersion": 2,
+        "positions": first["positions"],
     }
-    # BTC moves +$2 PnL. ETH is partially closed, so its resize is rebased.
-    # A new SOL leg starts with -$5 but entry itself must not jump the index.
-    current = {
+    assert active_trades_continuity_value(previous, second) == 103
+
+
+def test_active_trades_single_short_moves_inverse_to_underlying():
+    basket = active_trades_snapshot({
+        "positions": [{"symbol": "SOLUSDT", "side": "SHORT", "quantity": 1, "entryPrice": 200, "markPrice": 194}]
+    })
+    assert round(basket["positions"][0]["positionIndex"], 6) == 103
+    assert round(basket["compositeIndex"], 6) == 103
+
+
+def test_active_trades_mixed_basket_is_entry_notional_weighted():
+    basket = active_trades_snapshot({
         "positions": [
-            {"key": "BTCUSDT|LONG", "quantity": 2.0, "entryPrice": 100.0, "pnl": -6.0},
-            {"key": "ETHUSDT|SHORT", "quantity": 2.0, "entryPrice": 50.0, "pnl": -1.0},
-            {"key": "SOLUSDT|LONG", "quantity": 1.0, "entryPrice": 20.0, "pnl": -5.0},
-        ],
-        "openPnl": -12.0,
+            {"symbol": "BTCUSDT", "side": "LONG", "quantity": 2, "entryPrice": 100, "markPrice": 110},
+            {"symbol": "ETHUSDT", "side": "LONG", "quantity": 2, "entryPrice": 50, "markPrice": 45},
+            {"symbol": "SOLUSDT", "side": "SHORT", "quantity": 5, "entryPrice": 20, "markPrice": 18},
+        ]
+    })
+    # Entry notionals are 200/100/100 -> weights 50%/25%/25%.
+    # Position indices are 110/90/110 -> composite 105.
+    assert round(basket["compositeIndex"], 6) == 105
+    assert basket["weighting"] == "ENTRY_NOTIONAL"
+    assert round(active_trades_composite_index(basket["positions"]), 6) == 105
+
+
+def test_active_trades_continuity_rebases_entry_exit_dca_and_partial_close_changes():
+    original = active_trades_snapshot({
+        "positions": [
+            {"symbol": "BTCUSDT", "side": "LONG", "quantity": 2, "entryPrice": 100, "markPrice": 104},
+            {"symbol": "ETHUSDT", "side": "SHORT", "quantity": 4, "entryPrice": 50, "markPrice": 49},
+        ]
+    })
+    previous = {
+        "value": 104.0,
+        "rawCompositeIndex": original["compositeIndex"],
+        "indexVersion": 2,
+        "positions": original["positions"],
     }
-    assert active_trades_continuity_value(previous, current) == -8.0
+    # ETH partial close + new SOL entry change membership/quantity. The new
+    # basket is rebased at the already displayed 104 rather than jumping.
+    changed = active_trades_snapshot({
+        "positions": [
+            {"symbol": "BTCUSDT", "side": "LONG", "quantity": 2, "entryPrice": 100, "markPrice": 104},
+            {"symbol": "ETHUSDT", "side": "SHORT", "quantity": 2, "entryPrice": 50, "markPrice": 49},
+            {"symbol": "SOLUSDT", "side": "LONG", "quantity": 1, "entryPrice": 20, "markPrice": 19},
+        ]
+    })
+    assert active_trades_continuity_value(previous, changed) == 104.0
+
+    # DCA/average-entry change is also a rebase boundary.
+    dca = active_trades_snapshot({
+        "positions": [
+            {"symbol": "BTCUSDT", "side": "LONG", "quantity": 3, "entryPrice": 101, "markPrice": 104},
+            {"symbol": "ETHUSDT", "side": "SHORT", "quantity": 2, "entryPrice": 50, "markPrice": 49},
+            {"symbol": "SOLUSDT", "side": "LONG", "quantity": 1, "entryPrice": 20, "markPrice": 19},
+        ]
+    })
+    changed_state = {
+        "value": 104.0,
+        "rawCompositeIndex": changed["compositeIndex"],
+        "indexVersion": 2,
+        "positions": changed["positions"],
+    }
+    assert active_trades_continuity_value(changed_state, dca) == 104.0
+
+
+def test_active_trades_v1_state_migrates_to_basis_100_market_units():
+    current = active_trades_snapshot({
+        "positions": [{"symbol": "BTCUSDT", "side": "LONG", "quantity": 1, "entryPrice": 100, "markPrice": 102}]
+    })
+    old_state = {"value": -445.14, "positions": current["positions"]}
+    assert active_trades_continuity_value(old_state, current) == 102
 
 
 def test_active_trades_signed_ohlc_accepts_negative_and_zero_values():
@@ -286,7 +356,7 @@ def test_active_trades_signed_ohlc_accepts_negative_and_zero_values():
     assert row["high"] == 0.0
     assert row["low"] == -15.0
     assert row["close"] == -15.0
-    assert active_trades_collection_for_timeframe("15m") == "asterActiveTradesChart15m"
+    assert active_trades_collection_for_timeframe("15m") == "asterActiveTradesMarketIndex15m"
 
 
 def test_active_trades_endpoint_is_analytics_only_and_never_writes_canonical_account_snapshot():
