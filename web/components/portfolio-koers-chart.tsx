@@ -37,6 +37,7 @@ type ActiveTradesPayload={
   longPnl:number|null;shortPnl:number|null;longSharePercent:number|null;shortSharePercent:number|null;
   activeTrades:number;longTrades:number;shortTrades:number;totalNotional:number|null;
   dayHigh:number|null;dayLow:number|null;recoveryPercent:number|null;
+  indexBase:number|null;indexName:string;weighting:string;
   snapshotAtMs:number|null;live:boolean;persistent:boolean;entryExitAdjusted:boolean;readOnly:boolean;ordersSent:number;source:string;
 };
 type AdvisorSeats={longSlots:number|null;shortSlots:number|null;activeLong:number|null;activeShort:number|null;settings:Record<string,unknown>;zoneSoldiers:Record<string,unknown>;runtimeTruth:Record<string,unknown>;soldierOpenEvents:SoldierActivityEvent[]};
@@ -45,7 +46,8 @@ const EMPTY=normalizePortfolioKoersPayload({}) as Payload;
 const EMPTY_ACTIVE:ActiveTradesPayload={
   timeframe:"15m",candles:[],markers:[],currentIndexValue:null,currentOpenPnl:null,currentPnlPercent:null,
   longPnl:null,shortPnl:null,longSharePercent:null,shortSharePercent:null,activeTrades:0,longTrades:0,shortTrades:0,totalNotional:null,
-  dayHigh:null,dayLow:null,recoveryPercent:null,snapshotAtMs:null,live:false,persistent:true,entryExitAdjusted:true,readOnly:true,ordersSent:0,source:"",
+  dayHigh:null,dayLow:null,recoveryPercent:null,indexBase:100,indexName:"Active Trades Market Index",weighting:"ENTRY_NOTIONAL",
+  snapshotAtMs:null,live:false,persistent:true,entryExitAdjusted:true,readOnly:true,ordersSent:0,source:"",
 };
 const EMPTY_ADVISOR:AdvisorSeats={longSlots:null,shortSlots:null,activeLong:null,activeShort:null,settings:{},zoneSoldiers:{},runtimeTruth:{},soldierOpenEvents:[]};
 const ZONE_ADVISOR_REFERENCE="file_00000000d9b081f59f77ecf35043ec32";
@@ -78,6 +80,9 @@ const compactUsd=(value:number|null|undefined)=>{
   const number=Number(value),sign=number<0?"-":"";
   return `${sign}$ ${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}`;
 };
+const indexValue=(value:number|null|undefined)=>Number.isFinite(Number(value))
+  ? new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value))
+  : "—";
 const signedUsd=(value:number|null|undefined)=>{
   if(!Number.isFinite(Number(value)))return "—";
   const number=Number(value),sign=number<0?"−":"+";
@@ -159,6 +164,7 @@ function normalizeActiveTradesPayload(value:unknown):ActiveTradesPayload{
     longPnl:numberOrNull(root.longPnl),shortPnl:numberOrNull(root.shortPnl),longSharePercent:numberOrNull(root.longSharePercent),shortSharePercent:numberOrNull(root.shortSharePercent),
     activeTrades:Math.max(0,Math.round(Number(root.activeTrades)||0)),longTrades:Math.max(0,Math.round(Number(root.longTrades)||0)),shortTrades:Math.max(0,Math.round(Number(root.shortTrades)||0)),
     totalNotional:numberOrNull(root.totalNotional),dayHigh:numberOrNull(root.dayHigh),dayLow:numberOrNull(root.dayLow),recoveryPercent:numberOrNull(root.recoveryPercent),
+    indexBase:numberOrNull(root.indexBase)??100,indexName:String(root.indexName||"Active Trades Market Index"),weighting:String(root.weighting||"ENTRY_NOTIONAL"),
     snapshotAtMs:numberOrNull(root.snapshotAtMs),live:root.live===true,persistent:root.persistent!==false,entryExitAdjusted:root.entryExitAdjusted===true,readOnly:root.readOnly!==false,
     ordersSent:Math.max(0,Math.round(Number(root.ordersSent)||0)),source:String(root.source||""),
   };
@@ -1207,7 +1213,7 @@ export function PortfolioKoersChart({
       {!initialChartReady?<div className="portfolio-koers-state portfolio-koers-initial-state"><i/>Accountwaarde laden…</div>:null}
       {viewMode!=="active"&&recentChartGap?<div className="portfolio-koers-gap-warning" role="status">⚠ Historiegat {clockTime(recentChartGap.fromTime)}–{clockTime(recentChartGap.toTime)} · geen koerswaarden verzonnen</div>:null}
       {viewMode==="performance"?<div className="portfolio-koers-performance-note">PERFORMANCE · cashflow gecorrigeerd<span>Strategyzones staan alleen bij Accountwaarde</span></div>:null}
-      {viewMode==="active"?<div className="portfolio-koers-active-note">ACTIEVE TRADES INDEX<span>Entry/exit gecorrigeerd · alleen open posities</span></div>:null}
+      {viewMode==="active"?<div className="portfolio-koers-active-note">ACTIEVE TRADES MARKTINDEX<span>Basis 100 · LONG mee · SHORT invers · gewogen op entry-notional</span></div>:null}
       <div className={`portfolio-koers-zones ${zoneLayout.length?"is-ready":""}`} aria-hidden="true">{zoneLayout.map((zone)=><div key={zone.index} className={`portfolio-koers-zone zone-${zone.tone} ${zoneLevelClass(zone.index)} ${zone.index===activeZone?"active":""}`} style={{top:`${zone.top}px`,height:`${zone.height}px`}}><span>{zone.label}</span></div>)}</div>
       <div className="portfolio-koers-zone-boundaries" aria-hidden="true">{zoneBoundaries.map((boundary,index)=>{const distance=portfolioZoneDistancePercent(boundary.price,currentZonePrice);return <div key={`${boundary.price}-${index}`} className={`portfolio-koers-zone-boundary ${boundary.kind}`} style={{top:`${boundary.top}px`}}>{boundary.kind!=="regular"?<span title={`Exacte grens ${levelUsd(boundary.price)}`}>{boundary.kind==="next-up"?"↑":"↓"} Z{signedZone(boundary.targetIndex)} · {percent2(distance)}</span>:null}</div>})}</div>
       {viewMode==="account"?<div className="portfolio-koers-structure-layer" data-reference={PORTFOLIO_STRUCTURE_REFERENCE} aria-hidden="true">
@@ -1270,8 +1276,9 @@ export function PortfolioKoersChart({
       <h3>Actieve Trades Samenvatting</h3>
       <div className="portfolio-koers-active-summary-grid">
         <article><small>HUIDIGE OPEN P&amp;L</small><strong className={Number(activePayload.currentOpenPnl)<0?"negative":"positive"}>{signedUsd(activePayload.currentOpenPnl)}</strong><em>{percent2(activePayload.currentPnlPercent)}</em></article>
-        <article><small>HOOGSTE VANDAAG</small><strong className={Number(activePayload.dayHigh)<0?"negative":"positive"}>{signedUsd(activePayload.dayHigh)}</strong></article>
-        <article><small>LAAGSTE VANDAAG</small><strong className={Number(activePayload.dayLow)<0?"negative":"positive"}>{signedUsd(activePayload.dayLow)}</strong></article>
+        <article><small>MARKTINDEX NU</small><strong className={Number(activePayload.currentIndexValue)<100?"negative":"positive"}>{indexValue(activePayload.currentIndexValue)}</strong><em>{activePayload.currentIndexValue===null?"—":percent2(Number(activePayload.currentIndexValue)-100)} t.o.v. basis 100</em></article>
+        <article><small>INDEX HOOGSTE VANDAAG</small><strong>{indexValue(activePayload.dayHigh)}</strong></article>
+        <article><small>INDEX LAAGSTE VANDAAG</small><strong>{indexValue(activePayload.dayLow)}</strong></article>
         <article><small>HERSTEL VANAF BODEM</small><strong className="positive">{percent2(activePayload.recoveryPercent)}</strong></article>
         <article><small>LONG BIJDRAGE</small><strong className={Number(activePayload.longPnl)<0?"negative":"positive"}>↑ {signedUsd(activePayload.longPnl)}</strong><em>{percent2(activePayload.longSharePercent,false)} van notional</em></article>
         <article><small>SHORT BIJDRAGE</small><strong className={Number(activePayload.shortPnl)<0?"negative":"positive"}>↓ {signedUsd(activePayload.shortPnl)}</strong><em>{percent2(activePayload.shortSharePercent,false)} van notional</em></article>
