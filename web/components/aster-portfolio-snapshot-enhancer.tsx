@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { AsterHedgeManager } from "./aster-hedge-manager";
-import { PortfolioKoersChart } from "./portfolio-koers-chart";
+import { PortfolioKoersChart } from "./portfolio-koers-chart";\nimport { ActiveZoneSeatBlock, resolveActiveZoneSeatState, type ActiveZoneSeatSummary } from "./active-zone-seat-block";
 import { PortfolioPerformanceDetail, type PerformanceInitialTab } from "./portfolio-performance-detail";
 import { formatLiquidationRisk, liquidationNeedleDegrees, liquidationRiskRemaining, liquidationRiskTone, normalizeLiquidationRisk } from "@/lib/liquidation-gauge.mjs";
 
@@ -113,23 +113,15 @@ type LiquidationDiagnostics = {
   netExposureUsd: number | null;
 };
 
-type PriceZoneSeatSummary = {
+type PriceZoneSeatSummary = ActiveZoneSeatSummary & {
   enabled: boolean;
-  runtimeTruthCanonical: boolean;
-  activeZone: number | null;
-  perZoneLong: number;
-  perZoneShort: number;
   freeLongActiveZone: number;
   freeShortActiveZone: number;
-  occupiedLongActiveZone: number;
-  occupiedShortActiveZone: number;
   openFromOldZones: number;
   maxTotal: number;
   strategyOpenLong: number;
   strategyOpenShort: number;
   strategyOpenTotal: number;
-  zoneOpenCounts: Record<string, { long: number; short: number; total: number }>;
-  zoneOpenCountsReliable: boolean;
   entryStatus: string;
   entryReason: string;
   entrySkipReasons: Record<string, number>;
@@ -797,22 +789,11 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
   const liveZoneLabel = liveActiveZone === null ? "—" : `Zone ${liveActiveZone} actief`;
   if (!summary) return <section className="aps-zone-strategy aps-zone-loading" data-reference={PRICE_ZONE_DETAILS_REFERENCE} data-seat-zone-sync="waiting"><div className="aps-zone-title"><span className="aps-zone-target">◎</span><div><b>Prijszone-strategie</b><small>Live stoelstatus wordt geladen…</small></div><em>{liveZoneLabel}</em></div></section>;
   const pct = (value: number, capacity: number) => capacity <= 0 ? 0 : Math.min(100, Math.max(0, value / capacity * 100));
-  const displayActiveZone = summary.runtimeTruthCanonical ? summary.activeZone : (liveActiveZone ?? summary.activeZone);
-  const backendZoneMatches = displayActiveZone !== null && summary.activeZone === displayActiveZone;
-  const breakdown = displayActiveZone === null ? null : summary.zoneOpenCounts[String(displayActiveZone)] || null;
-  const resolvedCounts = backendZoneMatches
-    ? { long: summary.occupiedLongActiveZone, short: summary.occupiedShortActiveZone }
-    : displayActiveZone !== null && summary.zoneOpenCountsReliable
-      ? { long: breakdown?.long ?? 0, short: breakdown?.short ?? 0 }
-      : null;
-  const seatZoneInSync = resolvedCounts !== null;
+  const activeSeatState = resolveActiveZoneSeatState(summary, liveActiveZone);
+  const { displayActiveZone, seatZoneInSync, occupiedLongActiveZone, occupiedShortActiveZone } = activeSeatState;
   const zoneLabel = displayActiveZone === null ? "Zone —" : `Zone ${displayActiveZone} actief`;
-  const occupiedLongActiveZone = resolvedCounts?.long ?? 0;
-  const occupiedShortActiveZone = resolvedCounts?.short ?? 0;
   const freeLongActiveZone = Math.max(0, summary.perZoneLong - occupiedLongActiveZone);
   const freeShortActiveZone = Math.max(0, summary.perZoneShort - occupiedShortActiveZone);
-  const activeLongLabel = seatZoneInSync ? `${occupiedLongActiveZone} / ${summary.perZoneLong}` : "— / —";
-  const activeShortLabel = seatZoneInSync ? `${occupiedShortActiveZone} / ${summary.perZoneShort}` : "— / —";
   const statusText = !summary.enabled
     ? "Prijszone-stoelen staan momenteel uit."
     : seatZoneInSync
@@ -840,13 +821,7 @@ function PriceZoneStrategySummary({ summary, liveActiveZone }: { summary: PriceZ
       <span><small>Max totaal</small><b>{summary.maxTotal}</b></span>
     </div>
     <div className="aps-zone-seat-groups">
-      <div className="aps-zone-seat-group">
-        <strong className="aps-zone-group-title">Actieve zone</strong>
-        <div className="aps-zone-meters">
-          <div className="long"><span>LONG</span><i><u style={{width:`${seatZoneInSync ? pct(occupiedLongActiveZone,summary.perZoneLong) : 0}%`}} /></i><b>{activeLongLabel}</b></div>
-          <div className="short"><span>SHORT</span><i><u style={{width:`${seatZoneInSync ? pct(occupiedShortActiveZone,summary.perZoneShort) : 0}%`}} /></i><b>{activeShortLabel}</b></div>
-        </div>
-      </div>
+      <ActiveZoneSeatBlock summary={summary} liveActiveZone={liveActiveZone} />
       <div className="aps-zone-seat-group">
         <strong className="aps-zone-group-title">Alle zones samen</strong>
         <div className="aps-zone-open-counts">
@@ -1341,6 +1316,8 @@ export function AsterPortfolioSnapshotEnhancer() {
           liveAvailableText={values.available}
           liveLongText={values.longs}
           liveShortText={values.shorts}
+          activeZoneSeatSummary={priceZoneSeats}
+          activeZoneSeatLiveZone={liveActiveZone}
           onActiveZoneChange={setLiveActiveZone}
         />
         <Snapshot

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { authenticatedRequest } from "@/lib/cloud-client";
-import { useAuthSession } from "@/components/auth-provider";
+import { useAuthSession } from "@/components/auth-provider";\nimport { ActiveZoneSeatBlock, type ActiveZoneSeatSummary } from "@/components/active-zone-seat-block";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
@@ -395,12 +395,16 @@ export function PortfolioKoersChart({
   liveAvailableText,
   liveLongText,
   liveShortText,
+  activeZoneSeatSummary,
+  activeZoneSeatLiveZone,
   onActiveZoneChange,
 }:{
   liveEquityText:string;
   liveAvailableText:string;
   liveLongText:string;
   liveShortText:string;
+  activeZoneSeatSummary?:ActiveZoneSeatSummary|null;
+  activeZoneSeatLiveZone?:number|null;
   onActiveZoneChange?:(zone:number|null)=>void;
 }) {
   const { user }=useAuthSession();
@@ -1260,7 +1264,7 @@ export function PortfolioKoersChart({
       <span className="portfolio-koers-ui41-bb">BB 20,2</span>
       <span className="portfolio-koers-ui41-info" title="Bollinger Band 20,2 · actieve zone uit live portfolio-equity">i</span>
     </div>
-    <div className="portfolio-koers-ui41-hint"><MoneyBagIcon/><span>Tik op een TP-marker om de posities te bekijken</span></div>
+    <div className="portfolio-koers-active-zone-seat" data-reference="file_00000000796c8210aa150351316f20d1"><ActiveZoneSeatBlock summary={activeZoneSeatSummary ?? null} liveActiveZone={activeZoneSeatLiveZone ?? null} /></div>
     {viewMode==="active"?<section className="portfolio-koers-active-summary" aria-label="Actieve Trades Samenvatting">
       <h3>Actieve Trades Samenvatting</h3>
       <div className="portfolio-koers-active-summary-grid">
