@@ -26,35 +26,62 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-04",
-  title: "Profit Sparen 5.0 · per-user USDC/USDT transferasset",
+  title: "Profit Pot / Spot 2.0 · sparen tot drempel",
   newItems: [
-    "Profit Sparen kan per gebruiker vastleggen of de FUTURE_SPOT-transfer in USDC of USDT moet worden uitgevoerd.",
-    "De instelling wordt door backend, recovery en UI behouden; bestaande gebruikers blijven standaard op USDT tenzij hun account expliciet op USDC staat.",
+    "Kleine spaardelen uit positieve gerealiseerde nettowinst worden persistent opgeteld in één Profit Pot-buffer.",
+    "Vanaf de ingestelde minimale transfer wordt steeds exact één drempelblok veilig van Futures naar Spot overgezet.",
+    "De Profit Pot-tegel toont voortaan alleen het totaal dat vandaag succesvol door Profit Sparen naar Spot is overgezet en opent via een 3D flip de instellingen.",
   ],
   problems: [
-    "De Profit Sweep-engine stuurde elke transfer hardcoded als USDT.",
-    "Bij dit account staat de succesvolle handmatige Profit Pot-transfer op Spot als USDC, terwijl de automatische USDT-sweeps door Aster werden afgewezen.",
+    "Bij kleine winsttrades kon 5% slechts enkele fracties van een dollar zijn, waardoor per trade direct transfereren onpraktisch was.",
+    "De oude Profit Pot-tegel toonde de Spot-walletwaarde en maakte geen onderscheid tussen nog opgespaard bedrag en vandaag werkelijk overgezet spaargeld.",
   ],
   causes: [
-    "Transferasset en nettowinst-accounting waren onterecht als één vast USDT-contract behandeld.",
+    "De bestaande Profit Sweep koppelde iedere winstclose direct aan één transfer en had nog geen persistente accumulatiebuffer met transferdrempel.",
   ],
   fixes: [
-    "De transferasset is nu een per-user instelling met toegestane waarden USDT en USDC.",
-    "Alle transfer-, reconciliation- en recoverypaden gebruiken hetzelfde vastgelegde asset.",
-    "De Profit Sparen-UI bewaart de huidige assetinstelling bij het wijzigen van het percentage.",
+    "Per gebruiker is een idempotente pendingSavings-buffer toegevoegd met standaard minimale transfer van US$ 1,00.",
+    "Een transferclaim wordt eerst gereserveerd; de buffer wordt pas na exchange-bevestigd succes verlaagd en het dagtotaal pas dan verhoogd.",
+    "Meerdere volledige drempelblokken worden achter elkaar verwerkt terwijl de remainder in de buffer blijft.",
+    "Mislukte of onzekere transfers behouden het spaargeld en gebruiken een deterministische clientTranId voor veilige reconciliation/retry.",
   ],
   now: [
-    "Voor dit account kan Profit Sparen gericht via USDC naar Spot worden uitgevoerd zonder andere gebruikers naar USDC om te zetten.",
-    "Bestaande winstberekening, entry-, DCA-, TP-, Auto Hedge- en scannerlogica blijven ongewijzigd.",
+    "Bij US$ 1,15 pending en een drempel van US$ 1,00 gaat US$ 1,00 naar Spot en blijft US$ 0,15 opgespaard.",
+    "De app hoeft niet open te staan: de verwerking blijft gekoppeld aan de server-side confirmed-close flow.",
+    "Entry-, DCA-, TP-, Portfolio TP-, Auto Hedge-, Zone Warriors- en scannerlogica blijven ongewijzigd.",
   ],
   technicalDetails: [
-    "Backend: profit_sweep_live.py en profit_sweep_settings_extension.py.",
-    "Frontend: aster-profit-sweep-settings-bridge.tsx.",
-    "Nieuwe regressietest bevestigt dat een USDC-account ook daadwerkelijk asset=USDC naar de transferendpoint stuurt.",
+    "Backend: cloud_api/profit_sweep_live.py en cloud_api/profit_sweep_settings_extension.py.",
+    "Frontend: aster-profit-pot-snapshot-bridge.tsx, aster-profit-sweep-settings-bridge.tsx en profit-pot-snapshot.css.",
+    "Snapshot-dagtotaal gebruikt Europe/Amsterdam als kalenderdag en telt uitsluitend succesvolle drempeltransfers.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-495-profit-sweep-asset",
+    version: "46",
+    build: "495",
+    releasedAt: "2026-10-04",
+    title: "Profit Sparen 5.0 · per-user USDC/USDT transferasset",
+    newItems: [
+      "Profit Sparen kan per gebruiker vastleggen of de FUTURE_SPOT-transfer in USDC of USDT moet worden uitgevoerd.",
+      "De instelling wordt door backend, recovery en UI behouden; bestaande gebruikers blijven standaard op USDT tenzij hun account expliciet op USDC staat.",
+    ],
+    problems: [
+      "De Profit Sweep-engine stuurde elke transfer hardcoded als USDT.",
+      "Bij een account kon de succesvolle handmatige Profit Pot-transfer op Spot als USDC staan terwijl automatische USDT-sweeps werden afgewezen.",
+    ],
+    causes: ["Transferasset en nettowinst-accounting waren onterecht als één vast USDT-contract behandeld."],
+    fixes: [
+      "De transferasset is een per-user instelling met toegestane waarden USDT en USDC.",
+      "Transfer-, reconciliation- en recoverypaden gebruiken hetzelfde vastgelegde asset.",
+    ],
+    now: ["Profit Sparen kan per account het juiste Spot-stablecoinasset gebruiken zonder andere gebruikers om te zetten."],
+    technicalDetails: ["Backend en frontend Profit Sweep-contract uitgebreid met transferAsset."],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-494-profit-pot-value-fit",
     version: "46",

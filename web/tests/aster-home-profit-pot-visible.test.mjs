@@ -6,25 +6,25 @@ const bridge = await readFile(new URL("../components/aster-profit-pot-snapshot-b
 const css = await readFile(new URL("../app/profit-pot-snapshot.css", import.meta.url), "utf8");
 const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
 const snapshot = await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8");
-const profitPotValueSource = bridge.match(/function existingProfitPotValue\(\): string \{[\s\S]*?\n\}/)?.[0] ?? "";
-const profitPotCardSource = bridge.match(/<article className="aps-profit-pot-card"[\s\S]*?<\/article>/)?.[0] ?? "";
+const profitPotCardSource = bridge.match(/<button[\s\S]*?className="aps-profit-pot-card"[\s\S]*?<\/button>/)?.[0] ?? "";
 
-test("existing Profit Pot value is surfaced in HOME Portfolio Snapshot without a second API flow", () => {
-  assert.match(bridge, /\.metric-strip \.metric/);
+test("Profit Pot daily total is surfaced from server-confirmed sweep state", () => {
+  assert.match(bridge, /\/api\/exchanges\/aster\/profit-sweep-settings/);
+  assert.match(bridge, /payload\.todayTransferred/);
   assert.match(bridge, /PROFIT POT \/ SPOT/);
   assert.match(bridge, /:scope > \.aps-grid/);
   assert.match(bridge, /insertAdjacentElement\("afterend", mount\)/);
-  assert.ok(profitPotValueSource);
-  assert.doesNotMatch(profitPotValueSource, /authenticatedRequest|fetch\(|POST|PUT|DELETE|withdraw|transfer/i);
+  assert.doesNotMatch(bridge, /existingProfitPotValue/);
 });
 
-test("Profit Pot tile is read-only and uses the approved pixel reference", () => {
+test("Profit Pot tile keeps the approved visual reference and is now clickable for settings", () => {
   assert.match(bridge, /file_00000000f5ec8210bf3f2c300b972c25/);
   assert.match(css, /file_00000000f5ec8210bf3f2c300b972c25/);
   assert.match(css, /border:1px solid rgba\(72,180,255,\.98\)/);
-  assert.match(css, /pointer-events:none/);
+  assert.match(css, /pointer-events:auto/);
   assert.ok(profitPotCardSource);
-  assert.doesNotMatch(profitPotCardSource, /onClick=/);
+  assert.match(profitPotCardSource, /onClick=/);
+  assert.match(profitPotCardSource, /aster-profit-pot-open/);
 });
 
 test("bridge is mounted separately and existing Portfolio Snapshot controls stay untouched", () => {
@@ -49,7 +49,6 @@ test("Profit Pot row keeps the existing three-column mobile geometry without ove
   assert.match(css, /@media\(max-width:640px\)/);
   assert.match(css, /@media\(max-width:380px\)/);
 });
-
 
 test("Build 494 Profit Pot value stays readable on narrow mobile snapshot tiles", () => {
   assert.match(css, /Build 494 — keep Profit Pot amount fully readable/);

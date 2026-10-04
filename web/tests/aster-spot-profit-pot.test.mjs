@@ -3,24 +3,24 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-const route = await readFile(new URL("../app/api/exchanges/aster/spot-balance/route.ts", import.meta.url), "utf8");
+const snapshotBridge = await readFile(new URL("../components/aster-profit-pot-snapshot-bridge.tsx", import.meta.url), "utf8");
+const spotRoute = await readFile(new URL("../app/api/exchanges/aster/spot-balance/route.ts", import.meta.url), "utf8");
 const contract = await readFile(new URL("../lib/financial-data-contract.ts", import.meta.url), "utf8");
 
-test("Aster dashboard shows one read-only Profit Pot from Spot USDC plus USDT", () => {
+test("Profit Pot Snapshot no longer equates Spot wallet balance with today's savings transfers", () => {
   assert.match(page, /PROFIT POT \/ SPOT/);
-  assert.match(page, /spot-balance\?asset=USDC/);
-  assert.match(page, /spot-balance\?asset=USDT/);
-  assert.match(page, /total: usdc \+ usdt/);
-  assert.match(page, /Alleen-lezen · USDC/);
+  assert.match(snapshotBridge, /profit-sweep-settings/);
+  assert.match(snapshotBridge, /todayTransferred/);
+  assert.doesNotMatch(snapshotBridge, /spot-balance/);
 });
 
-test("Spot balance web proxy only forwards supported stablecoin GETs", () => {
-  assert.match(route, /asset !== "USDC" && asset !== "USDT"/);
-  assert.match(route, /proxyCloud\(request, `\/v1\/me\/aster\/spot-balance\?asset=\$\{asset\}`, "GET"\)/);
-  assert.doesNotMatch(route, /POST|PUT|DELETE/);
+test("Spot balance read-only proxy remains available independently", () => {
+  assert.match(spotRoute, /asset !== "USDC" && asset !== "USDT"/);
+  assert.match(spotRoute, /proxyCloud\(request, `\/v1\/me\/aster\/spot-balance\?asset=\$\{asset\}`, "GET"\)/);
+  assert.doesNotMatch(spotRoute, /POST|PUT|DELETE/);
 });
 
-test("Profit Pot is registered as non-trading financial data", () => {
+test("Profit Pot remains registered as non-trading financial data", () => {
   assert.match(contract, /spotStablecoinBalance/);
   assert.match(contract, /Profit Pot \/ Spot/);
   assert.match(contract, /tradingDecision: false/);

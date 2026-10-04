@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 495: Profit Sweep gebruikt per gebruiker het juiste Spot-stablecoinasset.
-export const WEBAPP_BUILD_NUMBER = "495";
+// Build 496: Profit Pot 2.0 gebruikt een persistente spaarbuffer met drempeltransfers.
+export const WEBAPP_BUILD_NUMBER = "496";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

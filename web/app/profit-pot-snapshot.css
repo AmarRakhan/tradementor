@@ -247,3 +247,132 @@
     letter-spacing:-.015em;
   }
 }
+
+
+/* Build 496 — Profit Pot 2.0: clickable front tile + compact 3D flip settings. */
+.aps-profit-pot-card{
+  font:inherit;
+  text-align:left;
+  cursor:pointer;
+  pointer-events:auto;
+  -webkit-tap-highlight-color:transparent;
+}
+.aps-profit-pot-card:active{transform:translateY(1px)}
+.aps-profit-pot-card:focus-visible{outline:2px solid #75efbf;outline-offset:2px}
+.aps-profit-pot-flip-scene{perspective:1200px}
+.aps-profit-pot-flip-back{
+  transform-style:preserve-3d;
+  backface-visibility:hidden;
+  animation:apsProfitPotFlipIn .38s cubic-bezier(.2,.72,.2,1);
+  transform-origin:center center;
+}
+@keyframes apsProfitPotFlipIn{
+  0%{opacity:.25;transform:rotateY(-88deg) scale(.94)}
+  62%{opacity:1;transform:rotateY(7deg) scale(1)}
+  100%{opacity:1;transform:rotateY(0) scale(1)}
+}
+@media(prefers-reduced-motion:reduce){.aps-profit-pot-flip-back{animation:none}}
+
+.aps-profit-pot-setting-list{
+  display:grid;
+  margin-top:16px;
+  border:1px solid rgba(82,190,239,.22);
+  border-radius:12px;
+  background:rgba(2,18,28,.56);
+  overflow:hidden;
+}
+.aps-profit-pot-setting-row{
+  min-height:48px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  padding:10px 12px;
+  border-bottom:1px solid rgba(108,171,199,.14);
+  color:#dceaf2;
+  font-size:12px;
+}
+.aps-profit-pot-setting-row:last-child{border-bottom:0}
+.aps-profit-pot-setting-row>span:first-child{min-width:0;font-weight:780}
+.aps-profit-pot-setting-row>strong{
+  flex:0 0 auto;
+  color:#63efb3;
+  font-size:12px;
+  font-weight:950;
+  white-space:nowrap;
+}
+.aps-profit-pot-setting-edit{cursor:text}
+.aps-profit-pot-compact-input{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:4px;
+  flex:0 0 auto;
+  min-width:84px;
+  padding:5px 7px;
+  border:1px solid rgba(86,194,255,.3);
+  border-radius:8px;
+  background:rgba(0,8,16,.55);
+}
+.aps-profit-pot-compact-input input{
+  width:54px;
+  padding:0;
+  border:0;
+  outline:0;
+  background:transparent;
+  color:#fff;
+  font:900 13px/1 system-ui,sans-serif;
+  text-align:right;
+}
+.aps-profit-pot-compact-input.money input{width:58px}
+.aps-profit-pot-compact-input b{color:#69e7b1;font-size:11px}
+.aps-profit-pot-fixed-on{
+  flex:0 0 auto;
+  padding:5px 8px;
+  border:1px solid rgba(63,226,165,.38);
+  border-radius:999px;
+  background:rgba(18,116,79,.22);
+  color:#69efb1;
+  font-size:9px;
+  font-weight:950;
+}
+.aps-profit-pot-simple-info{
+  margin-top:12px;
+  padding:11px 12px;
+  border:1px solid rgba(74,194,230,.25);
+  border-radius:10px;
+  background:rgba(8,60,73,.18);
+  color:#c0dce6;
+  font-size:10.5px;
+  line-height:1.5;
+}
+.aps-profit-pot-day-total{
+  margin-top:9px;
+  color:#9fb3bf;
+  font-size:10px;
+}
+.aps-profit-pot-day-total strong{color:#67efb4}
+.aps-profit-pot-actions{
+  display:grid;
+  grid-template-columns:1fr 1.15fr;
+  gap:9px;
+  margin-top:15px;
+}
+.aps-profit-pot-actions .aps-profit-pot-save{margin-top:0}
+.aps-profit-pot-cancel{
+  padding:13px 14px;
+  border:1px solid rgba(231,185,67,.58);
+  border-radius:12px;
+  background:rgba(52,38,7,.18);
+  color:#e9c451;
+  font-size:13px;
+  font-weight:950;
+  cursor:pointer;
+}
+.aps-profit-pot-cancel:disabled{opacity:.55;cursor:default}
+
+@media(max-width:640px){
+  .aps-profit-pot-setting-row{min-height:44px;padding:9px 10px;font-size:11px}
+  .aps-profit-pot-setting-row>strong{font-size:11px}
+  .aps-profit-pot-simple-info{font-size:10px}
+}

@@ -21,8 +21,13 @@ def test_settings_route_keeps_user_control_separate_from_global_live_gate():
     assert '"mode": "LIVE_AUTO_TRANSFER"' in source
     assert '"principalIncluded": False' in source
     assert '"unrealizedPnlIncluded": False' in source
-    assert "return False, float(DEFAULT_SWEEP_PERCENT), \"USDT\"" in source
+    assert "return False, float(DEFAULT_SWEEP_PERCENT), 1.0, \"USDT\"" in source
     assert '"transferAsset": asset' in source
+    assert '"minimumTransfer": minimum' in source
+    assert '"pendingSavings"' in source
+    assert '"todayTransferred"' in source
+    assert '"accumulateSmallAmounts": True' in source
+    assert '"retryFailedTransfers": True' in source
     # Configuration routes themselves still cannot move money.
     assert "signed_request" not in source
     assert "/asset/wallet/transfer" not in source
@@ -36,7 +41,7 @@ def test_live_engine_uses_only_internal_future_to_spot_transfer_and_no_withdrawa
     assert 'DEFAULT_TRANSFER_ASSET = "USDT"' in source
     assert 'SUPPORTED_TRANSFER_ASSETS = {"USDT", "USDC"}' in source
     assert '"asset": prepared.transfer_asset' in source
-    assert '"clientTranId": prepared.client_tran_id' in source
+    assert '"clientTranId": str(claim.get("clientTranId"))' in source
     assert 'client.signed_spot_request("POST", TRANSFER_PATH' in source
     assert 'str(payload.get("status", "")).upper() != "SUCCESS"' in source
     assert 'payload.get("tranId")' in source
@@ -50,3 +55,13 @@ def test_production_deploy_is_the_only_global_activation_gate():
     assert "ASTER_PROFIT_SWEEP_LIVE_ENABLED=true" in workflow
     assert '"ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true"' in workflow
     assert "DEPLOY_PRODUCTION_BACKEND" in workflow
+
+
+def test_profit_pot_buffer_reconciliation_is_wired_to_existing_minute_scheduler():
+    main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+    live_source = (ROOT / "profit_sweep_live.py").read_text(encoding="utf-8")
+    assert "def reconcile_profit_savings_buffer(" in live_source
+    assert "from profit_sweep_live import reconcile_profit_savings_buffer" in main_source
+    assert "reconcile_profit_savings_buffer(" in main_source
+    assert "if not dry_run and not str(event_symbol).strip()" in main_source
+    assert "Profit saving is subordinate to trading" in main_source

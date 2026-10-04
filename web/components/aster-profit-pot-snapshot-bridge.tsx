@@ -10,14 +10,6 @@ const HOST_ID = "aster-profit-pot-snapshot-host";
 const CYCLE_REFERENCE_INACTIVE = "file_00000000ba448210b16f35eaf915a01f";
 const CYCLE_REFERENCE_ACTIVE = "file_00000000ba448210b16f35eaf915a01f";
 
-function existingProfitPotValue(): string {
-  const rows = Array.from(document.querySelectorAll<HTMLElement>(".metric-strip .metric"));
-  const row = rows.find((item) => item.querySelector("span")?.textContent?.trim().toUpperCase() === "PROFIT POT / SPOT");
-  const value = row?.querySelector<HTMLElement>("strong")?.textContent?.trim() || "";
-  if (!value || value === "—") return "US$ —";
-  return value;
-}
-
 function profitPotIcon() {
   return <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
     <path d="M9 5.5h14M11 5.5v4h10v-4M8 11.5h16v14.5H8z" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
@@ -25,6 +17,11 @@ function profitPotIcon() {
   </svg>;
 }
 
+
+function formatProfitPotMoney(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "US$ —";
+  return `US$ ${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
+}
 
 function formatCycleMoney(value: number | null) {
   if (value === null || !Number.isFinite(value)) return "US$ —";
@@ -89,7 +86,7 @@ function PortfolioCycleCard({ state }: { state: PortfolioCycleCardState }) {
 
 export function AsterProfitPotSnapshotBridge() {
   const [host, setHost] = useState<HTMLElement | null>(null);
-  const [value, setValue] = useState("US$ —");
+  const [todayTransferred, setTodayTransferred] = useState<number | null>(null);
   const [cycleState, setCycleState] = useState<PortfolioCycleCardState>({ active: false, statusLabel: "Niet ingesteld", progressPercent: null, remainingUsd: null, remainingPercent: null });
 
   useEffect(() => {
@@ -116,6 +113,32 @@ export function AsterProfitPotSnapshotBridge() {
   }, [host]);
 
   useEffect(() => {
+    if (!host) return;
+    let alive = true;
+    const refreshProfitPot = async () => {
+      try {
+        const payload = await authenticatedRequest("/api/exchanges/aster/profit-sweep-settings", { cache: "no-store" });
+        const next = Number(payload.todayTransferred ?? 0);
+        if (alive) setTodayTransferred(Number.isFinite(next) ? next : 0);
+      } catch {
+        if (alive) setTodayTransferred(null);
+      }
+    };
+    void refreshProfitPot();
+    const timer = window.setInterval(refreshProfitPot, 10000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refreshProfitPot(); };
+    const onUpdated = () => { void refreshProfitPot(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("aster-profit-sweep-settings-updated", onUpdated);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("aster-profit-sweep-settings-updated", onUpdated);
+    };
+  }, [host]);
+
+  useEffect(() => {
     let alive = true;
     let frame = 0;
     const sync = () => {
@@ -128,7 +151,6 @@ export function AsterProfitPotSnapshotBridge() {
         if (!snapshot || !grid) {
           document.getElementById(HOST_ID)?.remove();
           setHost((current) => current === null ? current : null);
-          setValue("US$ —");
           return;
         }
         let mount = document.getElementById(HOST_ID) as HTMLElement | null;
@@ -138,8 +160,6 @@ export function AsterProfitPotSnapshotBridge() {
         }
         if (mount.parentElement !== snapshot || grid.nextElementSibling !== mount) grid.insertAdjacentElement("afterend", mount);
         setHost((current) => current === mount ? current : mount);
-        const next = existingProfitPotValue();
-        setValue((current) => current === next ? current : next);
       });
     };
 
@@ -163,13 +183,19 @@ export function AsterProfitPotSnapshotBridge() {
   if (!host) return null;
   return createPortal(
     <div className="aps-profit-pot-row" aria-label="Profit Pot / Spot">
-      <article className="aps-profit-pot-card" data-reference={PROFIT_POT_REFERENCE}>
+      <button
+        type="button"
+        className="aps-profit-pot-card"
+        data-reference={PROFIT_POT_REFERENCE}
+        onClick={() => window.dispatchEvent(new CustomEvent("aster-profit-pot-open"))}
+        aria-label={`Profit Pot / Spot. Vandaag succesvol naar Spot overgezet: ${formatProfitPotMoney(todayTransferred)}. Tik voor instellingen.`}
+      >
         <span className="aps-profit-pot-icon">{profitPotIcon()}</span>
-        <div className="aps-profit-pot-copy">
+        <span className="aps-profit-pot-copy">
           <small>PROFIT POT / SPOT</small>
-          <strong>{value}</strong>
-        </div>
-      </article>
+          <strong>{formatProfitPotMoney(todayTransferred)}</strong>
+        </span>
+      </button>
       <div id="aster-profit-sweep-settings-host" />
       <div id="aster-position-loss-auto-hedge-host" />
       <PortfolioCycleCard state={cycleState} />
