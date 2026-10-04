@@ -1255,6 +1255,60 @@ def drain_profit_savings_buffer(prepared: PreparedSweep, *, client: Any, max_blo
     }
 
 
+def reconcile_profit_savings_buffer(
+    *,
+    uid: str,
+    user_ref: Any,
+    client: Any,
+    max_blocks: int = 20,
+) -> dict[str, Any]:
+    """Minute-scheduler reconciliation for an already persisted Profit Pot buffer.
+
+    This never invents a contribution. It only retries/reconciles full threshold
+    blocks that were previously booked from confirmed positive realized closes.
+    """
+    control = user_ref.collection("executionControls").document("aster").get().to_dict() or {}
+    settings = control.get("profitSweep") if isinstance(control.get("profitSweep"), dict) else {}
+    if settings.get("enabled") is not True:
+        return {"status": "OFF", "transferred": "0"}
+    try:
+        percent = normalize_sweep_percent(settings.get("sweepPercent", 25))
+    except ProfitSweepError:
+        return {"status": "INVALID_SETTINGS", "transferred": "0"}
+    if percent <= 0:
+        return {"status": "OFF", "transferred": "0"}
+    asset = str(settings.get("transferAsset", DEFAULT_TRANSFER_ASSET)).upper().strip()
+    if asset not in SUPPORTED_TRANSFER_ASSETS:
+        asset = DEFAULT_TRANSFER_ASSET
+    threshold = _d(settings.get("minimumTransfer", DEFAULT_MINIMUM_TRANSFER))
+    if threshold <= 0:
+        threshold = DEFAULT_MINIMUM_TRANSFER
+
+    # A synthetic ledger reference is supplied only to satisfy the immutable
+    # PreparedSweep shape. Reconciliation/drain never writes close accounting.
+    prepared = PreparedSweep(
+        uid=uid,
+        sweep_id="buffer-reconcile",
+        intent_id="buffer-reconcile",
+        client_tran_id="",
+        symbol="",
+        position_side="",
+        sweep_percent=percent,
+        transfer_asset=asset,
+        minimum_transfer=threshold,
+        user_ref=user_ref,
+        ledger_ref=user_ref.collection("asterProfitSweeps").document("_buffer_reconcile"),
+        open_quantity=Decimal("0"),
+        entry_commission_pool=Decimal("0"),
+        cycle_start_ms=0,
+        negative_funding=Decimal("0"),
+        evidence_entry_fees=Decimal("0"),
+        evidence_funding=Decimal("0"),
+        evidence_other_costs=Decimal("0"),
+    )
+    return drain_profit_savings_buffer(prepared, client=client, max_blocks=max_blocks)
+
+
 def finalize_close_sweep(
     prepared: PreparedSweep | None,
     *,
