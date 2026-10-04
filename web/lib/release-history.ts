@@ -26,38 +26,73 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-04",
-  title: "Profit Pot / Spot 2.0 · sparen tot drempel",
+  title: "Portfolio Koers · bestaand Actieve-zone blok gedeeld",
   newItems: [
-    "Kleine spaardelen uit positieve gerealiseerde nettowinst worden persistent opgeteld in één Profit Pot-buffer.",
-    "Vanaf de ingestelde minimale transfer wordt steeds exact één drempelblok veilig van Futures naar Spot overgezet.",
-    "De Profit Pot-tegel toont voortaan alleen het totaal dat vandaag succesvol door Profit Sparen naar Spot is overgezet en opent via een 3D flip de instellingen.",
+    "Het bestaande Actieve-zone LONG/SHORT-blok uit Prijszone Details wordt nu ook direct onder Portfolio Koers weergegeven.",
+    "De oude hulptekst Tik op een TP-marker om de posities te bekijken is op die plek vervangen door de live stoelbezetting.",
   ],
   problems: [
-    "Bij kleine winsttrades kon 5% slechts enkele fracties van een dollar zijn, waardoor per trade direct transfereren onpraktisch was.",
-    "De oude Profit Pot-tegel toonde de Spot-walletwaarde en maakte geen onderscheid tussen nog opgespaard bedrag en vandaag werkelijk overgezet spaargeld.",
+    "De actieve-zone stoelbezetting was alleen zichtbaar na openen van Prijszone Details.",
+    "De hoofdkaart Portfolio Koers gebruikte de beschikbare ruimte onder de chart nog voor een statische TP-marker-hint.",
   ],
   causes: [
-    "De bestaande Profit Sweep koppelde iedere winstclose direct aan één transfer en had nog geen persistente accumulatiebuffer met transferdrempel.",
+    "De bestaande Actieve-zone meter was als markup ingebed in Prijszone Details en nog niet als gedeeld presentatiesubcomponent beschikbaar.",
   ],
   fixes: [
-    "Per gebruiker is een idempotente pendingSavings-buffer toegevoegd met standaard minimale transfer van US$ 1,00.",
-    "Een transferclaim wordt eerst gereserveerd; de buffer wordt pas na exchange-bevestigd succes verlaagd en het dagtotaal pas dan verhoogd.",
-    "Meerdere volledige drempelblokken worden achter elkaar verwerkt terwijl de remainder in de buffer blijft.",
-    "Mislukte of onzekere transfers behouden het spaargeld en gebruiken een deterministische clientTranId voor veilige reconciliation/retry.",
+    "De bestaande LONG/SHORT-meter is zonder nieuwe businesslogica uitgehaald naar één gedeeld ActiveZoneSeatBlock.",
+    "Prijszone Details en Portfolio Koers renderen voortaan hetzelfde gedeelde blok en dezelfde resolverlogica.",
+    "Portfolio Koers ontvangt dezelfde priceZoneSeats-state en liveActiveZone-state uit de bestaande Portfolio Snapshot enhancer; er is geen extra API-call toegevoegd.",
   ],
   now: [
-    "Bij US$ 1,15 pending en een drempel van US$ 1,00 gaat US$ 1,00 naar Spot en blijft US$ 0,15 opgespaard.",
-    "De app hoeft niet open te staan: de verwerking blijft gekoppeld aan de server-side confirmed-close flow.",
-    "Entry-, DCA-, TP-, Portfolio TP-, Auto Hedge-, Zone Warriors- en scannerlogica blijven ongewijzigd.",
+    "LONG en SHORT tonen op beide locaties dezelfde actuele x / y-bezetting en dezelfde progressbars.",
+    "Prijszone Details blijft verder ongewijzigd en Portfolio Koers krijgt alleen de extra tweede weergave onder de chart.",
+    "Trading-, Zone Warriors-, scanner-, DCA-, TP-, Auto Hedge- en runtime-logica zijn niet gewijzigd.",
   ],
   technicalDetails: [
-    "Backend: cloud_api/profit_sweep_live.py en cloud_api/profit_sweep_settings_extension.py.",
-    "Frontend: aster-profit-pot-snapshot-bridge.tsx, aster-profit-sweep-settings-bridge.tsx en profit-pot-snapshot.css.",
-    "Snapshot-dagtotaal gebruikt Europe/Amsterdam als kalenderdag en telt uitsluitend succesvolle drempeltransfers.",
+    "Nieuw gedeeld presentatiesubcomponent: web/components/active-zone-seat-block.tsx.",
+    "Frontend-only wijziging in aster-portfolio-snapshot-enhancer.tsx, portfolio-koers-chart.tsx en portfolio-koers-chart.css.",
+    "Mockupreferentie: file_00000000796c8210aa150351316f20d1.",
   ],
   confidence: "confirmed",
 };
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [\n  {
+    id: "v46-build-496-profit-pot-threshold",
+    version: "46",
+    build: "496",
+    releasedAt: "2026-10-04",
+    title: "Profit Pot / Spot 2.0 · sparen tot drempel",
+    newItems: [
+      "Kleine spaardelen uit positieve gerealiseerde nettowinst worden persistent opgeteld in één Profit Pot-buffer.",
+      "Vanaf de ingestelde minimale transfer wordt steeds exact één drempelblok veilig van Futures naar Spot overgezet.",
+      "De Profit Pot-tegel toont voortaan alleen het totaal dat vandaag succesvol door Profit Sparen naar Spot is overgezet en opent via een 3D flip de instellingen.",
+    ],
+    problems: [
+      "Bij kleine winsttrades kon 5% slechts enkele fracties van een dollar zijn, waardoor per trade direct transfereren onpraktisch was.",
+      "De oude Profit Pot-tegel toonde de Spot-walletwaarde en maakte geen onderscheid tussen nog opgespaard bedrag en vandaag werkelijk overgezet spaargeld.",
+    ],
+    causes: [
+      "De bestaande Profit Sweep koppelde iedere winstclose direct aan één transfer en had nog geen persistente accumulatiebuffer met transferdrempel.",
+    ],
+    fixes: [
+      "Per gebruiker is een idempotente pendingSavings-buffer toegevoegd met standaard minimale transfer van US$ 1,00.",
+      "Een transferclaim wordt eerst gereserveerd; de buffer wordt pas na exchange-bevestigd succes verlaagd en het dagtotaal pas dan verhoogd.",
+      "Meerdere volledige drempelblokken worden achter elkaar verwerkt terwijl de remainder in de buffer blijft.",
+      "Mislukte of onzekere transfers behouden het spaargeld en gebruiken een deterministische clientTranId voor veilige reconciliation/retry.",
+    ],
+    now: [
+      "Bij US$ 1,15 pending en een drempel van US$ 1,00 gaat US$ 1,00 naar Spot en blijft US$ 0,15 opgespaard.",
+      "De app hoeft niet open te staan: de verwerking blijft gekoppeld aan de server-side confirmed-close flow.",
+      "Entry-, DCA-, TP-, Portfolio TP-, Auto Hedge-, Zone Warriors- en scannerlogica blijven ongewijzigd.",
+    ],
+    technicalDetails: [
+      "Backend: cloud_api/profit_sweep_live.py en cloud_api/profit_sweep_settings_extension.py.",
+      "Frontend: aster-profit-pot-snapshot-bridge.tsx, aster-profit-sweep-settings-bridge.tsx en profit-pot-snapshot.css.",
+      "Snapshot-dagtotaal gebruikt Europe/Amsterdam als kalenderdag en telt uitsluitend succesvolle drempeltransfers.",
+    ],
+    confidence: "confirmed",
+  },
+
+
   {
     id: "v46-build-495-profit-sweep-asset",
     version: "46",
