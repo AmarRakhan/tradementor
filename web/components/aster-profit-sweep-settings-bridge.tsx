@@ -13,6 +13,7 @@ export function AsterProfitSweepSettingsBridge() {
   const [enabled, setEnabled] = useState(false);
   const [percent, setPercent] = useState<number | null>(null);
   const [automaticTransferEnabled, setAutomaticTransferEnabled] = useState(false);
+  const [transferAsset, setTransferAsset] = useState<"USDT" | "USDC">("USDT");
   const [draft, setDraft] = useState("25");
   const [loadingSettings, setLoadingSettings] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -31,6 +32,7 @@ export function AsterProfitSweepSettingsBridge() {
       setPercent(next);
       setDraft(String(next));
       setAutomaticTransferEnabled(result.automaticTransferEnabled === true);
+      setTransferAsset(result.transferAsset === "USDC" ? "USDC" : "USDT");
     } catch (reason) {
       setSettingsError(reason instanceof Error ? reason.message : "Profit sparen kon niet worden geladen");
     } finally {
@@ -81,7 +83,7 @@ export function AsterProfitSweepSettingsBridge() {
     try {
       const result = await authenticatedRequest("/api/exchanges/aster/profit-sweep-settings", {
         method: "PUT",
-        body: JSON.stringify({ enabled, sweepPercent: next }),
+        body: JSON.stringify({ enabled, sweepPercent: next, transferAsset }),
       });
       const saved = Number(result.sweepPercent);
       if (!Number.isFinite(saved)) throw new Error("Opslaan is niet bevestigd");
@@ -90,6 +92,7 @@ export function AsterProfitSweepSettingsBridge() {
       setPercent(saved);
       setDraft(String(saved));
       setAutomaticTransferEnabled(automatic);
+      setTransferAsset(result.transferAsset === "USDC" ? "USDC" : "USDT");
       setSavedMessage(
         result.enabled === true
           ? automatic
@@ -149,6 +152,7 @@ export function AsterProfitSweepSettingsBridge() {
         </div>
 
         <div className="aps-profit-pot-formula">Voorbeeld: bij US$10 nettowinst en {draft || "0"}% sparen wordt US${exampleAmount.toFixed(2)} gereserveerd voor de Profit Pot.</div>
+        <div className="aps-profit-pot-config-only"><strong>Spaarasset: {transferAsset}</strong> · winst wordt van Futures naar Spot verplaatst in dit asset.</div>
         {enabled && automaticTransferEnabled ? (
           <div className="aps-profit-pot-config-only"><strong>Automatisch actief.</strong> Na een bevestigde winstgevende Aster-sluiting wordt het ingestelde percentage veilig van Futures naar Spot verplaatst. Bij verlies, onvoldoende vrije margin of onzekere transfer wordt niets opnieuw verstuurd.</div>
         ) : (
