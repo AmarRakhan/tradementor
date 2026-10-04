@@ -309,7 +309,7 @@ def _spot_transfer_history_match(
             continue
         if str(row.get("type", "")).upper() != SPOT_TRANSFER_HISTORY_TYPE:
             continue
-        if str(row.get("asset", "")).upper() != TRANSFER_ASSET:
+        if str(row.get("asset", "")).upper() != asset:
             continue
         row_time = _timestamp_ms(row.get("time"))
         if row_time < lower or row_time > upper:
@@ -443,11 +443,13 @@ def _uncertain_result(
     client: Any,
     contribution: Decimal,
     submitted_at: Any,
+    asset: str = DEFAULT_TRANSFER_ASSET,
 ) -> dict[str, Any]:
     state, record = reconcile_transfer_history(
         client=client,
         amount=contribution,
         submitted_at=submitted_at,
+        asset=asset,
     )
     if record is not None:
         return _reconciled_result(ref=ref, contribution=contribution, record=record)
@@ -680,6 +682,7 @@ def recover_failed_sweep(
                 client=client,
                 contribution=contribution,
                 submitted_at=recovery_submitted_at,
+                asset=transfer_asset,
             )
             if str(result.get("status", "")).upper() == "SUCCEEDED":
                 recovery_ref.set({
@@ -707,6 +710,7 @@ def recover_failed_sweep(
                     client=client,
                     amount=contribution,
                     submitted_at=existing_recovery.get("submittedAt") or recovery_submitted_at,
+                    asset=transfer_asset,
                     poll_attempts=2,
                     poll_delay_seconds=0.35,
                 )
@@ -1071,6 +1075,7 @@ def finalize_close_sweep(
                 client=client,
                 contribution=contribution,
                 submitted_at=submitted_at,
+                asset=prepared.transfer_asset,
             )
         except AsterApiError as exc:
             # Defensive compatibility for older clients that still surface
@@ -1083,6 +1088,7 @@ def finalize_close_sweep(
                     client=client,
                     contribution=contribution,
                     submitted_at=submitted_at,
+                    asset=prepared.transfer_asset,
                 )
             ref.set({"status": "FAILED_EXCHANGE", "reason": message[:500], "completedAt": _now()}, merge=True)
             return {"status": "FAILED_EXCHANGE"}
