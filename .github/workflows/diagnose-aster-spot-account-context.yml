@@ -1,0 +1,196 @@
+name: Diagnose Aster Spot Account Context
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diagnose-aster-spot-account-context.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  ISSUE_NUMBER: "452"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Compare signer-mapped and explicit-user Spot contexts
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          PROD_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); rows=d["status"].get("traffic",[]); print(next((r["revisionName"] for r in rows if int(r.get("percent",0) or 0)==100), d["status"]["latestReadyRevisionName"]))' <<<"$SERVICE_JSON")"
+          PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          RUNTIME_SA="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["spec"]["template"]["spec"]["serviceAccountName"])' <<<"$SERVICE_JSON")"
+          JOB="tm-spot-context-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json,time,httpx
+          from datetime import datetime
+          from google.cloud import firestore
+          import main
+          from aster_spot_balance import build_signed_account_query
+          from aster_signing import local_eip712_signer
+
+          TARGET="dbcf103383"
+          db=firestore.Client(project="tradementor-production")
+          result={"status":"ACCOUNT_NOT_FOUND"}
+
+          for snap in db.collection("asterStrategy2").stream():
+              uid=snap.id
+              if hashlib.sha256(uid.encode()).hexdigest()[:10] != TARGET:
+                  continue
+              user_ref=db.collection("users").document(uid)
+              control=user_ref.collection("executionControls").document("aster").get().to_dict() or {}
+              master=str(control.get("masterAddress","")).strip().lower()
+              secret=main.load_aster_secret({"uid":uid})
+              signer=str(secret.signer_address).strip().lower()
+              client=main.AsterV3Client(
+                  signer_address=secret.signer_address,
+                  sign_message=main.local_eip712_signer(secret),
+                  live_authorized=False,
+                  before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")),
+              )
+
+              generic_account={}
+              generic_history=[]
+              generic_error=""
+              try:
+                  generic_account=client.signed_spot_request("GET","/api/v3/account",{}) or {}
+                  generic_history=client.signed_spot_request("GET","/api/v3/transactionHistory",{"limit":1000}) or []
+              except Exception as exc:
+                  generic_error=type(exc).__name__+":"+str(exc)[:240]
+
+              explicit_account={}
+              explicit_error=""
+              if master:
+                  try:
+                      nonce=time.time_ns()//1000
+                      q=build_signed_account_query(
+                          user_address=master,
+                          signer_address=secret.signer_address,
+                          nonce=nonce,
+                          sign_message=local_eip712_signer(secret),
+                      )
+                      with httpx.Client(base_url="https://sapi.asterdex.com",timeout=15.0) as h:
+                          resp=h.get(f"/api/v3/account?{q}",headers={"Accept":"application/json"})
+                          explicit_account=resp.json() if resp.content else {}
+                          if resp.status_code>=400:
+                              explicit_error=f"HTTP {resp.status_code}: {explicit_account}"
+                  except Exception as exc:
+                      explicit_error=type(exc).__name__+":"+str(exc)[:240]
+
+              def balances(payload):
+                  rows=payload.get("balances") if isinstance(payload,dict) else []
+                  out={}
+                  for row in rows if isinstance(rows,list) else []:
+                      if not isinstance(row,dict): continue
+                      asset=str(row.get("asset","")).upper()
+                      if asset in {"USDT","USDC","USD1"}:
+                          out[asset]={"free":str(row.get("free","")),"locked":str(row.get("locked",""))}
+                  return out
+
+              transfers=[]
+              for row in generic_history if isinstance(generic_history,list) else []:
+                  if not isinstance(row,dict): continue
+                  typ=str(row.get("type","")).upper()
+                  delta=str(row.get("balanceDelta",""))
+                  if "TRANSFER" in typ or delta in {"1","1.0","1.00","1.00000000","-1","-1.0","-1.00","-1.00000000"}:
+                      transfers.append({
+                          "time":row.get("time"),
+                          "asset":str(row.get("asset","")),
+                          "type":typ,
+                          "balanceDelta":delta,
+                          "tranId":str(row.get("tranId","")),
+                      })
+              result={
+                  "status":"OK",
+                  "accountRef":TARGET,
+                  "masterSuffix":master[-8:] if master else "",
+                  "signerSuffix":signer[-8:] if signer else "",
+                  "sameAddress":bool(master and signer and master==signer),
+                  "genericSignerContext":{
+                      "balances":balances(generic_account),
+                      "canTrade":generic_account.get("canTrade") if isinstance(generic_account,dict) else None,
+                      "canWithdraw":generic_account.get("canWithdraw") if isinstance(generic_account,dict) else None,
+                      "error":generic_error,
+                  },
+                  "explicitUserContext":{
+                      "balances":balances(explicit_account),
+                      "canTrade":explicit_account.get("canTrade") if isinstance(explicit_account,dict) else None,
+                      "canWithdraw":explicit_account.get("canWithdraw") if isinstance(explicit_account,dict) else None,
+                      "error":explicit_error,
+                  },
+                  "recentTransferLikeRows":sorted(transfers,key=lambda x:int(x.get("time") or 0),reverse=True)[:50],
+                  "ordersSent":0,
+                  "moneyMoved":False,
+              }
+              break
+
+          print("SPOT_CONTEXT_DIAG "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
+          PY
+          )"
+
+          ENV_VARS="GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=spot-context-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$PROD_IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "$ENV_VARS" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+
+      - name: Re-authenticate as observer
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Publish result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LINE="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"SPOT_CONTEXT_DIAG \"" --project "$GCP_PROJECT_ID" --freshness=30m --limit=10 --order=desc --format='value(textPayload)' | grep 'SPOT_CONTEXT_DIAG ' | head -n1 || true)"
+          test -n "$LINE"
+          JSON="${LINE#*SPOT_CONTEXT_DIAG }"
+          python - "$JSON" > /tmp/report.md <<'PY'
+          import json,sys
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          d=json.loads(sys.argv[1]);tz=ZoneInfo("Europe/Amsterdam")
+          def clock(ms):
+              try:return datetime.fromtimestamp(int(ms)/1000,tz).strftime("%d-%m %H:%M:%S")
+              except:return "—"
+          print("## Aster Spot account-context diagnose")
+          print()
+          print(f"- Status: **{d.get('status')}** · READ ONLY")
+          print(f"- Master suffix: **{d.get('masterSuffix')}**")
+          print(f"- Signer suffix: **{d.get('signerSuffix')}**")
+          print(f"- Zelfde adres: **{d.get('sameAddress')}**")
+          print(f"- Signer-context: {d.get('genericSignerContext')}")
+          print(f"- Expliciete user+signer-context: {d.get('explicitUserContext')}")
+          print()
+          print("### Recente transferachtige Spot-regels")
+          rows=d.get("recentTransferLikeRows") or []
+          if not rows: print("- Geen transferachtige regels gevonden.")
+          for r in rows:
+              print(f"- {clock(r.get('time'))} · {r.get('asset')} · {r.get('type')} · delta={r.get('balanceDelta')} · tranId={r.get('tranId')}")
+          PY
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
