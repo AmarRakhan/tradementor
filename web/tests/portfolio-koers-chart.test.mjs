@@ -194,7 +194,9 @@ test("Portfolio Koers UI 4.1 uses straight entry arrows and money-bag TP cluster
   assert.ok(component.includes("<CoinBadge symbol={trade.symbol}/>"));
   assert.ok(component.includes("Totaal gerealiseerd:"));
   assert.ok(component.includes("durationLabel(trade.durationMinutes)"));
-  assert.ok(component.includes("Tik op een TP-marker om de posities te bekijken"));
+  assert.ok(component.includes("ActiveZoneSeatBlock"));
+  assert.ok(component.includes('data-reference="file_00000000796c8210aa150351316f20d1"'));
+  assert.equal(component.includes("Tik op een TP-marker om de posities te bekijken"),false);
 });
 
 test("Portfolio Koers explicitly feeds Bollinger boundaries into marker layout",async()=>{

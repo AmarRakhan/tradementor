@@ -52,7 +52,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Nieuw gedeeld presentatiesubcomponent: web/components/active-zone-seat-block.tsx.",
     "Frontend-only wijziging in aster-portfolio-snapshot-enhancer.tsx, portfolio-koers-chart.tsx en portfolio-koers-chart.css.",
     "Mockupreferentie: file_00000000796c8210aa150351316f20d1.",
-    "Releasecontract en appversie zijn samen vastgelegd voor Build 501.",
+    "Releasecontract, appversie en regressietests zijn samen vastgelegd voor Build 502.",
   ],
   confidence: "confirmed",
 };

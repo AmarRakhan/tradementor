@@ -106,6 +106,7 @@ test("Build 410 labels net exposure as exposure instead of a profit-loss amount"
 
 test("Build 477 moves price-zone status behind two standalone Portfolio Snapshot detail buttons",async()=>{
   const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
+  const activeZoneBlock=await readFile(new URL("../components/active-zone-seat-block.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-snapshot.css",import.meta.url),"utf8");
   for(const reference of [
     "file_00000000afb481f480fb60893b473c16",
@@ -120,7 +121,11 @@ test("Build 477 moves price-zone status behind two standalone Portfolio Snapshot
   assert.ok(component.includes("ScannerStatusPage"));
   assert.ok(component.includes("loadPriceZoneSeatSummary"));
   assert.ok(component.includes("loadScannerStatus"));
-  for(const label of ["Prijszone-strategie","Per zone","Vrij in actieve zone","Oude zones open","Max totaal","Actieve zone","Alle zones samen","LONG totaal open","SHORT totaal open","Totaal bezet"]) assert.ok(component.includes(label),label);
+  for(const label of ["Prijszone-strategie","Per zone","Vrij in actieve zone","Oude zones open","Max totaal","Alle zones samen","LONG totaal open","SHORT totaal open","Totaal bezet"]) assert.ok(component.includes(label),label);
+  assert.ok(activeZoneBlock.includes("Actieve zone"));
+  assert.ok(activeZoneBlock.includes("LONG"));
+  assert.ok(activeZoneBlock.includes("SHORT"));
+  assert.match(component,/<ActiveZoneSeatBlock summary=\{summary\} liveActiveZone=\{liveActiveZone\} \/>/);
   const snapshot=component.match(/function Snapshot\([\s\S]*?function finiteExposure/)?.[0]||"";
   assert.match(snapshot,/SnapshotDetailButtons/);
   assert.doesNotMatch(snapshot,/<PriceZoneStrategySummary/);
@@ -133,26 +138,25 @@ test("Build 477 moves price-zone status behind two standalone Portfolio Snapshot
 
 test("Build 469 keeps active-zone occupancy numeric across chart/backend zone transitions without fictive side caps",async()=>{
   const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
+  const activeZoneBlock=await readFile(new URL("../components/active-zone-seat-block.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-snapshot.css",import.meta.url),"utf8");
   const summary=component.match(/function PriceZoneStrategySummary[\s\S]*?function Snapshot/)?.[0]||"";
 
-  assert.match(summary,/occupiedLongActiveZone/);
-  assert.match(summary,/occupiedShortActiveZone/);
-  assert.match(summary,/const occupiedLongActiveZone = resolvedCounts\?\.long \?\? 0/);
-  assert.match(summary,/const occupiedShortActiveZone = resolvedCounts\?\.short \?\? 0/);
-  assert.match(summary,/pct\(occupiedLongActiveZone,summary\.perZoneLong\)/);
-  assert.match(summary,/pct\(occupiedShortActiveZone,summary\.perZoneShort\)/);
-  assert.match(summary,/summary\.zoneOpenCountsReliable/);
-  assert.match(summary,/breakdown\?\.long \?\? 0/);
-  assert.match(summary,/breakdown\?\.short \?\? 0/);
+  assert.match(activeZoneBlock,/occupiedLongActiveZone/);
+  assert.match(activeZoneBlock,/occupiedShortActiveZone/);
+  assert.match(activeZoneBlock,/const occupiedLongActiveZone = resolvedCounts\?\.long \?\? 0/);
+  assert.match(activeZoneBlock,/const occupiedShortActiveZone = resolvedCounts\?\.short \?\? 0/);
+  assert.match(activeZoneBlock,/pct\(occupiedLongActiveZone, summary\.perZoneLong\)/);
+  assert.match(activeZoneBlock,/pct\(occupiedShortActiveZone, summary\.perZoneShort\)/);
+  assert.match(activeZoneBlock,/summary\.zoneOpenCountsReliable/);
+  assert.match(activeZoneBlock,/breakdown\?\.long \?\? 0/);
+  assert.match(activeZoneBlock,/breakdown\?\.short \?\? 0/);
   assert.match(summary,/LONG totaal open[\s\S]*summary\.strategyOpenLong/);
   assert.match(summary,/SHORT totaal open[\s\S]*summary\.strategyOpenShort/);
   assert.match(summary,/Totaal bezet[\s\S]*summary\.strategyOpenTotal[\s\S]*summary\.maxTotal/);
-  assert.doesNotMatch(summary,/const sideTotal\s*=/);
-  assert.doesNotMatch(summary,/const longCapacity\s*=/);
-  assert.doesNotMatch(summary,/const shortCapacity\s*=/);
-  assert.doesNotMatch(summary,/strategyOpenLong\}\s*\/\s*\{longCapacity/);
-  assert.doesNotMatch(summary,/strategyOpenShort\}\s*\/\s*\{shortCapacity/);
+  assert.doesNotMatch(activeZoneBlock,/const sideTotal\s*=/);
+  assert.doesNotMatch(activeZoneBlock,/const longCapacity\s*=/);
+  assert.doesNotMatch(activeZoneBlock,/const shortCapacity\s*=/);
   assert.match(summary,/seatZoneInSync \? <b><i>\{freeLongActiveZone\}L<\/i> \/ <em>\{freeShortActiveZone\}S<\/em><\/b> : <b>— \/ —<\/b>/);
   assert.match(css,/\.aps-zone-seat-groups\{/);
   assert.match(css,/\.aps-zone-open-counts\{/);
@@ -161,11 +165,12 @@ test("Build 469 keeps active-zone occupancy numeric across chart/backend zone tr
 
 test("Runtime Contract V1 phase 6 makes snapshot and scanner use operational runtime truth",async()=>{
   const component=await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx",import.meta.url),"utf8");
-  assert.match(component,/runtimeTruthCanonical: boolean/);
+  const activeZoneBlock=await readFile(new URL("../components/active-zone-seat-block.tsx",import.meta.url),"utf8");
+  assert.match(activeZoneBlock,/runtimeTruthCanonical: boolean/);
   assert.match(component,/runtimeTruth\.source === "SERVER_RUNTIME"/);
   assert.match(component,/runtimeTruth\.strategyMode === "ZONE_WARRIORS"/);
   assert.match(component,/timestampMs\(runtimeTruth\.lastTickAt\)/);
-  assert.match(component,/summary\.runtimeTruthCanonical \? summary\.activeZone/);
+  assert.match(activeZoneBlock,/summary\.runtimeTruthCanonical[\s\S]*\? summary\.activeZone/);
   assert.match(component,/runtimeTruth\.dynamicHedgeBlocking === true/);
   assert.match(component,/runtimeTruth\.queueHalted === true/);
 });
