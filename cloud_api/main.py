@@ -6278,12 +6278,14 @@ def _persist_active_trades_chart_sample(
         local_day = datetime.fromtimestamp(source_at_ms / 1000, tz=timezone.utc).astimezone(
             ZoneInfo("Europe/Amsterdam")
         ).date().isoformat()
-        if str(previous.get("dayKey", "")) == local_day:
+        if int(safe_float(previous.get("indexVersion"))) == 2 and str(previous.get("dayKey", "")) == local_day:
             previous_high = safe_float(previous.get("dayHigh"))
             previous_low = safe_float(previous.get("dayLow"))
             day_high = max(previous_high, adjusted) if previous.get("dayHigh") is not None else adjusted
             day_low = min(previous_low, adjusted) if previous.get("dayLow") is not None else adjusted
         else:
+            # A semantics/version migration must never mix the old PnL-valued
+            # daily range with the new basis-100 market index.
             day_high = adjusted
             day_low = adjusted
         state_value = {
