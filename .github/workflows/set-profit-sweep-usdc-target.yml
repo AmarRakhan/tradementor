@@ -32,8 +32,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --quiet google-cloud-firestore
-          python <<'PY' > /tmp/result.json
+          SERVICE_JSON="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region europe-west4 --format=json)"
+          PROD_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); rows=d["status"].get("traffic",[]); print(next((r["revisionName"] for r in rows if int(r.get("percent",0) or 0)==100), d["status"]["latestReadyRevisionName"]))' <<<"$SERVICE_JSON")"
+          PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region europe-west4 --format='value(spec.containers[0].image)')"
+          RUNTIME_SA="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["spec"]["template"]["spec"]["serviceAccountName"])' <<<"$SERVICE_JSON")"
+          JOB="tm-set-sweep-usdc-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region europe-west4 --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
           import hashlib,json
           from google.cloud import firestore
 
@@ -67,8 +74,14 @@ jobs:
                   ),
               }
               break
-          print(json.dumps(result,separators=(",",":"),sort_keys=True))
+          print("SET_SWEEP_USDC_RESULT "+json.dumps(result,separators=(",",":"),sort_keys=True),flush=True)
           PY
+          )"
+
+          ENV_VARS="GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=set-profit-sweep-usdc,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region europe-west4 --image "$PROD_IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "$ENV_VARS" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region europe-west4 --wait >/dev/null
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
 
       - name: Re-authenticate as observer
         if: always()
@@ -84,7 +97,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          JSON="$(cat /tmp/result.json)"
+          LINE="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"SET_SWEEP_USDC_RESULT \"" --project "$GCP_PROJECT_ID" --freshness=30m --limit=10 --order=desc --format='value(textPayload)' | grep 'SET_SWEEP_USDC_RESULT ' | head -n1 || true)"
+          test -n "$LINE"
+          JSON="${LINE#*SET_SWEEP_USDC_RESULT }"
           python - "$JSON" > /tmp/report.md <<'PY'
           import json,sys
           d=json.loads(sys.argv[1])
