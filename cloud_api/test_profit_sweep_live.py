@@ -236,7 +236,10 @@ def test_uncertain_transfer_replays_at_most_once_with_same_id(monkeypatch):
     result = finalize_close_sweep(prepared, client=client, confirmed_order={
         "orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED",
     })
-    assert result == {"status": "UNCERTAIN", "reconciliationStatus": "NOT_FOUND"}
+    assert result["status"] == "UNCERTAIN"
+    assert result["contribution"] == "0.9625"
+    assert result["pendingSavings"] == "0.9625"
+    assert result["transferred"] == "0"
     assert len(client.transfers) == 2
     first_id = client.transfers[0][2]["clientTranId"]
     second_id = client.transfers[1][2]["clientTranId"]
