@@ -1,5 +1,7 @@
 import { proxyCloud } from "@/lib/cloud-proxy";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: Request) {
   const asset = new URL(request.url).searchParams.get("asset")?.toUpperCase() || "USDC";
   if (asset !== "USDC" && asset !== "USDT") {
