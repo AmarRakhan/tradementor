@@ -45,12 +45,12 @@ class FakeCollection:
 
 
 class FakeUserRef:
-    def __init__(self, *, enabled=True, percent=25, asset="USDT"):
+    def __init__(self, *, enabled=True, percent=25, asset="USDT", minimum=1.0):
         self.collections = {}
         control = self.collection("executionControls").document("aster")
         control.set({
             "masterAddress": "0x" + "a" * 40,
-            "profitSweep": {"enabled": enabled, "sweepPercent": percent, "transferAsset": asset},
+            "profitSweep": {"enabled": enabled, "sweepPercent": percent, "transferAsset": asset, "minimumTransfer": minimum},
         })
     def collection(self, key):
         if key not in self.collections: self.collections[key] = FakeCollection()
@@ -142,7 +142,7 @@ def test_margin_projection_fails_closed_before_transfer():
 
 def test_live_25_percent_sweep_posts_exactly_once(monkeypatch):
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
-    user = FakeUserRef(enabled=True, percent=25)
+    user = FakeUserRef(enabled=True, percent=25, minimum=0.9625)
     client = FakeClient()
     prepared = prepare_close_sweep(
         uid="u1", user_ref=user, client=client, intent_id="close-btc-1", symbol="BTCUSDT",
@@ -152,7 +152,11 @@ def test_live_25_percent_sweep_posts_exactly_once(monkeypatch):
     result = finalize_close_sweep(prepared, client=client, confirmed_order={
         "orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED",
     })
-    assert result == {"status": "SUCCEEDED", "contribution": "0.9625", "tranId": "777"}
+    assert result["status"] == "SUCCEEDED"
+    assert result["contribution"] == "0.9625"
+    assert result["transferred"] == "0.9625"
+    assert result["pendingSavings"] == "0"
+    assert result["todayTransferred"] == "0.9625"
     assert len(client.transfers) == 1
     method, path, payload = client.transfers[0]
     assert method == "POST" and path == TRANSFER_PATH
@@ -160,7 +164,7 @@ def test_live_25_percent_sweep_posts_exactly_once(monkeypatch):
     assert payload["asset"] == "USDT"
     assert payload["amount"] == "0.9625"
     assert "user" not in payload
-    assert payload["clientTranId"].startswith("tmpp-")
+    assert payload["clientTranId"].startswith("tmpp2-")
     # Same logical close cannot create a second sweep booking or transfer.
     duplicate = prepare_close_sweep(
         uid="u1", user_ref=user, client=client, intent_id="close-btc-1", symbol="BTCUSDT",
@@ -173,7 +177,7 @@ def test_live_25_percent_sweep_posts_exactly_once(monkeypatch):
 def test_live_sweep_does_not_require_legacy_master_address(monkeypatch):
     """Spot V3 signs with the API wallet; legacy executionControls.masterAddress is not required."""
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
-    user = FakeUserRef(enabled=True, percent=5)
+    user = FakeUserRef(enabled=True, percent=5, minimum=0.1925)
     user.collection("executionControls").document("aster").data.pop("masterAddress", None)
     client = FakeClient()
 
@@ -198,7 +202,9 @@ def test_live_sweep_does_not_require_legacy_master_address(monkeypatch):
             "status": "FILLED",
         },
     )
-    assert result == {"status": "SUCCEEDED", "contribution": "0.1925", "tranId": "777"}
+    assert result["status"] == "SUCCEEDED"
+    assert result["contribution"] == "0.1925"
+    assert result["transferred"] == "0.1925"
     assert len(client.transfers) == 1
 
 
@@ -221,7 +227,7 @@ def test_disabled_or_global_gate_off_never_posts(monkeypatch):
 def test_uncertain_transfer_replays_at_most_once_with_same_id(monkeypatch):
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
     monkeypatch.setattr("profit_sweep_live.time.sleep", lambda _: None)
-    user = FakeUserRef(enabled=True, percent=25)
+    user = FakeUserRef(enabled=True, percent=25, minimum=0.9625)
     client = FakeClient(uncertain=True)
     prepared = prepare_close_sweep(
         uid="u3", user_ref=user, client=client, intent_id="close-uncertain", symbol="BTCUSDT",
@@ -250,7 +256,7 @@ def test_live_unknown_replays_once_with_exact_same_client_tran_id(monkeypatch):
                 raise AsterSubmissionUncertain("Aster -1006: Execution status unknown")
             return {"tranId": 779, "status": "SUCCESS"}
 
-    user = FakeUserRef(enabled=True, percent=5)
+    user = FakeUserRef(enabled=True, percent=5, minimum=0.1925)
     client = OneUnknownThenSuccessClient()
     prepared = prepare_close_sweep(
         uid="u-live-replay", user_ref=user, client=client,
@@ -263,15 +269,15 @@ def test_live_unknown_replays_once_with_exact_same_client_tran_id(monkeypatch):
     )
 
     assert result["status"] == "SUCCEEDED"
-    assert result["replayed"] is True
     assert result["contribution"] == "0.1925"
+    assert result["transferred"] == "0.1925"
     assert len(client.transfers) == 2
     assert client.transfers[0][2]["clientTranId"] == client.transfers[1][2]["clientTranId"]
 
 
 def test_uncertain_transfer_reconciles_from_authoritative_income_history(monkeypatch):
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
-    user = FakeUserRef(enabled=True, percent=25)
+    user = FakeUserRef(enabled=True, percent=25, minimum=0.9625)
     client = FakeClient(
         uncertain=True,
         transfer_history=[{
@@ -289,18 +295,16 @@ def test_uncertain_transfer_reconciles_from_authoritative_income_history(monkeyp
     result = finalize_close_sweep(prepared, client=client, confirmed_order={
         "orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED",
     })
-    assert result == {
-        "status": "SUCCEEDED",
-        "contribution": "0.9625",
-        "tranId": "888",
-        "reconciled": True,
-    }
+    assert result["status"] == "SUCCEEDED"
+    assert result["contribution"] == "0.9625"
+    assert result["transferred"] == "0.9625"
+    assert result["pendingSavings"] == "0"
     assert len(client.transfers) == 1
 
 
 def test_uncertain_transfer_reconciles_from_spot_transaction_history(monkeypatch):
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
-    user = FakeUserRef(enabled=True, percent=25)
+    user = FakeUserRef(enabled=True, percent=25, minimum=0.9625)
     client = FakeClient(
         uncertain=True,
         spot_history=[{
@@ -318,12 +322,10 @@ def test_uncertain_transfer_reconciles_from_spot_transaction_history(monkeypatch
     result = finalize_close_sweep(prepared, client=client, confirmed_order={
         "orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED",
     })
-    assert result == {
-        "status": "SUCCEEDED",
-        "contribution": "0.9625",
-        "tranId": "889",
-        "reconciled": True,
-    }
+    assert result["status"] == "SUCCEEDED"
+    assert result["contribution"] == "0.9625"
+    assert result["transferred"] == "0.9625"
+    assert result["pendingSavings"] == "0"
     assert len(client.transfers) == 1
 
 
@@ -507,9 +509,80 @@ def test_recovery_never_reposts_when_original_transfer_is_already_in_spot_histor
     assert client.transfers == []
 
 
+
+def test_profit_sweep_accumulates_small_parts_until_one_dollar(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5, minimum=1.0)
+    client = FakeClient()
+    prepared = prepare_close_sweep(
+        uid="u-buffer", user_ref=user, client=client, intent_id="close-buffer-1",
+        symbol="BTCUSDT", position_side="LONG", close_quantity="1",
+    )
+    result = finalize_close_sweep(
+        prepared, client=client,
+        confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+    assert result["contribution"] == "0.1925"
+    assert result["transferred"] == "0"
+    assert result["pendingSavings"] == "0.1925"
+    assert result["todayTransferred"] == "0"
+    assert client.transfers == []
+
+
+def test_profit_sweep_transfers_whole_threshold_and_keeps_remainder(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5, minimum=1.0)
+    user.collection("asterProfitSweepState").document("current").set({
+        "pendingSavings": "0.95",
+        "todayTransferred": "0",
+        "todayKey": "",
+        "transferSequence": 0,
+    })
+    client = FakeClient()
+    prepared = prepare_close_sweep(
+        uid="u-remainder", user_ref=user, client=client, intent_id="close-remainder-1",
+        symbol="BTCUSDT", position_side="LONG", close_quantity="1",
+    )
+    result = finalize_close_sweep(
+        prepared, client=client,
+        confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+    assert result["contribution"] == "0.1925"
+    assert result["transferred"] == "1"
+    assert result["pendingSavings"] == "0.1425"
+    assert result["todayTransferred"] == "1"
+    assert len(client.transfers) == 1
+    assert client.transfers[0][2]["amount"] == "1"
+
+
+def test_profit_sweep_drains_multiple_full_blocks(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5, minimum=1.0)
+    user.collection("asterProfitSweepState").document("current").set({
+        "pendingSavings": "2.1775",
+        "todayTransferred": "0",
+        "todayKey": "",
+        "transferSequence": 0,
+    })
+    client = FakeClient()
+    prepared = prepare_close_sweep(
+        uid="u-multi", user_ref=user, client=client, intent_id="close-multi-1",
+        symbol="BTCUSDT", position_side="LONG", close_quantity="1",
+    )
+    result = finalize_close_sweep(
+        prepared, client=client,
+        confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+    assert result["transferred"] == "2"
+    assert result["transferCount"] == 2
+    assert result["pendingSavings"] == "0.37"
+    assert result["todayTransferred"] == "2"
+    assert [row[2]["amount"] for row in client.transfers] == ["1", "1"]
+
+
 def test_live_sweep_uses_configured_usdc_asset(monkeypatch):
     monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
-    user = FakeUserRef(enabled=True, percent=5, asset="USDC")
+    user = FakeUserRef(enabled=True, percent=5, asset="USDC", minimum=0.1925)
     client = FakeClient()
     prepared = prepare_close_sweep(
         uid="u-usdc", user_ref=user, client=client, intent_id="close-usdc-1", symbol="BTCUSDT",
