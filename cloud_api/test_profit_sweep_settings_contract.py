@@ -55,3 +55,13 @@ def test_production_deploy_is_the_only_global_activation_gate():
     assert "ASTER_PROFIT_SWEEP_LIVE_ENABLED=true" in workflow
     assert '"ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true"' in workflow
     assert "DEPLOY_PRODUCTION_BACKEND" in workflow
+
+
+def test_profit_pot_buffer_reconciliation_is_wired_to_existing_minute_scheduler():
+    main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+    live_source = (ROOT / "profit_sweep_live.py").read_text(encoding="utf-8")
+    assert "def reconcile_profit_savings_buffer(" in live_source
+    assert "from profit_sweep_live import reconcile_profit_savings_buffer" in main_source
+    assert "reconcile_profit_savings_buffer(" in main_source
+    assert "if not dry_run and not str(event_symbol).strip()" in main_source
+    assert "Profit saving is subordinate to trading" in main_source
