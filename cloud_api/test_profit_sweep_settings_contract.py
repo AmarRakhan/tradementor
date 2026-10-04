@@ -41,7 +41,7 @@ def test_live_engine_uses_only_internal_future_to_spot_transfer_and_no_withdrawa
     assert 'DEFAULT_TRANSFER_ASSET = "USDT"' in source
     assert 'SUPPORTED_TRANSFER_ASSETS = {"USDT", "USDC"}' in source
     assert '"asset": prepared.transfer_asset' in source
-    assert '"clientTranId": prepared.client_tran_id' in source
+    assert '"clientTranId": str(claim.get("clientTranId"))' in source
     assert 'client.signed_spot_request("POST", TRANSFER_PATH' in source
     assert 'str(payload.get("status", "")).upper() != "SUCCESS"' in source
     assert 'payload.get("tranId")' in source
