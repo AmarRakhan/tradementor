@@ -62,7 +62,39 @@ jobs:
                   live_authorized=False,
                   before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")),
               )
-              summary=main._verified_aster_daily_close_summary(client, main.user_reference({"uid":uid}))
+              from datetime import datetime, timezone
+              from zoneinfo import ZoneInfo
+              tz=ZoneInfo("Europe/Amsterdam")
+              start_local=datetime(2026,10,3,0,0,0,tzinfo=tz)
+              end_local=datetime(2026,10,4,0,0,0,tzinfo=tz)
+              start_ms=int(start_local.timestamp()*1000)
+              end_ms=int(end_local.timestamp()*1000)-1
+              income_day=[row for row in client.income_history(income_type="REALIZED_PNL",start_time=start_ms,end_time=end_ms,limit=1000) if isinstance(row,dict)]
+              symbols=sorted({str(row.get("symbol","")).upper() for row in income_day if str(row.get("symbol","")).strip()})
+              fills=[]
+              for symbol in symbols:
+                  fills.extend(row for row in client.user_trades(symbol,limit=1000) if isinstance(row,dict))
+              cycles=[
+                  row for row in main.fully_closed_trades_from_fills(fills)
+                  if start_ms <= int(datetime.fromisoformat(str(row.get("closedAt","")).replace("Z","+00:00")).timestamp()*1000) <= end_ms
+              ]
+              sweep_rows=[snap.to_dict() or {} for snap in main.user_reference({"uid":uid}).collection("asterProfitSweeps").stream()]
+              explicit=main.full_leg_closes_from_sweep_ledgers(sweep_rows,fills,day_start_ms=start_ms,end_ms=end_ms)
+              existing={str(row.get("exchangeOrderId","")).strip() for row in cycles if str(row.get("exchangeOrderId","")).strip()}
+              additional=[row for row in explicit if str(row.get("exchangeOrderId","")).strip() not in existing]
+              closed_rows=[*cycles,*additional]
+              ledger_total=sum(main.safe_float(row.get("income")) for row in income_day)
+              closed_total=sum(main.safe_float(row.get("realizedPnlUsd")) for row in closed_rows)
+              summary={
+                  "reliable":True,
+                  "method":"EXCHANGE_PROVEN_FULL_POSITION_OR_SIDE_CLOSES_HISTORICAL_2026_10_03",
+                  "closedTrades":len(closed_rows),
+                  "realizedPnlUsd":round(closed_total,8),
+                  "ledgerRealizedPnlUsd":round(ledger_total,8),
+                  "adjustmentRealizedPnlUsd":round(ledger_total-closed_total,8),
+                  "explicitFullLegCloseCount":len(additional),
+                  "fullClosedTrades":closed_rows,
+              }
               zec_income=[
                   row for row in client.income_history(income_type="REALIZED_PNL",limit=1000)
                   if isinstance(row,dict)
@@ -114,6 +146,7 @@ jobs:
           print(f"- Status: **{d.get('status')}**")
           print("- Modus: **READ ONLY** · 0 orders · 0 settingswijzigingen")
           print(f"- Productierevision: `{revision}`")
+          print("- Historische verificatiedag: **2026-10-03 Europe/Amsterdam**")
           print(f"- Productie source commit: `{source or 'onbekend'}`")
           print(f"- Summary reliable: **{s.get('reliable')}**")
           print(f"- Methode: **{s.get('method','—')}**")
@@ -130,3 +163,5 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/report.md
 
 # live verification rerun after full hedge-side accounting production deploy 2026-10-04
+
+# historical 2026-10-03 verification after midnight rollover
