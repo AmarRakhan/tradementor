@@ -3,7 +3,7 @@ name: Compare Manual Transfer API Context
 on:
   push:
     branches: [amar-crypto-bot-2026-cloud]
-    paths: [.github/workflows/compare-manual-transfer-api-context.yml]
+    paths: [.github/workflows/compare-manual-transfer-api-context-live.yml]
 
 permissions:
   contents: read
