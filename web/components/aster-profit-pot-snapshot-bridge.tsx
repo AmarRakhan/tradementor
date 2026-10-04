@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { derivePortfolioCycleCard, type PortfolioCycleCardState } from "@/lib/portfolio-cycle-card";
 
-const PROFIT_POT_REFERENCE = "file_00000000f5ec8210bf3f2c300b972c25";
+const PROFIT_POT_REFERENCE = "file_00000000a6388210976eaf5f7d7386e0";
 const HOST_ID = "aster-profit-pot-snapshot-host";
 const CYCLE_REFERENCE_INACTIVE = "file_00000000ba448210b16f35eaf915a01f";
 const CYCLE_REFERENCE_ACTIVE = "file_00000000ba448210b16f35eaf915a01f";
@@ -87,6 +87,7 @@ function PortfolioCycleCard({ state }: { state: PortfolioCycleCardState }) {
 export function AsterProfitPotSnapshotBridge() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [todayTransferred, setTodayTransferred] = useState<number | null>(null);
+  const [pendingSavings, setPendingSavings] = useState<number | null>(null);
   const [cycleState, setCycleState] = useState<PortfolioCycleCardState>({ active: false, statusLabel: "Niet ingesteld", progressPercent: null, remainingUsd: null, remainingPercent: null });
 
   useEffect(() => {
@@ -118,10 +119,17 @@ export function AsterProfitPotSnapshotBridge() {
     const refreshProfitPot = async () => {
       try {
         const payload = await authenticatedRequest("/api/exchanges/aster/profit-sweep-settings", { cache: "no-store" });
-        const next = Number(payload.todayTransferred ?? 0);
-        if (alive) setTodayTransferred(Number.isFinite(next) ? next : 0);
+        const transferred = Number(payload.todayTransferred ?? 0);
+        const pending = Number(payload.pendingSavings ?? 0);
+        if (alive) {
+          setTodayTransferred(Number.isFinite(transferred) ? transferred : 0);
+          setPendingSavings(Number.isFinite(pending) ? pending : 0);
+        }
       } catch {
-        if (alive) setTodayTransferred(null);
+        if (alive) {
+          setTodayTransferred(null);
+          setPendingSavings(null);
+        }
       }
     };
     void refreshProfitPot();
@@ -181,6 +189,9 @@ export function AsterProfitPotSnapshotBridge() {
   }, []);
 
   if (!host) return null;
+  const profitPotTodayDisplay = todayTransferred === null || pendingSavings === null
+    ? null
+    : todayTransferred + pendingSavings;
   return createPortal(
     <div className="aps-profit-pot-row" aria-label="Profit Pot / Spot">
       <button
@@ -188,12 +199,13 @@ export function AsterProfitPotSnapshotBridge() {
         className="aps-profit-pot-card"
         data-reference={PROFIT_POT_REFERENCE}
         onClick={() => window.dispatchEvent(new CustomEvent("aster-profit-pot-open"))}
-        aria-label={`Profit Pot / Spot. Vandaag succesvol naar Spot overgezet: ${formatProfitPotMoney(todayTransferred)}. Tik voor instellingen.`}
+        aria-label={`Profit Pot / Spot. Vandaag richting Spot: ${formatProfitPotMoney(profitPotTodayDisplay)}. Dit is vandaag succesvol overgezet plus de huidige spaarbuffer. Tik voor instellingen.`}
       >
         <span className="aps-profit-pot-icon">{profitPotIcon()}</span>
         <span className="aps-profit-pot-copy">
           <small>PROFIT POT / SPOT</small>
-          <strong>{formatProfitPotMoney(todayTransferred)}</strong>
+          <strong>{formatProfitPotMoney(profitPotTodayDisplay)}</strong>
+          <em>Vandaag</em>
         </span>
       </button>
       <div id="aster-profit-sweep-settings-host" />
