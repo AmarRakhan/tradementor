@@ -57,8 +57,10 @@ function destinationHref(destination: Destination): string {
   return `${window.location.pathname}${window.location.search}#/${destination}`;
 }
 
-function asterActionsAreFresh(snapshot: ExchangeSnapshot, cloudReady: boolean) {
-  return Boolean(cloudReady && snapshot.serverConfirmed && snapshot.updatedAt && Date.now() - snapshot.updatedAt < 120_000 && !snapshot.error);
+function asterActionsAreFresh(snapshot: ExchangeSnapshot, _cloudReady: boolean) {
+  // A server-confirmed authenticated Aster snapshot is sufficient proof for the action gate.
+  // Do not keep the configurator locked behind the separate session/bootstrap request.
+  return Boolean(snapshot.serverConfirmed && snapshot.updatedAt && Date.now() - snapshot.updatedAt < 120_000 && !snapshot.error);
 }
 
 function asterEvidenceIsFresh(value: unknown, maximumAgeMs = 120_000) {
