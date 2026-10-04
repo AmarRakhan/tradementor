@@ -25,31 +25,51 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-10-03",
-  title: "Portfolio Snapshot · Profit Pot-bedrag volledig leesbaar",
+  releasedAt: "2026-10-04",
+  title: "Profit Sparen 5.0 · per-user USDC/USDT transferasset",
   newItems: [
-    "Het bedrag in Profit Pot / Spot blijft op mobiel volledig zichtbaar binnen de eigen kaart.",
+    "Profit Sparen kan per gebruiker vastleggen of de FUTURE_SPOT-transfer in USDC of USDT moet worden uitgevoerd.",
+    "De instelling wordt door backend, recovery en UI behouden; bestaande gebruikers blijven standaard op USDT tenzij hun account expliciet op USDC staat.",
   ],
   problems: [
-    "In Build 493 werd de Profit Pot-waarde rechts afgekapt, waardoor alleen bijvoorbeeld US$ 1,... zichtbaar bleef.",
+    "De Profit Sweep-engine stuurde elke transfer hardcoded als USDT.",
+    "Bij dit account staat de succesvolle handmatige Profit Pot-transfer op Spot als USDC, terwijl de automatische USDT-sweeps door Aster werden afgewezen.",
   ],
   causes: [
-    "De Profit Pot-kaart hield op smalle schermen te veel ruimte gereserveerd voor icoon, gap en waardelettergrootte.",
+    "Transferasset en nettowinst-accounting waren onterecht als één vast USDT-contract behandeld.",
   ],
   fixes: [
-    "Op mobiel gebruikt de Profit Pot-kaart een compactere icon-kolom, kleinere gap en een kleinere waardelettergrootte.",
-    "Het bedrag blijft op één regel en gebruikt geen ellipsis meer voor de waarde zelf.",
+    "De transferasset is nu een per-user instelling met toegestane waarden USDT en USDC.",
+    "Alle transfer-, reconciliation- en recoverypaden gebruiken hetzelfde vastgelegde asset.",
+    "De Profit Sparen-UI bewaart de huidige assetinstelling bij het wijzigen van het percentage.",
   ],
   now: [
-    "Bedragen zoals US$ 1,24, US$ 12,48 en US$ 123,45 blijven binnen de Profit Pot-kaart leesbaar.",
+    "Voor dit account kan Profit Sparen gericht via USDC naar Spot worden uitgevoerd zonder andere gebruikers naar USDC om te zetten.",
+    "Bestaande winstberekening, entry-, DCA-, TP-, Auto Hedge- en scannerlogica blijven ongewijzigd.",
   ],
   technicalDetails: [
-    "Frontend-only wijziging in web/app/profit-pot-snapshot.css plus regressietest.",
-    "Geen wijziging aan Profit Sweep-berekening, Spot-balans, trading-, entry-, DCA-, TP-, Auto Hedge-, scanner- of backendlogica.",
+    "Backend: profit_sweep_live.py en profit_sweep_settings_extension.py.",
+    "Frontend: aster-profit-sweep-settings-bridge.tsx.",
+    "Nieuwe regressietest bevestigt dat een USDC-account ook daadwerkelijk asset=USDC naar de transferendpoint stuurt.",
   ],
   confidence: "confirmed",
 };
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-494-profit-pot-value-fit",
+    version: "46",
+    build: "494",
+    releasedAt: "2026-10-03",
+    title: "Portfolio Snapshot · Profit Pot-bedrag volledig leesbaar",
+    newItems: ["Het bedrag in Profit Pot / Spot blijft op mobiel volledig zichtbaar binnen de eigen kaart."],
+    problems: ["In Build 493 werd de Profit Pot-waarde rechts afgekapt, waardoor alleen bijvoorbeeld US$ 1,... zichtbaar bleef."],
+    causes: ["De Profit Pot-kaart hield op smalle schermen te veel ruimte gereserveerd voor icoon, gap en waardelettergrootte."],
+    fixes: ["Op mobiel gebruikt de Profit Pot-kaart een compactere icon-kolom, kleinere gap en een kleinere waardelettergrootte.","Het bedrag blijft op één regel en gebruikt geen ellipsis meer voor de waarde zelf."],
+    now: ["Bedragen zoals US$ 1,24, US$ 12,48 en US$ 123,45 blijven binnen de Profit Pot-kaart leesbaar."],
+    technicalDetails: ["Frontend-only wijziging in web/app/profit-pot-snapshot.css plus regressietest.","Geen wijziging aan Profit Sweep-berekening, Spot-balans, trading-, entry-, DCA-, TP-, Auto Hedge-, scanner- of backendlogica."],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-493-snapshot-copy-fit",
     version: "46",
