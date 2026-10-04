@@ -69,6 +69,7 @@ jobs:
                   before_order_submit=lambda *_a,**_k: (_ for _ in ()).throw(RuntimeError("READ_ONLY_ORDER_ATTEMPT")),
               )
 
+              account=client.account_information() or {}
               generic_account={}
               generic_history=[]
               generic_error=""
