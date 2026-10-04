@@ -26,12 +26,15 @@ COLLECTION_BY_TIMEFRAME: dict[str, str] = {
 }
 
 ACTIVE_TRADES_COLLECTION_BY_TIMEFRAME: dict[str, str] = {
-    "1m": "asterActiveTradesChart1m",
-    "5m": "asterActiveTradesChart5m",
-    "15m": "asterActiveTradesChart15m",
-    "1u": "asterActiveTradesChart1h",
-    "4u": "asterActiveTradesChart4h",
-    "24u": "asterActiveTradesChart24h",
+    # V2 deliberately uses fresh collections. The previous stream stored a
+    # continuity-adjusted open-PnL value and must never be mixed with the
+    # normalized market-performance index introduced by Active Trades 2.0.
+    "1m": "asterActiveTradesMarketIndex1m",
+    "5m": "asterActiveTradesMarketIndex5m",
+    "15m": "asterActiveTradesMarketIndex15m",
+    "1u": "asterActiveTradesMarketIndex1h",
+    "4u": "asterActiveTradesMarketIndex4h",
+    "24u": "asterActiveTradesMarketIndex24h",
 }
 EXTERNAL_CASHFLOW_TYPES = frozenset({
     "TRANSFER", "DEPOSIT", "WITHDRAWAL", "WALLET_TRANSFER", "INTERNAL_TRANSFER",
@@ -172,7 +175,14 @@ def active_trades_collection_for_timeframe(timeframe: str) -> str:
 
 
 def active_trades_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
-    """Normalize the exchange-confirmed open positions into one read-only basket."""
+    """Normalize exchange-confirmed open positions into the Active Trades 2.0 basket.
+
+    The chart index is market-performance only. Each position starts at 100 at
+    its own average entry. LONG follows mark/entry; SHORT uses the inverse
+    unlevered return 1 + (entry-mark)/entry. Position weights use entry
+    notional, keeping wallet/equity, realized PnL, funding and cashflows out of
+    the candle value.
+    """
     root = snapshot if isinstance(snapshot, dict) else {}
     positions = root.get("positions") if isinstance(root.get("positions"), list) else []
     normalized: list[dict[str, Any]] = []
@@ -193,6 +203,17 @@ def active_trades_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
         notional = abs(_number(raw.get("notionalUsd", raw.get("notional"))))
         if notional <= 0 and mark > 0:
             notional = mark * quantity
+
+        entry_notional = entry * quantity if entry > 0 else 0.0
+        if entry > 0 and mark > 0:
+            position_index = (
+                100.0 * (mark / entry)
+                if side == "LONG"
+                else 100.0 * (1.0 + ((entry - mark) / entry))
+            )
+        else:
+            position_index = 100.0
+
         normalized.append({
             "key": f"{symbol}|{side}",
             "symbol": symbol,
@@ -202,6 +223,8 @@ def active_trades_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
             "markPrice": mark,
             "pnl": pnl,
             "notionalUsd": notional,
+            "entryNotionalUsd": entry_notional,
+            "positionIndex": position_index,
         })
     normalized.sort(key=lambda row: str(row["key"]))
     long_rows = [row for row in normalized if row["side"] == "LONG"]
@@ -212,6 +235,7 @@ def active_trades_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
     short_notional = sum(abs(_number(row.get("notionalUsd"))) for row in short_rows)
     total_notional = long_notional + short_notional
     open_pnl = long_pnl + short_pnl
+    composite_index = active_trades_composite_index(normalized)
     return {
         "positions": normalized,
         "openPnl": open_pnl,
@@ -226,39 +250,90 @@ def active_trades_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
         "shortTrades": len(short_rows),
         "longSharePercent": (long_notional / total_notional * 100.0) if total_notional > 1e-12 else 0.0,
         "shortSharePercent": (short_notional / total_notional * 100.0) if total_notional > 1e-12 else 0.0,
+        "compositeIndex": composite_index,
+        "indexBase": 100.0,
+        "indexVersion": 2,
+        "weighting": "ENTRY_NOTIONAL",
     }
 
 
-def active_trades_continuity_value(previous: dict[str, Any] | None, current: dict[str, Any]) -> float:
-    """Advance the basket only by market PnL on unchanged legs.
+def active_trades_composite_index(positions: list[dict[str, Any]] | None) -> float:
+    """Return the entry-notional weighted market index for the active basket."""
+    rows = [row for row in positions or [] if isinstance(row, dict)]
+    weighted = []
+    for row in rows:
+        weight = max(0.0, _number(row.get("entryNotionalUsd")))
+        index_value = _number(row.get("positionIndex"))
+        if weight > 1e-12 and math.isfinite(index_value):
+            weighted.append((weight, index_value))
+    total_weight = sum(weight for weight, _ in weighted)
+    if total_weight <= 1e-12:
+        return 100.0
+    return sum(weight * index_value for weight, index_value in weighted) / total_weight
 
-    New/removed legs and quantity/average-entry changes are rebased at the
-    observation boundary, so an entry, exit, DCA or partial close cannot create
-    an artificial chart jump. Unchanged LONG and SHORT legs contribute their
-    exchange-confirmed unrealized-PnL delta.
-    """
-    prior = previous if isinstance(previous, dict) else {}
-    if not prior or not isinstance(prior.get("positions"), list):
-        return _number(current.get("openPnl"))
-    previous_value = _number(prior.get("value"))
+
+def _active_trades_composition_unchanged(
+    previous_positions: list[dict[str, Any]] | None,
+    current_positions: list[dict[str, Any]] | None,
+) -> bool:
     previous_rows = {
-        str(row.get("key", "")): row for row in prior.get("positions", [])
+        str(row.get("key", "")): row for row in previous_positions or []
         if isinstance(row, dict) and str(row.get("key", ""))
     }
     current_rows = {
-        str(row.get("key", "")): row for row in current.get("positions", [])
+        str(row.get("key", "")): row for row in current_positions or []
         if isinstance(row, dict) and str(row.get("key", ""))
     }
-    delta = 0.0
-    for key in previous_rows.keys() & current_rows.keys():
+    if previous_rows.keys() != current_rows.keys():
+        return False
+    for key in previous_rows:
         before, after = previous_rows[key], current_rows[key]
-        before_qty, after_qty = abs(_number(before.get("quantity"))), abs(_number(after.get("quantity")))
-        before_entry, after_entry = _number(before.get("entryPrice")), _number(after.get("entryPrice"))
-        quantity_same = math.isclose(before_qty, after_qty, rel_tol=1e-9, abs_tol=1e-12)
-        entry_same = math.isclose(before_entry, after_entry, rel_tol=1e-9, abs_tol=1e-12)
-        if quantity_same and entry_same:
-            delta += _number(after.get("pnl")) - _number(before.get("pnl"))
-    return previous_value + delta
+        if not math.isclose(
+            abs(_number(before.get("quantity"))),
+            abs(_number(after.get("quantity"))),
+            rel_tol=1e-9,
+            abs_tol=1e-12,
+        ):
+            return False
+        if not math.isclose(
+            _number(before.get("entryPrice")),
+            _number(after.get("entryPrice")),
+            rel_tol=1e-9,
+            abs_tol=1e-12,
+        ):
+            return False
+    return True
+
+
+def active_trades_continuity_value(previous: dict[str, Any] | None, current: dict[str, Any]) -> float:
+    """Chain-link the Active Trades Market Index without composition jumps.
+
+    When the active basket is unchanged, the persisted index follows the
+    movement of the entry-notional weighted composite. An entry, full exit,
+    partial close, DCA, quantity change or average-entry change rebases the new
+    basket at the prior displayed value, so membership changes never create a
+    synthetic vertical candle.
+    """
+    prior = previous if isinstance(previous, dict) else {}
+    current_raw = _number(current.get("compositeIndex")) or active_trades_composite_index(
+        current.get("positions") if isinstance(current.get("positions"), list) else []
+    )
+
+    # Migrate cleanly from Active Trades 1.x. Old state/candles were PnL-valued;
+    # new collections and this version gate prevent those units from mixing.
+    if int(_number(prior.get("indexVersion"))) != 2:
+        return current_raw
+
+    previous_value = _number(prior.get("value"))
+    previous_raw = _number(prior.get("rawCompositeIndex"))
+    previous_positions = prior.get("positions") if isinstance(prior.get("positions"), list) else []
+    current_positions = current.get("positions") if isinstance(current.get("positions"), list) else []
+
+    if not _active_trades_composition_unchanged(previous_positions, current_positions):
+        return previous_value if math.isfinite(previous_value) else current_raw
+    if abs(previous_raw) <= 1e-12:
+        return previous_value
+    return previous_value * (current_raw / previous_raw)
 
 
 def merge_active_trades_sample(existing: dict[str, Any] | None, *, value: float, source_at_ms: int, timeframe: str) -> dict[str, Any]:
