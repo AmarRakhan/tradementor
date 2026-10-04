@@ -4,7 +4,8 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { AsterHedgeManager } from "./aster-hedge-manager";
-import { PortfolioKoersChart } from "./portfolio-koers-chart";\nimport { ActiveZoneSeatBlock, resolveActiveZoneSeatState, type ActiveZoneSeatSummary } from "./active-zone-seat-block";
+import { PortfolioKoersChart } from "./portfolio-koers-chart";
+import { ActiveZoneSeatBlock, resolveActiveZoneSeatState, type ActiveZoneSeatSummary } from "./active-zone-seat-block";
 import { PortfolioPerformanceDetail, type PerformanceInitialTab } from "./portfolio-performance-detail";
 import { formatLiquidationRisk, liquidationNeedleDegrees, liquidationRiskRemaining, liquidationRiskTone, normalizeLiquidationRisk } from "@/lib/liquidation-gauge.mjs";
 
