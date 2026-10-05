@@ -20,7 +20,7 @@ type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;cou
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
-type StructureLevelLayout={label:"R2"|"R1"|"S1"|"S2";price:number;top:number;side:"resistance"|"support"};
+type StructureLevelLayout={label:string;price:number;top:number;side:"resistance"|"support"};
 type StructureOverlayLayout={
   levels:StructureLevelLayout[];
   activeZone:{top:number;height:number;label:string}|null;
@@ -147,6 +147,7 @@ const percent2=(value:number|null|undefined,signed=true)=>{
   return `${prefix}${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}%`;
 };
 
+const amsterdamDayKey=(value:number)=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Amsterdam",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(value));
 const numberOrNull=(value:unknown)=>Number.isFinite(Number(value))?Number(value):null;
 function normalizeActiveTradesPayload(value:unknown):ActiveTradesPayload{
   const root=record(value);
@@ -682,7 +683,7 @@ export function PortfolioKoersChart({
   const advisorZoneLadder=useMemo(()=>{
     if(!advisorZoneSource.length)return null;
     const base=derivePortfolioZoneLadder(advisorZoneSource);
-    return extendPortfolioZoneLadderToPrice(base,currentZonePrice,2);
+    return extendPortfolioZoneLadderToPrice(base,currentZonePrice,4);
   },[advisorZoneSource,currentZonePrice]);
   const zoneContext=useMemo(()=>portfolioZoneContextFromLadder(advisorZoneLadder,currentZonePrice),[advisorZoneLadder,currentZonePrice]);
   const zoneSoldierReport=advisorSeats.zoneSoldiers;
@@ -751,9 +752,9 @@ export function PortfolioKoersChart({
 
     const bb=viewMode==="account"?bollinger20x2(candles):{upper:[],middle:[],lower:[]};
     if(viewMode==="account"){
-      const upper=chart.addSeries(LineSeries,{color:"rgba(18,152,255,.26)",lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-      const middle=chart.addSeries(LineSeries,{color:"rgba(226,235,239,.16)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-      const lower=chart.addSeries(LineSeries,{color:"rgba(240,46,73,.26)",lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const upper=chart.addSeries(LineSeries,{color:"rgba(35,190,255,.82)",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const middle=chart.addSeries(LineSeries,{color:"rgba(218,231,236,.44)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const lower=chart.addSeries(LineSeries,{color:"rgba(255,72,111,.78)",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
       bbRefs.current={upper,middle,lower};
       upper.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
       middle.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
@@ -838,27 +839,22 @@ export function PortfolioKoersChart({
         const structurePrice=parsePortfolioEquityText(liveEquityTextRef.current)??payload.currentEquity??candles.at(-1)?.close??null;
         const marketContext=portfolioZoneContextFromLadder(zoneLadder,structurePrice);
         const rows=Array.isArray(zoneLadder.zones)?zoneLadder.zones as any[]:[];
-        const activeIndex=marketContext?.activeIndex;
+        const operationalIndex=activeZoneRef.current;
+        const activeIndex=Number.isFinite(Number(operationalIndex))?Number(operationalIndex):marketContext?.activeIndex;
         const activeRow=rows.find((row:any)=>Number(row.index)===Number(activeIndex))??null;
-        const step=Number(zoneLadder.step);
-        const s1=Number.isFinite(Number(marketContext?.lowerBoundary))&&Number(marketContext?.lowerBoundary)>0
-          ? Number(marketContext?.lowerBoundary)
-          : Number.isFinite(Number(activeRow?.center))&&Number.isFinite(step)?Number(activeRow.center)-step/2:null;
-        const r1=Number.isFinite(Number(marketContext?.upperBoundary))&&Number(marketContext?.upperBoundary)>0
-          ? Number(marketContext?.upperBoundary)
-          : Number.isFinite(Number(activeRow?.center))&&Number.isFinite(step)?Number(activeRow.center)+step/2:null;
-        const below=rows.find((row:any)=>Number(row.index)===Number(activeIndex)-1);
-        const above=rows.find((row:any)=>Number(row.index)===Number(activeIndex)+1);
-        const s2=Number.isFinite(Number(below?.lower))?Number(below.lower):Number.isFinite(Number(s1))&&Number.isFinite(step)?Number(s1)-step:null;
-        const r2=Number.isFinite(Number(above?.upper))?Number(above.upper):Number.isFinite(Number(r1))&&Number.isFinite(step)?Number(r1)+step:null;
-        const activeLower=s1;
-        const activeUpper=r1;
-        const rawLevels=[
-          {label:"R2",price:r2,side:"resistance"},
-          {label:"R1",price:r1,side:"resistance"},
-          {label:"S1",price:s1,side:"support"},
-          {label:"S2",price:s2,side:"support"},
-        ] as const;
+        const activeLower=Number.isFinite(Number(activeRow?.lower))?Number(activeRow.lower):marketContext?.lowerBoundary??null;
+        const activeUpper=Number.isFinite(Number(activeRow?.upper))?Number(activeRow.upper):marketContext?.upperBoundary??null;
+        const resistanceLevels=Array.from({length:4},(_,offset)=>{
+          if(offset===0)return {label:"R1",price:activeUpper,side:"resistance" as const};
+          const row=rows.find((item:any)=>Number(item.index)===Number(activeIndex)+offset);
+          return {label:`R${offset+1}`,price:Number.isFinite(Number(row?.upper))?Number(row.upper):null,side:"resistance" as const};
+        });
+        const supportLevels=Array.from({length:4},(_,offset)=>{
+          if(offset===0)return {label:"S1",price:activeLower,side:"support" as const};
+          const row=rows.find((item:any)=>Number(item.index)===Number(activeIndex)-offset);
+          return {label:`S${offset+1}`,price:Number.isFinite(Number(row?.lower))?Number(row.lower):null,side:"support" as const};
+        });
+        const rawLevels=[...resistanceLevels,...supportLevels];
         const levels=rawLevels.flatMap((level)=>{
           if(!Number.isFinite(Number(level.price))||Number(level.price)<=0)return [];
           const coordinate=series.priceToCoordinate(Number(level.price));
@@ -868,7 +864,6 @@ export function PortfolioKoersChart({
           return [{label:level.label,price:Number(level.price),top,side:level.side}] as StructureLevelLayout[];
         });
         const r1Level=levels.find((level)=>level.label==="R1");
-        const r2Level=levels.find((level)=>level.label==="R2");
         const s1Level=levels.find((level)=>level.label==="S1");
         const activeUpperY=Number.isFinite(Number(activeUpper))?series.priceToCoordinate(Number(activeUpper)):null;
         const activeLowerY=Number.isFinite(Number(activeLower))?series.priceToCoordinate(Number(activeLower)):null;
@@ -880,13 +875,13 @@ export function PortfolioKoersChart({
         const highX=visibleHigh?chart.timeScale().timeToCoordinate(visibleHigh.time as UTCTimestamp):null;
         const highY=visibleHigh?series.priceToCoordinate(visibleHigh.high):null;
         let roleFlipCandle:Candle|null=null;
-        if(Number.isFinite(Number(s1))){
+        if(Number.isFinite(Number(activeLower))){
           for(let index=1;index<candles.length;index+=1){
-            if(candles[index-1].close<=Number(s1)&&candles[index].close>Number(s1))roleFlipCandle=candles[index];
+            if(candles[index-1].close<=Number(activeLower)&&candles[index].close>Number(activeLower))roleFlipCandle=candles[index];
           }
         }
         const roleX=roleFlipCandle?chart.timeScale().timeToCoordinate(roleFlipCandle.time as UTCTimestamp):null;
-        const roleY=Number.isFinite(Number(s1))?series.priceToCoordinate(Number(s1)):null;
+        const roleY=Number.isFinite(Number(activeLower))?series.priceToCoordinate(Number(activeLower)):null;
         const zoneLabel=Number.isInteger(Number(activeIndex))?`Zone ${Number(activeIndex)} actief`:"Zone actief";
         structureDraft={
           levels,
@@ -1022,6 +1017,17 @@ export function PortfolioKoersChart({
 
 
   const latest=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
+  const accountDayRange=useMemo(()=>{
+    const today=amsterdamDayKey(Date.now());
+    const rows=timelineCandles.filter((row)=>amsterdamDayKey(Number(row.atMs)||Number(row.time)*1000)===today);
+    if(!rows.length)return {high:null as number|null,low:null as number|null};
+    return {
+      high:rows.reduce((value,row)=>Math.max(value,Number(row.high)),Number.NEGATIVE_INFINITY),
+      low:rows.reduce((value,row)=>Math.min(value,Number(row.low)),Number.POSITIVE_INFINITY),
+    };
+  },[timelineCandles]);
+  const highTodayText=viewMode==="active"?indexValue(activePayload.dayHigh):accountUsd(accountDayRange.high);
+  const lowTodayText=viewMode==="active"?indexValue(activePayload.dayLow):accountUsd(accountDayRange.low);
   const activeHeaderValue=activePayload.currentOpenPnl;
   const activeHeaderPercent=activePayload.currentPnlPercent;
   const headerPerformanceSeries=cashflowAdjustedPortfolioSeries(timelineCandles,combinedMarkers);
@@ -1192,9 +1198,15 @@ export function PortfolioKoersChart({
           <button type="button" className="portfolio-koers-zones-button" onClick={openPortfolioZones}><span aria-hidden="true">◎</span>Zones</button>
         </div>
       </div>
-      <div className="portfolio-koers-ui41-value">
-        <strong>{viewMode==="active"?signedUsd(activeHeaderValue):accountUsd(latest)}</strong>
-        <span className={(viewMode==="active"?activeHeaderPercent:headerPerformancePercent)!==null&&Number(viewMode==="active"?activeHeaderPercent:headerPerformancePercent)<0?"negative":""}>{(viewMode==="active"?activeHeaderPercent:headerPerformancePercent)===null?"—":percent2(viewMode==="active"?activeHeaderPercent:headerPerformancePercent)}</span>
+      <div className="portfolio-koers-ui41-metrics">
+        <div className="portfolio-koers-ui41-value">
+          <strong>{viewMode==="active"?signedUsd(activeHeaderValue):accountUsd(latest)}</strong>
+          <span className={(viewMode==="active"?activeHeaderPercent:headerPerformancePercent)!==null&&Number(viewMode==="active"?activeHeaderPercent:headerPerformancePercent)<0?"negative":""}>{(viewMode==="active"?activeHeaderPercent:headerPerformancePercent)===null?"—":percent2(viewMode==="active"?activeHeaderPercent:headerPerformancePercent)}</span>
+        </div>
+        <div className="portfolio-koers-day-range" aria-label="High en low vandaag">
+          <article className="high"><small>High vandaag</small><strong>{highTodayText}</strong></article>
+          <article className="low"><small>Low vandaag</small><strong>{lowTodayText}</strong></article>
+        </div>
       </div>
       <div className="portfolio-koers-ui41-controls">
         <div className="portfolio-koers-toolbar" role="group" aria-label="Portfolio Koers timeframe">
