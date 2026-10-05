@@ -1,0 +1,71 @@
+name: Recover NEAR Profit Sweep 2026-10-05 V2
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths:
+      - ".github/workflows/recover-profit-sweep-near-20261005-v2.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  SOURCE_COMMIT: d7f16e1d36a59ce5e6cb14fe2e101c9e2dfd59c5
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  recover:
+    if: github.actor == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          fetch-depth: 0
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve production runtime service account
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME_SA="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          test -n "$RUNTIME_SA"
+          echo "RUNTIME_SA=$RUNTIME_SA" >> "$GITHUB_ENV"
+
+      - name: Build exact guarded recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/profit-sweep-near-recovery-v2:$SOURCE_COMMIT"
+          docker build --build-arg SOURCE_COMMIT="$SOURCE_COMMIT" -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "RECOVERY_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Execute one-time guarded recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="profit-sweep-near-recovery-v2-${GITHUB_RUN_ID: -8}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$RECOVERY_IMAGE"             --service-account "$RUNTIME_SA"             --command python             --args recover_profit_sweep_near_20261005.py             --max-retries 0             --task-timeout 300s             --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID"             --quiet
+          EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
+          test -n "$EXECUTION"
+          gcloud logging read             "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"PROFIT_SWEEP_NEAR_RECOVERY_20261005=\""             --project "$GCP_PROJECT_ID" --freshness=20m --limit=5 --order=desc --format='value(textPayload)'
