@@ -178,13 +178,15 @@ test("Build 509 makes Bollinger, active-zone shading and day high/low visibly ex
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
   assert.ok(component.includes('rgba(35,190,255,.82)'));
-  assert.ok(component.includes('rgba(255,72,111,.78)'));
+  assert.equal(component.includes('rgba(255,72,111,.78)'),false);
+  assert.ok(component.includes('color:"#e4b84a"'));
   assert.ok(component.includes("High vandaag"));
   assert.ok(component.includes("Low vandaag"));
   assert.ok(component.includes('timeZone:"Europe/Amsterdam"'));
-  assert.ok(component.includes('Array.from({length:4}'));
+  assert.ok(component.includes("const boundaryPrices=Array.from(new Set(rows.flatMap"));
   assert.ok(css.includes("portfolio-koers-day-range"));
-  assert.ok(css.includes("rgba(211,163,28,.28)"));
+  assert.ok(css.includes(".portfolio-koers-structure-level.resistance{color:#ff5967}"));
+  assert.ok(css.includes(".portfolio-koers-structure-level.support{color:#19dda0}"));
 });
 
 test("Portfolio Koers zone overlay renders above the opaque chart canvas",async()=>{
@@ -201,7 +203,7 @@ test("Portfolio Koers UI 4.1 uses straight entry arrows and money-bag TP cluster
   assert.ok(component.includes('<DirectionArrow direction="down"/>'));
   assert.ok(component.includes("portfolio-koers-event-count"));
   assert.ok(component.includes("connectorStyle(label)"));
-  assert.ok(component.includes("openTpCluster(label)"));
+  assert.ok(component.includes("openEventCluster(label)"));
   assert.ok(component.includes("/api/exchanges/aster/closed-trades"));
   assert.ok(component.includes("tpTradesForBucketFromActivity"));
   assert.ok(component.includes("<CoinBadge symbol={trade.symbol}/>"));
@@ -294,12 +296,12 @@ test("Build 413 initial focus drops old distant history while preserving recent 
 test("Build 479 keeps the reference-style longer timeline while visible data drives account autoscale",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   for(const pair of [
-    '"1m":{visibleBars:40',
-    '"5m":{visibleBars:38',
-    '"15m":{visibleBars:36',
-    '"1u":{visibleBars:34',
-    '"4u":{visibleBars:30',
-    '"24u":{visibleBars:26',
+    '"1m":{visibleBars:32',
+    '"5m":{visibleBars:31',
+    '"15m":{visibleBars:30',
+    '"1u":{visibleBars:28',
+    '"4u":{visibleBars:26',
+    '"24u":{visibleBars:24',
   ]) assert.ok(component.includes(pair),pair);
   assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
   assert.equal(component.includes('viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars'),false);
@@ -333,7 +335,7 @@ test("Build 474 keeps the reference marker layer calm without deleting underlyin
   assert.ok(component.includes("selectPortfolioKoersReferenceCandidates"));
   assert.ok(component.includes("{tp:3,long:2,short:2,cashflow:1,other:1}"));
   assert.ok(component.includes("markerRowsRef.current.filter((row)=>row.time===time)"));
-  assert.ok(component.includes("openTpCluster(label)"));
+  assert.ok(component.includes("openEventCluster(label)"));
 });
 
 test("Build 446 keeps calm price-axis typography without a colored last-value badge",async()=>{
@@ -364,7 +366,9 @@ test("Build 422 preserves event-to-candle identity while scrolling and adds no f
   assert.ok(syncBlock.includes("candleIndexByTime"));
   assert.ok(syncBlock.includes("timeToCoordinate(row.time"));
   assert.equal(syncBlock.includes("authenticatedRequest("),false);
-  assert.ok(component.includes("subscribeVisibleLogicalRangeChange(sync)"));
+  assert.ok(component.includes("subscribeVisibleLogicalRangeChange(rememberViewport)"));
+  assert.ok(component.includes("savedViewportRef.current[viewportKey]"));
+  assert.ok(component.includes("manualViewportRef.current[viewportKey]"));
 });
 
 
