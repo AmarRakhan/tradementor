@@ -472,6 +472,7 @@ export function PortfolioKoersChart({
   const bbRefs=useRef<{upper:ISeriesApi<any>|null;middle:ISeriesApi<any>|null;lower:ISeriesApi<any>|null}>({upper:null,middle:null,lower:null});
   const candleDataRef=useRef<Candle[]>([]);
   const markerRowsRef=useRef<Marker[]>([]);
+  const tradeActivityCacheRef=useRef<Record<string,unknown>|null>(null);
   const syncOverlaysRef=useRef<()=>void>(()=>{});
   const advisorZoneLadderRef=useRef<any>(null);
   const activeZoneRef=useRef<number|null>(null);
@@ -1076,11 +1077,24 @@ export function PortfolioKoersChart({
     if(isTp&&existing.length>=expected&&existing.every((trade)=>trade.durationMinutes!==null))return;
     setTpDetailLoading(true);
     try{
-      const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
-      const activity=record(response.recentTradeActivity);
+      let activity:Record<string,unknown>|null=tradeActivityCacheRef.current;
+      let lastError:unknown=null;
+      for(let attempt=0;attempt<2;attempt+=1){
+        try{
+          const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
+          activity=record(response.recentTradeActivity);
+          tradeActivityCacheRef.current=activity;
+          lastError=null;
+          break;
+        }catch(reason){
+          lastError=reason;
+          if(attempt===0)await new Promise((resolve)=>window.setTimeout(resolve,350));
+        }
+      }
+      if(!activity&&lastError)throw lastError;
       const fallback=isTp
-        ? tpTradesForBucketFromActivity(activity,timeframe,Number(label.markerTime)) as TpTrade[]
-        : entryTradesForBucketFromActivity(activity,timeframe,Number(label.markerTime),label.tone==="short"?"SHORT":"LONG");
+        ? tpTradesForBucketFromActivity(activity||{},timeframe,Number(label.markerTime)) as TpTrade[]
+        : entryTradesForBucketFromActivity(activity||{},timeframe,Number(label.markerTime),label.tone==="short"?"SHORT":"LONG");
       const trades=!isTp&&exactMarkerEntries.length?exactMarkerEntries:fallback;
       setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades}:current);
       if(!trades.length)setTpDetailError(isTp?"Geen bevestigde fillregels voor dit cluster gevonden.":"Geen bevestigde entryregels voor dit cluster gevonden.");
@@ -1090,7 +1104,7 @@ export function PortfolioKoersChart({
         setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades:exactMarkerEntries}:current);
         setTpDetailError(exactMarkerEntries.length===expected?"":`Cluster verwacht ${expected} bevestigde entries, maar ${exactMarkerEntries.length} detailregels zijn beschikbaar.`);
       }else{
-        setTpDetailError(advisorErrorText(reason,isTp?"Bevestigde filldetails tijdelijk niet beschikbaar.":"Bevestigde entrydetails tijdelijk niet beschikbaar."));
+        setTpDetailError(isTp?"Filldetails tijdelijk niet beschikbaar · probeer de marker opnieuw.":"Entrydetails tijdelijk niet beschikbaar · probeer de marker opnieuw.");
       }
     }finally{
       setTpDetailLoading(false);

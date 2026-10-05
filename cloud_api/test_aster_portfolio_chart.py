@@ -433,3 +433,29 @@ def test_unconfirmed_entry_audit_row_never_becomes_live_chart_marker():
         {"event": "MULTI_BB_ENTRY", "timestampMs": 61_000, "symbol": "PONSUSDT", "side": "LONG", "orderId": "candidate-only"},
     ]
     assert strategy_audit_trade_markers(rows, "1m") == []
+
+
+def test_confirmed_fill_markers_embed_entry_details_for_chart_without_second_fetch():
+    markers = aggregate_trade_activity({
+        "entries": [{
+            "id": "pons-order-7",
+            "symbol": "PONSUSDT",
+            "side": "LONG",
+            "timestampMs": 61_000,
+            "quantity": 12.0,
+            "averagePrice": 0.3701,
+            "executedNotionalUsd": 4.4412,
+            "clientOrderId": "mbb-pons-7",
+        }],
+        "exits": [],
+    }, "1m")
+    assert len(markers) == 1
+    marker = markers[0]
+    assert marker["count"] == 1
+    assert len(marker["entries"]) == 1
+    entry = marker["entries"][0]
+    assert entry["symbol"] == "PONSUSDT"
+    assert entry["entryPrice"] == 0.3701
+    assert entry["orderId"] == "pons-order-7"
+    assert entry["clientOrderId"] == "mbb-pons-7"
+    assert entry["exchangeConfirmed"] is True

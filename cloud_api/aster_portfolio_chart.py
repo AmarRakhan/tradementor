@@ -528,6 +528,25 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
                     "durationMinutes": _duration_minutes(raw, stamp),
                 })
             if kind == "entry":
+                group.setdefault("entries", [])
+                entry_price = _number(raw.get("averagePrice", raw.get("entryPrice", raw.get("price"))))
+                order_id = str(raw.get("id", raw.get("exchangeTradeId", raw.get("orderId", ""))) or "").strip()
+                client_order_id = str(raw.get("clientOrderId", "") or "").strip()
+                group["entries"].append({
+                    "symbol": str(raw.get("symbol", "")).upper().strip(),
+                    "side": side,
+                    "atMs": stamp,
+                    "entryPrice": entry_price if entry_price > 0 else None,
+                    "notionalUsd": abs(_number(raw.get("executedNotionalUsd", raw.get("notionalUsd")))) or None,
+                    "activityType": str(raw.get("activityType", "ENTRY") or "ENTRY").upper().strip(),
+                    "originZone": raw.get("originZone"),
+                    "soldierId": str(raw.get("soldierId", "") or ""),
+                    "soldierRole": str(raw.get("soldierRole", "") or "").upper().strip(),
+                    "fillQuantity": abs(_number(raw.get("quantity", raw.get("qty")))) or None,
+                    "orderId": order_id,
+                    "clientOrderId": client_order_id,
+                    "exchangeConfirmed": True,
+                })
                 origin = raw.get("originZone")
                 if isinstance(origin, int) or (isinstance(origin, str) and origin.lstrip("-+").isdigit()):
                     group.setdefault("originZones", [])
@@ -545,6 +564,8 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
             group["originZones"].sort()
         if isinstance(group.get("soldierRoles"), list):
             group["soldierRoles"].sort()
+        if isinstance(group.get("entries"), list):
+            group["entries"].sort(key=lambda row: (int(row.get("atMs") or 0), str(row.get("symbol") or "")))
         if group["kind"] == "entry":
             side_letter = "L" if group["side"] == "LONG" else "S"
             amount = group["notionalUsd"]
