@@ -1,0 +1,159 @@
+name: Diagnose NEAR Profit Sweep 2026-10-05
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diag-profit-sweep-near-20261005.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run private read-only NEAR Profit Sweep diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$RUNNER_TEMP/service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
+          RUNTIME_SA="$(python - "$SERVICE_JSON" <<'PY'
+          import json,sys
+          value=json.load(open(sys.argv[1],encoding='utf-8'))
+          print(value['spec']['template']['spec']['serviceAccountName'])
+          PY
+          )"
+          test -n "$RUNTIME_SA"
+          mkdir -p "$RUNNER_TEMP/near-profit-sweep-diag"
+          cat > "$RUNNER_TEMP/near-profit-sweep-diag/Dockerfile" <<'DOCKER'
+          FROM python:3.12-slim
+          RUN pip install --no-cache-dir 'google-cloud-firestore>=2.21,<3'
+          COPY diag.py /diag.py
+          CMD ["python","/diag.py"]
+          DOCKER
+          cat > "$RUNNER_TEMP/near-profit-sweep-diag/diag.py" <<'PY'
+          from datetime import datetime, timezone
+          from zoneinfo import ZoneInfo
+          from google.cloud import firestore
+          import json, os, urllib.request
+
+          db=firestore.Client(project="tradementor-production")
+          ams=ZoneInfo("Europe/Amsterdam")
+          now=datetime.now(timezone.utc)
+          day_start=datetime(2026,10,5,0,0,tzinfo=ams).astimezone(timezone.utc)
+          accounts=[]
+
+          def as_utc(value):
+              return value.astimezone(timezone.utc) if isinstance(value,datetime) else None
+
+          for user in db.collection("users").stream():
+              control=user.reference.collection("executionControls").document("aster").get().to_dict() or {}
+              settings=control.get("profitSweep") if isinstance(control.get("profitSweep"),dict) else {}
+              if settings.get("enabled") is not True:
+                  continue
+              try:
+                  pct=float(settings.get("sweepPercent",0))
+              except Exception:
+                  continue
+              if abs(pct-5.0)>1e-9:
+                  continue
+
+              state=user.reference.collection("asterProfitSweepState").document("current").get().to_dict() or {}
+              near=[]
+              latest=[]
+              for snap in user.reference.collection("asterProfitSweeps").stream():
+                  row=snap.to_dict() or {}
+                  created=as_utc(row.get("createdAt"))
+                  if created is None or created < day_start or created > now:
+                      continue
+                  item={
+                      "id":snap.id,
+                      "symbol":str(row.get("symbol","")).upper(),
+                      "positionSide":str(row.get("positionSide","")).upper(),
+                      "status":str(row.get("status","")).upper(),
+                      "reason":str(row.get("reason",""))[:300],
+                      "exchangeOrderId":str(row.get("exchangeOrderId","")),
+                      "openQuantityBeforeClose":str(row.get("openQuantityBeforeClose","")),
+                      "netRealizedProfit":str(row.get("netRealizedProfit","")),
+                      "sweepContribution":str(row.get("sweepContribution","")),
+                      "bufferBooked":bool(row.get("bufferBooked") is True),
+                      "bufferBookedAmount":str(row.get("bufferBookedAmount","")),
+                      "pendingSavingsAfter":str(row.get("pendingSavingsAfter","")),
+                      "todayTransferredAfter":str(row.get("todayTransferredAfter","")),
+                      "thresholdTransferStatus":str(row.get("thresholdTransferStatus","")),
+                      "createdAt":created.isoformat(),
+                  }
+                  calc=row.get("calculation") if isinstance(row.get("calculation"),dict) else {}
+                  item["calculation"]={
+                      "realizedPnl":str(calc.get("realizedPnl","")),
+                      "closedQuantity":str(calc.get("closedQuantity","")),
+                      "closeCommission":str(calc.get("closeCommission","")),
+                      "allocatedEntryFee":str(calc.get("allocatedEntryFee","")),
+                      "fundingAdjustment":str(calc.get("fundingAdjustment","")),
+                      "otherCostAdjustment":str(calc.get("otherCostAdjustment","")),
+                  }
+                  latest.append(item)
+                  if item["symbol"]=="NEARUSDT":
+                      near.append(item)
+
+              latest.sort(key=lambda x:x["createdAt"], reverse=True)
+              near.sort(key=lambda x:x["createdAt"], reverse=True)
+              accounts.append({
+                  "transferAsset":str(settings.get("transferAsset","")),
+                  "minimumTransfer":str(settings.get("minimumTransfer","")),
+                  "pendingSavings":str(state.get("pendingSavings","")),
+                  "todayTransferred":str(state.get("todayTransferred","")),
+                  "todayKey":str(state.get("todayKey","")),
+                  "inFlight":state.get("inFlight") if isinstance(state.get("inFlight"),dict) else None,
+                  "nearSweepsToday":near[:10],
+                  "latestSweepsToday":latest[:12],
+              })
+
+          report=json.dumps({
+              "generatedAt":now.isoformat(),
+              "matching5PctEnabledAccounts":len(accounts),
+              "accounts":accounts,
+          },separators=(",",":"),sort_keys=True)
+          print("NEAR_PROFIT_SWEEP_DIAG_20261005="+report)
+          token=os.environ.get("DIAG_GH_TOKEN","")
+          repo=os.environ.get("DIAG_REPO","")
+          if token and repo:
+              req=urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/issues/41/comments",
+                  data=json.dumps({"body":"NEAR_PROFIT_SWEEP_DIAG_20261005 "+report}).encode(),
+                  method="POST",
+                  headers={"Authorization":f"Bearer {token}","Accept":"application/vnd.github+json","Content-Type":"application/json","User-Agent":"tradementor-near-profit-sweep-diag"},
+              )
+              with urllib.request.urlopen(req,timeout=20) as response:
+                  assert 200 <= response.status < 300
+          PY
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/near-profit-sweep-diag:$GITHUB_SHA"
+          docker build -t "$IMAGE" "$RUNNER_TEMP/near-profit-sweep-diag"
+          docker push "$IMAGE"
+          JOB="near-profit-sweep-diag-${GITHUB_RUN_ID: -8}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --set-env-vars "DIAG_REPO=$GITHUB_REPOSITORY,DIAG_GH_TOKEN=${{ github.token }}" --quiet
+          EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
+          test -n "$EXECUTION"
