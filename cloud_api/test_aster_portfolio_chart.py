@@ -177,8 +177,8 @@ def test_established_zone_ladder_moves_to_newest_segment_after_warmup():
 
 def test_recent_strategy_audit_events_become_immediate_chart_markers():
     rows = [
-        {"event": "MULTI_BB_ENTRY", "timestampMs": 61_000, "side": "SHORT", "originZone": -2, "soldierRole": "ZONE_BASE"},
-        {"event": "MULTI_BB_DCA", "timestampMs": 65_000, "side": "SHORT"},
+        {"event": "MULTI_BB_ENTRY", "timestampMs": 61_000, "symbol": "BTCUSDT", "side": "SHORT", "originZone": -2, "soldierRole": "ZONE_BASE", "plannedInputNotionalUsd": 12.5},
+        {"event": "MULTI_BB_DCA", "timestampMs": 65_000, "symbol": "ETHUSDT", "side": "SHORT", "entryPrice": 2500.0},
         {"event": "MULTI_BB_TP", "timestampMs": 70_000, "side": "LONG"},
         {"event": "MULTI_BB_DCA_BLOCKED", "timestampMs": 71_000, "side": "LONG"},
     ]
@@ -190,6 +190,13 @@ def test_recent_strategy_audit_events_become_immediate_chart_markers():
     assert short["activityTypes"] == ["DCA", "ENTRY"]
     assert short["originZones"] == [-2]
     assert short["soldierRoles"] == ["ZONE_BASE"]
+    assert len(short["entries"]) == short["count"] == 2
+    assert short["entries"][0]["symbol"] == "BTCUSDT"
+    assert short["entries"][0]["notionalUsd"] == 12.5
+    assert short["entries"][0]["activityType"] == "ENTRY"
+    assert short["entries"][1]["symbol"] == "ETHUSDT"
+    assert short["entries"][1]["entryPrice"] == 2500.0
+    assert short["entries"][1]["activityType"] == "DCA"
     tp = next(row for row in markers if row["kind"] == "tp")
     assert tp["side"] == "ALL"
     assert tp["count"] == 1
