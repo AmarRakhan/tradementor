@@ -26,26 +26,33 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Portfolio Koers · touch lock en verticale grafiekbediening",
+  title: "Trade Intelligence Advisor + Portfolio Koers · release repair",
   newItems: [
+    "Trade Intelligence Advisor Center 1.0 blijft actief tussen Actieve Zone en Portfolio Snapshot.",
+    "De Portfolio Koers touch-lock uit build 521 blijft behouden.",
+    "Het release-history contract is syntactisch hersteld zodat de volledige build- en regressiesuite weer kan draaien.",
     "Touchbewegingen binnen het grafiekvlak blijven exclusief bij Portfolio Koers.",
     "Na inzoomen kan de grafiek weer omhoog en omlaag worden bewogen zonder dat de Aster-pagina meescrollt.",
     "Horizontaal pannen en pinch-zoom blijven actief.",
   ],
   problems: [
+    "Build 520/521 kon niet door de deploymentgate omdat een historisch release-object eindigde op een ongeldige };, combinatie.",
     "Een verticale swipe binnen de grafiek scrolde de hele pagina.",
     "Na vergroten kon het koersbereik niet goed verticaal worden verplaatst.",
   ],
   causes: [
+    "Bij het verplaatsen van build 519 naar de historische release-array bleef de objectterminator foutief als };, staan.",
     "De globale mobiele pagina gebruikt touch-action: pan-y en het grafiekvlak had geen lokale gesture-lock.",
     "Daardoor kon de browser de verticale gesture als paginascroll claimen.",
   ],
   fixes: [
+    "De historische release-array gebruikt weer geldige objectsyntax met },.",
     "portfolio-koers-stage krijgt touch-action:none en overscroll-behavior:none.",
     "De chart canvas-host en onderliggende canvas-wrapper krijgen dezelfde lokale touch-lock.",
     "Lightweight Charts behoudt vertTouchDrag, horzTouchDrag en pinch expliciet ingeschakeld.",
   ],
   now: [
+    "Build 522 bevat zowel het Trade Intelligence Advisor Center als de build-521 chart-touchfix zonder rollback.",
     "Vinger binnen de grafiek: omhoog/omlaag bedient de grafiek en niet de pagina.",
     "Links/rechts blijft de tijdlijn bewegen; pinch blijft zoomen.",
     "Buiten het grafiekvlak blijft normale verticale paginascroll behouden.",
@@ -53,12 +60,25 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   technicalDetails: [
     "Alleen UI/touch-interactie gewijzigd; tradinglogica, scanner, zones en orders zijn ongemoeid.",
     "Videoreferentie: file_00000000b494821085ce3208cb415e50.",
-    "Release-identiteit: Webapp V46 build 521.",
+    "Release-identiteit: Webapp V46 build 522.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-521-portfolio-koers-touch-lock",
+    version: "46",
+    build: "521",
+    releasedAt: "2026-10-06",
+    title: "Portfolio Koers · touch lock en verticale grafiekbediening",
+    newItems: ["Verticale touchbewegingen binnen het chartvlak blijven bij Lightweight Charts."],
+    problems: ["Verticale swipes in de grafiek konden de Aster-pagina scrollen."],
+    causes: ["Het chartvlak had geen lokale gesture-lock."],
+    fixes: ["Touch-action en overscroll-lock lokaal op de Portfolio Koers-stage gezet."],
+    now: ["In build 522 behouden samen met de release-contract repair."],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-520-trade-intelligence-advisor-center",
     version: "46",
@@ -108,7 +128,7 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
       "Release-identiteit: Webapp V46 build 519.",
     ],
     confidence: "confirmed",
-  };,
+  },
   {
     id: "v46-build-518-execution-proof-atomic",
     version: "46",
