@@ -107,10 +107,12 @@ test("more settings exposes every existing advanced configuration family without
   assert.match(v3, /bewust geen fake schakelaars/);
 });
 
-test("V3 quick edit remains BETA-only and STABLE V2 stays untouched", () => {
-  assert.match(shell, /release\?\.channel === "BETA"/);
-  assert.match(shell, /BetaConfiguratorV3/);
-  assert.match(shell, /BetaConfiguratorV2/);
+test("V3 quick edit remains the new opt-in BETA UI while legacy stays available", () => {
+  assert.match(shell, /BotSettingsMode/);
+  assert.match(shell, /ConfiguratorV3/);
+  assert.match(shell, /AsterStrategy2Maker/);
+  assert.match(shell, /Nieuwe configurator/);
+  assert.match(v3, /data-rollout="opt-in-beta"/);
   assert.doesNotMatch(v2, /v31-current/);
   assert.doesNotMatch(v2, /Instellingen wijzigen/);
   assert.doesNotMatch(v2, /file_0000000064fc8210b631ce0a8caebb42/);
