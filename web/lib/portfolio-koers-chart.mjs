@@ -45,7 +45,10 @@ function mergeEntryDetails(left,right) {
   const rows=[...normalizeEntryDetails(left),...normalizeEntryDetails(right)];
   const byKey=new Map();
   for(const row of rows){
-    const key=[row.atMs,row.symbol,row.side,row.activityType,row.soldierId].join("|");
+    const stableExecutionId=row.orderId||row.clientOrderId||"";
+    const key=stableExecutionId
+      ? ["execution",row.symbol,row.side,row.activityType,stableExecutionId].join("|")
+      : [row.atMs,row.symbol,row.side,row.activityType,row.soldierId].join("|");
     const existing=byKey.get(key);
     if(!existing){byKey.set(key,row);continue}
     byKey.set(key,{
