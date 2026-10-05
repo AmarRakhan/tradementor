@@ -216,7 +216,7 @@ def test_scanner_that_becomes_stale_during_deploy_still_fails():
     before_generated = NOW - 180_000
     prior = account(
         lastTickAtMs=NOW - 180_000,
-        scannerUpdatedAtMs=before_generated - 30_000,
+        scannerUpdatedAtMs=before_generated - 90_000,
     )
     current = account(
         lastTickAtMs=NOW - 5_000,
