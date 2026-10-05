@@ -32,6 +32,7 @@ import "./portfolio-snapshot.css";
 import "./portfolio-koers-chart.css";
 import "./trade-intelligence-advisor-center.css";
 import "./aster-compact-chrome.css";
+import "./aster-subtabs.css";
 import "./profit-pot-snapshot.css";
 import "./position-loss-auto-hedge.css";
 import "./liquidation-gauge-hotfix.css";
