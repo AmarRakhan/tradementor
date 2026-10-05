@@ -1,0 +1,98 @@
+name: Recover NEAR Profit Sweep 2026-10-05
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/recovery-requests/profit-sweep-near-20261005.json]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  recover:
+    if: github.actor == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Validate exact one-time recovery request
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST=.github/recovery-requests/profit-sweep-near-20261005.json
+          python - "$REQUEST" > "$RUNNER_TEMP/recovery.env" <<'PY'
+          import json,re,sys
+          req=json.load(open(sys.argv[1],encoding="utf-8"))
+          expected={"action","confirmation","sourceCommit","requestedBy","requestId"}
+          if set(req)!=expected:
+              raise SystemExit(f"unexpected keys: {sorted(req)}")
+          if req["action"]!="recover-profit-sweep-near-20261005":
+              raise SystemExit("invalid action")
+          if req["confirmation"]!="RECOVER_TODAY_NEAR_PROFIT_SWEEP":
+              raise SystemExit("invalid confirmation")
+          if req["requestedBy"]!="AmarRakhan":
+              raise SystemExit("invalid requester")
+          source=str(req["sourceCommit"])
+          if not re.fullmatch(r"[0-9a-f]{40}",source):
+              raise SystemExit("invalid sourceCommit")
+          print(f"SOURCE_COMMIT={source}")
+          PY
+          . "$RUNNER_TEMP/recovery.env"
+          git merge-base --is-ancestor "$SOURCE_COMMIT" HEAD
+          echo "SOURCE_COMMIT=$SOURCE_COMMIT" >> "$GITHUB_ENV"
+
+      - name: Check out exact recovery source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          fetch-depth: 0
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve production runtime service account
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME_SA="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          test -n "$RUNTIME_SA"
+          echo "RUNTIME_SA=$RUNTIME_SA" >> "$GITHUB_ENV"
+
+      - name: Build guarded recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/profit-sweep-near-recovery:$SOURCE_COMMIT"
+          docker build --build-arg SOURCE_COMMIT="$SOURCE_COMMIT" -t "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "RECOVERY_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Execute one-time recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOB="profit-sweep-near-recovery-${GITHUB_RUN_ID: -8}"
+          cleanup() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          gcloud run jobs deploy "$JOB"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$RECOVERY_IMAGE"             --service-account "$RUNTIME_SA"             --command python             --args recover_profit_sweep_near_20261005.py             --max-retries 0             --task-timeout 300s             --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID"             --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --quiet
