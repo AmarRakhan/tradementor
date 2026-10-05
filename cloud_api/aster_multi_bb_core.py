@@ -1214,7 +1214,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             st.update({"dcaCount":next_count,"lastBotFillPrice":fill_price,"lastDcaFillPrice":fill_price,"lastKnownQty":new_qty,"lastKnownEntry":new_entry,"lastBotDcaAtMs":timestamp_ms,"updatedAtMs":timestamp_ms,"nextDcaPrice":next_trigger,"nextDcaDistanceUsd":next_distance_usd,"nextDcaDistancePct":next_distance_pct,"nextDcaDue":next_due,"nextDcaStatus":next_status,"nextDcaNumber":next_count+1 if next_trigger else None,"leverage":int(tier["leverage"]),"lastTierReductionAtMs":timestamp_ms if tier["tierReduction"] else st0.get("lastTierReductionAtMs")})
             state[key]=st
             ref.set({"multiBbPositions":state,"lastTickAt":datetime.now(timezone.utc),"phase":"RUNNING","lastReason":f"Multi DCA actief; DCA {next_count} bevestigd op {symbol} @ {int(tier['leverage'])}x"},merge=True)
-            ref.collection("audit").add({"event":"MULTI_BB_DCA","symbol":symbol,"side":side,"dcaNumber":next_count,"catchup":False,"previousLeverage":tier["previousLeverage"],"leverage":tier["leverage"],"tierReduction":tier["tierReduction"],"projectedNotional":tier["projectedNotional"],"timestamp":datetime.now(timezone.utc)})
+            ref.collection("audit").add({
+                "event":"MULTI_BB_DCA","symbol":symbol,"side":side,"dcaNumber":next_count,"catchup":False,
+                "previousLeverage":tier["previousLeverage"],"leverage":tier["leverage"],"tierReduction":tier["tierReduction"],
+                "projectedNotional":tier["projectedNotional"],"dcaDistancePercent":float(settings.dca_distance)*100.0,
+                "anchorPrice":anchor,"triggerPrice":trigger,"fillPrice":fill_price,"fillQuantity":fill_qty,
+                "orderId":str(fill.get("orderId",fill.get("orderID","")) or ""),
+                "clientOrderId":str(fill.get("clientOrderId",fill.get("clientOrderID","")) or ""),
+                "exchangeConfirmed":True,"timestamp":datetime.now(timezone.utc)
+            })
         available-=required; sent+=1
 
     # pmap was already refreshed from Aster at the start whenever pairing mode is
