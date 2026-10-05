@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "afd635536e8bb986d3cfc1611e3c4ca0de720e02",
+  "sourceCommit": "d7f16e1d36a59ce5e6cb14fe2e101c9e2dfd59c5",
   "requestedBy": "AmarRakhan",
-  "requestId": "build503-active-trades-market-index-20261004"
+  "requestId": "build506-profit-sparen-3-1-20261005"
 }
