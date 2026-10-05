@@ -593,6 +593,10 @@ class InterfacePreferenceRequest(BaseModel):
     mode: str = Field(pattern="^(legacy|premium)$")
 
 
+class BotSettingsUiPreferenceRequest(BaseModel):
+    mode: str = Field(pattern="^(legacy|configurator3)$")
+
+
 class NavigationPreferenceRequest(BaseModel):
     hyperliquid: bool | None = None
     markets: bool | None = None
@@ -3189,12 +3193,33 @@ def _release_channel_enabled(beta_owner: bool, key: str, *, seen: set[str] | Non
     return True
 
 
+def _bot_settings_configurator3_enrolled(user: dict[str, Any]) -> bool:
+    if _is_beta_owner(user):
+        return True
+    value = user_reference(user).collection("preferences").document("botSettingsUi").get().to_dict() or {}
+    return value.get("configurator3Enabled") is True
+
+
+def _bot_settings_configurator3_enrolled_for_uid(uid: str) -> bool:
+    if _is_beta_owner_uid(uid):
+        return True
+    value = user_reference({"uid": uid}).collection("preferences").document("botSettingsUi").get().to_dict() or {}
+    return value.get("configurator3Enabled") is True
+
+
 def _release_feature_enabled(user: dict[str, Any], key: str) -> bool:
+    # Build 507: Zone Warriors remains explicit per-user opt-in. Opening the
+    # new configurator enrolls access, but switching UI tabs never changes the
+    # strategy setting, bot state or live orders.
+    if key == "zone_soldiers" and _bot_settings_configurator3_enrolled(user):
+        return True
     return _release_channel_enabled(_is_beta_owner(user), key)
 
 
 def _release_feature_enabled_for_uid(uid: str, key: str) -> bool:
     """Background-safe entitlement check that rejects forged/stale BETA labels."""
+    if key == "zone_soldiers" and _bot_settings_configurator3_enrolled_for_uid(uid):
+        return True
     profile = user_reference({"uid": uid}).get().to_dict() or {}
     beta_candidate = (
         profile.get("betaOwner") is True
@@ -3217,7 +3242,7 @@ def _release_snapshot(user: dict[str, Any]) -> dict[str, Any]:
         row = _release_feature_record(key)
         features[key] = {
             **row,
-            "enabled": _release_channel_enabled(beta_owner, key),
+            "enabled": _release_feature_enabled(user, key),
             "ownerOnly": False,
             "requires": list(_RELEASE_FEATURE_DEPENDENCIES.get(key, ())),
         }
@@ -4756,6 +4781,32 @@ def save_interface_preference(request: InterfacePreferenceRequest,
         "updatedAt": now,
     }, merge=True)
     return {"mode": request.mode, "saved": True}
+
+
+@app.get("/v1/me/preferences/bot-settings-ui")
+def get_bot_settings_ui_preference(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    snapshot = user_reference(user).collection("preferences").document("botSettingsUi").get()
+    value = snapshot.to_dict() or {}
+    default_mode = "configurator3" if _is_beta_owner(user) else "legacy"
+    mode = str(value.get("mode") or default_mode)
+    if mode not in {"legacy", "configurator3"}:
+        mode = default_mode
+    enrolled = value.get("configurator3Enabled") is True or _is_beta_owner(user)
+    return {"mode": mode, "configurator3Enabled": enrolled, "configured": bool(snapshot.exists)}
+
+
+@app.put("/v1/me/preferences/bot-settings-ui")
+def save_bot_settings_ui_preference(request: BotSettingsUiPreferenceRequest,
+                                    user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    reference = user_reference(user).collection("preferences").document("botSettingsUi")
+    current = reference.get().to_dict() or {}
+    enrolled = bool(current.get("configurator3Enabled")) or request.mode == "configurator3" or _is_beta_owner(user)
+    reference.set({
+        "mode": request.mode,
+        "configurator3Enabled": enrolled,
+        "updatedAt": datetime.now(timezone.utc),
+    }, merge=True)
+    return {"mode": request.mode, "configurator3Enabled": enrolled, "configured": True, "saved": True}
 
 
 _NAVIGATION_PREFERENCE_FIELDS = ("hyperliquid", "markets", "sniper", "news", "friends", "journey")
