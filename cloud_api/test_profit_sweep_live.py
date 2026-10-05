@@ -72,6 +72,8 @@ class FakeClient:
             "id": 2, "orderId": 99, "symbol": "BTCUSDT", "positionSide": "LONG", "side": "SELL",
             "qty": "1", "commission": "-0.05", "commissionAsset": "USDT", "realizedPnl": "4", "time": 2000,
         }]
+    def position_risk(self):
+        return [{"symbol": "BTCUSDT", "positionSide": "LONG", "positionAmt": "1", "entryPrice": "100"}]
     def user_trades(self, symbol, **kwargs):
         self.calls += 1
         return list(self.pre if self.calls == 1 else self.post)
@@ -602,3 +604,91 @@ def test_live_sweep_uses_configured_usdc_asset(monkeypatch):
     assert client.transfers[0][2]["asset"] == "USDC"
     ledger = user.collection("asterProfitSweeps").document(prepared.sweep_id).data
     assert ledger["asset"] == "USDC"
+
+
+def test_strategy_neutral_partial_close_uses_exchange_position_when_history_mismatches(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5, asset="USDC", minimum=1.0)
+    user.collection("asterProfitSweepState").document("current").set({
+        "pendingSavings": "0.10396818", "todayTransferred": "0",
+        "todayKey": "2026-10-04", "transferSequence": 0,
+    })
+
+    class NearRecoveryClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.pre = [{
+                "id": 1, "orderId": 10, "symbol": "NEARUSDT", "positionSide": "LONG",
+                "side": "BUY", "qty": "10", "commission": "-0.01",
+                "commissionAsset": "USDT", "realizedPnl": "0", "time": 1000,
+            }]
+            self.post = [*self.pre, {
+                "id": 2, "orderId": 1253220410, "symbol": "NEARUSDT",
+                "positionSide": "LONG", "side": "SELL", "qty": "18",
+                "commission": "-0.0372096", "commissionAsset": "USDT",
+                "realizedPnl": "2.329", "time": 2000,
+            }]
+        def position_risk(self):
+            # Exchange truth says 36 LONG existed before the 50% close. The
+            # opposite SHORT/Recovery leg may coexist and is irrelevant here.
+            return [
+                {"symbol": "NEARUSDT", "positionSide": "LONG", "positionAmt": "36", "entryPrice": "2.5"},
+                {"symbol": "NEARUSDT", "positionSide": "SHORT", "positionAmt": "-36", "entryPrice": "3.0"},
+            ]
+
+    client = NearRecoveryClient()
+    prepared = prepare_close_sweep(
+        uid="near-usdc", user_ref=user, client=client, intent_id="near-half-close",
+        symbol="NEARUSDT", position_side="LONG", close_quantity="18",
+    )
+    assert prepared is not None
+    assert prepared.open_quantity == Decimal("36")
+    assert prepared.calculation_evidence == "PARTIAL_COST_EVIDENCE"
+
+    result = finalize_close_sweep(
+        prepared, client=client,
+        confirmed_order={"orderId": 1253220410, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+    # Conservative fallback uses proven close commission and does not invent
+    # unproven historical costs. It still books a proven positive close.
+    assert result["contribution"] == "0.11458952"
+    assert result["pendingSavings"] == "0.2185577"
+    assert result["transferred"] == "0"
+    assert client.transfers == []
+    ledger = user.collection("asterProfitSweeps").document(prepared.sweep_id).data
+    assert ledger["calculationEvidence"] == "PARTIAL_COST_EVIDENCE"
+    assert ledger["realizedPnlSource"] == "ASTER_CONFIRMED_ORDER_FILLS"
+    assert ledger["bufferBooked"] is True
+
+
+def test_strategy_neutral_partial_percentages_book_only_confirmed_closed_part(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    for pct, close_qty in ((25, "25"), (50, "50"), (75, "75"), (100, "100")):
+        user = FakeUserRef(enabled=True, percent=5, minimum=999)
+        class PartialClient(FakeClient):
+            def __init__(self):
+                super().__init__()
+                self.pre = [{
+                    "id": 1, "orderId": 1, "symbol": "BTCUSDT", "positionSide": "LONG",
+                    "side": "BUY", "qty": "100", "commission": "-1",
+                    "commissionAsset": "USDT", "realizedPnl": "0", "time": 1000,
+                }]
+                self.post = [*self.pre, {
+                    "id": 2, "orderId": 99, "symbol": "BTCUSDT", "positionSide": "LONG",
+                    "side": "SELL", "qty": close_qty, "commission": "-0.1",
+                    "commissionAsset": "USDT", "realizedPnl": "4", "time": 2000,
+                }]
+            def position_risk(self):
+                return [{"symbol": "BTCUSDT", "positionSide": "LONG", "positionAmt": "100", "entryPrice": "100"}]
+        client = PartialClient()
+        prepared = prepare_close_sweep(
+            uid=f"partial-{pct}", user_ref=user, client=client, intent_id=f"partial-{pct}",
+            symbol="BTCUSDT", position_side="LONG", close_quantity=close_qty,
+        )
+        assert prepared is not None
+        result = finalize_close_sweep(
+            prepared, client=client,
+            confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+        )
+        assert Decimal(result["contribution"]) > 0
+        assert result["transferred"] == "0"
