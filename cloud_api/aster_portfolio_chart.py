@@ -575,6 +575,7 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         "MANUAL_DCA_DETECTED": ("entry", None, "ADD"),
     }
     groups: dict[tuple[int, str, str], dict[str, Any]] = {}
+    seen_entry_execution_ids: set[str] = set()
     for raw in rows or []:
         if not isinstance(raw, dict):
             continue
@@ -589,6 +590,30 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
             continue
         if kind == "entry" and side not in {"LONG", "SHORT"}:
             continue
+        if kind == "entry":
+            # The fast Portfolio Koers feed must represent executions, not
+            # reconciliation/snapshot observations. A Strategy-2 audit row is
+            # eligible only when the execution path explicitly confirmed the
+            # exchange result and persisted a stable order/fill identity.
+            if raw.get("exchangeConfirmed") is not True:
+                continue
+            execution_id = ""
+            for field in ("orderId", "clientOrderId", "exchangeTradeId", "tradeId", "fillId"):
+                value = str(raw.get(field, "") or "").strip()
+                if value:
+                    execution_id = f"{field}:{value}"
+                    break
+            if not execution_id:
+                continue
+            identity = "|".join((
+                str(raw.get("symbol", "")).upper().strip(),
+                side,
+                activity_type,
+                execution_id,
+            ))
+            if identity in seen_entry_execution_ids:
+                continue
+            seen_entry_execution_ids.add(identity)
         group_side = side if kind == "entry" else "ALL"
         bucket = bucket_start_ms(stamp, timeframe)
         key = (bucket, kind, group_side)
@@ -626,7 +651,7 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
                 "fillQuantity": _number(raw.get("fillQuantity")) if _number(raw.get("fillQuantity")) > 0 else None,
                 "orderId": str(raw.get("orderId", "") or ""),
                 "clientOrderId": str(raw.get("clientOrderId", "") or ""),
-                "exchangeConfirmed": bool(raw.get("exchangeConfirmed")) or (event == "MULTI_BB_DCA"),
+                "exchangeConfirmed": raw.get("exchangeConfirmed") is True,
             }
             group.setdefault("entries", [])
             group["entries"].append(entry_detail)
