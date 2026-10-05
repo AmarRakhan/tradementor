@@ -13,6 +13,7 @@ from profit_sweep_live import (
     prepare_close_sweep,
     _recovery_client_tran_id,
     recover_failed_sweep,
+    recover_blocked_close_to_buffer,
     transfer_safety,
 )
 
@@ -602,3 +603,215 @@ def test_live_sweep_uses_configured_usdc_asset(monkeypatch):
     assert client.transfers[0][2]["asset"] == "USDC"
     ledger = user.collection("asterProfitSweeps").document(prepared.sweep_id).data
     assert ledger["asset"] == "USDC"
+
+
+class StrategyNeutralMismatchClient(FakeClient):
+    """Exchange position is authoritative even when legacy fill reconstruction disagrees."""
+    def __init__(self, *, close_qty="50", realized="3"):
+        super().__init__()
+        self.close_qty = str(close_qty)
+        self.realized = str(realized)
+        self.pre = [{
+            "id": 1, "orderId": 10, "symbol": "NEARUSDT", "positionSide": "LONG", "side": "BUY",
+            "qty": "40", "price": "10", "commission": "-0.04", "commissionAsset": "USDT",
+            "realizedPnl": "0", "time": 1000,
+        }]
+        self.post = [*self.pre, {
+            "id": 2, "orderId": 99, "symbol": "NEARUSDT", "positionSide": "LONG", "side": "SELL",
+            "qty": self.close_qty, "price": "11", "commission": "-0.03", "commissionAsset": "USDT",
+            "realizedPnl": self.realized, "time": 2000,
+        }]
+
+    def position_risk(self, symbol=None):
+        return [
+            {"symbol": "NEARUSDT", "positionSide": "LONG", "positionAmt": "100", "entryPrice": "10"},
+            # Opposite hedge/recovery leg deliberately remains open.
+            {"symbol": "NEARUSDT", "positionSide": "SHORT", "positionAmt": "-80", "entryPrice": "15"},
+        ]
+
+
+def test_profit_sweep_uses_exchange_preclose_truth_when_legacy_inventory_mismatches(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5, asset="USDC", minimum=1.0)
+    user.collection("asterProfitSweepState").document("current").set({
+        "pendingSavings": "0.10396818",
+        "todayTransferred": "0",
+        "todayKey": "2026-10-04",
+        "transferSequence": 0,
+    })
+    client = StrategyNeutralMismatchClient(close_qty="50", realized="3")
+
+    prepared = prepare_close_sweep(
+        uid="near-recovery",
+        user_ref=user,
+        client=client,
+        intent_id="near-half-close",
+        symbol="NEARUSDT",
+        position_side="LONG",
+        close_quantity="50",
+    )
+
+    assert prepared is not None
+    assert prepared.open_quantity == Decimal("100")
+    assert prepared.calculation_evidence == "PARTIAL_COST_EVIDENCE"
+
+    result = finalize_close_sweep(
+        prepared,
+        client=client,
+        confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+
+    assert result["status"] == "BUFFERED"
+    assert Decimal(result["contribution"]) > 0
+    assert Decimal(result["pendingSavings"]) > Decimal("0.10396818")
+    assert result["transferred"] == "0"
+    assert client.transfers == []
+    ledger = user.collection("asterProfitSweeps").document(prepared.sweep_id).data
+    assert ledger["bufferBooked"] is True
+    assert ledger["calculationEvidence"] == "PARTIAL_COST_EVIDENCE"
+    assert ledger["calculation"]["closedQuantity"] == "50"
+
+
+def test_strategy_neutral_profit_sweep_supports_25_50_75_100_percent_closes(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    for percentage, qty in ((25, "25"), (50, "50"), (75, "75"), (100, "100")):
+        user = FakeUserRef(enabled=True, percent=5, asset="USDC", minimum=1.0)
+        client = StrategyNeutralMismatchClient(close_qty=qty, realized="2")
+        prepared = prepare_close_sweep(
+            uid=f"pct-{percentage}",
+            user_ref=user,
+            client=client,
+            intent_id=f"near-close-{percentage}",
+            symbol="NEARUSDT",
+            position_side="LONG",
+            close_quantity=qty,
+        )
+        assert prepared is not None
+        result = finalize_close_sweep(
+            prepared,
+            client=client,
+            confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+        )
+        assert result["status"] == "BUFFERED"
+        assert Decimal(result["contribution"]) > 0
+        assert result["transferred"] == "0"
+        ledger = user.collection("asterProfitSweeps").document(prepared.sweep_id).data
+        assert ledger["calculation"]["closedQuantity"] == qty
+
+
+def test_strategy_neutral_fallback_never_saves_nonpositive_close(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5, asset="USDC", minimum=1.0)
+    client = StrategyNeutralMismatchClient(close_qty="50", realized="-1")
+    prepared = prepare_close_sweep(
+        uid="near-loss",
+        user_ref=user,
+        client=client,
+        intent_id="near-loss-half",
+        symbol="NEARUSDT",
+        position_side="LONG",
+        close_quantity="50",
+    )
+    assert prepared is not None
+    result = finalize_close_sweep(
+        prepared,
+        client=client,
+        confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+    assert result["status"] == "SKIPPED_NONPOSITIVE"
+    state = user.collection("asterProfitSweepState").document("current").data
+    assert Decimal(str(state.get("pendingSavings", "0"))) == Decimal("0")
+    assert client.transfers == []
+
+
+def test_today_blocked_recovery_adds_to_existing_buffer_once_without_spot_transfer(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5, asset="USDC", minimum=1.0)
+    state = user.collection("asterProfitSweepState").document("current")
+    state.set({
+        "pendingSavings": "0.10396818",
+        "todayTransferred": "0",
+        "todayKey": "2026-10-04",
+        "transferSequence": 0,
+    })
+    sweep_id = "blocked-near-today"
+    ledger = user.collection("asterProfitSweeps").document(sweep_id)
+    ledger.set({
+        "uid": "u-recovery",
+        "exchange": "ASTER",
+        "closureId": "near-half",
+        "symbol": "NEARUSDT",
+        "positionSide": "LONG",
+        "sweepPercent": 5.0,
+        "asset": "USDC",
+        "status": "BLOCKED_EVIDENCE",
+        "bufferBooked": False,
+        "reason": "Open inventory en sluitingshoeveelheid komen niet betrouwbaar overeen",
+    })
+    client = StrategyNeutralMismatchClient(close_qty="50", realized="3")
+    # Recovery reads the already-confirmed fill set in one shot.
+    client.calls = 1
+
+    first = recover_blocked_close_to_buffer(
+        uid="u-recovery",
+        user_ref=user,
+        client=client,
+        sweep_id=sweep_id,
+        exchange_order_id="99",
+        expected_pre_close_quantity="100",
+    )
+    assert first["status"] == "BUFFERED"
+    assert first["transferred"] == "0"
+    assert Decimal(first["pendingSavings"]) > Decimal("0.10396818")
+    assert client.transfers == []
+
+    after_first = Decimal(first["pendingSavings"])
+    second = recover_blocked_close_to_buffer(
+        uid="u-recovery",
+        user_ref=user,
+        client=client,
+        sweep_id=sweep_id,
+        exchange_order_id="99",
+        expected_pre_close_quantity="100",
+    )
+    assert second["status"] == "ALREADY_BOOKED"
+    assert Decimal(second["pendingSavings"]) == after_first
+    assert client.transfers == []
+    restored = user.collection("asterProfitSweeps").document(sweep_id).data
+    assert restored["recoveredProfitSweep"] is True
+    assert restored["recoveryReason"] == "TODAY_BLOCKED_EVIDENCE_BACKFILL"
+    assert restored["thresholdTransferStatus"] == "RECOVERY_BUFFERED_NO_TRANSFER"
+
+
+def test_history_read_failure_does_not_drop_proven_exchange_close(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+
+    class HistoryFailClient(StrategyNeutralMismatchClient):
+        def user_trades(self, symbol, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("legacy history temporarily unavailable")
+            return list(self.post)
+
+    user = FakeUserRef(enabled=True, percent=5, asset="USDC", minimum=1.0)
+    client = HistoryFailClient(close_qty="50", realized="3")
+    prepared = prepare_close_sweep(
+        uid="history-fail",
+        user_ref=user,
+        client=client,
+        intent_id="near-history-fail",
+        symbol="NEARUSDT",
+        position_side="LONG",
+        close_quantity="50",
+    )
+    assert prepared is not None
+    assert prepared.open_quantity == Decimal("100")
+    assert prepared.calculation_evidence == "PARTIAL_COST_EVIDENCE"
+
+    result = finalize_close_sweep(
+        prepared,
+        client=client,
+        confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+    assert result["status"] == "BUFFERED"
+    assert Decimal(result["contribution"]) > 0
