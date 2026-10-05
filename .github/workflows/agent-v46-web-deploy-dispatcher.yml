@@ -29,9 +29,12 @@ jobs:
           test "${#COMMIT}" -eq 40
           BRANCH_SHA="$(gh api "repos/$GITHUB_REPOSITORY/branches/$TARGET_BRANCH" --jq .commit.sha)"
           test "$BRANCH_SHA" = "$COMMIT"
+          REQUESTED_BUILD="$(printf '%s\n' "$REQUEST_BODY" | sed -nE 's/^[[:space:]]*build:[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' | head -1)"
           BUILD="$(gh api "repos/$GITHUB_REPOSITORY/contents/web/lib/app-version.ts?ref=$TARGET_BRANCH" --jq .content | base64 -d | sed -n 's/^export const WEBAPP_BUILD_NUMBER = "\([0-9][0-9]*\)";/\1/p')"
-          test "$BUILD" = "380"
+          test -n "$REQUESTED_BUILD"
+          test "$BUILD" = "$REQUESTED_BUILD"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
 
       - name: Dispatch canonical V46 deployment
         shell: bash
@@ -43,12 +46,13 @@ jobs:
         shell: bash
         env:
           COMMIT: ${{ steps.validate.outputs.commit }}
+          BUILD: ${{ steps.validate.outputs.build }}
         run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Verified V46 build 380 source $COMMIT and dispatched the canonical candidate → healthcheck → production web deployment."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Verified V46 build $BUILD source $COMMIT and dispatched the canonical candidate → healthcheck → production web deployment."
           gh issue close "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --reason completed
 
       - name: Report rejected request
         if: failure()
         shell: bash
         run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "V46 web deployment request was rejected before deployment. The requested commit must exactly equal the current amar-crypto-bot-2026-cloud head and that head must declare build 380."
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "V46 web deployment request was rejected before deployment. The requested commit must exactly equal the current amar-crypto-bot-2026-cloud head and the requested build must match that head."
