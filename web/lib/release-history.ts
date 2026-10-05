@@ -26,39 +26,51 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Trade Intelligence Advisor · interne lijstscroll",
+  title: "Trade Intelligence Advisor · goedgekeurde AI-mascotte",
   newItems: [
-    "Mijn posities, Verliezers en Winnaars tonen nu alle regels in plaats van maximaal zes.",
-    "De muntentabel heeft een eigen verticale scrollzone binnen het Advisor Center.",
-    "De tabel behoudt een compacte vaste hoogte terwijl honderdplus posities intern doorzoekbaar blijven.",
+    "De zelfgetekende SVG-mascotte is vervangen door de goedgekeurde rastermascotte uit de referentie.",
+    "De originele 130×140-verhouding blijft behouden zonder crop of schaalvervorming.",
+    "De mascotte blijft linksboven naast de Trade Intelligence Advisor Center-titel staan.",
   ],
   problems: [
-    "De tabteller kon meer dan honderd posities tonen terwijl slechts zes regels werden gerenderd.",
-    "Een verticale swipe over de tabel scrolde daardoor de hele Aster-pagina in plaats van de Advisor-lijst.",
+    "De live mascotte was een alternatieve SVG-interpretatie en week zichtbaar af van het goedgekeurde AI-poppetje.",
   ],
   causes: [
-    "De eerste Advisor-release beperkte de zichtbare rows expliciet met slice(0, 6).",
-    "De tabelbody had geen eigen overflow-container en kon touch-scroll dus niet claimen.",
+    "De eerste implementatie gebruikte een opnieuw getekende vectorasset in plaats van de goedgekeurde rasterasset.",
   ],
   fixes: [
-    "De zes-regels-limiet is verwijderd.",
-    "tia-table-body gebruikt eigen overflow-y:auto, touch-action:pan-y, iOS momentum scrolling en overscroll containment.",
-    "Bij wisselen van tab start de interne lijst weer bovenaan.",
+    "Exacte PNG-asset toegevoegd als web/public/trade-intelligence-mascot.png.",
+    "De component gebruikt voortaan de PNG en niet meer de vervangende SVG.",
+    "object-fit is op contain gezet en de container gebruikt exact aspect-ratio 13/14 zodat geen delen worden afgesneden of uitgerekt.",
   ],
   now: [
-    "De teller en de werkelijk bereikbare regels zijn gelijk: alle posities binnen de gekozen tab zijn bereikbaar.",
-    "Scrollen met de vinger in de muntentabel beweegt de lijst; scrollen buiten de tabel blijft de pagina bewegen.",
-    "Trade Intelligence Advisor, Portfolio Koers touch-lock en alle bestaande tradinglogica blijven behouden.",
+    "Het Advisor Center gebruikt dezelfde goedgekeurde mascotte-asset als visuele waarheid.",
+    "Tabs, posities, interne scroll, P&L, adviezen, actieknoppen en alle tradinglogica zijn ongewijzigd.",
   ],
   technicalDetails: [
-    "Videoreferentie: file_00000000ffb481f49ac6ea178bf6da19.",
-    "Frontend-only: web/components/trade-intelligence-advisor-center.tsx en web/app/trade-intelligence-advisor-center.css.",
-    "Release-identiteit: Webapp V46 build 523.",
+    "Master reference karakter: file_000000000cd88210a1cb98214824c4cc.",
+    "Plaatsingsreference: file_00000000243882108ac4bfd6d08c28e0.",
+    "Goedgekeurde rasterasset: 130×140 PNG, zonder hertekening.",
+    "Release-identiteit: Webapp V46 build 524.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-523-trade-intelligence-internal-scroll",
+    version: "46",
+    build: "523",
+    releasedAt: "2026-10-06",
+    title: "Trade Intelligence Advisor · interne lijstscroll",
+    newItems: ["Alle posities zijn bereikbaar via een eigen interne scrollzone."],
+    problems: ["De eerste versie renderde maximaal zes regels terwijl de teller honderdplus posities kon tonen."],
+    causes: ["slice(0, 6) plus ontbrekende interne overflow-container."],
+    fixes: ["Zes-regels-limiet verwijderd en touch/momentum scroll toegevoegd."],
+    now: ["Behouden in build 524."],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-522-release-contract-repair",
     version: "46",
