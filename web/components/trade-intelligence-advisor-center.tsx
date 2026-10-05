@@ -192,7 +192,7 @@ export function TradeIntelligenceAdvisorCenter({
 
   return <section className="tia-center" data-reference="file_000000000cd88210a1cb98214824c4cc" aria-label="Trade Intelligence Advisor Center">
     <header className="tia-head">
-      <div className="tia-mascot" aria-hidden="true"><img src="/trade-intelligence-mascot.svg" alt="" /></div>
+      <div className="tia-mascot" aria-hidden="true"><img src="/trade-intelligence-mascot.png" alt="" /></div>
       <div className="tia-heading">
         <div className="tia-title-row"><h2>Trade Intelligence Advisor Center</h2><span className={snapshot.live ? "tia-live live" : "tia-live"}><i />{snapshot.live ? "Live" : "Sync"}</span></div>
         <strong>Slimmere trades. Sterker portfolio.</strong>
