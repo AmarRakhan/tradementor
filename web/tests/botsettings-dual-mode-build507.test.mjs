@@ -41,7 +41,7 @@ test("legacy and configurator 3 remain two frontends on the same existing settin
   assert.match(shell, /<ConfiguratorV3 \{\.\.\.props\}/);
   assert.match(legacy, /embedded = false/);
   assert.match(v3, /\/api\/exchanges\/aster\/strategy2\/settings/);
-  assert.match(legacy, /\/api\/exchanges\/aster\/strategy2\/settings/);
+  assert.match(legacy, /\/api\/exchanges\/aster\/strategy2\/\$\{route\}/);
 });
 
 test("normal users default to legacy while beta owner defaults to configurator3", () => {
