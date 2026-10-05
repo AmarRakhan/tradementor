@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 170" role="img" aria-label="Trade Intelligence Advisor">
+<defs>
+  <radialGradient id="bg" cx="50%" cy="45%" r="65%"><stop offset="0" stop-color="#123e29"/><stop offset=".55" stop-color="#071c15"/><stop offset="1" stop-color="#03100c"/></radialGradient>
+  <linearGradient id="gold" x1="0" x2="1"><stop stop-color="#f6df75"/><stop offset=".45" stop-color="#c49628"/><stop offset="1" stop-color="#765414"/></linearGradient>
+  <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f4e0a1"/><stop offset=".24" stop-color="#8d742d"/><stop offset=".55" stop-color="#29382c"/><stop offset=".8" stop-color="#d8b354"/><stop offset="1" stop-color="#46360f"/></linearGradient>
+  <linearGradient id="face" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#12382a"/><stop offset="1" stop-color="#020b08"/></linearGradient>
+  <filter id="glow"><feGaussianBlur stdDeviation="2.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<rect width="160" height="170" rx="24" fill="url(#bg)"/>
+<ellipse cx="79" cy="157" rx="53" ry="9" fill="#000" opacity=".42"/>
+<path d="M70 17c-8-10-5-15 2-15 7 0 10 4 8 11" fill="none" stroke="url(#gold)" stroke-width="5" stroke-linecap="round"/>
+<circle cx="82" cy="12" r="5" fill="#22f1a5" stroke="#d9b33d" stroke-width="2" filter="url(#glow)"/>
+<path d="M41 46C48 29 62 23 81 23s34 7 40 24l4 38c1 18-13 31-31 31H67c-18 0-32-13-31-31z" fill="url(#metal)" stroke="#edc54e" stroke-width="2"/>
+<rect x="46" y="44" width="68" height="55" rx="25" fill="url(#face)" stroke="#2d6e50" stroke-width="2"/>
+<ellipse cx="67" cy="68" rx="8" ry="12" fill="#20f5a4" filter="url(#glow)"/>
+<ellipse cx="94" cy="68" rx="8" ry="12" fill="#20f5a4" filter="url(#glow)"/>
+<path d="M69 87c7 6 16 6 23 0" fill="none" stroke="#27eda7" stroke-width="4" stroke-linecap="round" filter="url(#glow)"/>
+<path d="M35 61c-13 4-17 14-14 25 3 10 10 16 20 16" fill="none" stroke="url(#metal)" stroke-width="10" stroke-linecap="round"/>
+<path d="M124 61c13 4 17 14 14 25-3 10-10 16-20 16" fill="none" stroke="url(#metal)" stroke-width="10" stroke-linecap="round"/>
+<path d="M59 111c-18 7-25 18-26 38l24 7h47l24-7c-1-20-9-32-27-38" fill="url(#metal)" stroke="#b98822" stroke-width="2"/>
+<circle cx="80" cy="132" r="18" fill="#07150f" stroke="#d4a82e" stroke-width="2"/>
+<text x="80" y="140" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="900" fill="#1ff0a3" filter="url(#glow)">AI</text>
+<path d="M43 119c-15 2-27 14-31 31l15 4c4-11 10-18 21-20" fill="url(#metal)" stroke="#ad801f" stroke-width="2"/>
+<path d="M116 119c15 2 27 14 31 31l-15 4c-4-11-10-18-21-20" fill="url(#metal)" stroke="#ad801f" stroke-width="2"/>
+<path d="M68 27c-7-8-6-16-1-23 4 7 8 8 13 4 5 6 10 6 15 0 2 7 0 14-7 20" fill="#71b55b" stroke="#c9b64d" stroke-width="2"/>
+</svg>
