@@ -9,6 +9,49 @@ function finite(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function normalizeEntryDetails(rows) {
+  return (Array.isArray(rows) ? rows : []).flatMap((raw)=>{
+    if(!raw || typeof raw!=="object") return [];
+    const atMs=Math.max(0,Math.floor(finite(raw.atMs||raw.timestampMs||raw.time)));
+    const side=String(raw.side||"").toUpperCase().trim();
+    const symbol=String(raw.symbol||"").toUpperCase().trim();
+    const entryPrice=finite(raw.entryPrice||raw.fillPrice||raw.price);
+    const notionalUsd=finite(raw.notionalUsd||raw.executedNotionalUsd||raw.plannedInputNotionalUsd||raw.configuredNotionalUsd);
+    const originRaw=raw.originZone;
+    const originZone=(typeof originRaw==="number"&&Number.isInteger(originRaw))||(typeof originRaw==="string"&&originRaw.trim()!==""&&Number.isInteger(Number(originRaw)))?Number(originRaw):null;
+    return [{
+      symbol,
+      side,
+      atMs,
+      entryPrice:entryPrice>0?entryPrice:null,
+      notionalUsd:notionalUsd>0?notionalUsd:null,
+      activityType:String(raw.activityType||"").toUpperCase().trim(),
+      originZone,
+      soldierId:String(raw.soldierId||""),
+      soldierRole:String(raw.soldierRole||"").toUpperCase().trim(),
+    }];
+  });
+}
+
+function mergeEntryDetails(left,right) {
+  const rows=[...normalizeEntryDetails(left),...normalizeEntryDetails(right)];
+  const byKey=new Map();
+  for(const row of rows){
+    const key=[row.atMs,row.symbol,row.side,row.activityType,row.soldierId].join("|");
+    const existing=byKey.get(key);
+    if(!existing){byKey.set(key,row);continue}
+    byKey.set(key,{
+      ...existing,
+      ...row,
+      entryPrice:row.entryPrice??existing.entryPrice??null,
+      notionalUsd:row.notionalUsd??existing.notionalUsd??null,
+      originZone:row.originZone??existing.originZone??null,
+      soldierRole:row.soldierRole||existing.soldierRole||"",
+    });
+  }
+  return [...byKey.values()].sort((a,b)=>a.atMs-b.atMs||String(a.symbol).localeCompare(String(b.symbol)));
+}
+
 function normalizeTpTrades(rows) {
   return (Array.isArray(rows) ? rows : []).flatMap((raw)=>{
     if(!raw || typeof raw!=="object") return [];
@@ -36,6 +79,7 @@ export function normalizePortfolioKoersPayload(raw) {
     ...row, time:Math.floor(finite(row.time)), atMs:Math.floor(finite(row.atMs)) || Math.floor(finite(row.time))*1000,
     count:Math.max(1,Math.floor(finite(row.count))), notionalUsd:finite(row.notionalUsd), realizedPnlUsd:finite(row.realizedPnlUsd), amountUsd:finite(row.amountUsd),
     trades:normalizeTpTrades(row.trades),
+    entries:normalizeEntryDetails(row.entries),
   })).sort((a,b)=>a.time-b.time);
   const zones = (Array.isArray(source.zones) ? source.zones : []).filter((row)=>row && typeof row==="object").map((row)=>({
     index:Math.trunc(finite(row.index)), label:String(row.label||""), center:finite(row.center), lower:finite(row.lower), upper:finite(row.upper),
@@ -84,6 +128,7 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
     const existingTrades=normalizeTpTrades(existing?.trades);
     const rawTrades=normalizeTpTrades(raw.trades);
     const trades=rawTrades.length?rawTrades:existingTrades;
+    const entries=mergeEntryDetails(existing?.entries,raw.entries);
     if(!existing){
       byKey.set(key,{
         ...raw,time,
@@ -92,7 +137,7 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
         notionalUsd:finite(raw.notionalUsd),
         realizedPnlUsd:finite(raw.realizedPnlUsd),
         amountUsd:finite(raw.amountUsd),
-        originZones,soldierRoles,activityTypes,trades,
+        originZones,soldierRoles,activityTypes,trades,entries,entries,
       });
       continue;
     }
