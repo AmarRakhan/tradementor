@@ -314,7 +314,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     try {
       const outgoingSettings = kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
       const outgoingSizingMode = String(outgoingSettings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
-      if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
+      const zoneWarriorsActive = persisted.zoneSoldiersEnabled === true && Number(persisted.zoneSoldiersOptInVersion ?? 0) >= 1;
+      if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || (!zoneWarriorsActive && settings.longSlots + settings.shortSlots !== settings.maximumPositions)) throw new Error("Positielimieten zijn ongeldig: maximaal 400 totaal; bij Classic DCA moet LONG + SHORT exact gelijk zijn aan totaal.");
       // Minimum leverage is only a candidate floor. Automatic Top-N still resolves every
       // symbol at its actual maximum valid leverage unless Maximum leverage supplies an
       // optional cap, and skips symbols whose Aster maximum cannot satisfy the minimum.
