@@ -15,7 +15,7 @@ import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierO
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
-type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null};
+type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null};
 type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];source?:string};
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
@@ -94,7 +94,22 @@ const accountUsd=(value:number|null|undefined)=>Number.isFinite(Number(value))
 const durationLabel=(minutes:number|null|undefined)=>Number.isFinite(Number(minutes))
   ? (Number(minutes)>=60?`${Math.floor(Number(minutes)/60)}u ${Math.round(Number(minutes)%60)}m`:`${Math.round(Number(minutes))}m`)
   : "—";
+const ENTRY_TIMEFRAME_SECONDS:Record<string,number>={"1m":60,"5m":300,"15m":900,"1u":3600,"4u":14400,"24u":86400};
+const entryClock=(atMs:number|null|undefined)=>Number.isFinite(Number(atMs))&&Number(atMs)>0?new Date(Number(atMs)).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}):"—";
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"?value as Record<string,unknown>:{};
+function entryTradesForBucketFromActivity(activity:unknown,timeframe:string,bucketTime:number,side:"LONG"|"SHORT"):TpTrade[]{
+  const payload=record(activity),step=ENTRY_TIMEFRAME_SECONDS[timeframe],target=Math.floor(Number(bucketTime)||0);
+  if(!step||target<=0)return [];
+  return (Array.isArray(payload.entries)?payload.entries:[]).flatMap((raw)=>{
+    const row=record(raw),stamp=Math.floor(Number(row.timestampMs??row.time)||0),rowSide=String(row.side||"").toUpperCase();
+    if(stamp<=0||rowSide!==side||Math.floor(stamp/1000/step)*step!==target)return [];
+    const symbol=String(row.symbol||"").toUpperCase().replace(/(?:USDT|USDC|BUSD|USD)$/,"").trim();
+    if(!symbol)return [];
+    const entryPrice=Number(row.entryPrice??row.price??row.avgPrice),quantity=Math.abs(Number(row.quantity??row.qty)||0),explicitNotional=Math.abs(Number(row.notionalUsd??row.notional)||0);
+    const notionalUsd=explicitNotional>0?explicitNotional:Number.isFinite(entryPrice)&&entryPrice>0&&quantity>0?entryPrice*quantity:null;
+    return [{symbol,realizedPnlUsd:0,durationMinutes:null,side,entryPrice:Number.isFinite(entryPrice)&&entryPrice>0?entryPrice:null,openedAtMs:stamp,notionalUsd}];
+  });
+}
 const integerOrNull=(value:unknown)=>{
   if(value===null||value===undefined||value==="")return null;
   const number=Number(value);
@@ -1011,20 +1026,22 @@ export function PortfolioKoersChart({
     window.dispatchEvent(new CustomEvent(ZONE_SOLDIERS_OPEN_EVENT));
   };
 
-  const openTpCluster=useCallback(async(label:EventLabel)=>{
+  const openEventCluster=useCallback(async(label:EventLabel)=>{
     setSelectedTpCluster(label);
     setTpDetailError("");
     const existing=Array.isArray(label.trades)?label.trades:[];
     const expected=Math.max(1,Number(label.eventCount)||1);
-    if(existing.length>=expected&&existing.every((trade)=>trade.durationMinutes!==null))return;
+    const isTp=label.tone==="tp";
+    if(isTp&&existing.length>=expected&&existing.every((trade)=>trade.durationMinutes!==null))return;
     setTpDetailLoading(true);
     try{
       const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
-      const trades=tpTradesForBucketFromActivity(record(response.recentTradeActivity),timeframe,Number(label.markerTime)) as TpTrade[];
+      const activity=record(response.recentTradeActivity);
+      const trades=isTp?tpTradesForBucketFromActivity(activity,timeframe,Number(label.markerTime)) as TpTrade[]:entryTradesForBucketFromActivity(activity,timeframe,Number(label.markerTime),label.tone==="short"?"SHORT":"LONG");
       setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades}:current);
-      if(!trades.length)setTpDetailError("Geen bevestigde fillregels voor dit cluster gevonden.");
+      if(!trades.length)setTpDetailError(isTp?"Geen bevestigde fillregels voor dit cluster gevonden.":"Geen bevestigde entryregels voor dit cluster gevonden.");
     }catch(reason){
-      setTpDetailError(advisorErrorText(reason,"Bevestigde filldetails tijdelijk niet beschikbaar."));
+      setTpDetailError(advisorErrorText(reason,label.tone==="tp"?"Bevestigde filldetails tijdelijk niet beschikbaar.":"Bevestigde entrydetails tijdelijk niet beschikbaar."));
     }finally{
       setTpDetailLoading(false);
     }
