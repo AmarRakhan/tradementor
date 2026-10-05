@@ -93,7 +93,7 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
       "Release-identiteit: Webapp V46 build 526.",
     ],
     confidence: "confirmed",
-  };,
+  },
   {
     id: "v46-build-525-aster-subtabs",
     version: "46",
