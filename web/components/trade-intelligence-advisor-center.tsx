@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { useAuthSession } from "@/components/auth-provider";
 
@@ -136,6 +136,7 @@ export function TradeIntelligenceAdvisorCenter({
   const [snapshot, setSnapshot] = useState<AdvisorSnapshot>(EMPTY);
   const [tab, setTab] = useState<Tab>("positions");
   const [error, setError] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -164,8 +165,12 @@ export function TradeIntelligenceAdvisorCenter({
 
   const rows = useMemo(() => {
     const source = tab === "losers" ? losers : tab === "winners" ? winners : snapshot.positions;
-    return [...source].sort((a, b) => Math.abs(b.pnlPercent) - Math.abs(a.pnlPercent)).slice(0, 6);
+    return [...source].sort((a, b) => Math.abs(b.pnlPercent) - Math.abs(a.pnlPercent));
   }, [losers, snapshot.positions, tab, winners]);
+
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: 0, behavior: "auto" });
+  }, [tab]);
 
   const equity = snapshot.equity ?? 0;
   const activeCapital = snapshot.activeCapital ?? Math.max(0, equity - (snapshot.available ?? 0));
@@ -215,7 +220,7 @@ export function TradeIntelligenceAdvisorCenter({
       <div className="tia-table-head" role="row">
         <span>Munt</span><span>Richting</span><span>Huidige positie</span><span>P&amp;L</span><span>Advies</span><span>Reden</span><span>Actie</span>
       </div>
-      <div className="tia-table-body">
+      <div ref={listRef} className="tia-table-body" tabIndex={0} aria-label={`Scrollable ${tab} lijst met ${rows.length} regels`}>
         {rows.map((position) => {
           const advice = recommendation(position, snapshot.available);
           return <div className="tia-row" role="row" key={`${position.symbol}-${position.side}`}>
