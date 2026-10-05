@@ -15,8 +15,8 @@ import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierO
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
-type EntryDetail={symbol:string;side:string;atMs:number;entryPrice:number|null;notionalUsd:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string};
-type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string};
+type EntryDetail={symbol:string;side:string;atMs:number;entryPrice:number|null;notionalUsd:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
+type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
 type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];entries?:EntryDetail[];source?:string};
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
@@ -110,6 +110,14 @@ const markerEntryTrades=(rows:EntryDetail[]|undefined):TpTrade[]=>(
   originZone:Number.isInteger(Number(row.originZone))?Number(row.originZone):null,
   soldierId:String(row.soldierId||""),
   soldierRole:String(row.soldierRole||"").toUpperCase(),
+  dcaNumber:Number.isFinite(Number(row.dcaNumber))&&Number(row.dcaNumber)>0?Number(row.dcaNumber):null,
+  dcaDistancePercent:Number.isFinite(Number(row.dcaDistancePercent))&&Number(row.dcaDistancePercent)>0?Number(row.dcaDistancePercent):null,
+  anchorPrice:Number.isFinite(Number(row.anchorPrice))&&Number(row.anchorPrice)>0?Number(row.anchorPrice):null,
+  triggerPrice:Number.isFinite(Number(row.triggerPrice))&&Number(row.triggerPrice)>0?Number(row.triggerPrice):null,
+  fillQuantity:Number.isFinite(Number(row.fillQuantity))&&Number(row.fillQuantity)>0?Number(row.fillQuantity):null,
+  orderId:String(row.orderId||""),
+  clientOrderId:String(row.clientOrderId||""),
+  exchangeConfirmed:row.exchangeConfirmed===true,
 }));
 
 const entryClock=(atMs:number|null|undefined)=>Number.isFinite(Number(atMs))&&Number(atMs)>0?new Date(Number(atMs)).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}):"—";
@@ -172,6 +180,13 @@ const zoneLevelClass=(value:number)=>value<0?`level-n${Math.abs(value)}`:value>0
 const levelUsd=(value:number|null|undefined)=>Number.isFinite(Number(value))
   ? `${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value))}`
   : "—";
+const entryPriceText=(value:number|null|undefined)=>{
+  const number=Number(value);
+  if(!Number.isFinite(number)||number<=0)return "—";
+  const decimals=number<1?Math.min(8,Math.max(4,Math.ceil(-Math.log10(number))+3)):number<100?4:2;
+  return new Intl.NumberFormat("nl-NL",{minimumFractionDigits:Math.min(2,decimals),maximumFractionDigits:decimals}).format(number);
+};
+
 const percent2=(value:number|null|undefined,signed=true)=>{
   if(!Number.isFinite(Number(value)))return "—";
   const number=Number(value);
@@ -1326,8 +1341,8 @@ export function PortfolioKoersChart({
           <header>{selectedTpCluster.tone==="tp"?<MoneyBagIcon/>:<DirectionArrow direction={selectedTpCluster.tone==="short"?"down":"up"}/>}<strong>{selectedTpCluster.tone==="tp"?<>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></>:<>{selectedTpCluster.tone==="short"?"SHORT":"LONG"} · <b>{selectedTpCluster.eventCount||1} entry-events</b></>}</strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
           <div className="portfolio-koers-tp-trades">
             {(selectedTpCluster.trades||[]).map((trade,index)=><div className="portfolio-koers-tp-trade" key={`${trade.symbol}-${index}`}>
-              <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}{selectedTpCluster.tone!=="tp"&&trade.activityType?<em>{trade.activityType==="DCA"?"DCA":"ENTRY"}</em>:null}</span></strong>
-              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b title="Entrykoers">{trade.entryPrice?`koers ${levelUsd(trade.entryPrice)}`:trade.notionalUsd?`inzet ${accountUsd(trade.notionalUsd)}`:"ENTRY"}</b>}
+              <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}{selectedTpCluster.tone!=="tp"&&trade.activityType?<em>{trade.activityType==="DCA"?"DCA":trade.activityType==="ADD"?"ADD":"ENTRY"}</em>:null}</span></strong>
+              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b title="Entrykoers">{trade.entryPrice?`koers ${entryPriceText(trade.entryPrice)}`:trade.notionalUsd?`inzet ${accountUsd(trade.notionalUsd)}`:"ENTRY"}</b>}
               <span>{selectedTpCluster.tone==="tp"?durationLabel(trade.durationMinutes):entryClock(trade.openedAtMs)}</span>
             </div>)}
             {tpDetailLoading?<div className="portfolio-koers-tp-empty loading">{selectedTpCluster.tone==="tp"?"Bevestigde fills laden…":"Bevestigde entries laden…"}</div>:null}
