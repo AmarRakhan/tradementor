@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { AsterHedgeManager } from "./aster-hedge-manager";
 import { PortfolioKoersChart } from "./portfolio-koers-chart";
+import { TradeIntelligenceAdvisorCenter } from "./trade-intelligence-advisor-center";
 import { ActiveZoneSeatBlock, resolveActiveZoneSeatState, type ActiveZoneSeatSummary } from "./active-zone-seat-block";
 import { PortfolioPerformanceDetail, type PerformanceInitialTab } from "./portfolio-performance-detail";
 import { formatLiquidationRisk, liquidationNeedleDegrees, liquidationRiskRemaining, liquidationRiskTone, normalizeLiquidationRisk } from "@/lib/liquidation-gauge.mjs";
@@ -137,6 +138,7 @@ type PriceZoneSeatSummary = ActiveZoneSeatSummary & {
 };
 
 type SnapshotDetailView = "portfolio" | "price-zone" | "scanner" | "performance";
+type AsterSubtab = "portfolio" | "advisor" | "positions" | "settings";
 type ScannerVerdict = "NORMAAL" | "GEEN KANDIDATEN" | "GEBLOKKEERD" | "SCANNER STIL" | "ORDERFOUT";
 
 type ScannerSideStatus = {
@@ -1070,6 +1072,8 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [performanceInitialTab, setPerformanceInitialTab] = useState<PerformanceInitialTab>("per-day");
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
+  const [asterSubtab, setAsterSubtab] = useState<AsterSubtab>("portfolio");
+  const [advisorDayRangePosition, setAdvisorDayRangePosition] = useState<"low"|"middle"|"high">("middle");
   const valuesRef = useRef<SnapshotValues>(EMPTY);
   const detailScrollY = useRef(0);
   const syncing = useRef(false);
@@ -1214,6 +1218,16 @@ export function AsterPortfolioSnapshotEnhancer() {
   }, [host]);
 
   useEffect(() => {
+    document.documentElement.setAttribute("data-aster-subtab", asterSubtab);
+    window.dispatchEvent(new CustomEvent("tradementor:aster-subtab-change", { detail: { tab: asterSubtab } }));
+    return () => {
+      if (document.documentElement.getAttribute("data-aster-subtab") === asterSubtab) {
+        document.documentElement.removeAttribute("data-aster-subtab");
+      }
+    };
+  }, [asterSubtab]);
+
+  useEffect(() => {
     const modalOpen = hedgeOpen || Boolean(confirmScope);
     if (!modalOpen) return;
     const previous = document.body.style.overflow;
@@ -1312,27 +1326,38 @@ export function AsterPortfolioSnapshotEnhancer() {
   return host ? createPortal(
     <>
       {detailView === "portfolio" ? <>
-        <PortfolioKoersChart
-          liveEquityText={values.equity}
-          liveAvailableText={values.available}
-          liveLongText={values.longs}
-          liveShortText={values.shorts}
-          activeZoneSeatSummary={priceZoneSeats}
-          activeZoneSeatLiveZone={liveActiveZone}
-          onActiveZoneChange={setLiveActiveZone}
-        />
-        <Snapshot
-          values={values}
-          profitPreview={profitPreview}
-          liquidationDiagnostics={liquidationDiagnostics}
-          profitBusy={profitBusy}
-          onCloseAll={closeAll}
-          onCloseProfit={openProfitPreview}
-          onOpenHedge={() => setHedgeOpen(true)}
-          onOpenPriceZone={() => openDetail("price-zone")}
-          onOpenScanner={() => openDetail("scanner")}
-          onOpenPerformance={openPerformance}
-        />
+        <nav className="aster-subtabs" aria-label="Aster onderdelen" data-reference="file_00000000451081f497006c8382f6aaf6">
+          <button type="button" className={asterSubtab==="portfolio"?"active":""} aria-pressed={asterSubtab==="portfolio"} onClick={()=>setAsterSubtab("portfolio")}><span aria-hidden="true">▥</span><b>Portfolio Koers</b></button>
+          <button type="button" className={asterSubtab==="advisor"?"active":""} aria-pressed={asterSubtab==="advisor"} onClick={()=>setAsterSubtab("advisor")}><span aria-hidden="true">🤖</span><b>Advisor</b></button>
+          <button type="button" className={asterSubtab==="positions"?"active":""} aria-pressed={asterSubtab==="positions"} onClick={()=>setAsterSubtab("positions")}><span aria-hidden="true">▱</span><b>Posities</b></button>
+          <button type="button" className={asterSubtab==="settings"?"active":""} aria-pressed={asterSubtab==="settings"} onClick={()=>setAsterSubtab("settings")}><span aria-hidden="true">⚙</span><b>Instellingen</b></button>
+        </nav>
+
+        {asterSubtab==="portfolio" ? <>
+          <PortfolioKoersChart
+            liveEquityText={values.equity}
+            liveAvailableText={values.available}
+            liveLongText={values.longs}
+            liveShortText={values.shorts}
+            activeZoneSeatSummary={priceZoneSeats}
+            activeZoneSeatLiveZone={liveActiveZone}
+            onActiveZoneChange={setLiveActiveZone}
+            onDayRangePositionChange={setAdvisorDayRangePosition}
+          />
+          <Snapshot
+            values={values}
+            profitPreview={profitPreview}
+            liquidationDiagnostics={liquidationDiagnostics}
+            profitBusy={profitBusy}
+            onCloseAll={closeAll}
+            onCloseProfit={openProfitPreview}
+            onOpenHedge={() => setHedgeOpen(true)}
+            onOpenPriceZone={() => openDetail("price-zone")}
+            onOpenScanner={() => openDetail("scanner")}
+            onOpenPerformance={openPerformance}
+          />
+        </> : asterSubtab==="advisor" ? <TradeIntelligenceAdvisorCenter dayRangePosition={advisorDayRangePosition} /> : null}
+
         {hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}
         {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet
           scope={confirmScope}
