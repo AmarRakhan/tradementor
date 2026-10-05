@@ -1938,9 +1938,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     linked = dict(state[key]); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "pairedShortOrderConfirmedAtMs": timestamp_ms}); state[key] = linked
                     ref.set({"multiBbPositions": state, "lastReason": f"Asymmetrische hedge actief op {symbol}: LONG + {settings.short_start_multiplier:g}x SHORT bevestigd"}, merge=True)
                     ref.collection("audit").add({"event": "MULTI_BB_ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "cycleId": cycle_id, "multiplier": settings.short_start_multiplier, "leverage": short_plan.leverage,
-                        "fillPrice": short_fill_price, "fillQuantity": short_fill_qty,
-                        "orderId": str(short_fill.get("orderId", short_fill.get("orderID", "")) or ""),
-                        "clientOrderId": str(short_fill.get("clientOrderId", short_fill.get("clientOrderID", "")) or ""),
+                        "fillPrice": short_price, "fillQuantity": short_qty,
+                        "orderId": str(sf.get("orderId", sf.get("orderID", "")) or ""),
+                        "clientOrderId": str(sf.get("clientOrderId", sf.get("clientOrderID", "")) or ""),
                         "exchangeConfirmed": True, "timestamp": datetime.now(timezone.utc)})
                     actions.append(short_action)
         active_symbols.add(symbol)
