@@ -876,7 +876,6 @@ export function PortfolioKoersChart({
           const side:StructureLevelLayout["side"]=structurePrice!==null&&price>Number(structurePrice)?"resistance":"support";
           return [{label:`level-${price.toFixed(8)}`,price,top,side}] as StructureLevelLayout[];
         });
-        const r1Level=null;
         const activeUpperY=Number.isFinite(Number(activeUpper))?series.priceToCoordinate(Number(activeUpper)):null;
         const activeLowerY=Number.isFinite(Number(activeLower))?series.priceToCoordinate(Number(activeLower)):null;
         const activeTop=activeUpperY!==null&&activeLowerY!==null?Math.min(Number(activeUpperY),Number(activeLowerY)):null;
@@ -900,7 +899,7 @@ export function PortfolioKoersChart({
           activeZone:null,
           roleFlip:roleX!==null&&roleY!==null&&Number(roleX)>70&&Number(roleX)<width-70?{left:Number(roleX),top:Number(roleY)}:null,
           newHigh:highX!==null&&highY!==null?{left:Math.max(92,Math.min(width-86,Number(highX))),top:Math.max(22,Number(highY)-28)}:null,
-          breakout:r1Level?{left:Math.max(150,Math.min(width-92,width*.72)),top:Math.max(20,r1Level.top-30)}:null,
+          breakout:null,
         };
       }else{
         structureDraft=EMPTY_STRUCTURE_OVERLAY;
