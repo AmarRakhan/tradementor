@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 505: Profit Pot dagtotaal incl. buffer + live USDC Spot saldo · CI contract bijgewerkt.
-export const WEBAPP_BUILD_NUMBER = "505";
+// Build 506: Profit Sparen 3.1 · elke bewezen winstclose telt + recovery van vandaag.
+export const WEBAPP_BUILD_NUMBER = "506";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
