@@ -607,8 +607,8 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         if activity_type not in group["activityTypes"]:
             group["activityTypes"].append(activity_type)
         if kind == "entry":
-            entry_price = _finite(raw.get("entryPrice", raw.get("fillPrice", raw.get("price"))))
-            notional_usd = _finite(raw.get("executedNotionalUsd", raw.get("notionalUsd", raw.get("plannedInputNotionalUsd", raw.get("configuredNotionalUsd")))))
+            entry_price = _number(raw.get("entryPrice", raw.get("fillPrice", raw.get("price"))))
+            notional_usd = _number(raw.get("executedNotionalUsd", raw.get("notionalUsd", raw.get("plannedInputNotionalUsd", raw.get("configuredNotionalUsd")))))
             entry_detail = {
                 "symbol": str(raw.get("symbol", "")).upper().strip(),
                 "side": side,
