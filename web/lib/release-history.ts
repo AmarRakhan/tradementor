@@ -26,7 +26,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-05",
-  title: "iPhone / iOS Scroll Performance 1.0",
+  title: "iPhone / iOS Scroll Performance 1.0 · release verification",
   newItems: [
     "iPhone/iOS gebruikt weer de native WebKit async scrolling pipeline voor normale verticale swipes.",
     "Pull-to-refresh blijft beschikbaar maar blokkeert de hoofdscroll niet meer met een globale non-passive touchmove-listener.",
@@ -53,13 +53,26 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   technicalDetails: [
     "Frontend: web/components/pull-to-refresh.tsx en web/components/zoom-guard.tsx.",
-    "Release-identiteit: Webapp V46 build 510.",
+    "Release-identiteit: Webapp V46 build 511.",
     "Videoreferenties: file_000000009370821098f4e14968867958 (iPhone probleem) en file_00000000218881f59d0c227159f19e3b (Z Fold 7 referentie).",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-510-ios-scroll-performance",
+    version: "46",
+    build: "510",
+    releasedAt: "2026-10-05",
+    title: "iPhone / iOS Scroll Performance 1.0",
+    newItems: ["Native iOS async scrolling hersteld door blocking touchmove-handlers te verwijderen."],
+    problems: ["iPhone-scroll voelde veel zwaarder dan de Z Fold 7-referentie."],
+    causes: ["Globale non-passive touchmove-listeners blokkeerden WebKit's async scrollpad."],
+    fixes: ["Pull-to-refresh passive gemaakt en ZoomGuard touchmove-hook verwijderd."],
+    now: ["Build 510 introduceerde de inhoudelijke scrollfix; build 511 brengt de regressietests in lijn met dit nieuwe contract."],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-509-portfolio-koers-visual-upgrade",
     version: "46",
