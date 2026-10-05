@@ -942,7 +942,11 @@
   left:44px;
   top:32px;
   width:min(220px,calc(100% - 56px));
+  max-height:calc(100% - 48px);
   box-sizing:border-box;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
   padding:10px 11px 9px;
   border:1px solid rgba(245,196,48,.88);
   border-radius:12px;
@@ -982,7 +986,7 @@
   font:400 19px/1 system-ui;
   cursor:pointer;
 }
-.portfolio-koers-tp-trades{display:grid}
+.portfolio-koers-tp-trades{display:grid;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y;scrollbar-width:thin}
 .portfolio-koers-tp-trade{
   display:grid;
   grid-template-columns:minmax(80px,1fr) minmax(60px,.8fr) 36px;
@@ -992,6 +996,8 @@
   border-bottom:1px solid rgba(117,153,149,.16);
 }
 .portfolio-koers-tp-trade>strong{display:flex;align-items:center;gap:7px;color:#edf3f1;font:900 9px/1 system-ui}
+.portfolio-koers-tp-trade>strong>span{display:flex;align-items:center;gap:4px;min-width:0}
+.portfolio-koers-tp-trade>strong>span>em{padding:2px 4px;border:1px solid rgba(69,236,173,.34);border-radius:999px;color:#62edb5;background:rgba(7,55,39,.55);font:850 6px/1 system-ui;font-style:normal;letter-spacing:.02em}
 .portfolio-koers-tp-trade>b{color:#31e9aa;font:900 9px/1 system-ui;text-align:left}
 .portfolio-koers-tp-trade>span{color:#c1cbca;font:800 8px/1 system-ui;text-align:right}
 .portfolio-koers-coin{display:grid;place-items:center;width:25px;height:25px;flex:0 0 25px;border:1px solid rgba(255,255,255,.2);border-radius:50%;background:#172027;color:#f2f5f5;box-shadow:inset 0 1px 0 rgba(255,255,255,.12);font:900 12px/1 system-ui}
