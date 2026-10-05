@@ -480,6 +480,40 @@ jobs:
           assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
           PY
 
+      - name: Recover blocked NEAR Profit Sweep from 2026-10-05
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$SOURCE_COMMIT" != "d7f16e1d36a59ce5e6cb14fe2e101c9e2dfd59c5" ]; then
+            echo "No scoped Profit Sweep recovery for source $SOURCE_COMMIT"
+            exit 0
+          fi
+          echo "DEPLOY_PHASE=recover-near-profit-sweep-20261005" >> "$GITHUB_ENV"
+          JOB="profit-sweep-near-recovery-${GITHUB_RUN_ID: -8}"
+          cleanup_recovery() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup_recovery EXIT
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command python \
+            --args recover_profit_sweep_near_20261005.py \
+            --max-retries 0 \
+            --task-timeout 300s \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false" \
+            --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          RESULT="$(gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"PROFIT_SWEEP_NEAR_RECOVERY_20261005=\"" \
+            --project "$GCP_PROJECT_ID" --freshness=20m --limit=10 --order=desc --format='value(textPayload)' \
+            | grep 'PROFIT_SWEEP_NEAR_RECOVERY_20261005=' | head -n1 || true)"
+          test -n "$RESULT"
+          echo "$RESULT"
+          printf '%s\n' "$RESULT" > "$RUNNER_TEMP/profit-sweep-near-recovery-result.txt"
+
       - name: Collect post-deploy account runtime snapshot with production runtime identity
         shell: bash
         run: |
