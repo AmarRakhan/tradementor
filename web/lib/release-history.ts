@@ -55,7 +55,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Visuele referentie: file_00000000a6388210976eaf5f7d7386e0.",
     "Frontend: web/components/aster-profit-pot-snapshot-bridge.tsx, web/components/aster-profit-sweep-settings-bridge.tsx en web/app/profit-pot-snapshot.css.",
     "Read-only route: web/app/api/exchanges/aster/spot-balance/route.ts.",
-    "Regressietest: web/tests/profit-sweep-settings.test.mjs.",
+    "Regressietests: web/tests/profit-sweep-settings.test.mjs en de bijgewerkte visuele/startup-contracttests.",
   ],
   confidence: "confirmed",
 };
