@@ -122,7 +122,7 @@ function entryTradesForBucketFromActivity(activity:unknown,timeframe:string,buck
     if(stamp<=0||rowSide!==side||Math.floor(stamp/1000/step)*step!==target)return [];
     const symbol=String(row.symbol||"").toUpperCase().replace(/(?:USDT|USDC|BUSD|USD)$/,"").trim();
     if(!symbol)return [];
-    const entryPrice=Number(row.entryPrice??row.price??row.avgPrice),quantity=Math.abs(Number(row.quantity??row.qty)||0),explicitNotional=Math.abs(Number(row.notionalUsd??row.notional)||0);
+    const entryPrice=Number(row.entryPrice??row.averagePrice??row.avgPrice??row.price),quantity=Math.abs(Number(row.quantity??row.qty)||0),explicitNotional=Math.abs(Number(row.executedNotionalUsd??row.notionalUsd??row.notional)||0);
     const notionalUsd=explicitNotional>0?explicitNotional:Number.isFinite(entryPrice)&&entryPrice>0&&quantity>0?entryPrice*quantity:null;
     return [{symbol,realizedPnlUsd:0,durationMinutes:null,side,entryPrice:Number.isFinite(entryPrice)&&entryPrice>0?entryPrice:null,openedAtMs:stamp,notionalUsd}];
   });
@@ -1312,7 +1312,7 @@ export function PortfolioKoersChart({
             style={{left:`${label.left}px`,top:`${label.top}px`}}
             onClick={isInteractive?()=>void openEventCluster(label):undefined}
             tabIndex={isInteractive?0:-1}
-            aria-label={isTp?`Take Profit cluster ${signedUsd(label.realizedPnlUsd)}, ${label.eventCount||1} trades`:isEntry?`${label.tone==="short"?"SHORT":"LONG"} cluster, ${label.eventCount||1} geopende posities`:undefined}
+            aria-label={isTp?`Take Profit cluster ${signedUsd(label.realizedPnlUsd)}, ${label.eventCount||1} trades`:isEntry?`${label.tone==="short"?"SHORT":"LONG"} cluster, ${label.eventCount||1} entry-events`:undefined}
           >
             {label.tone==="long"?<DirectionArrow direction="up"/>:label.tone==="short"?<DirectionArrow direction="down"/>:isTp?<MoneyBagIcon/>:null}
             <b>{label.multiplier||`+${label.eventCount}`}</b>
@@ -1322,12 +1322,12 @@ export function PortfolioKoersChart({
       })}</div>
       {selectedTpCluster?<div className="portfolio-koers-tp-detail-shell" data-reference={PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE}>
         {tpDetailConnectorStyle(selectedTpCluster)?<span className="portfolio-koers-tp-detail-leader" style={tpDetailConnectorStyle(selectedTpCluster)}/>:null}
-        <section className="portfolio-koers-tp-detail" onDoubleClick={()=>setSelectedTpCluster(null)} aria-label={selectedTpCluster.tone==="tp"?"Take Profit details":"Geopende posities details"}>
-          <header>{selectedTpCluster.tone==="tp"?<MoneyBagIcon/>:<DirectionArrow direction={selectedTpCluster.tone==="short"?"down":"up"}/>}<strong>{selectedTpCluster.tone==="tp"?<>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></>:<>{selectedTpCluster.tone==="short"?"SHORT":"LONG"} geopend: <b>{selectedTpCluster.eventCount||1} posities</b></>}</strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
+        <section className="portfolio-koers-tp-detail" onDoubleClick={()=>setSelectedTpCluster(null)} aria-label={selectedTpCluster.tone==="tp"?"Take Profit details":"Entry-event details"}>
+          <header>{selectedTpCluster.tone==="tp"?<MoneyBagIcon/>:<DirectionArrow direction={selectedTpCluster.tone==="short"?"down":"up"}/>}<strong>{selectedTpCluster.tone==="tp"?<>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></>:<>{selectedTpCluster.tone==="short"?"SHORT":"LONG"} · <b>{selectedTpCluster.eventCount||1} entry-events</b></>}</strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
           <div className="portfolio-koers-tp-trades">
             {(selectedTpCluster.trades||[]).map((trade,index)=><div className="portfolio-koers-tp-trade" key={`${trade.symbol}-${index}`}>
-              <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}</span></strong>
-              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b>{trade.entryPrice?`@ ${levelUsd(trade.entryPrice)}`:"ENTRY"}</b>}
+              <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}{selectedTpCluster.tone!=="tp"&&trade.activityType?<em>{trade.activityType==="DCA"?"DCA":"ENTRY"}</em>:null}</span></strong>
+              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b title="Entrykoers">{trade.entryPrice?`koers ${levelUsd(trade.entryPrice)}`:trade.notionalUsd?`inzet ${accountUsd(trade.notionalUsd)}`:"ENTRY"}</b>}
               <span>{selectedTpCluster.tone==="tp"?durationLabel(trade.durationMinutes):entryClock(trade.openedAtMs)}</span>
             </div>)}
             {tpDetailLoading?<div className="portfolio-koers-tp-empty loading">{selectedTpCluster.tone==="tp"?"Bevestigde fills laden…":"Bevestigde entries laden…"}</div>:null}
