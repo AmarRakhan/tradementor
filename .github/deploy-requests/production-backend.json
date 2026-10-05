@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "e47d68f2d4d9bf6e26092ce9505554f087bcaea1",
+  "sourceCommit": "e404928c3bd6c21bad273dd4ad464c40cefd8338",
   "requestedBy": "AmarRakhan",
-  "requestId": "build507-botsettings-dual-mode-20261005-1506"
+  "requestId": "build518-portfolio-execution-proof-20261005-2112"
 }
