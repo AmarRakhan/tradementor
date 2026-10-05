@@ -67,3 +67,18 @@ test("Build 514 opens entry clusters from marker-owned details before using the 
   assert.ok(component.includes("setSelectedTpCluster({...label,trades:exactMarkerEntries})"));
   assert.ok(component.includes("entries:Array.isArray(row.entries)?row.entries:[]"));
 });
+
+
+test("Build 515 makes the LONG/SHORT entry-event panel scrollable and labels repeated rows truthfully",async()=>{
+  const [component,css]=await Promise.all([
+    readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8"),
+  ]);
+  assert.ok(component.includes("entry-events"));
+  assert.ok(component.includes('trade.activityType==="DCA"?"DCA":"ENTRY"'));
+  assert.ok(component.includes('row.entryPrice??row.averagePrice??row.avgPrice??row.price'));
+  assert.ok(component.includes('row.executedNotionalUsd??row.notionalUsd??row.notional'));
+  assert.ok(css.includes(".portfolio-koers-tp-trades{display:grid;min-height:0;overflow-y:auto"));
+  assert.ok(css.includes("-webkit-overflow-scrolling:touch"));
+  assert.ok(css.includes("touch-action:pan-y"));
+});
