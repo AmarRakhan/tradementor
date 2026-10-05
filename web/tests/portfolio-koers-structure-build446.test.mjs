@@ -79,7 +79,7 @@ test("Build 513 renders every visible ladder boundary without an R/S display cap
 
 test("Build 513 disables legacy breakout structure notes",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("const r1Level=null"));
+  assert.ok(component.includes("breakout:null"));
   assert.ok(component.includes("setStructureOverlay({...structureDraft,roleFlip:null,newHigh:null,breakout:null})"));
 });
 
