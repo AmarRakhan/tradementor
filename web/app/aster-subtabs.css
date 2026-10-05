@@ -28,10 +28,7 @@
 }
 .aster-subtabs button.active span{color:#37efa7;text-shadow:0 0 11px rgba(44,239,169,.45)}
 
-/* Only the selected Aster section is visible below the shared subtab bar. */
-html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] section[aria-label="Aster Tradecentrum"],
-html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] .dashboard-grid,
-html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] section[aria-label^="Portfolio impact."],
+/* Advisor/Posities/Instellingen isolate their dedicated views. Portfolio keeps the complete existing Aster tail below Snapshot. */
 html[data-aster-compact-snapshot="true"][data-aster-subtab="advisor"] section[aria-label="Aster Tradecentrum"],
 html[data-aster-compact-snapshot="true"][data-aster-subtab="advisor"] .dashboard-grid,
 html[data-aster-compact-snapshot="true"][data-aster-subtab="advisor"] section[aria-label^="Portfolio impact."],
@@ -70,3 +67,14 @@ html[data-aster-compact-snapshot="true"][data-aster-subtab="settings"] #aster-po
   .aster-subtabs button{font-size:6.8px}
   .aster-subtabs button span{font-size:14px}
 }
+
+/* Build 526 regression guard: Portfolio Koers must retain all legacy content below Snapshot.
+   This restores the bull/bear Portfolio Impact block, Tradecentrum, bot/settings tail and
+   any release/support content that follows them, while the Advisor itself remains moved
+   out of PortfolioKoersChart. */
+html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] section[aria-label="Aster Tradecentrum"],
+html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] .dashboard-grid,
+html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] section[aria-label^="Portfolio impact."]{
+  display:revert!important
+}
+html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] .dashboard-grid{display:grid!important}

@@ -26,39 +26,52 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Portfolio Koers · betrouwbare marker-details",
+  title: "Aster Portfolio · volledige onderkant hersteld",
   newItems: [
-    "Bevestigde Aster entry-fills leveren hun detailregels voortaan direct mee in de duurzame Portfolio Koers-markers.",
-    "De marker-popup hoeft daardoor bij normale werking geen tweede zware closed-trades call meer te doen.",
-    "Als een oudere marker toch detaildata moet ophalen, probeert de webapp één keer opnieuw en gebruikt daarna de laatst succesvolle lokale activity-cache.",
+    "Portfolio Koers behoudt na de nieuwe subtabs opnieuw alle bestaande content onder Portfolio Snapshot.",
+    "De beren/stieren Portfolio Impact-weergave met eigen timeframes is opnieuw zichtbaar.",
+    "Tradecentrum, instellingenstaart en overige bestaande content onderaan Aster blijven weer bereikbaar door verder te scrollen.",
   ],
   problems: [
-    "Bij openen van een LONG/SHORT-marker verscheen regelmatig 'De cloudopdracht is niet gelukt'.",
-    "De chartmarker zelf was al aanwezig, maar de popup deed daarna nog een aparte netwerkcall naar de relatief zware closed-trades route.",
+    "Build 525 verborg op de Portfolio-tab onbedoeld ook bestaande secties onder Portfolio Snapshot.",
+    "Daardoor bleef de timeframebalk zichtbaar maar verdwenen de Portfolio Impact-weergave en verdere onderste content uit de scrollflow.",
   ],
   causes: [
-    "Duurzame fill-markers bevatten wel count/notional maar nog geen exacte entry-detailregels.",
-    "Daardoor was de popup onnodig afhankelijk van een extra API-call die tijdelijk kon falen of door exchange-history latency geraakt kon worden.",
+    "De eerste subtab-CSS gebruikte te brede selectors en zette Portfolio Impact, Tradecentrum en dashboard-grid op display:none binnen de Portfolio-tab.",
   ],
   fixes: [
-    "aggregate_trade_activity voegt symbol, side, timestamp, entryPrice, quantity, orderId, clientOrderId en exchangeConfirmed toe aan entrymarkers.",
-    "Portfolio Koers gebruikt marker-owned details direct wanneer beschikbaar.",
-    "Legacy fallback krijgt retry + last-known-good cache en toont geen generieke cloudopdracht-fout meer.",
+    "De Portfolio-tab verbergt geen bestaande Aster-tail meer.",
+    "Alleen Advisor is werkelijk uit PortfolioKoersChart verplaatst; de rest van de bestaande Portfolio-scrollflow blijft intact.",
+    "Advisor, Posities en Instellingen behouden hun eigen geïsoleerde tabweergave.",
   ],
   now: [
-    "Een marker die al uit bevestigde fill-history komt, kan zijn detailpaneel zonder extra cloud roundtrip openen.",
-    "Tijdelijke netwerkproblemen veroorzaken veel minder lege detailpanelen.",
-    "Tradinglogica, orders, DCA, scanner, zones en posities zijn niet gewijzigd.",
+    "Op Portfolio Koers kun je weer onder Portfolio Snapshot door naar Portfolio Impact en de overige bestaande blokken scrollen.",
+    "De premium subtabs uit build 525 blijven behouden.",
+    "Geen trading-, scanner-, DCA-, TP-, hedge-, recovery- of orderlogica gewijzigd.",
   ],
   technicalDetails: [
-    "Backend: cloud_api/aster_portfolio_chart.py.",
-    "Frontend: web/components/portfolio-koers-chart.tsx.",
+    "Frontend-only hotfix in web/app/aster-subtabs.css.",
+    "Gebruikersreferentie: file_00000000d1b482108eef000bf3f35c62.",
     "Release-identiteit: Webapp V46 build 526.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-525-aster-subtabs",
+    version: "46",
+    build: "525",
+    releasedAt: "2026-10-06",
+    title: "Aster premium subtabs + Advisor move",
+    newItems: ["Portfolio Koers, Advisor, Posities en Instellingen als tweede Aster-navigatielaag."],
+    problems: ["De eerste CSS-isolatie verborg te veel bestaande Portfolio-content onder Snapshot."],
+    causes: ["Te brede display:none-selectors in de Portfolio-tab."],
+    fixes: ["Opgevolgd door build 526 die de volledige Portfolio-tail herstelt."],
+    now: ["Subtabs blijven behouden; Portfolio-scrollflow is in build 526 hersteld."],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-525-aster-subtabs",
     version: "46",
