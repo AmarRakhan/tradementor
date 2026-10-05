@@ -35,12 +35,16 @@ jobs:
           set -euo pipefail
           SERVICE_JSON="$RUNNER_TEMP/service.json"
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$SERVICE_JSON"
-          RUNTIME_SA="$(python - "$SERVICE_JSON" <<'PY'
+          read -r RUNTIME_SA PRODUCTION_SOURCE_COMMIT <<EOF
+          $(python - "$SERVICE_JSON" <<'PY'
           import json,sys
           value=json.load(open(sys.argv[1],encoding='utf-8'))
-          print(value['spec']['template']['spec']['serviceAccountName'])
+          spec=value['spec']['template']['spec']
+          env={row['name']:row.get('value','') for row in spec['containers'][0].get('env',[])}
+          print(spec['serviceAccountName'], env.get('TRADEMENTOR_SOURCE_COMMIT',''))
           PY
-          )"
+          )
+          EOF
           test -n "$RUNTIME_SA"
           mkdir -p "$RUNNER_TEMP/near-profit-sweep-diag"
           cat > "$RUNNER_TEMP/near-profit-sweep-diag/Dockerfile" <<'DOCKER'
@@ -157,6 +161,7 @@ jobs:
 
           report=json.dumps({
               "generatedAt":now.isoformat(),
+              "productionSourceCommit":os.environ.get("PRODUCTION_SOURCE_COMMIT",""),
               "matching5PctEnabledAccounts":len(accounts),
               "accounts":accounts,
           },separators=(",",":"),sort_keys=True)
@@ -182,6 +187,6 @@ jobs:
             gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --set-env-vars "DIAG_REPO=$GITHUB_REPOSITORY,DIAG_GH_TOKEN=${{ github.token }}" --quiet
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --set-env-vars "DIAG_REPO=$GITHUB_REPOSITORY,DIAG_GH_TOKEN=${{ github.token }},PRODUCTION_SOURCE_COMMIT=$PRODUCTION_SOURCE_COMMIT" --quiet
           EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
           test -n "$EXECUTION"
