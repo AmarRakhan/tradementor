@@ -26,7 +26,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-05",
-  title: "Portfolio Koers · alleen unieke bevestigde executions",
+  title: "Portfolio Koers · alleen unieke bevestigde executions · release 518",
   newItems: [
     "Live entry- en DCA-markers worden alleen nog opgebouwd uit exchange-bevestigde auditregels met een stabiele order/fill-identiteit.",
     "Herhaalde auditregels van dezelfde execution worden vóór clustering gededupliceerd.",
@@ -56,12 +56,25 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Backend: cloud_api/aster_portfolio_chart.py en cloud_api/aster_multi_bb_core.py.",
     "Frontend: web/lib/portfolio-koers-chart.mjs.",
     "Regressie: duplicate orderId en niet-bevestigde/manual reconciliation events.",
-    "Release-identiteit: Webapp V46 build 517.",
+    "Release-identiteit: Webapp V46 build 518.",
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-517-execution-proof",
+    version: "46",
+    build: "517",
+    releasedAt: "2026-10-05",
+    title: "Portfolio Koers · execution-proof gate",
+    newItems: ["Alleen exchange-bevestigde entry/DCA-audits met stabiele execution identity tellen mee."],
+    problems: ["Herhaalde PONS-auditregels konden de entry-eventteller kunstmatig verhogen."],
+    causes: ["De snelle audit-feed vereiste eerder geen unieke exchange execution identity."],
+    fixes: ["Niet-bevestigde reconciliatie-events en duplicate execution IDs worden geblokkeerd."],
+    now: ["Build 518 levert dezelfde inhoud atomair uit met het verplichte releasecontract."],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-516-dca-proof",
     version: "46",
