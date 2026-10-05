@@ -44,3 +44,26 @@ test("Portfolio Koers uses a lightweight five-second marker feed and rebuilds on
   assert.ok(component.includes("const cashflowSignature=useMemo"));
   assert.ok(route.includes("/v1/me/aster/portfolio-chart/events"));
 });
+
+test("Build 514 keeps the exact Strategy-2 audit rows behind a merged LONG/SHORT cluster",()=>{
+  const rows=mergePortfolioKoersMarkers(
+    [{time:60,atMs:60_000,kind:"entry",side:"SHORT",count:1,notionalUsd:25,source:"aster-confirmed-fills",label:"ENTRY S"}],
+    [{time:60,atMs:60_000,kind:"entry",side:"SHORT",count:2,source:"strategy2-confirmed-audit",entries:[
+      {symbol:"BTCUSDT",side:"SHORT",atMs:61_000,entryPrice:null,notionalUsd:12,activityType:"ENTRY",originZone:2,soldierId:"S-1",soldierRole:"ZONE_BASE"},
+      {symbol:"ETHUSDT",side:"SHORT",atMs:65_000,entryPrice:2500,notionalUsd:null,activityType:"DCA",originZone:2,soldierId:"S-2",soldierRole:"ZONE_BASE"},
+    ]}],
+  );
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].count,2);
+  assert.equal(rows[0].entries.length,2);
+  assert.deepEqual(rows[0].entries.map((row)=>row.symbol),["BTCUSDT","ETHUSDT"]);
+  assert.equal(rows[0].entries[1].entryPrice,2500);
+});
+
+test("Build 514 opens entry clusters from marker-owned details before using the old activity fallback",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("const exactMarkerEntries=!isTp?markerEntryTrades(label.entries):[]"));
+  assert.ok(component.includes("if(!isTp&&exactMarkerEntries.length===expected)"));
+  assert.ok(component.includes("setSelectedTpCluster({...label,trades:exactMarkerEntries})"));
+  assert.ok(component.includes("entries:Array.isArray(row.entries)?row.entries:[]"));
+});
