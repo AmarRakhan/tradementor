@@ -15,8 +15,9 @@ import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierO
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
-type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null};
-type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];source?:string};
+type EntryDetail={symbol:string;side:string;atMs:number;entryPrice:number|null;notionalUsd:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string};
+type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string};
+type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];entries?:EntryDetail[];source?:string};
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
@@ -28,7 +29,7 @@ type StructureOverlayLayout={
   newHigh:{left:number;top:number}|null;
   breakout:{left:number;top:number}|null;
 };
-type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number;realizedPnlUsd?:number;trades?:TpTrade[];markerTime?:number};
+type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number;realizedPnlUsd?:number;trades?:TpTrade[];entries?:EntryDetail[];markerTime?:number};
 type SoldierActivityEvent={id:string;atMs:number;side:"LONG"|"SHORT";count:number;originZone:number|null;role?:string;source?:string};
 type PortfolioViewMode="performance"|"account"|"active";
 type ActiveTradesPayload={
@@ -95,6 +96,22 @@ const durationLabel=(minutes:number|null|undefined)=>Number.isFinite(Number(minu
   ? (Number(minutes)>=60?`${Math.floor(Number(minutes)/60)}u ${Math.round(Number(minutes)%60)}m`:`${Math.round(Number(minutes))}m`)
   : "—";
 const ENTRY_TIMEFRAME_SECONDS:Record<string,number>={"1m":60,"5m":300,"15m":900,"1u":3600,"4u":14400,"24u":86400};
+const markerEntryTrades=(rows:EntryDetail[]|undefined):TpTrade[]=>(
+  Array.isArray(rows)?rows:[]
+).map((row)=>({
+  symbol:String(row.symbol||"").toUpperCase(),
+  side:String(row.side||"").toUpperCase()==="SHORT"?"SHORT":"LONG",
+  realizedPnlUsd:0,
+  durationMinutes:null,
+  entryPrice:Number.isFinite(Number(row.entryPrice))&&Number(row.entryPrice)>0?Number(row.entryPrice):null,
+  openedAtMs:Number.isFinite(Number(row.atMs))&&Number(row.atMs)>0?Number(row.atMs):null,
+  notionalUsd:Number.isFinite(Number(row.notionalUsd))&&Number(row.notionalUsd)>0?Number(row.notionalUsd):null,
+  activityType:String(row.activityType||"").toUpperCase(),
+  originZone:Number.isInteger(Number(row.originZone))?Number(row.originZone):null,
+  soldierId:String(row.soldierId||""),
+  soldierRole:String(row.soldierRole||"").toUpperCase(),
+}));
+
 const entryClock=(atMs:number|null|undefined)=>Number.isFinite(Number(atMs))&&Number(atMs)>0?new Date(Number(atMs)).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}):"—";
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"?value as Record<string,unknown>:{};
 function entryTradesForBucketFromActivity(activity:unknown,timeframe:string,bucketTime:number,side:"LONG"|"SHORT"):TpTrade[]{
@@ -945,6 +962,7 @@ export function PortfolioKoersChart({
           anchorLeft:Number(x),anchorTop:Number(y),markerTime:row.time,
           realizedPnlUsd:Number(row.realizedPnlUsd)||0,
           trades:Array.isArray(row.trades)?row.trades:[],
+          entries:Array.isArray(row.entries)?row.entries:[],
           bandTop:upperY===null?null:Number(upperY),bandBottom:lowerY===null?null:Number(lowerY),
           width:copy.tone==="cashflow"?92:copy.tone==="tp"?86:58,height:copy.tone==="tp"?34:30,
         });
@@ -1026,21 +1044,37 @@ export function PortfolioKoersChart({
   };
 
   const openEventCluster=useCallback(async(label:EventLabel)=>{
+    const expected=Math.max(1,Number(label.eventCount)||1);
+    const isTp=label.tone==="tp";
+    const exactMarkerEntries=!isTp?markerEntryTrades(label.entries):[];
+    if(!isTp&&exactMarkerEntries.length===expected){
+      setSelectedTpCluster({...label,trades:exactMarkerEntries});
+      setTpDetailError("");
+      setTpDetailLoading(false);
+      return;
+    }
     setSelectedTpCluster(label);
     setTpDetailError("");
     const existing=Array.isArray(label.trades)?label.trades:[];
-    const expected=Math.max(1,Number(label.eventCount)||1);
-    const isTp=label.tone==="tp";
     if(isTp&&existing.length>=expected&&existing.every((trade)=>trade.durationMinutes!==null))return;
     setTpDetailLoading(true);
     try{
       const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
       const activity=record(response.recentTradeActivity);
-      const trades=isTp?tpTradesForBucketFromActivity(activity,timeframe,Number(label.markerTime)) as TpTrade[]:entryTradesForBucketFromActivity(activity,timeframe,Number(label.markerTime),label.tone==="short"?"SHORT":"LONG");
+      const fallback=isTp
+        ? tpTradesForBucketFromActivity(activity,timeframe,Number(label.markerTime)) as TpTrade[]
+        : entryTradesForBucketFromActivity(activity,timeframe,Number(label.markerTime),label.tone==="short"?"SHORT":"LONG");
+      const trades=!isTp&&exactMarkerEntries.length?exactMarkerEntries:fallback;
       setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades}:current);
       if(!trades.length)setTpDetailError(isTp?"Geen bevestigde fillregels voor dit cluster gevonden.":"Geen bevestigde entryregels voor dit cluster gevonden.");
+      else if(!isTp&&trades.length!==expected)setTpDetailError(`Cluster verwacht ${expected} bevestigde entries, maar ${trades.length} detailregels zijn beschikbaar.`);
     }catch(reason){
-      setTpDetailError(advisorErrorText(reason,label.tone==="tp"?"Bevestigde filldetails tijdelijk niet beschikbaar.":"Bevestigde entrydetails tijdelijk niet beschikbaar."));
+      if(!isTp&&exactMarkerEntries.length){
+        setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades:exactMarkerEntries}:current);
+        setTpDetailError(exactMarkerEntries.length===expected?"":`Cluster verwacht ${expected} bevestigde entries, maar ${exactMarkerEntries.length} detailregels zijn beschikbaar.`);
+      }else{
+        setTpDetailError(advisorErrorText(reason,isTp?"Bevestigde filldetails tijdelijk niet beschikbaar.":"Bevestigde entrydetails tijdelijk niet beschikbaar."));
+      }
     }finally{
       setTpDetailLoading(false);
     }
