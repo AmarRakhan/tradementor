@@ -29,6 +29,14 @@ function normalizeEntryDetails(rows) {
       originZone,
       soldierId:String(raw.soldierId||""),
       soldierRole:String(raw.soldierRole||"").toUpperCase().trim(),
+      dcaNumber:finite(raw.dcaNumber)>0?Math.floor(finite(raw.dcaNumber)):null,
+      dcaDistancePercent:finite(raw.dcaDistancePercent)>0?finite(raw.dcaDistancePercent):null,
+      anchorPrice:finite(raw.anchorPrice)>0?finite(raw.anchorPrice):null,
+      triggerPrice:finite(raw.triggerPrice)>0?finite(raw.triggerPrice):null,
+      fillQuantity:finite(raw.fillQuantity)>0?finite(raw.fillQuantity):null,
+      orderId:String(raw.orderId||""),
+      clientOrderId:String(raw.clientOrderId||""),
+      exchangeConfirmed:raw.exchangeConfirmed===true,
     }];
   });
 }
@@ -47,6 +55,14 @@ function mergeEntryDetails(left,right) {
       notionalUsd:row.notionalUsd??existing.notionalUsd??null,
       originZone:row.originZone??existing.originZone??null,
       soldierRole:row.soldierRole||existing.soldierRole||"",
+      dcaNumber:row.dcaNumber??existing.dcaNumber??null,
+      dcaDistancePercent:row.dcaDistancePercent??existing.dcaDistancePercent??null,
+      anchorPrice:row.anchorPrice??existing.anchorPrice??null,
+      triggerPrice:row.triggerPrice??existing.triggerPrice??null,
+      fillQuantity:row.fillQuantity??existing.fillQuantity??null,
+      orderId:row.orderId||existing.orderId||"",
+      clientOrderId:row.clientOrderId||existing.clientOrderId||"",
+      exchangeConfirmed:row.exchangeConfirmed===true||existing.exchangeConfirmed===true,
     });
   }
   return [...byKey.values()].sort((a,b)=>a.atMs-b.atMs||String(a.symbol).localeCompare(String(b.symbol)));
