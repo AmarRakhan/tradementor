@@ -94,12 +94,35 @@ export function normalizePortfolioKoersPayload(raw) {
     byTime.set(time, { time, atMs: Math.floor(finite(row.atMs)) || time*1000, open, high, low, close, samples: Math.max(1,Math.floor(finite(row.samples))), sourceAtMs: Math.floor(finite(row.sourceAtMs)) });
   }
   const candles = [...byTime.values()].sort((a,b)=>a.time-b.time);
-  const markers = (Array.isArray(source.markers) ? source.markers : []).filter((row)=>row && typeof row==="object" && finite(row.time)>0).map((row)=>({
-    ...row, time:Math.floor(finite(row.time)), atMs:Math.floor(finite(row.atMs)) || Math.floor(finite(row.time))*1000,
-    count:Math.max(1,Math.floor(finite(row.count))), notionalUsd:finite(row.notionalUsd), realizedPnlUsd:finite(row.realizedPnlUsd), amountUsd:finite(row.amountUsd),
-    trades:normalizeTpTrades(row.trades),
-    entries:normalizeEntryDetails(row.entries),
-  })).sort((a,b)=>a.time-b.time);
+  const markers = (Array.isArray(source.markers) ? source.markers : [])
+    .filter((row)=>row && typeof row==="object" && finite(row.time)>0)
+    .flatMap((row)=>{
+      const markerSource=String(row.source||"");
+      const kind=String(row.kind||"").toLowerCase();
+      let entries=normalizeEntryDetails(row.entries);
+      if(markerSource==="strategy2-confirmed-audit"&&kind==="entry"){
+        // Production can temporarily be on an older backend revision while the
+        // web release is newer. Never trust legacy audit rows that labelled a
+        // MULTI_BB_DCA as confirmed solely from its event name. A live entry/DCA
+        // marker needs an explicit stable exchange execution identity.
+        entries=entries.filter((entry)=>entry.exchangeConfirmed===true&&Boolean(entry.orderId||entry.clientOrderId));
+        if(!entries.length)return [];
+      }
+      return [{
+        ...row,
+        time:Math.floor(finite(row.time)),
+        atMs:Math.floor(finite(row.atMs)) || Math.floor(finite(row.time))*1000,
+        count:markerSource==="strategy2-confirmed-audit"&&kind==="entry"
+          ? entries.length
+          : Math.max(1,Math.floor(finite(row.count))),
+        notionalUsd:finite(row.notionalUsd),
+        realizedPnlUsd:finite(row.realizedPnlUsd),
+        amountUsd:finite(row.amountUsd),
+        trades:normalizeTpTrades(row.trades),
+        entries,
+      }];
+    })
+    .sort((a,b)=>a.time-b.time);
   const zones = (Array.isArray(source.zones) ? source.zones : []).filter((row)=>row && typeof row==="object").map((row)=>({
     index:Math.trunc(finite(row.index)), label:String(row.label||""), center:finite(row.center), lower:finite(row.lower), upper:finite(row.upper),
     touches:Math.max(0,Math.floor(finite(row.touches))), atr:finite(row.atr), source:String(row.source||""),

@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 518: Portfolio Koers execution-proof gate · atomic verified release.
-export const WEBAPP_BUILD_NUMBER = "518";
+// Build 519: Portfolio Koers legacy-backend phantom DCA shield.
+export const WEBAPP_BUILD_NUMBER = "519";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

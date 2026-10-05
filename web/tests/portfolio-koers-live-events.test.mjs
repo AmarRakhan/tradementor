@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { mergePortfolioKoersMarkers } from "../lib/portfolio-koers-chart.mjs";
+import { mergePortfolioKoersMarkers, normalizePortfolioKoersPayload } from "../lib/portfolio-koers-chart.mjs";
 
 test("live audit markers merge with durable fill markers without visual duplicates",()=>{
   const rows=mergePortfolioKoersMarkers(
@@ -109,4 +109,36 @@ test("Build 517 deduplicates repeated entry details by stable execution identity
   assert.equal(rows.length,1);
   assert.equal(rows[0].entries.length,1);
   assert.equal(rows[0].entries[0].orderId,"pons-5");
+});
+
+
+test("Build 519 blocks legacy backend phantom DCA audit rows without stable execution proof",()=>{
+  const normalized=normalizePortfolioKoersPayload({
+    timeframe:"15m",
+    markers:[{
+      time:1760,atMs:1_760_000,kind:"entry",side:"LONG",count:12,source:"strategy2-confirmed-audit",
+      activityTypes:["DCA"],
+      entries:Array.from({length:12},(_,index)=>({
+        symbol:"PONSUSDT",side:"LONG",atMs:1_760_000+index*60_000,entryPrice:0.3701,
+        activityType:"DCA",exchangeConfirmed:true,orderId:"",clientOrderId:"",
+      })),
+    }],
+  });
+  assert.equal(normalized.markers.length,0);
+});
+
+test("Build 519 derives live audit marker count from unique execution-proven entries",()=>{
+  const normalized=normalizePortfolioKoersPayload({
+    timeframe:"15m",
+    markers:[{
+      time:1760,atMs:1_760_000,kind:"entry",side:"LONG",count:12,source:"strategy2-confirmed-audit",
+      activityTypes:["DCA"],
+      entries:[
+        {symbol:"PONSUSDT",side:"LONG",atMs:1_760_100,entryPrice:0.3701,activityType:"DCA",exchangeConfirmed:true,orderId:"pons-5"},
+        {symbol:"PONSUSDT",side:"LONG",atMs:1_760_200,entryPrice:0.3701,activityType:"DCA",exchangeConfirmed:true,orderId:"pons-5"},
+      ],
+    }],
+  });
+  assert.equal(normalized.markers.length,1);
+  assert.equal(normalized.markers[0].count,2);
 });
