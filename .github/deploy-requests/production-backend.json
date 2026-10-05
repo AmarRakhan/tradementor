@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "25be826ee7e7313973fcd8b4ffcaee5fc196a589",
+  "sourceCommit": "e47d68f2d4d9bf6e26092ce9505554f087bcaea1",
   "requestedBy": "AmarRakhan",
-  "requestId": "build506-profit-sparen-3-1-redeploy-20261005-1322"
+  "requestId": "build507-botsettings-dual-mode-20261005-1506"
 }
