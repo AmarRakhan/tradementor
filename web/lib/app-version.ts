@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 514: Portfolio Koers entry-marker drilldown · exact cluster event details.
-export const WEBAPP_BUILD_NUMBER = "514";
+// Build 515: Portfolio Koers entry-event detail · scroll + truthful ENTRY/DCA semantics.
+export const WEBAPP_BUILD_NUMBER = "515";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
