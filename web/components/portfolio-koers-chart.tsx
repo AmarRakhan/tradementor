@@ -60,12 +60,12 @@ const PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE="file_00000000267082109428370054535e
 const EMPTY_STRUCTURE_OVERLAY:StructureOverlayLayout={levels:[],activeZone:null,roleFlip:null,newHigh:null,breakout:null};
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
-  "1m":{visibleBars:40,barSpacing:6.0,rightOffset:1.4},
-  "5m":{visibleBars:38,barSpacing:6.2,rightOffset:1.4},
-  "15m":{visibleBars:36,barSpacing:6.6,rightOffset:1.6},
-  "1u":{visibleBars:34,barSpacing:6.8,rightOffset:1.6},
-  "4u":{visibleBars:30,barSpacing:7.2,rightOffset:1.8},
-  "24u":{visibleBars:26,barSpacing:7.8,rightOffset:2.0},
+  "1m":{visibleBars:32,barSpacing:7.2,rightOffset:1.5},
+  "5m":{visibleBars:31,barSpacing:7.4,rightOffset:1.5},
+  "15m":{visibleBars:30,barSpacing:7.6,rightOffset:1.6},
+  "1u":{visibleBars:28,barSpacing:7.8,rightOffset:1.6},
+  "4u":{visibleBars:26,barSpacing:8.0,rightOffset:1.8},
+  "24u":{visibleBars:24,barSpacing:8.2,rightOffset:2.0},
 };
 const localTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("nl-NL",{timeZone:"Europe/Amsterdam",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockTime=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
@@ -427,6 +427,9 @@ export function PortfolioKoersChart({
   const advisorZoneLadderRef=useRef<any>(null);
   const activeZoneRef=useRef<number|null>(null);
   const liveEquityTextRef=useRef(liveEquityText);
+  const manualViewportRef=useRef<Record<string,boolean>>({});
+  const savedViewportRef=useRef<Record<string,{from:number;to:number;span:number;followLatest:boolean}>>({});
+  const viewportSyncGuardRef=useRef(false);
   const [timeframe,setTimeframe]=useState(PORTFOLIO_KOERS_DEFAULT_TIMEFRAME);
   const [viewMode,setViewMode]=useState<PortfolioViewMode>("account");
   const [payload,setPayload]=useState<Payload>(EMPTY);
@@ -742,7 +745,7 @@ export function PortfolioKoersChart({
     chartRef.current=chart;
     const series=viewMode==="performance"
       ? chart.addSeries(LineSeries,{color:"#39eaa0",lineWidth:3,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:true})
-      : chart.addSeries(CandlestickSeries,{upColor:"#17e6a0",downColor:"#ff5a66",wickUpColor:"#17e6a0",wickDownColor:"#ff6a74",borderVisible:false,priceLineVisible:false,lastValueVisible:true});
+      : chart.addSeries(CandlestickSeries,{upColor:"#17e6a0",downColor:"#ff5a66",wickUpColor:"#17e6a0",wickDownColor:"#ff6a74",borderVisible:false,priceLineVisible:false,lastValueVisible:false});
     candleSeriesRef.current=series;
     if(viewMode==="performance"){
       series.setData(performancePoints.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
@@ -750,11 +753,16 @@ export function PortfolioKoersChart({
       series.setData(candles.map((row)=>({time:row.time as UTCTimestamp,open:row.open,high:row.high,low:row.low,close:row.close})));
     }
 
+    if(viewMode!=="performance"){
+      const currentPrice=Number(candles.at(-1)?.close);
+      if(Number.isFinite(currentPrice)&&currentPrice>0)series.createPriceLine({price:currentPrice,color:"#e4b84a",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:""});
+    }
+
     const bb=viewMode==="account"?bollinger20x2(candles):{upper:[],middle:[],lower:[]};
     if(viewMode==="account"){
       const upper=chart.addSeries(LineSeries,{color:"rgba(35,190,255,.82)",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
       const middle=chart.addSeries(LineSeries,{color:"rgba(218,231,236,.44)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-      const lower=chart.addSeries(LineSeries,{color:"rgba(255,72,111,.78)",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+      const lower=chart.addSeries(LineSeries,{color:"rgba(35,190,255,.82)",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
       bbRefs.current={upper,middle,lower};
       upper.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
       middle.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
@@ -844,26 +852,16 @@ export function PortfolioKoersChart({
         const activeRow=rows.find((row:any)=>Number(row.index)===Number(activeIndex))??null;
         const activeLower=Number.isFinite(Number(activeRow?.lower))?Number(activeRow.lower):marketContext?.lowerBoundary??null;
         const activeUpper=Number.isFinite(Number(activeRow?.upper))?Number(activeRow.upper):marketContext?.upperBoundary??null;
-        const resistanceLevels=Array.from({length:4},(_,offset)=>{
-          if(offset===0)return {label:"R1",price:activeUpper,side:"resistance" as const};
-          const row=rows.find((item:any)=>Number(item.index)===Number(activeIndex)+offset);
-          return {label:`R${offset+1}`,price:Number.isFinite(Number(row?.upper))?Number(row.upper):null,side:"resistance" as const};
-        });
-        const supportLevels=Array.from({length:4},(_,offset)=>{
-          if(offset===0)return {label:"S1",price:activeLower,side:"support" as const};
-          const row=rows.find((item:any)=>Number(item.index)===Number(activeIndex)-offset);
-          return {label:`S${offset+1}`,price:Number.isFinite(Number(row?.lower))?Number(row.lower):null,side:"support" as const};
-        });
-        const rawLevels=[...resistanceLevels,...supportLevels];
-        const levels=rawLevels.flatMap((level)=>{
-          if(!Number.isFinite(Number(level.price))||Number(level.price)<=0)return [];
-          const coordinate=series.priceToCoordinate(Number(level.price));
+        const boundaryPrices=Array.from(new Set(rows.flatMap((row:any)=>[Number(row.lower),Number(row.upper)]).filter((price:any)=>Number.isFinite(price)&&price>0))) as number[];
+        const levels=boundaryPrices.flatMap((price)=>{
+          const coordinate=series.priceToCoordinate(price);
           if(coordinate===null)return [];
           const top=Number(coordinate);
           if(top<0||top>height)return [];
-          return [{label:level.label,price:Number(level.price),top,side:level.side}] as StructureLevelLayout[];
+          const side:StructureLevelLayout["side"]=structurePrice!==null&&price>Number(structurePrice)?"resistance":"support";
+          return [{label:`level-${price.toFixed(8)}`,price,top,side}] as StructureLevelLayout[];
         });
-        const r1Level=levels.find((level)=>level.label==="R1");
+        const r1Level=null;
         const activeUpperY=Number.isFinite(Number(activeUpper))?series.priceToCoordinate(Number(activeUpper)):null;
         const activeLowerY=Number.isFinite(Number(activeLower))?series.priceToCoordinate(Number(activeLower)):null;
         const activeTop=activeUpperY!==null&&activeLowerY!==null?Math.min(Number(activeUpperY),Number(activeLowerY)):null;
@@ -884,7 +882,7 @@ export function PortfolioKoersChart({
         const zoneLabel=Number.isInteger(Number(activeIndex))?`Zone ${Number(activeIndex)} actief`:"Zone actief";
         structureDraft={
           levels,
-          activeZone:activeTop!==null&&activeBottom!==null?{top:activeTop,height:Math.max(1,activeBottom-activeTop),label:zoneLabel}:null,
+          activeZone:null,
           roleFlip:roleX!==null&&roleY!==null&&Number(roleX)>70&&Number(roleX)<width-70?{left:Number(roleX),top:Number(roleY)}:null,
           newHigh:highX!==null&&highY!==null?{left:Math.max(92,Math.min(width-86,Number(highX))),top:Math.max(22,Number(highY)-28)}:null,
           breakout:r1Level?{left:Math.max(150,Math.min(width-92,width*.72)),top:Math.max(20,r1Level.top-30)}:null,
@@ -956,23 +954,42 @@ export function PortfolioKoersChart({
     };
     chart.subscribeCrosshairMove(onCrosshair);
     const sync=()=>syncOverlaysRef.current();
-    chart.timeScale().subscribeVisibleLogicalRangeChange(sync);
+    const viewportKey=`${viewMode}:${timeframe}`;
+    const rememberViewport=()=>{
+      if(!viewportSyncGuardRef.current&&manualViewportRef.current[viewportKey]){
+        const range=chart.timeScale().getVisibleLogicalRange();
+        if(range){
+          const span=Math.max(1,Number(range.to)-Number(range.from));
+          const latestTo=candles.length-1+view.rightOffset;
+          savedViewportRef.current[viewportKey]={from:Number(range.from),to:Number(range.to),span,followLatest:Number(range.to)>=latestTo-1};
+        }
+      }
+      sync();
+    };
+    const markViewportManual=()=>{manualViewportRef.current[viewportKey]=true};
+    chart.timeScale().subscribeVisibleLogicalRangeChange(rememberViewport);
     const resize=new ResizeObserver(()=>{
       if(chartRef.current!==chart||!container.isConnected)return;
       try{chart.applyOptions({width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight)});sync()}catch{/* disposed */}
     });
     resize.observe(container);
-    container.addEventListener("pointermove",sync,{passive:true});
-    container.addEventListener("touchmove",sync,{passive:true});
-    chart.timeScale().setVisibleLogicalRange({
-      from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:Math.max(-.5,candles.length-focusVisibleBars-.5),
-      to:candles.length-1+view.rightOffset,
-    });
+    container.addEventListener("pointermove",rememberViewport,{passive:true});
+    container.addEventListener("touchmove",rememberViewport,{passive:true});
+    container.addEventListener("pointerdown",markViewportManual,{passive:true});
+    container.addEventListener("touchstart",markViewportManual,{passive:true});
+    container.addEventListener("wheel",markViewportManual,{passive:true});
+    const defaultTo=candles.length-1+view.rightOffset;
+    const savedViewport=savedViewportRef.current[viewportKey];
+    const initialRange=savedViewport?(savedViewport.followLatest?{from:defaultTo-savedViewport.span,to:defaultTo}:{from:savedViewport.from,to:savedViewport.to}):{from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:Math.max(-.5,candles.length-focusVisibleBars-.5),to:defaultTo};
+    viewportSyncGuardRef.current=true;
+    chart.timeScale().setVisibleLogicalRange(initialRange);
+    requestAnimationFrame(()=>{viewportSyncGuardRef.current=false;sync()});
     sync();
 
     return()=>{
-      resize.disconnect();chart.timeScale().unsubscribeVisibleLogicalRangeChange(sync);
-      container.removeEventListener("pointermove",sync);container.removeEventListener("touchmove",sync);
+      resize.disconnect();chart.timeScale().unsubscribeVisibleLogicalRangeChange(rememberViewport);
+      container.removeEventListener("pointermove",rememberViewport);container.removeEventListener("touchmove",rememberViewport);
+      container.removeEventListener("pointerdown",markViewportManual);container.removeEventListener("touchstart",markViewportManual);container.removeEventListener("wheel",markViewportManual);
       try{chart.unsubscribeCrosshairMove(onCrosshair);chart.remove()}catch{/* disposed */}
       if(chartRef.current===chart)chartRef.current=null;
       candleSeriesRef.current=null;bbRefs.current={upper:null,middle:null,lower:null};syncOverlaysRef.current=()=>{};setZoneBoundaries([]);setStructureOverlay(EMPTY_STRUCTURE_OVERLAY);setEventLabels([]);
