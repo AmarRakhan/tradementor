@@ -177,7 +177,7 @@ def test_established_zone_ladder_moves_to_newest_segment_after_warmup():
 
 def test_recent_strategy_audit_events_become_immediate_chart_markers():
     rows = [
-        {"event": "MULTI_BB_ENTRY", "timestampMs": 61_000, "symbol": "BTCUSDT", "side": "SHORT", "originZone": -2, "soldierRole": "ZONE_BASE", "plannedInputNotionalUsd": 12.5},
+        {"event": "MULTI_BB_ENTRY", "timestampMs": 61_000, "symbol": "BTCUSDT", "side": "SHORT", "originZone": -2, "soldierRole": "ZONE_BASE", "plannedInputNotionalUsd": 12.5, "orderId": "41", "exchangeConfirmed": True},
         {"event": "MULTI_BB_DCA", "timestampMs": 65_000, "symbol": "ETHUSDT", "side": "SHORT", "fillPrice": 2500.0, "dcaNumber": 1, "dcaDistancePercent": 10.0, "anchorPrice": 2250.0, "triggerPrice": 2475.0, "fillQuantity": 0.01, "orderId": "42", "exchangeConfirmed": True},
         {"event": "MULTI_BB_TP", "timestampMs": 70_000, "side": "LONG"},
         {"event": "MULTI_BB_DCA_BLOCKED", "timestampMs": 71_000, "side": "LONG"},
@@ -408,14 +408,28 @@ def test_build487_runtime_report_persists_dynamic_hedge_ownership_for_scanner_ga
 
 
 
-def test_manual_dca_detected_is_presented_as_reconciled_add_not_true_dca():
+def test_manual_dca_reconciliation_snapshot_is_not_presented_as_confirmed_entry():
     rows = [
         {"event": "MANUAL_DCA_DETECTED", "timestampMs": 61_000, "symbol": "PONSUSDT", "side": "LONG", "fillPrice": 0.371234, "qtyDelta": 12.0},
     ]
+    assert strategy_audit_trade_markers(rows, "1m") == []
+
+
+def test_repeated_audit_rows_for_same_exchange_order_count_once():
+    rows = [
+        {"event": "MULTI_BB_DCA", "timestampMs": 61_000, "symbol": "PONSUSDT", "side": "LONG", "fillPrice": 0.371234, "dcaNumber": 5, "orderId": "pons-order-5", "exchangeConfirmed": True},
+        {"event": "MULTI_BB_DCA", "timestampMs": 62_000, "symbol": "PONSUSDT", "side": "LONG", "fillPrice": 0.371234, "dcaNumber": 5, "orderId": "pons-order-5", "exchangeConfirmed": True},
+        {"event": "MULTI_BB_DCA", "timestampMs": 63_000, "symbol": "PONSUSDT", "side": "LONG", "fillPrice": 0.371234, "dcaNumber": 5, "orderId": "pons-order-5", "exchangeConfirmed": True},
+    ]
     markers = strategy_audit_trade_markers(rows, "1m")
     assert len(markers) == 1
-    marker = markers[0]
-    assert marker["activityTypes"] == ["ADD"]
-    assert marker["label"] == "ADD L"
-    assert marker["entries"][0]["activityType"] == "ADD"
-    assert marker["entries"][0]["entryPrice"] == 0.371234
+    assert markers[0]["count"] == 1
+    assert len(markers[0]["entries"]) == 1
+    assert markers[0]["entries"][0]["orderId"] == "pons-order-5"
+
+
+def test_unconfirmed_entry_audit_row_never_becomes_live_chart_marker():
+    rows = [
+        {"event": "MULTI_BB_ENTRY", "timestampMs": 61_000, "symbol": "PONSUSDT", "side": "LONG", "orderId": "candidate-only"},
+    ]
+    assert strategy_audit_trade_markers(rows, "1m") == []
