@@ -18,8 +18,8 @@ test("Profit Pot daily total is surfaced from server-confirmed sweep state", () 
 });
 
 test("Profit Pot tile keeps the approved visual reference and is now clickable for settings", () => {
-  assert.match(bridge, /file_00000000f5ec8210bf3f2c300b972c25/);
-  assert.match(css, /file_00000000f5ec8210bf3f2c300b972c25/);
+  assert.match(bridge, /file_00000000a6388210976eaf5f7d7386e0/);
+  assert.match(css, /file_00000000a6388210976eaf5f7d7386e0/);
   assert.match(css, /border:1px solid rgba\(72,180,255,\.98\)/);
   assert.match(css, /pointer-events:auto/);
   assert.ok(profitPotCardSource);
