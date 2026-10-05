@@ -66,6 +66,7 @@ def evaluate_runtime_contract(
 
     before_rows = _row_map(before.get("accounts") if isinstance(before.get("accounts"), list) else [])
     after_rows = _row_map(after.get("accounts") if isinstance(after.get("accounts"), list) else [])
+    before_generated_ms = _i(before.get("generatedAtMs"), now_ms)
 
     for account_ref, previous in sorted(before_rows.items()):
         current = after_rows.get(account_ref)
@@ -92,10 +93,27 @@ def evaluate_runtime_contract(
             scanner_blocked = _b(current.get("scannerBlocked"))
             if scanner_after > 0:
                 scanner_age = max(0, now_ms - scanner_after)
+                scanner_before_age = (
+                    max(0, before_generated_ms - scanner_before)
+                    if scanner_before > 0 and before_generated_ms > 0
+                    else 10**18
+                )
+                scanner_was_already_stale = scanner_before_age > MAX_SCANNER_AGE_MS
+                scanner_did_not_advance = scanner_before > 0 and scanner_after <= scanner_before
                 if scanner_age > MAX_SCANNER_AGE_MS and not scanner_blocked:
-                    failures.append(f"{account_ref}:SCANNER_HEARTBEAT_STALE")
-                if scanner_before > 0 and scanner_after <= scanner_before and not scanner_blocked:
-                    failures.append(f"{account_ref}:SCANNER_DID_NOT_ADVANCE")
+                    if scanner_was_already_stale and scanner_did_not_advance:
+                        # This gate protects deployments against regressions. A scanner
+                        # that was already stale before the candidate cannot be caused
+                        # by that candidate, so surface it without rolling back an
+                        # otherwise healthy, unrelated release.
+                        warnings.append(f"{account_ref}:PREEXISTING_SCANNER_HEARTBEAT_STALE")
+                    else:
+                        failures.append(f"{account_ref}:SCANNER_HEARTBEAT_STALE")
+                if scanner_did_not_advance and not scanner_blocked:
+                    if scanner_was_already_stale:
+                        warnings.append(f"{account_ref}:PREEXISTING_SCANNER_DID_NOT_ADVANCE")
+                    else:
+                        failures.append(f"{account_ref}:SCANNER_DID_NOT_ADVANCE")
             elif not scanner_blocked:
                 warnings.append(f"{account_ref}:SCANNER_HEARTBEAT_UNAVAILABLE")
 
