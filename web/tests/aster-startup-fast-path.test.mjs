@@ -34,6 +34,7 @@ test("startup network waits are bounded and action gate no longer waits on unrel
   assert.match(page, /fieldset className="aster-action-gate" disabled=\{!asterActionsEnabled\}/);
 });
 
-test("release metadata identifies the startup performance build", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "504"/);
+test("release metadata stays at or above the startup performance build", () => {
+  const build = Number(version.match(/WEBAPP_BUILD_NUMBER = "(\d+)"/)?.[1] ?? "0");
+  assert.ok(build >= 504);
 });
