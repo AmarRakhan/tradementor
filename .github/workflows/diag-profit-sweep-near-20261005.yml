@@ -31,6 +31,8 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
       - name: Run private read-only NEAR Profit Sweep diagnostic
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           SERVICE_JSON="$RUNNER_TEMP/service.json"
@@ -46,6 +48,25 @@ jobs:
           )
           EOF
           test -n "$RUNTIME_SA"
+          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-cloud-production.yml/runs?branch=amar-crypto-bot-2026-cloud&event=push&per_page=10" --jq '.workflow_runs | sort_by(.created_at) | reverse | .[0]')"
+          DEPLOY_RUN_ID="$(python -c 'import json,sys; print(json.loads(sys.argv[1]).get("id",""))' "$RUN_JSON")"
+          DEPLOY_STATUS="$(python -c 'import json,sys; print(json.loads(sys.argv[1]).get("status",""))' "$RUN_JSON")"
+          DEPLOY_CONCLUSION="$(python -c 'import json,sys; print(json.loads(sys.argv[1]).get("conclusion") or "")' "$RUN_JSON")"
+          DEPLOY_FAILED_STEP=""
+          if [ -n "$DEPLOY_RUN_ID" ]; then
+            JOBS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$DEPLOY_RUN_ID/jobs?per_page=100")"
+            DEPLOY_FAILED_STEP="$(python - "$JOBS_JSON" <<'PY'
+          import json,sys
+          jobs=json.loads(sys.argv[1]).get("jobs",[])
+          failures=[]
+          for job in jobs:
+              for step in job.get("steps",[]):
+                  if step.get("conclusion")=="failure":
+                      failures.append(f"{job.get('name')}::{step.get('name')}")
+          print(" | ".join(failures))
+          PY
+            )"
+          fi
           mkdir -p "$RUNNER_TEMP/near-profit-sweep-diag"
           cat > "$RUNNER_TEMP/near-profit-sweep-diag/Dockerfile" <<'DOCKER'
           FROM python:3.12-slim
@@ -162,6 +183,10 @@ jobs:
           report=json.dumps({
               "generatedAt":now.isoformat(),
               "productionSourceCommit":os.environ.get("PRODUCTION_SOURCE_COMMIT",""),
+              "deployRunId":os.environ.get("DEPLOY_RUN_ID",""),
+              "deployStatus":os.environ.get("DEPLOY_STATUS",""),
+              "deployConclusion":os.environ.get("DEPLOY_CONCLUSION",""),
+              "deployFailedStep":os.environ.get("DEPLOY_FAILED_STEP",""),
               "matching5PctEnabledAccounts":len(accounts),
               "accounts":accounts,
           },separators=(",",":"),sort_keys=True)
@@ -187,8 +212,10 @@ jobs:
             gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --set-env-vars "DIAG_REPO=$GITHUB_REPOSITORY,DIAG_GH_TOKEN=${{ github.token }},PRODUCTION_SOURCE_COMMIT=$PRODUCTION_SOURCE_COMMIT" --quiet
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --set-env-vars "DIAG_REPO=$GITHUB_REPOSITORY,DIAG_GH_TOKEN=${{ github.token }},PRODUCTION_SOURCE_COMMIT=$PRODUCTION_SOURCE_COMMIT,DEPLOY_RUN_ID=$DEPLOY_RUN_ID,DEPLOY_STATUS=$DEPLOY_STATUS,DEPLOY_CONCLUSION=$DEPLOY_CONCLUSION,DEPLOY_FAILED_STEP=$DEPLOY_FAILED_STEP" --quiet
           EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
           test -n "$EXECUTION"
 
 # rerun after Build 506 deploy/recovery request
+
+# include backend deploy run status for Build 506
