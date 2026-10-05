@@ -69,3 +69,5 @@ jobs:
           EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
           test -n "$EXECUTION"
           gcloud logging read             "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"PROFIT_SWEEP_NEAR_RECOVERY_20261005=\""             --project "$GCP_PROJECT_ID" --freshness=20m --limit=5 --order=desc --format='value(textPayload)'
+
+# trigger recovery after workflow registration
