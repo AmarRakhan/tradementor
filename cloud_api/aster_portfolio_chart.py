@@ -572,7 +572,7 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         "MULTI_BB_DCA": ("entry", None, "DCA"),
         "MULTI_BB_TP": ("tp", "ALL", "TP"),
         "MULTI_BB_ASYM_SHORT_ENTRY": ("entry", "SHORT", "ENTRY"),
-        "MANUAL_DCA_DETECTED": ("entry", None, "DCA"),
+        "MANUAL_DCA_DETECTED": ("entry", None, "ADD"),
     }
     groups: dict[tuple[int, str, str], dict[str, Any]] = {}
     for raw in rows or []:
@@ -619,6 +619,14 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
                 "originZone": raw.get("originZone"),
                 "soldierId": str(raw.get("soldierId", "") or ""),
                 "soldierRole": str(raw.get("soldierRole", "") or "").upper().strip(),
+                "dcaNumber": int(_number(raw.get("dcaNumber"))) if _number(raw.get("dcaNumber")) > 0 else None,
+                "dcaDistancePercent": _number(raw.get("dcaDistancePercent")) if _number(raw.get("dcaDistancePercent")) > 0 else None,
+                "anchorPrice": _number(raw.get("anchorPrice")) if _number(raw.get("anchorPrice")) > 0 else None,
+                "triggerPrice": _number(raw.get("triggerPrice")) if _number(raw.get("triggerPrice")) > 0 else None,
+                "fillQuantity": _number(raw.get("fillQuantity")) if _number(raw.get("fillQuantity")) > 0 else None,
+                "orderId": str(raw.get("orderId", "") or ""),
+                "clientOrderId": str(raw.get("clientOrderId", "") or ""),
+                "exchangeConfirmed": bool(raw.get("exchangeConfirmed")) or (event == "MULTI_BB_DCA"),
             }
             group.setdefault("entries", [])
             group["entries"].append(entry_detail)
@@ -645,7 +653,7 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
             group["entries"].sort(key=lambda row: (int(row.get("atMs") or 0), str(row.get("symbol") or "")))
         if group["kind"] == "entry":
             side_letter = "L" if group["side"] == "LONG" else "S"
-            prefix = "DCA" if group["activityTypes"] == ["DCA"] else "ENTRY"
+            prefix = "DCA" if group["activityTypes"] == ["DCA"] else "ADD" if group["activityTypes"] == ["ADD"] else "ENTRY"
             group["label"] = f"{prefix} {side_letter}"
         else:
             group["label"] = "TP"
