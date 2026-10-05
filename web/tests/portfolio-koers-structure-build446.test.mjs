@@ -10,7 +10,10 @@ test("Build 446 binds Portfolio Koers Graph 3.0 to the approved structure refere
   assert.ok(component.includes(`PORTFOLIO_STRUCTURE_REFERENCE="${REFERENCE}"`));
   assert.ok(component.includes(`PORTFOLIO_STRUCTURE_BASELINE_REFERENCE="${BASELINE}"`));
   assert.ok(component.includes("portfolio-koers-structure-layer"));
-  for(const label of ['label:"R2"','label:"R1"','label:"S1"','label:"S2"'])assert.ok(component.includes(label),label);
+  assert.ok(component.includes('label:"R1"'));
+  assert.ok(component.includes('label:"S1"'));
+  assert.ok(component.includes('label:`R${offset+1}`'));
+  assert.ok(component.includes('label:`S${offset+1}`'));
 });
 
 test("Build 473 keeps the active gold zone while UI 4.1 hides the obsolete structure-note text",async()=>{
@@ -22,13 +25,12 @@ test("Build 473 keeps the active gold zone while UI 4.1 hides the obsolete struc
   assert.equal(component.includes(">volgende breakout</div>"),false);
 });
 
-test("Build 446 defines the active zone by S1/R1 so a broken resistance can become the next support",async()=>{
+test("Build 509 binds the active gold zone to the same operational zone used by the footer",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("marketContext?.lowerBoundary"));
-  assert.ok(component.includes("marketContext?.upperBoundary"));
-  assert.ok(component.includes("const activeLower=s1"));
-  assert.ok(component.includes("const activeUpper=r1"));
-  assert.ok(component.includes('candles[index-1].close<=Number(s1)&&candles[index].close>Number(s1)'));
+  assert.ok(component.includes("const operationalIndex=activeZoneRef.current"));
+  assert.ok(component.includes("const activeLower=Number.isFinite(Number(activeRow?.lower))"));
+  assert.ok(component.includes("const activeUpper=Number.isFinite(Number(activeRow?.upper))"));
+  assert.ok(component.includes('candles[index-1].close<=Number(activeLower)&&candles[index].close>Number(activeLower)'));
 });
 
 test("Build 446 keeps the right price axis calm and does not add volume or a side summary",async()=>{
@@ -64,12 +66,12 @@ test("Build 479 is the advertised webapp build while Build 447 Graph 3.1 regress
 });
 
 
-test("Build 447 derives visible active zone from the current live price instead of capped +3",async()=>{
+test("Build 509 extends the read-only ladder far enough to render R1-R4 and S1-S4",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,2)"));
+  assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,4)"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(zoneLadder,structurePrice)"));
-  assert.ok(component.includes("const activeLower=s1"));
-  assert.ok(component.includes("const activeUpper=r1"));
+  assert.ok(component.includes("Array.from({length:4}"));
+  assert.ok(component.includes("activeZoneRef.current"));
 });
 
 test("Build 447 puts the next breakout at R1, the first resistance above the active zone",async()=>{
