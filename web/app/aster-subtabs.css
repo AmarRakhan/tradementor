@@ -1,0 +1,72 @@
+/* Build 525 · Aster premium subtabs
+   Reference: file_00000000451081f497006c8382f6aaf6 */
+.aster-subtabs{
+  position:relative;z-index:20;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+  width:100%;min-width:0;margin:0 0 10px;padding:3px;
+  border:1px solid rgba(50,154,100,.48);border-radius:15px;
+  background:linear-gradient(180deg,rgba(3,20,15,.98),rgba(1,12,9,.99));
+  box-shadow:0 10px 26px rgba(0,0,0,.32),inset 0 1px 0 rgba(108,255,184,.035);
+  overflow:hidden
+}
+.aster-subtabs button{
+  position:relative;min-width:0;height:54px;padding:5px 4px;border:0;border-right:1px solid rgba(91,126,111,.22);
+  color:#9eb2aa;background:transparent;display:grid;place-items:center;align-content:center;gap:3px;
+  font:800 9px/1.05 system-ui;cursor:pointer;touch-action:manipulation;
+  transition:background .15s ease,border-color .15s ease,color .15s ease,box-shadow .15s ease
+}
+.aster-subtabs button:last-child{border-right:0}
+.aster-subtabs button span{display:block;color:#9fb6ad;font-size:17px;line-height:1}
+.aster-subtabs button b{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:inherit}
+.aster-subtabs button.active{
+  color:#f5fff9;border-radius:11px;
+  background:radial-gradient(circle at 50% 20%,rgba(31,238,160,.18),transparent 65%),linear-gradient(180deg,rgba(5,58,41,.88),rgba(2,28,21,.95));
+  box-shadow:inset 0 0 0 1px rgba(34,239,162,.82),0 0 17px rgba(25,229,151,.16)
+}
+.aster-subtabs button.active:before{
+  content:"";position:absolute;left:18%;right:18%;top:0;height:2px;border-radius:999px;
+  background:linear-gradient(90deg,#e6b640,#26ed9f);box-shadow:0 0 8px rgba(42,238,163,.6)
+}
+.aster-subtabs button.active span{color:#37efa7;text-shadow:0 0 11px rgba(44,239,169,.45)}
+
+/* Only the selected Aster section is visible below the shared subtab bar. */
+html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] section[aria-label="Aster Tradecentrum"],
+html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] .dashboard-grid,
+html[data-aster-compact-snapshot="true"][data-aster-subtab="portfolio"] section[aria-label^="Portfolio impact."],
+html[data-aster-compact-snapshot="true"][data-aster-subtab="advisor"] section[aria-label="Aster Tradecentrum"],
+html[data-aster-compact-snapshot="true"][data-aster-subtab="advisor"] .dashboard-grid,
+html[data-aster-compact-snapshot="true"][data-aster-subtab="advisor"] section[aria-label^="Portfolio impact."],
+html[data-aster-compact-snapshot="true"][data-aster-subtab="positions"] .dashboard-grid,
+html[data-aster-compact-snapshot="true"][data-aster-subtab="positions"] section[aria-label^="Portfolio impact."],
+html[data-aster-compact-snapshot="true"][data-aster-subtab="settings"] section[aria-label="Aster Tradecentrum"],
+html[data-aster-compact-snapshot="true"][data-aster-subtab="settings"] section[aria-label^="Portfolio impact."]{
+  display:none!important
+}
+html[data-aster-compact-snapshot="true"][data-aster-subtab="positions"] section[aria-label="Aster Tradecentrum"]{
+  display:block!important;margin-top:0!important
+}
+html[data-aster-compact-snapshot="true"][data-aster-subtab="settings"] .dashboard-grid{
+  display:block!important;margin-top:0!important
+}
+html[data-aster-compact-snapshot="true"][data-aster-subtab="settings"] .dashboard-grid>.side-stack{
+  display:grid!important;width:100%!important;max-width:none!important;margin:0!important
+}
+html[data-aster-compact-snapshot="true"][data-aster-subtab="settings"] .aster-action-gate{
+  width:100%;min-width:0
+}
+
+/* Prevent empty legacy spacing below the tab content. */
+html[data-aster-compact-snapshot="true"][data-aster-subtab="advisor"] #aster-portfolio-snapshot-host,
+html[data-aster-compact-snapshot="true"][data-aster-subtab="positions"] #aster-portfolio-snapshot-host,
+html[data-aster-compact-snapshot="true"][data-aster-subtab="settings"] #aster-portfolio-snapshot-host{
+  margin-bottom:10px
+}
+
+@media(max-width:640px){
+  .aster-subtabs{margin-bottom:8px;padding:2px;border-radius:13px}
+  .aster-subtabs button{height:50px;padding:4px 2px;font-size:7.5px;gap:2px}
+  .aster-subtabs button span{font-size:15px}
+}
+@media(max-width:380px){
+  .aster-subtabs button{font-size:6.8px}
+  .aster-subtabs button span{font-size:14px}
+}
