@@ -7,13 +7,13 @@ const v2 = fs.readFileSync(new URL("../components/aster-bot-configurator-v2.tsx"
 const v3 = fs.readFileSync(new URL("../components/aster-bot-configurator-v3.tsx", import.meta.url), "utf8");
 const page = fs.readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 
-test("Botconfigurator 3.0 is hard-routed to BETA while STABLE keeps V2", () => {
-  assert.match(shell, /features\?\.bot_configurator_v2\?\.enabled/);
-  assert.match(shell, /if \(!releaseEnabled\) return <AsterStrategy2Maker/);
-  assert.match(shell, /release\?\.channel === "BETA"/);
-  assert.match(shell, /import\("@\/components\/aster-bot-configurator-v2"\)/);
-  assert.match(shell, /import\("@\/components\/aster-bot-configurator-v3"\)/);
-  assert.match(shell, /betaV3Enabled[\s\S]*BetaConfiguratorV3[\s\S]*BetaConfiguratorV2/);
+test("Build 507 routes every user through an explicit legacy or Configurator 3 choice", () => {
+  assert.match(shell, /type BotSettingsMode = "legacy" \| "configurator3"/);
+  assert.match(shell, /Oude instellingen/);
+  assert.match(shell, /Nieuwe configurator/);
+  assert.match(shell, /<AsterStrategy2Maker \{\.\.\.props\} embedded \/>/);
+  assert.match(shell, /<ConfiguratorV3 \{\.\.\.props\}/);
+  assert.doesNotMatch(shell, /BetaConfiguratorV2/);
 });
 
 test("Build 457 V2 remains intact for STABLE users", () => {
@@ -36,7 +36,7 @@ test("Botconfigurator 3.0 has exactly four visible wizard steps", () => {
   assert.match(v3, /currentStep===1/);
   assert.match(v3, /currentStep===4/);
   assert.match(v3, /id="bot-configurator-v3"/);
-  assert.match(v3, /data-beta-only="true"/);
+  assert.match(v3, /data-rollout="opt-in-beta"/);
 });
 
 test("all binding Set A and Set B visual references are embedded in V3", () => {
