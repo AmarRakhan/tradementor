@@ -97,7 +97,7 @@ function buildSmartPreview(startMargin: number, leverage: number, range: number,
 }
 function money(value: number) { return Number.isFinite(value) ? `$${value >= 1000000 ? value.toLocaleString("nl-NL", { maximumFractionDigits: 0 }) : value.toFixed(value < 10 ? 2 : 0)}` : "—"; }
 
-export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, onChanged }: { snapshot: Record<string, unknown> | null; serverConfirmed: boolean; onConfirmed: (strategy2: Record<string, unknown>) => void; onChanged: () => void }) {
+export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, onChanged, embedded = false }: { snapshot: Record<string, unknown> | null; serverConfirmed: boolean; onConfirmed: (strategy2: Record<string, unknown>) => void; onChanged: () => void; embedded?: boolean }) {
   const [v, setV] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -467,7 +467,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   async function toggleLive() { if (status.pending || busy) return; if (dirty) { setMessage("Sla eerst de gewijzigde instellingen op; daarna kun je de bot direct aan- of uitzetten."); return; } if (enabled) return action("stop"); if (liveReady) return action("start"); return checkReadiness(true); }
 
   return <article id="strategy-2-maker" className="strategy-card strategy-two-card botsettings-ref" data-reference={BOT_SETTINGS_REFERENCE}>
-    <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
+    {!embedded && <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>}
 
     <section className="slot-overview" aria-label="Slot-overzicht">
       <header><span className="slot-icon">◇</span><div><b>Slot-overzicht</b><small>Bezetting van beschikbare botslots</small></div><span className="slot-cross">⇄ <b>CROSS</b></span><span className="slot-candidates">♙ <b>{candidateCount}</b> kandidaten</span></header>
