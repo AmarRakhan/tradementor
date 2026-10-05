@@ -58,7 +58,7 @@ jobs:
           db=firestore.Client(project="tradementor-production")
           ams=ZoneInfo("Europe/Amsterdam")
           now=datetime.now(timezone.utc)
-          day_start=datetime(2026,10,5,0,0,tzinfo=ams).astimezone(timezone.utc)
+          day_start=datetime(2026,10,4,0,0,tzinfo=ams).astimezone(timezone.utc)
           accounts=[]
 
           def as_utc(value):
