@@ -151,7 +151,8 @@ jobs:
                   "todayKey":str(state.get("todayKey","")),
                   "inFlight":state.get("inFlight") if isinstance(state.get("inFlight"),dict) else None,
                   "nearSweepsToday":near[:10],
-                  "latestSweepsToday":latest[:12],
+                  "latestSweepsToday":latest[:40],
+                  "manualIntents":manual_intents[:20],
               })
 
           report=json.dumps({
