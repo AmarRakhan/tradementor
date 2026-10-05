@@ -221,3 +221,5 @@ jobs:
 # include backend deploy run status for Build 506
 
 # post-recovery verification 2026-10-05
+
+# rerun after Build 506 production deploy
