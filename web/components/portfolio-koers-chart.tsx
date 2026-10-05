@@ -6,6 +6,7 @@ import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart, t
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { useAuthSession } from "@/components/auth-provider";
 import { ActiveZoneSeatBlock, type ActiveZoneSeatSummary } from "@/components/active-zone-seat-block";
+import { TradeIntelligenceAdvisorCenter } from "@/components/trade-intelligence-advisor-center";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
@@ -1109,6 +1110,12 @@ export function PortfolioKoersChart({
   },[timelineCandles]);
   const highTodayText=viewMode==="active"?indexValue(activePayload.dayHigh):accountUsd(accountDayRange.high);
   const lowTodayText=viewMode==="active"?indexValue(activePayload.dayLow):accountUsd(accountDayRange.low);
+  const tradeIntelligenceDayRangePosition=useMemo(()=>{
+    const current=Number(latest),high=Number(accountDayRange.high),low=Number(accountDayRange.low);
+    if(!Number.isFinite(current)||!Number.isFinite(high)||!Number.isFinite(low)||high<=low)return "middle" as const;
+    const progress=(current-low)/(high-low);
+    return progress<=.2?"low":progress>=.8?"high":"middle";
+  },[latest,accountDayRange.high,accountDayRange.low]);
   const activeHeaderValue=activePayload.currentOpenPnl;
   const activeHeaderPercent=activePayload.currentPnlPercent;
   const headerPerformanceSeries=cashflowAdjustedPortfolioSeries(timelineCandles,combinedMarkers);
@@ -1367,6 +1374,7 @@ export function PortfolioKoersChart({
       <span className="portfolio-koers-ui41-info" title="Bollinger Band 20,2 · actieve zone uit live portfolio-equity">i</span>
     </div>
     <div className="portfolio-koers-active-zone-seat" data-reference="file_00000000796c8210aa150351316f20d1"><ActiveZoneSeatBlock summary={activeZoneSeatSummary ?? null} liveActiveZone={activeZoneSeatLiveZone ?? null} /></div>
+    <TradeIntelligenceAdvisorCenter dayRangePosition={tradeIntelligenceDayRangePosition} />
     {viewMode==="active"?<section className="portfolio-koers-active-summary" aria-label="Actieve Trades Samenvatting">
       <h3>Actieve Trades Samenvatting</h3>
       <div className="portfolio-koers-active-summary-grid">
