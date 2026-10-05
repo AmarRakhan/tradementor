@@ -1268,16 +1268,18 @@ export function PortfolioKoersChart({
       <div className="portfolio-koers-event-layer">{eventLabels.map((label)=>{
         const connector=connectorStyle(label);
         const isTp=label.tone==="tp";
+        const isEntry=label.tone==="long"||label.tone==="short";
+        const isInteractive=isTp||isEntry;
         return <div key={label.id} className="portfolio-koers-event-group">
-          {isTp&&connector?<span className="portfolio-koers-connector tp" style={connector}/>:null}
-          {isTp&&Number.isFinite(label.anchorLeft)&&Number.isFinite(label.anchorTop)?<span className="portfolio-koers-anchor tp" style={{left:`${label.anchorLeft}px`,top:`${label.anchorTop}px`}}/>:null}
+          {isInteractive&&connector?<span className={`portfolio-koers-connector ${label.tone}`} style={connector}/>:null}
+          {isInteractive&&Number.isFinite(label.anchorLeft)&&Number.isFinite(label.anchorTop)?<span className={`portfolio-koers-anchor ${label.tone}`} style={{left:`${label.anchorLeft}px`,top:`${label.anchorTop}px`}}/>:null}
           <button
             type="button"
             className={`portfolio-koers-event portfolio-koers-event-chip ${label.tone} ${label.position} ${(label as any).compressed?"compressed":""}`}
             style={{left:`${label.left}px`,top:`${label.top}px`}}
-            onClick={isTp?()=>void openTpCluster(label):undefined}
-            tabIndex={isTp?0:-1}
-            aria-label={isTp?`Take Profit cluster ${signedUsd(label.realizedPnlUsd)}, ${label.eventCount||1} trades`:undefined}
+            onClick={isInteractive?()=>void openEventCluster(label):undefined}
+            tabIndex={isInteractive?0:-1}
+            aria-label={isTp?`Take Profit cluster ${signedUsd(label.realizedPnlUsd)}, ${label.eventCount||1} trades`:isEntry?`${label.tone==="short"?"SHORT":"LONG"} cluster, ${label.eventCount||1} geopende posities`:undefined}
           >
             {label.tone==="long"?<DirectionArrow direction="up"/>:label.tone==="short"?<DirectionArrow direction="down"/>:isTp?<MoneyBagIcon/>:null}
             <b>{label.multiplier||`+${label.eventCount}`}</b>
@@ -1287,17 +1289,17 @@ export function PortfolioKoersChart({
       })}</div>
       {selectedTpCluster?<div className="portfolio-koers-tp-detail-shell" data-reference={PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE}>
         {tpDetailConnectorStyle(selectedTpCluster)?<span className="portfolio-koers-tp-detail-leader" style={tpDetailConnectorStyle(selectedTpCluster)}/>:null}
-        <section className="portfolio-koers-tp-detail" onDoubleClick={()=>setSelectedTpCluster(null)} aria-label="Take Profit details">
-          <header><MoneyBagIcon/><strong>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
+        <section className="portfolio-koers-tp-detail" onDoubleClick={()=>setSelectedTpCluster(null)} aria-label={selectedTpCluster.tone==="tp"?"Take Profit details":"Geopende posities details"}>
+          <header>{selectedTpCluster.tone==="tp"?<MoneyBagIcon/>:<DirectionArrow direction={selectedTpCluster.tone==="short"?"down":"up"}/>}<strong>{selectedTpCluster.tone==="tp"?<>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></>:<>{selectedTpCluster.tone==="short"?"SHORT":"LONG"} geopend: <b>{selectedTpCluster.eventCount||1} posities</b></>}</strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
           <div className="portfolio-koers-tp-trades">
             {(selectedTpCluster.trades||[]).map((trade,index)=><div className="portfolio-koers-tp-trade" key={`${trade.symbol}-${index}`}>
               <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}</span></strong>
-              <b>{signedUsd(trade.realizedPnlUsd)}</b>
-              <span>{durationLabel(trade.durationMinutes)}</span>
+              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b>{trade.entryPrice?`@ ${levelUsd(trade.entryPrice)}`:"ENTRY"}</b>}
+              <span>{selectedTpCluster.tone==="tp"?durationLabel(trade.durationMinutes):entryClock(trade.openedAtMs)}</span>
             </div>)}
-            {tpDetailLoading?<div className="portfolio-koers-tp-empty loading">Bevestigde fills laden…</div>:null}
+            {tpDetailLoading?<div className="portfolio-koers-tp-empty loading">{selectedTpCluster.tone==="tp"?"Bevestigde fills laden…":"Bevestigde entries laden…"}</div>:null}
             {!tpDetailLoading&&tpDetailError?<div className="portfolio-koers-tp-empty error">{tpDetailError}</div>:null}
-            {!tpDetailLoading&&!tpDetailError&&!(selectedTpCluster.trades||[]).length?<div className="portfolio-koers-tp-empty">Geen bevestigde filldetails beschikbaar.</div>:null}
+            {!tpDetailLoading&&!tpDetailError&&!(selectedTpCluster.trades||[]).length?<div className="portfolio-koers-tp-empty">{selectedTpCluster.tone==="tp"?"Geen bevestigde filldetails beschikbaar.":"Geen bevestigde entrydetails beschikbaar."}</div>:null}
           </div>
           <footer>⌁&nbsp;&nbsp; Dubbeltik om te sluiten</footer>
         </section>
