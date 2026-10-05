@@ -6,7 +6,6 @@ import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart, t
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { useAuthSession } from "@/components/auth-provider";
 import { ActiveZoneSeatBlock, type ActiveZoneSeatSummary } from "@/components/active-zone-seat-block";
-import { TradeIntelligenceAdvisorCenter } from "@/components/trade-intelligence-advisor-center";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
@@ -454,6 +453,7 @@ export function PortfolioKoersChart({
   activeZoneSeatSummary,
   activeZoneSeatLiveZone,
   onActiveZoneChange,
+  onDayRangePositionChange,
 }:{
   liveEquityText:string;
   liveAvailableText:string;
@@ -462,6 +462,7 @@ export function PortfolioKoersChart({
   activeZoneSeatSummary?:ActiveZoneSeatSummary|null;
   activeZoneSeatLiveZone?:number|null;
   onActiveZoneChange?:(zone:number|null)=>void;
+  onDayRangePositionChange?:(position:"low"|"middle"|"high")=>void;
 }) {
   const { user }=useAuthSession();
   const shellRef=useRef<HTMLElement>(null);
@@ -1116,6 +1117,7 @@ export function PortfolioKoersChart({
     const progress=(current-low)/(high-low);
     return progress<=.2?"low":progress>=.8?"high":"middle";
   },[latest,accountDayRange.high,accountDayRange.low]);
+  useEffect(()=>{onDayRangePositionChange?.(tradeIntelligenceDayRangePosition)},[tradeIntelligenceDayRangePosition,onDayRangePositionChange]);
   const activeHeaderValue=activePayload.currentOpenPnl;
   const activeHeaderPercent=activePayload.currentPnlPercent;
   const headerPerformanceSeries=cashflowAdjustedPortfolioSeries(timelineCandles,combinedMarkers);
@@ -1274,7 +1276,7 @@ export function PortfolioKoersChart({
     soldierActivity,
   });
 
-  return <><section ref={shellRef} className={`portfolio-koers-card portfolio-zone-map portfolio-koers-ui41 ${advisorEnabled?"beta-zone-advisor":""}`} aria-label="Portfolio Koers" data-reference={PORTFOLIO_KOERS_UI41_REFERENCE} data-structure-reference={PORTFOLIO_STRUCTURE_REFERENCE} data-structure-baseline-reference={PORTFOLIO_STRUCTURE_BASELINE_REFERENCE} data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
+  return <section ref={shellRef} className={`portfolio-koers-card portfolio-zone-map portfolio-koers-ui41 ${advisorEnabled?"beta-zone-advisor":""}`} aria-label="Portfolio Koers" data-reference={PORTFOLIO_KOERS_UI41_REFERENCE} data-structure-reference={PORTFOLIO_STRUCTURE_REFERENCE} data-structure-baseline-reference={PORTFOLIO_STRUCTURE_BASELINE_REFERENCE} data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
     <header className="portfolio-koers-header portfolio-koers-ui41-header">
       <div className="portfolio-koers-ui41-top">
         <div className="portfolio-koers-heading">
@@ -1439,5 +1441,5 @@ export function PortfolioKoersChart({
       </span>
     </section>:null}
     <span className="portfolio-koers-current-sr">Actuele portfolio waarde {latest===null?"onbekend":compactUsd(latest)}</span>
-  </section><TradeIntelligenceAdvisorCenter dayRangePosition={tradeIntelligenceDayRangePosition} /></>;
+  </section>;
 }
