@@ -3201,8 +3201,6 @@ def _bot_settings_configurator3_enrolled(user: dict[str, Any]) -> bool:
 
 
 def _bot_settings_configurator3_enrolled_for_uid(uid: str) -> bool:
-    if _is_beta_owner_uid(uid):
-        return True
     value = user_reference({"uid": uid}).collection("preferences").document("botSettingsUi").get().to_dict() or {}
     return value.get("configurator3Enabled") is True
 
