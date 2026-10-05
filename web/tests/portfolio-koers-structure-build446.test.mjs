@@ -10,19 +10,21 @@ test("Build 446 binds Portfolio Koers Graph 3.0 to the approved structure refere
   assert.ok(component.includes(`PORTFOLIO_STRUCTURE_REFERENCE="${REFERENCE}"`));
   assert.ok(component.includes(`PORTFOLIO_STRUCTURE_BASELINE_REFERENCE="${BASELINE}"`));
   assert.ok(component.includes("portfolio-koers-structure-layer"));
-  assert.ok(component.includes('label:"R1"'));
-  assert.ok(component.includes('label:"S1"'));
-  assert.ok(component.includes('label:`R${offset+1}`'));
-  assert.ok(component.includes('label:`S${offset+1}`'));
+  assert.ok(component.includes("boundaryPrices"));
+  assert.ok(component.includes("structurePrice!==null&&price>Number(structurePrice)?\"resistance\":\"support\""));
+  assert.equal(component.includes('label:"R1"'),false);
+  assert.equal(component.includes('label:"S1"'),false);
 });
 
-test("Build 473 keeps the active gold zone while UI 4.1 hides the obsolete structure-note text",async()=>{
-  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("portfolio-koers-structure-zone"));
-  assert.ok(component.includes("Zone ${Number(activeIndex)} actief"));
+test("Build 513 removes the in-chart active-zone block while keeping footer context",async()=>{
+  const [component,css]=await Promise.all([
+    readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8"),
+  ]);
+  assert.ok(component.includes("activeZone:null"));
+  assert.ok(css.includes(".portfolio-koers-ui41 .portfolio-koers-structure-zone{"));
+  assert.ok(css.includes("display:none!important"));
   assert.equal(component.includes("voormalige R1 → nieuwe support"),false);
-  assert.equal(component.includes(">nieuwe high</div>"),false);
-  assert.equal(component.includes(">volgende breakout</div>"),false);
 });
 
 test("Build 509 binds the active gold zone to the same operational zone used by the footer",async()=>{
@@ -66,18 +68,19 @@ test("Build 479 is the advertised webapp build while Build 447 Graph 3.1 regress
 });
 
 
-test("Build 509 extends the read-only ladder far enough to render R1-R4 and S1-S4",async()=>{
+test("Build 513 renders every visible ladder boundary without an R/S display cap",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,4)"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(zoneLadder,structurePrice)"));
-  assert.ok(component.includes("Array.from({length:4}"));
-  assert.ok(component.includes("activeZoneRef.current"));
+  assert.ok(component.includes("const boundaryPrices=Array.from(new Set(rows.flatMap"));
+  assert.ok(component.includes("if(top<0||top>height)return []"));
+  assert.equal(component.includes("Array.from({length:4}"),false);
 });
 
-test("Build 447 puts the next breakout at R1, the first resistance above the active zone",async()=>{
+test("Build 513 disables legacy breakout structure notes",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("breakout:r1Level?"));
-  assert.equal(component.includes("breakout:(r2Level??r1Level)"),false);
+  assert.ok(component.includes("const r1Level=null"));
+  assert.ok(component.includes("setStructureOverlay({...structureDraft,roleFlip:null,newHigh:null,breakout:null})"));
 });
 
 test("Build 474 keeps marker collision layout after reference-density selection and hides legacy structure notes",async()=>{
