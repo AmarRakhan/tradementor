@@ -10,7 +10,8 @@ test("mobile pull-to-refresh visibly refreshes server snapshots", () => {
   assert.match(component, /TRIGGER_DISTANCE = 72/);
   assert.match(component, /window\.addEventListener\("touchmove", touchMove, \{ passive: true \}\)/);
   assert.doesNotMatch(component, /event\.preventDefault\(\)/);
-  assert.match(component, /requestAnimationFrame/);\n  assert.match(component, /await onRefresh\(\)/);
+  assert.match(component, /requestAnimationFrame/);
+  assert.match(component, /await onRefresh\(\)/);
   assert.match(component, /Gegevens worden vernieuwd/);
   assert.match(styles, /\.refreshing span\{animation:spin/);
   assert.match(styles, /@media\(min-width:701px\)/);
