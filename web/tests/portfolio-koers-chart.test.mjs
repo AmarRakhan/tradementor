@@ -174,6 +174,19 @@ test("Portfolio Koers UI 4.1 keeps Bollinger context compact and never invents a
   assert.equal(component.includes("Aster PERP"),false);
 });
 
+test("Build 509 makes Bollinger, active-zone shading and day high/low visibly explicit",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes('rgba(35,190,255,.82)'));
+  assert.ok(component.includes('rgba(255,72,111,.78)'));
+  assert.ok(component.includes("High vandaag"));
+  assert.ok(component.includes("Low vandaag"));
+  assert.ok(component.includes('timeZone:"Europe/Amsterdam"'));
+  assert.ok(component.includes('Array.from({length:4}'));
+  assert.ok(css.includes("portfolio-koers-day-range"));
+  assert.ok(css.includes("rgba(211,163,28,.28)"));
+});
+
 test("Portfolio Koers zone overlay renders above the opaque chart canvas",async()=>{
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
   assert.ok(css.includes(".portfolio-koers-canvas{position:absolute;inset:0;z-index:2"));
