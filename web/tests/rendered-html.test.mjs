@@ -414,8 +414,10 @@ test("application zoom is blocked while deliberate chart gestures remain availab
   assert.match(layout, /maximumScale:\s*1/);
   assert.match(layout, /userScalable:\s*false/);
   assert.match(layout, /<ZoomGuard\s*\/>/);
-  assert.match(guard, /event\.touches\.length > 1/);
   assert.match(guard, /closest\("\.chart-canvas"\)/);
+  assert.match(guard, /gesturestart/);
+  assert.match(guard, /gesturechange/);
+  assert.doesNotMatch(guard, /addEventListener\("touchmove"/);
   assert.match(styles, /html\s*\{[^}]*touch-action:\s*pan-y/i);
   assert.match(styles, /body\s*\{[^}]*touch-action:\s*pan-y/i);
 });
