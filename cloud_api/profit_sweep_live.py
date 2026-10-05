@@ -57,6 +57,9 @@ class PreparedSweep:
     evidence_entry_fees: Decimal
     evidence_funding: Decimal
     evidence_other_costs: Decimal
+    pre_close_entry_price: Decimal = Decimal("0")
+    requested_close_quantity: Decimal = Decimal("0")
+    calculation_evidence: str = "FULL_HISTORY"
 
 
 def _d(value: Any, default: str = "0") -> Decimal:
@@ -163,22 +166,49 @@ def net_realized_for_order(
     pre_entry_commission_pool: Decimal,
     negative_funding: Decimal = Decimal("0"),
     evidence: CloseEvidence | None = None,
+    pre_entry_price: Decimal = Decimal("0"),
+    calculation_evidence: str = "FULL_HISTORY",
 ) -> tuple[Decimal, dict[str, str]]:
+    """Calculate net realized profit from one exact confirmed close order.
+
+    Exchange pre-close quantity is the primary denominator for partial closes.
+    Historical fills provide cost evidence only and cannot erase an otherwise
+    proven positive realized close.
+    """
     rows = [row for row in target_fills if is_closing_fill(row, position_side)]
     if not rows:
         raise ProfitSweepError("Aster bevestigde nog geen sluitfills voor deze order")
     closed_qty = sum((_fill_quantity(row) for row in rows), Decimal("0"))
     if closed_qty <= 0 or pre_open_quantity <= 0:
-        raise ProfitSweepError("Sluitingshoeveelheid kan niet betrouwbaar aan open inventory worden gekoppeld")
+        raise ProfitSweepError("Sluitingshoeveelheid kan niet aan de actuele pre-close positie worden gekoppeld")
+    if closed_qty > pre_open_quantity + Decimal("0.00000001"):
+        raise ProfitSweepError("Bevestigde sluitfills overschrijden de actuele pre-close positie")
     ratio = min(Decimal("1"), closed_qty / pre_open_quantity)
     realized = sum((_d(row.get("realizedPnl", row.get("realizedProfit"))) for row in rows), Decimal("0"))
     close_commission = sum((_commission_cost(row) for row in rows), Decimal("0"))
+
     allocated_entry_commission = pre_entry_commission_pool * ratio
     entry_fee_cost = abs(allocated_entry_commission)
     evidence_entry = _d(evidence.entry_fees) if evidence is not None else Decimal("0")
     if evidence_entry > entry_fee_cost:
         entry_fee_cost = evidence_entry
-    funding_adjustment = min(Decimal("0"), negative_funding * ratio)
+
+    estimated_entry_fee = Decimal("0")
+    if calculation_evidence != "FULL_HISTORY" and pre_entry_price > 0:
+        close_notional = sum(
+            (_fill_quantity(row) * abs(_d(row.get("price")))) for row in rows
+        )
+        close_fee_cost = abs(close_commission)
+        if close_notional > 0 and close_fee_cost > 0:
+            observed_fee_rate = close_fee_cost / close_notional
+            estimated_entry_fee = closed_qty * pre_entry_price * observed_fee_rate
+            if estimated_entry_fee > entry_fee_cost:
+                entry_fee_cost = estimated_entry_fee
+
+    if calculation_evidence == "FULL_HISTORY":
+        funding_adjustment = min(Decimal("0"), negative_funding * ratio)
+    else:
+        funding_adjustment = min(Decimal("0"), negative_funding)
     evidence_funding = _d(evidence.funding) if evidence is not None else Decimal("0")
     funding_adjustment = min(funding_adjustment, evidence_funding, Decimal("0"))
     other_cost = max(Decimal("0"), _d(evidence.other_costs) if evidence is not None else Decimal("0"))
@@ -188,10 +218,11 @@ def net_realized_for_order(
         "closedQuantity": _plain(closed_qty),
         "closeCommission": _plain(close_commission),
         "allocatedEntryFee": _plain(-entry_fee_cost),
+        "estimatedEntryFeeFallback": _plain(-estimated_entry_fee),
         "fundingAdjustment": _plain(funding_adjustment),
         "otherCostAdjustment": _plain(-other_cost),
+        "calculationEvidence": calculation_evidence,
     }
-
 
 def transfer_safety(account: dict[str, Any], amount: Decimal) -> tuple[bool, str, dict[str, float]]:
     """Project the account after removing ``amount`` from Futures margin."""
@@ -818,7 +849,7 @@ def prepare_close_sweep(
     close_quantity: Any,
     evidence: CloseEvidence | None = None,
 ) -> PreparedSweep | None:
-    """Snapshot settings/evidence before the close; never blocks the close itself."""
+    """Snapshot strategy-neutral exchange truth before any confirmed close."""
     if not live_enabled():
         return None
     control_ref = user_ref.collection("executionControls").document("aster")
@@ -838,14 +869,18 @@ def prepare_close_sweep(
         return None
     if percent <= 0:
         return None
+
+    normalized_symbol = symbol.upper()
+    normalized_side = position_side.upper()
+    requested = abs(_d(close_quantity))
     sweep_id = _sweep_id(uid, intent_id)
     ledger_ref = user_ref.collection("asterProfitSweeps").document(sweep_id)
     created = {
         "uid": uid,
         "exchange": "ASTER",
         "closureId": intent_id,
-        "symbol": symbol.upper(),
-        "positionSide": position_side.upper(),
+        "symbol": normalized_symbol,
+        "positionSide": normalized_side,
         "sweepPercent": float(percent),
         "asset": transfer_asset,
         "kindType": TRANSFER_KIND,
@@ -853,6 +888,7 @@ def prepare_close_sweep(
         "status": "PREPARING",
         "principalIncluded": False,
         "unrealizedPnlIncluded": False,
+        "strategyNeutral": True,
         "createdAt": _now(),
     }
     try:
@@ -861,28 +897,68 @@ def prepare_close_sweep(
         return None
 
     try:
-        pre_trades = client.user_trades(symbol.upper(), limit=1000)
-        if len(pre_trades) >= 1000:
-            raise ProfitSweepError("Fillhistorie is begrensd; entrykosten kunnen niet volledig worden bewezen")
-        open_qty, fee_pool, cycle_start = open_inventory(pre_trades, position_side)
-        requested = abs(_d(close_quantity))
-        if open_qty <= 0 or requested <= 0 or requested > open_qty + Decimal("0.00000001"):
-            raise ProfitSweepError("Open inventory en sluitingshoeveelheid komen niet betrouwbaar overeen")
-        if cycle_start <= 0:
-            raise ProfitSweepError("Start van de huidige positiecyclus ontbreekt")
+        if requested <= 0:
+            raise ProfitSweepError("Sluitingshoeveelheid is niet positief")
+
+        exchange_qty = Decimal("0")
+        exchange_entry_price = Decimal("0")
+        position_reader = getattr(client, "position_risk", None)
+        if callable(position_reader):
+            positions = position_reader(normalized_symbol)
+            position = next((
+                row for row in positions
+                if str(row.get("symbol", "")).upper() == normalized_symbol
+                and str(row.get("positionSide", "")).upper() == normalized_side
+                and abs(_d(row.get("positionAmt"))) > 0
+            ), None)
+            if position is not None:
+                exchange_qty = abs(_d(position.get("positionAmt")))
+                exchange_entry_price = abs(_d(position.get("entryPrice")))
+
+        pre_trades = client.user_trades(normalized_symbol, limit=1000)
+        history_qty, fee_pool, cycle_start = open_inventory(pre_trades, normalized_side)
+        history_complete = len(pre_trades) < 1000
+        history_matches_exchange = (
+            exchange_qty > 0
+            and history_qty > 0
+            and abs(history_qty - exchange_qty) <= max(
+                Decimal("0.00000001"), exchange_qty * Decimal("0.000000001")
+            )
+            and cycle_start > 0
+            and history_complete
+        )
+
+        primary_qty = exchange_qty if exchange_qty > 0 else history_qty
+        if primary_qty <= 0 or requested > primary_qty + Decimal("0.00000001"):
+            raise ProfitSweepError("Actuele pre-close positie en sluitingshoeveelheid komen niet betrouwbaar overeen")
+
+        calculation_evidence = (
+            "FULL_HISTORY" if history_matches_exchange or exchange_qty <= 0
+            else "PARTIAL_COST_EVIDENCE"
+        )
+        funding_start = cycle_start if calculation_evidence == "FULL_HISTORY" and cycle_start > 0 else None
         funding_rows = client.income_history(
-            symbol=symbol.upper(), income_type="FUNDING_FEE", start_time=cycle_start, limit=1000,
+            symbol=normalized_symbol, income_type="FUNDING_FEE", start_time=funding_start, limit=1000,
+        )
+        negative_funding = sum(
+            (min(Decimal("0"), _d(row.get("income"))) for row in funding_rows),
+            Decimal("0"),
         )
         if len(funding_rows) >= 1000:
-            raise ProfitSweepError("Fundinghistorie is begrensd; nettowinst kan niet conservatief worden bewezen")
-        # Positive funding is deliberately ignored; negative funding is a cost.
-        negative_funding = sum((min(Decimal("0"), _d(row.get("income"))) for row in funding_rows), Decimal("0"))
+            calculation_evidence = "PARTIAL_COST_EVIDENCE"
+
         ledger_ref.set({
             "status": "PREPARED",
-            "openQuantityBeforeClose": _plain(open_qty),
+            "openQuantityBeforeClose": _plain(primary_qty),
+            "exchangeOpenQuantityBeforeClose": _plain(exchange_qty),
+            "historicalOpenQuantityBeforeClose": _plain(history_qty),
+            "requestedCloseQuantity": _plain(requested),
+            "preCloseEntryPrice": _plain(exchange_entry_price),
             "entryCommissionPool": _plain(fee_pool),
             "negativeFundingObserved": _plain(negative_funding),
             "cycleStartMs": cycle_start,
+            "calculationEvidence": calculation_evidence,
+            "inventoryMismatch": bool(exchange_qty > 0 and history_qty != exchange_qty),
             "preparedAt": _now(),
         }, merge=True)
         return PreparedSweep(
@@ -890,26 +966,27 @@ def prepare_close_sweep(
             sweep_id=sweep_id,
             intent_id=intent_id,
             client_tran_id=created["clientTranId"],
-            symbol=symbol.upper(),
-            position_side=position_side.upper(),
+            symbol=normalized_symbol,
+            position_side=normalized_side,
             sweep_percent=percent,
             transfer_asset=transfer_asset,
             minimum_transfer=minimum_transfer,
             user_ref=user_ref,
             ledger_ref=ledger_ref,
-            open_quantity=open_qty,
+            open_quantity=primary_qty,
             entry_commission_pool=fee_pool,
             cycle_start_ms=cycle_start,
             negative_funding=negative_funding,
             evidence_entry_fees=_d(evidence.entry_fees) if evidence else Decimal("0"),
             evidence_funding=_d(evidence.funding) if evidence else Decimal("0"),
             evidence_other_costs=_d(evidence.other_costs) if evidence else Decimal("0"),
+            pre_close_entry_price=exchange_entry_price,
+            requested_close_quantity=requested,
+            calculation_evidence=calculation_evidence,
         )
     except Exception as exc:
         ledger_ref.set({"status": "BLOCKED_EVIDENCE", "reason": str(exc)[:500], "updatedAt": _now()}, merge=True)
         return None
-
-
 
 def _local_day_key(value: datetime | None = None) -> str:
     current = value or _now()
@@ -1316,7 +1393,7 @@ def finalize_close_sweep(
     confirmed_order: dict[str, Any],
     evidence: CloseEvidence | None = None,
 ) -> dict[str, Any] | None:
-    """Book a positive realized-profit share and transfer only complete threshold blocks."""
+    """Book every proven positive close profit, independent of strategy/hedge ownership."""
     if prepared is None:
         return None
     ref = prepared.ledger_ref
@@ -1328,14 +1405,14 @@ def finalize_close_sweep(
     try:
         target: list[dict[str, Any]] = []
         for attempt in range(6):
-            rows = client.user_trades(
-                prepared.symbol,
-                start_time=max(0, prepared.cycle_start_ms - 1000),
-                limit=1000,
-            )
-            if len(rows) >= 1000:
-                raise ProfitSweepError("Sluitfillhistorie is begrensd")
-            target = [row for row in rows if str(row.get("orderId", "")) == order_id]
+            rows = client.user_trades(prepared.symbol, limit=1000)
+            target = [
+                row for row in rows
+                if str(row.get("orderId", "")) == order_id
+                and str(row.get("symbol", prepared.symbol)).upper() == prepared.symbol
+                and str(row.get("positionSide", "")).upper() == prepared.position_side
+                and is_closing_fill(row, prepared.position_side)
+            ]
             if target:
                 break
             if attempt < 5:
@@ -1350,6 +1427,8 @@ def finalize_close_sweep(
             pre_entry_commission_pool=prepared.entry_commission_pool,
             negative_funding=prepared.negative_funding,
             evidence=evidence,
+            pre_entry_price=prepared.pre_close_entry_price,
+            calculation_evidence=prepared.calculation_evidence,
         )
         contribution = sweep_contribution(net, prepared.sweep_percent, enabled=True)
         ref.set({
@@ -1358,6 +1437,7 @@ def finalize_close_sweep(
             "netRealizedProfit": _plain(net),
             "sweepContribution": _plain(contribution),
             "minimumTransfer": _plain(prepared.minimum_transfer),
+            "calculationEvidence": prepared.calculation_evidence,
             "calculation": detail,
             "calculatedAt": _now(),
         }, merge=True)
@@ -1383,3 +1463,4 @@ def finalize_close_sweep(
     except Exception as exc:
         ref.set({"status": "FAILED_INTERNAL", "reason": str(exc)[:500], "updatedAt": _now()}, merge=True)
         return {"status": "FAILED_INTERNAL"}
+
