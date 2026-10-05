@@ -8,7 +8,9 @@ test("direct settings support up to 100 total positions with independent LONG an
   assert.match(maker, /Totaal posities/);
   assert.match(maker, /LONG slots/);
   assert.match(maker, /SHORT slots/);
-  assert.match(maker, /maximumPositions:\s*Math\.min\(MAX_TOTAL_POSITIONS, longSlots \+ shortSlots\)/);
+  assert.match(maker, /persisted\.zoneSoldiersEnabled === true/);
+  assert.match(maker, /Math\.max\(1, Math\.round\(finiteOr\(persisted\.maximumPositions, longSlots \+ shortSlots\)\)\)/);
+  assert.match(maker, /Math\.min\(MAX_TOTAL_POSITIONS, longSlots \+ shortSlots\)/);
   assert.match(maker, /const longSlots = clampInt\(n\(v\.longSlots\), 0, MAX_SIDE_SLOTS\)/);
   assert.match(maker, /const shortSlots = clampInt\(n\(v\.shortSlots\), 0, MAX_SIDE_SLOTS\)/);
   assert.match(maker, /fixedPositionSize:\s*false/);
