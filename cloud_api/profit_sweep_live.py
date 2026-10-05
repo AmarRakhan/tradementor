@@ -912,9 +912,18 @@ def prepare_close_sweep(
                 exchange_qty = abs(_d(position.get("positionAmt")))
                 exchange_entry_price = abs(_d(position.get("entryPrice")))
 
-        pre_trades = client.user_trades(normalized_symbol, limit=1000)
-        history_qty, fee_pool, cycle_start = open_inventory(pre_trades, normalized_side)
-        history_complete = len(pre_trades) < 1000
+        try:
+            pre_trades = client.user_trades(normalized_symbol, limit=1000)
+            history_qty, fee_pool, cycle_start = open_inventory(pre_trades, normalized_side)
+            history_complete = len(pre_trades) < 1000
+        except Exception:
+            # A legacy/history read problem may reduce cost evidence, but it must
+            # not erase an otherwise proven live exchange position before close.
+            pre_trades = []
+            history_qty = Decimal("0")
+            fee_pool = Decimal("0")
+            cycle_start = 0
+            history_complete = False
         history_matches_exchange = (
             exchange_qty > 0
             and history_qty > 0
@@ -934,12 +943,18 @@ def prepare_close_sweep(
             else "PARTIAL_COST_EVIDENCE"
         )
         funding_start = cycle_start if cycle_start > 0 else None
-        funding_rows = (
-            client.income_history(
-                symbol=normalized_symbol, income_type="FUNDING_FEE", start_time=funding_start, limit=1000,
+        try:
+            funding_rows = (
+                client.income_history(
+                    symbol=normalized_symbol, income_type="FUNDING_FEE", start_time=funding_start, limit=1000,
+                )
+                if funding_start is not None else []
             )
-            if funding_start is not None else []
-        )
+        except Exception:
+            # Funding that cannot be reliably attributed is not invented.
+            # The ledger is explicitly marked partial-cost evidence below.
+            funding_rows = []
+            calculation_evidence = "PARTIAL_COST_EVIDENCE"
         negative_funding = sum(
             (min(Decimal("0"), _d(row.get("income"))) for row in funding_rows),
             Decimal("0"),
