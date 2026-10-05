@@ -26,13 +26,15 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-05",
-  title: "Botinstellingen · Oude + Nieuwe configurator",
+  title: "Botinstellingen · directe tabwissel op mobiel",
   newItems: [
+    "Wisselen tussen Oude instellingen en Nieuwe configurator · BETA reageert nu direct op de tik, ook op mobiel.",
     "Iedere gebruiker kan binnen Aster → Botinstellingen kiezen tussen Oude instellingen en Nieuwe configurator · BETA.",
     "De nieuwe modus hergebruikt Bot Configurator 3.0 met Zone Warriors en Classic DCA; de oude configurator blijft volledig beschikbaar.",
     "De gekozen UI-modus wordt per gebruiker opgeslagen en blijft na refresh of app-herstart behouden.",
   ],
   problems: [
+    "De tabwissel wachtte op cloudopslag en een extra release-refresh voordat de zichtbare weergave veranderde, waardoor tikken op mobiel vaak niet leken te reageren.",
     "Bot Configurator 3.0 was alleen direct zichtbaar voor het BETA/admin-account, waardoor normale gebruikers niet gecontroleerd konden migreren.",
     "Een big-bang vervanging van de legacy configurator was te risicovol zolang live posities en bestaande instellingen actief zijn.",
   ],
@@ -41,12 +43,14 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Zone Warriors-toegang was gekoppeld aan het BETA-releasekanaal en niet aan een individuele, blijvende opt-in.",
   ],
   fixes: [
+    "De gekozen tab wordt nu eerst lokaal en onmiddellijk geactiveerd; cloudopslag en entitlement-refresh lopen daarna zonder de zichtbare tab te blokkeren.",
     "Een veilige dual-mode shell is toegevoegd volgens mockup file_00000000d63482109f11a4ef9574daf3.",
     "Tabwissels schrijven uitsluitend de persoonlijke UI-voorkeur en roepen geen trading-, start-, stop- of close-endpoints aan.",
     "Configurator-3 enrollment is sticky: terugwisselen naar Oude instellingen kan een reeds gekozen Zone Warriors-runtime nooit uitschakelen.",
     "Beide interfaces blijven dezelfde bestaande Strategy 2 settings-endpoint en dezelfde live trading-engine gebruiken.",
   ],
   now: [
+    "Tik op Oude instellingen of Nieuwe configurator wisselt de zichtbare interface direct; een trage netwerkrequest houdt de gebruiker niet meer vast op de vorige tab.",
     "Bestaande normale gebruikers starten standaard in Oude instellingen; het BETA/admin-account start standaard in Nieuwe configurator.",
     "Nieuwe configurator blijft expliciet BETA en Zone Warriors wordt pas actief nadat de gebruiker die strategie bewust kiest en opslaat.",
     "Open posities, DCA-state, TP-state en runtime-state worden niet geraakt door UI-navigation.",

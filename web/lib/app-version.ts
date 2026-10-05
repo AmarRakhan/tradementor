@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 507: Botinstellingen dubbele modus · legacy + Bot Configurator 3.0 opt-in.
-export const WEBAPP_BUILD_NUMBER = "507";
+// Build 508: Botinstellingen tabs schakelen direct op mobiel; cloudopslag blokkeert de UI niet meer.
+export const WEBAPP_BUILD_NUMBER = "508";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

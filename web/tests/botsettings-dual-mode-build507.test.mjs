@@ -25,11 +25,13 @@ test("Build 507 exposes the exact dual-mode Botinstellingen rollout shell", () =
   assert.match(shell, /Je live bot en open posities blijven actief/);
 });
 
-test("tab switching only writes UI preference and never calls trading mutations", () => {
+test("tab switching is immediate on mobile and persistence never blocks the visual tab", () => {
   const block = slice(shell, "const changeMode = async", "const fallback =");
-  assert.match(block, /\/api\/preferences\/bot-settings-ui/);
+  assert.match(block, /setMode\(nextMode\)[\s\S]*await authenticatedRequest\("\/api\/preferences\/bot-settings-ui"/);
+  assert.match(block, /window\.localStorage\.setItem\("tradementor\.botSettingsUiVersion", nextMode\)/);
   assert.match(block, /method: "PUT"/);
-  assert.match(block, /\/api\/releases\/me/);
+  assert.match(block, /void authenticatedRequest\("\/api\/releases\/me"/);
+  assert.match(block, /Weergave gewijzigd; cloudopslag volgt later/);
   assert.doesNotMatch(block, /strategy2\/settings/);
   assert.doesNotMatch(block, /strategy2\/start/);
   assert.doesNotMatch(block, /strategy2\/stop/);

@@ -96,6 +96,12 @@ export function AsterStrategy2Entry(props: Props) {
 
   const changeMode = async (nextMode: BotSettingsMode) => {
     if (switching || nextMode === mode) return;
+    const previousMode = mode;
+    // Build 508: tab navigation is a local UI action and must feel immediate on
+    // mobile. Persisting the preference and refreshing release entitlements may
+    // take a network round-trip, but neither is allowed to block the visual tab.
+    setMode(nextMode);
+    window.localStorage.setItem("tradementor.botSettingsUiVersion", nextMode);
     setSwitching(true);
     setPreferenceMessage("");
     try {
@@ -103,20 +109,26 @@ export function AsterStrategy2Entry(props: Props) {
         method: "PUT",
         body: JSON.stringify({ mode: nextMode }),
       });
-      const nextRelease = await authenticatedRequest("/api/releases/me", { cache: "no-store" }) as ReleaseState;
-      setRelease(nextRelease);
-      setMode(nextMode);
-      window.localStorage.setItem("tradementor.botSettingsUiVersion", nextMode);
       setPreferenceMessage(
         nextMode === "configurator3"
           ? "Nieuwe configurator actief. Je live bot en open posities zijn niet gewijzigd."
           : "Oude instellingen actief. Je live bot en open posities zijn niet gewijzigd.",
       );
+      if (nextMode === "configurator3") {
+        void authenticatedRequest("/api/releases/me", { cache: "no-store" })
+          .then((nextRelease) => setRelease(nextRelease as ReleaseState))
+          .catch(() => {
+            // Entitlement refresh is best-effort; the selected UI remains usable.
+          });
+      }
     } catch (error) {
+      // Keep the user's chosen tab locally usable even if cloud preference
+      // persistence is temporarily unavailable. A later reload can retry sync.
+      if (previousMode) window.localStorage.setItem("tradementor.botSettingsUiVersion", nextMode);
       setPreferenceMessage(
         error instanceof Error
-          ? `Wisselen niet opgeslagen: ${error.message}`
-          : "Wisselen kon niet veilig worden opgeslagen.",
+          ? `Weergave gewijzigd; cloudopslag volgt later: ${error.message}`
+          : "Weergave gewijzigd; cloudopslag volgt later.",
       );
     } finally {
       setSwitching(false);
