@@ -33,11 +33,11 @@ test("V2 control is only shown inside Portfolio TP mode and uses the existing se
   assert.doesNotMatch(winst, /strategy2\/start|strategy2\/stop|closeAll|POST/);
 });
 
-test("existing STABLE V2 routing remains intact and users are not migrated to V3", () => {
-  assert.match(entry, /release\?\.channel === "BETA"/);
-  assert.match(entry, /BetaConfiguratorV3/);
-  assert.match(entry, /BetaConfiguratorV2/);
-  assert.match(entry, /betaV3Enabled[\s\S]*\? <BetaConfiguratorV3[\s\S]*: <BetaConfiguratorV2/);
+test("Build 507 keeps V2 code intact but the live rollout offers legacy and Configurator 3 explicitly", () => {
+  assert.match(entry, /type BotSettingsMode = "legacy" \| "configurator3"/);
+  assert.match(entry, /<AsterStrategy2Maker \{\.\.\.props\} embedded \/>/);
+  assert.match(entry, /<ConfiguratorV3 \{\.\.\.props\}/);
+  assert.match(v2, /Botconfigurator V2/);
 });
 
 test("the persisted setting remains protected from older editors", () => {
