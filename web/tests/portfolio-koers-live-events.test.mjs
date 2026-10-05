@@ -95,3 +95,18 @@ test("Build 516 distinguishes reconciled ADD events from true DCA and preserves 
     assert.ok(lib.includes(token),token);
   }
 });
+
+
+test("Build 517 deduplicates repeated entry details by stable execution identity",()=>{
+  const rows=mergePortfolioKoersMarkers(
+    [{time:60,atMs:60_000,kind:"entry",side:"LONG",count:1,source:"aster-confirmed-fills",entries:[
+      {symbol:"PONSUSDT",side:"LONG",atMs:61_000,activityType:"DCA",orderId:"pons-5",exchangeConfirmed:true},
+    ]}],
+    [{time:60,atMs:60_000,kind:"entry",side:"LONG",count:1,source:"strategy2-confirmed-audit",entries:[
+      {symbol:"PONSUSDT",side:"LONG",atMs:63_000,activityType:"DCA",orderId:"pons-5",exchangeConfirmed:true},
+    ]}],
+  );
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].entries.length,1);
+  assert.equal(rows[0].entries[0].orderId,"pons-5");
+});
