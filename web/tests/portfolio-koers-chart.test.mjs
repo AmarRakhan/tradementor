@@ -442,3 +442,15 @@ test("Runtime Contract V1 phase 6 makes Portfolio Koers use canonical operationa
   assert.match(component,/onActiveZoneChange\?\.\(activeZone\)/);
   assert.match(component,/runtimeTruth\.zoneSafeForNewEntries===true/);
 });
+
+test("Build 521 keeps all touch gestures inside Portfolio Koers while allowing chart vertical pan", async()=>{
+  const [component,css]=await Promise.all([
+    readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8"),
+  ]);
+  assert.ok(component.includes("vertTouchDrag:true"));
+  assert.ok(component.includes("horzTouchDrag:true"));
+  assert.ok(component.includes("pinch:true"));
+  assert.match(css,/\.portfolio-koers-stage\{[^}]*touch-action:none[^}]*overscroll-behavior:none/);
+  assert.match(css,/\.portfolio-koers-canvas\{[^}]*touch-action:none!important[^}]*overscroll-behavior:none/);
+});
