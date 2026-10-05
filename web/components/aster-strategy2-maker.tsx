@@ -201,7 +201,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     return {
       ...persisted,
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode, universeTopN: Math.max(1, Math.round(n(v.universe))),
-      maximumPositions: Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage,
+      // In Zone Warriors mode maximumPositions is the strategy-wide seat cap.
+      // The legacy UI has no zone-cap control, so a legacy save must preserve it.
+      maximumPositions: persisted.zoneSoldiersEnabled === true
+        ? Math.max(1, Math.round(finiteOr(persisted.maximumPositions, longSlots + shortSlots)))
+        : Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots),
+      longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage,
       ...sizingSettings,
       // Base entry margins are always preserved exactly as entered. Enabling
       // fixed position size must never convert or overwrite these values.
