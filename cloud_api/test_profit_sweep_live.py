@@ -13,6 +13,7 @@ from profit_sweep_live import (
     prepare_close_sweep,
     _recovery_client_tran_id,
     recover_failed_sweep,
+    recover_blocked_close_to_buffer,
     transfer_safety,
 )
 
@@ -721,3 +722,62 @@ def test_strategy_neutral_fallback_never_saves_nonpositive_close(monkeypatch):
     state = user.collection("asterProfitSweepState").document("current").data
     assert Decimal(str(state.get("pendingSavings", "0"))) == Decimal("0")
     assert client.transfers == []
+
+
+def test_today_blocked_recovery_adds_to_existing_buffer_once_without_spot_transfer(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+    user = FakeUserRef(enabled=True, percent=5, asset="USDC", minimum=1.0)
+    state = user.collection("asterProfitSweepState").document("current")
+    state.set({
+        "pendingSavings": "0.10396818",
+        "todayTransferred": "0",
+        "todayKey": "2026-10-04",
+        "transferSequence": 0,
+    })
+    sweep_id = "blocked-near-today"
+    ledger = user.collection("asterProfitSweeps").document(sweep_id)
+    ledger.set({
+        "uid": "u-recovery",
+        "exchange": "ASTER",
+        "closureId": "near-half",
+        "symbol": "NEARUSDT",
+        "positionSide": "LONG",
+        "sweepPercent": 5.0,
+        "asset": "USDC",
+        "status": "BLOCKED_EVIDENCE",
+        "bufferBooked": False,
+        "reason": "Open inventory en sluitingshoeveelheid komen niet betrouwbaar overeen",
+    })
+    client = StrategyNeutralMismatchClient(close_qty="50", realized="3")
+    # Recovery reads the already-confirmed fill set in one shot.
+    client.calls = 1
+
+    first = recover_blocked_close_to_buffer(
+        uid="u-recovery",
+        user_ref=user,
+        client=client,
+        sweep_id=sweep_id,
+        exchange_order_id="99",
+        expected_pre_close_quantity="100",
+    )
+    assert first["status"] == "BUFFERED"
+    assert first["transferred"] == "0"
+    assert Decimal(first["pendingSavings"]) > Decimal("0.10396818")
+    assert client.transfers == []
+
+    after_first = Decimal(first["pendingSavings"])
+    second = recover_blocked_close_to_buffer(
+        uid="u-recovery",
+        user_ref=user,
+        client=client,
+        sweep_id=sweep_id,
+        exchange_order_id="99",
+        expected_pre_close_quantity="100",
+    )
+    assert second["status"] == "ALREADY_BOOKED"
+    assert Decimal(second["pendingSavings"]) == after_first
+    assert client.transfers == []
+    restored = user.collection("asterProfitSweeps").document(sweep_id).data
+    assert restored["recoveredProfitSweep"] is True
+    assert restored["recoveryReason"] == "TODAY_BLOCKED_EVIDENCE_BACKFILL"
+    assert restored["thresholdTransferStatus"] == "RECOVERY_BUFFERED_NO_TRANSFER"
