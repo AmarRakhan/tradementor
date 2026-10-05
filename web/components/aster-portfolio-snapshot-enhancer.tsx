@@ -1129,6 +1129,8 @@ export function AsterPortfolioSnapshotEnhancer() {
     };
   }, []);
 
+  useEffect(() => { if (host) setAsterSubtab("portfolio"); }, [host]);
+
   useEffect(() => {
     if (!host) return;
     let alive = true;
