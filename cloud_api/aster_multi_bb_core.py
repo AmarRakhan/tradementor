@@ -1910,7 +1910,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 "entrySizingMultiplier": _f(entry_sizing.get("multiplier"), 1.0),
                 "originZone": state[key].get("originZone"), "originZoneCycleId": state[key].get("originZoneCycleId"),
                 "soldierId": state[key].get("soldierId"), "soldierRole": state[key].get("soldierRole"),
-                "timestamp": datetime.now(timezone.utc)})
+                "fillPrice": fill_price, "fillQuantity": fill_qty,
+                "orderId": str(fill.get("orderId", fill.get("orderID", "")) or ""),
+                "clientOrderId": str(fill.get("clientOrderId", fill.get("clientOrderID", "")) or ""),
+                "exchangeConfirmed": True, "timestamp": datetime.now(timezone.utc)})
             actions.append(entry_action)
             if paired and short_plan is not None and short_action is not None and defer_paired_short:
                 pending = dict(state[key]); pending.update({"pairedShortPending": True, "pairedShortLastError": "SHORT_REQUIRES_PREEXISTING_LONG", "updatedAtMs": timestamp_ms}); state[key] = pending
@@ -1934,7 +1937,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True, "asymmetricHedge": True, "pairedLongKey": key, "initialShortMultiplier": settings.short_start_multiplier}
                     linked = dict(state[key]); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "pairedShortOrderConfirmedAtMs": timestamp_ms}); state[key] = linked
                     ref.set({"multiBbPositions": state, "lastReason": f"Asymmetrische hedge actief op {symbol}: LONG + {settings.short_start_multiplier:g}x SHORT bevestigd"}, merge=True)
-                    ref.collection("audit").add({"event": "MULTI_BB_ASYM_SHORT_ENTRY", "symbol": symbol, "cycleId": cycle_id, "multiplier": settings.short_start_multiplier, "leverage": short_plan.leverage, "timestamp": datetime.now(timezone.utc)})
+                    ref.collection("audit").add({"event": "MULTI_BB_ASYM_SHORT_ENTRY", "symbol": symbol, "side": "SHORT", "cycleId": cycle_id, "multiplier": settings.short_start_multiplier, "leverage": short_plan.leverage,
+                        "fillPrice": short_fill_price, "fillQuantity": short_fill_qty,
+                        "orderId": str(short_fill.get("orderId", short_fill.get("orderID", "")) or ""),
+                        "clientOrderId": str(short_fill.get("clientOrderId", short_fill.get("clientOrderID", "")) or ""),
+                        "exchangeConfirmed": True, "timestamp": datetime.now(timezone.utc)})
                     actions.append(short_action)
         active_symbols.add(symbol)
         consumed = 2 if paired and ((dry_run and not defer_paired_short) or f"{symbol}|SHORT" in state) else 1
