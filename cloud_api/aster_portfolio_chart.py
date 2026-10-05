@@ -607,6 +607,21 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         if activity_type not in group["activityTypes"]:
             group["activityTypes"].append(activity_type)
         if kind == "entry":
+            entry_price = _finite(raw.get("entryPrice", raw.get("fillPrice", raw.get("price"))))
+            notional_usd = _finite(raw.get("executedNotionalUsd", raw.get("notionalUsd", raw.get("plannedInputNotionalUsd", raw.get("configuredNotionalUsd")))))
+            entry_detail = {
+                "symbol": str(raw.get("symbol", "")).upper().strip(),
+                "side": side,
+                "atMs": stamp,
+                "entryPrice": entry_price if entry_price > 0 else None,
+                "notionalUsd": notional_usd if notional_usd > 0 else None,
+                "activityType": activity_type,
+                "originZone": raw.get("originZone"),
+                "soldierId": str(raw.get("soldierId", "") or ""),
+                "soldierRole": str(raw.get("soldierRole", "") or "").upper().strip(),
+            }
+            group.setdefault("entries", [])
+            group["entries"].append(entry_detail)
             origin = raw.get("originZone")
             if isinstance(origin, int) or (isinstance(origin, str) and origin.lstrip("-+").isdigit()):
                 group.setdefault("originZones", [])
@@ -626,6 +641,8 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         if isinstance(group.get("soldierRoles"), list):
             group["soldierRoles"].sort()
         group["activityTypes"].sort()
+        if isinstance(group.get("entries"), list):
+            group["entries"].sort(key=lambda row: (int(row.get("atMs") or 0), str(row.get("symbol") or "")))
         if group["kind"] == "entry":
             side_letter = "L" if group["side"] == "LONG" else "S"
             prefix = "DCA" if group["activityTypes"] == ["DCA"] else "ENTRY"
