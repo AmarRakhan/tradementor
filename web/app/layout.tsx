@@ -30,6 +30,7 @@ import "./strategy2-reference.css";
 import "./markets-bridge.css";
 import "./portfolio-snapshot.css";
 import "./portfolio-koers-chart.css";
+import "./trade-intelligence-advisor-center.css";
 import "./aster-compact-chrome.css";
 import "./profit-pot-snapshot.css";
 import "./position-loss-auto-hedge.css";
