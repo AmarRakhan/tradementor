@@ -178,7 +178,7 @@ def test_established_zone_ladder_moves_to_newest_segment_after_warmup():
 def test_recent_strategy_audit_events_become_immediate_chart_markers():
     rows = [
         {"event": "MULTI_BB_ENTRY", "timestampMs": 61_000, "symbol": "BTCUSDT", "side": "SHORT", "originZone": -2, "soldierRole": "ZONE_BASE", "plannedInputNotionalUsd": 12.5},
-        {"event": "MULTI_BB_DCA", "timestampMs": 65_000, "symbol": "ETHUSDT", "side": "SHORT", "entryPrice": 2500.0},
+        {"event": "MULTI_BB_DCA", "timestampMs": 65_000, "symbol": "ETHUSDT", "side": "SHORT", "fillPrice": 2500.0, "dcaNumber": 1, "dcaDistancePercent": 10.0, "anchorPrice": 2250.0, "triggerPrice": 2475.0, "fillQuantity": 0.01, "orderId": "42", "exchangeConfirmed": True},
         {"event": "MULTI_BB_TP", "timestampMs": 70_000, "side": "LONG"},
         {"event": "MULTI_BB_DCA_BLOCKED", "timestampMs": 71_000, "side": "LONG"},
     ]
@@ -197,6 +197,11 @@ def test_recent_strategy_audit_events_become_immediate_chart_markers():
     assert short["entries"][1]["symbol"] == "ETHUSDT"
     assert short["entries"][1]["entryPrice"] == 2500.0
     assert short["entries"][1]["activityType"] == "DCA"
+    assert short["entries"][1]["dcaNumber"] == 1
+    assert short["entries"][1]["dcaDistancePercent"] == 10.0
+    assert short["entries"][1]["triggerPrice"] == 2475.0
+    assert short["entries"][1]["orderId"] == "42"
+    assert short["entries"][1]["exchangeConfirmed"] is True
     tp = next(row for row in markers if row["kind"] == "tp")
     assert tp["side"] == "ALL"
     assert tp["count"] == 1
@@ -401,3 +406,16 @@ def test_build487_runtime_report_persists_dynamic_hedge_ownership_for_scanner_ga
     blocked = block.index("if dynamic_strategy_scan_blocked(")
     assert owner < persisted < blocked
 
+
+
+def test_manual_dca_detected_is_presented_as_reconciled_add_not_true_dca():
+    rows = [
+        {"event": "MANUAL_DCA_DETECTED", "timestampMs": 61_000, "symbol": "PONSUSDT", "side": "LONG", "fillPrice": 0.371234, "qtyDelta": 12.0},
+    ]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert len(markers) == 1
+    marker = markers[0]
+    assert marker["activityTypes"] == ["ADD"]
+    assert marker["label"] == "ADD L"
+    assert marker["entries"][0]["activityType"] == "ADD"
+    assert marker["entries"][0]["entryPrice"] == 0.371234
