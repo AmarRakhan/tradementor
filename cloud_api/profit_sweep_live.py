@@ -205,10 +205,7 @@ def net_realized_for_order(
             if estimated_entry_fee > entry_fee_cost:
                 entry_fee_cost = estimated_entry_fee
 
-    if calculation_evidence == "FULL_HISTORY":
-        funding_adjustment = min(Decimal("0"), negative_funding * ratio)
-    else:
-        funding_adjustment = min(Decimal("0"), negative_funding)
+    funding_adjustment = min(Decimal("0"), negative_funding * ratio)
     evidence_funding = _d(evidence.funding) if evidence is not None else Decimal("0")
     funding_adjustment = min(funding_adjustment, evidence_funding, Decimal("0"))
     other_cost = max(Decimal("0"), _d(evidence.other_costs) if evidence is not None else Decimal("0"))
@@ -936,9 +933,12 @@ def prepare_close_sweep(
             "FULL_HISTORY" if history_matches_exchange or exchange_qty <= 0
             else "PARTIAL_COST_EVIDENCE"
         )
-        funding_start = cycle_start if calculation_evidence == "FULL_HISTORY" and cycle_start > 0 else None
-        funding_rows = client.income_history(
-            symbol=normalized_symbol, income_type="FUNDING_FEE", start_time=funding_start, limit=1000,
+        funding_start = cycle_start if cycle_start > 0 else None
+        funding_rows = (
+            client.income_history(
+                symbol=normalized_symbol, income_type="FUNDING_FEE", start_time=funding_start, limit=1000,
+            )
+            if funding_start is not None else []
         )
         negative_funding = sum(
             (min(Decimal("0"), _d(row.get("income"))) for row in funding_rows),
