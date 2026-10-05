@@ -723,10 +723,10 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
 
   if (quickEditOpen) {
     const quickClassicTotal = Math.max(0, Math.round(n(quickDraft.longSlots))) + Math.max(0, Math.round(n(quickDraft.shortSlots)));
-    return <article id="bot-configurator-v3" className="botconfig-v3 v31-mode" data-version="3.1" data-beta-only="true" data-reference={VISUAL_REFERENCES.quickEdit}>
+    return <article id="bot-configurator-v3" className="botconfig-v3 v31-mode" data-version="3.1" data-rollout="opt-in-beta" data-reference={VISUAL_REFERENCES.quickEdit}>
       <header className="v31-top">
         <div><span className="v3-kicker">BOTCONFIGURATOR 3.0</span><h2>Instellingen wijzigen</h2><p>Pas snel je huidige instellingen aan.</p></div>
-        <div className="v3-top-status">{ownerBeta&&<span>BETA</span>}<b className={enabled?"on":""}>{enabled?"BOT AAN":"BOT UIT"}</b></div>
+        <div className="v3-top-status"><span>BETA</span><b className={enabled?"on":""}>{enabled?"BOT AAN":"BOT UIT"}</b></div>
       </header>
 
       <section className="v31-quick">
@@ -815,12 +815,12 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
     </article>;
   }
 
-  return <article id="bot-configurator-v3" className="botconfig-v3" data-version="3.1" data-feature="quick-edit-3.1" data-beta-only="true">
+  return <article id="bot-configurator-v3" className="botconfig-v3" data-version="3.1" data-feature="quick-edit-3.1" data-rollout="opt-in-beta">
     <header className="v3-top">
       <div className="v3-topline">
         <div><span className="v3-kicker">BOTCONFIGURATOR 3.0</span><h2>Bot configurator</h2><p>Stel je bot snel en duidelijk in.</p></div>
         <div className="v3-top-status">
-          {ownerBeta && <span>BETA</span>}
+          <span>BETA</span>
           <b className={enabled ? "on" : ""}>{enabled ? "BOT AAN" : "BOT UIT"}</b>
         </div>
       </div>

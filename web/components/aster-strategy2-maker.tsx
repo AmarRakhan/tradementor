@@ -97,7 +97,7 @@ function buildSmartPreview(startMargin: number, leverage: number, range: number,
 }
 function money(value: number) { return Number.isFinite(value) ? `$${value >= 1000000 ? value.toLocaleString("nl-NL", { maximumFractionDigits: 0 }) : value.toFixed(value < 10 ? 2 : 0)}` : "—"; }
 
-export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, onChanged }: { snapshot: Record<string, unknown> | null; serverConfirmed: boolean; onConfirmed: (strategy2: Record<string, unknown>) => void; onChanged: () => void }) {
+export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, onChanged, embedded = false }: { snapshot: Record<string, unknown> | null; serverConfirmed: boolean; onConfirmed: (strategy2: Record<string, unknown>) => void; onChanged: () => void; embedded?: boolean }) {
   const [v, setV] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -201,7 +201,12 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     return {
       ...persisted,
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode, universeTopN: Math.max(1, Math.round(n(v.universe))),
-      maximumPositions: Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots), longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage,
+      // In Zone Warriors mode maximumPositions is the strategy-wide seat cap.
+      // The legacy UI has no zone-cap control, so a legacy save must preserve it.
+      maximumPositions: persisted.zoneSoldiersEnabled === true
+        ? Math.max(1, Math.round(finiteOr(persisted.maximumPositions, longSlots + shortSlots)))
+        : Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots),
+      longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage,
       ...sizingSettings,
       // Base entry margins are always preserved exactly as entered. Enabling
       // fixed position size must never convert or overwrite these values.
@@ -309,7 +314,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     try {
       const outgoingSettings = kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
       const outgoingSizingMode = String(outgoingSettings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
-      if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || settings.longSlots + settings.shortSlots !== settings.maximumPositions) throw new Error("Positielimieten zijn ongeldig: maximaal 100 totaal en LONG + SHORT moet exact gelijk zijn aan totaal.");
+      const zoneWarriorsActive = persisted.zoneSoldiersEnabled === true && Number(persisted.zoneSoldiersOptInVersion ?? 0) >= 1;
+      if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || (!zoneWarriorsActive && settings.longSlots + settings.shortSlots !== settings.maximumPositions)) throw new Error("Positielimieten zijn ongeldig: maximaal 400 totaal; bij Classic DCA moet LONG + SHORT exact gelijk zijn aan totaal.");
       // Minimum leverage is only a candidate floor. Automatic Top-N still resolves every
       // symbol at its actual maximum valid leverage unless Maximum leverage supplies an
       // optional cap, and skips symbols whose Aster maximum cannot satisfy the minimum.
@@ -467,7 +473,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   async function toggleLive() { if (status.pending || busy) return; if (dirty) { setMessage("Sla eerst de gewijzigde instellingen op; daarna kun je de bot direct aan- of uitzetten."); return; } if (enabled) return action("stop"); if (liveReady) return action("start"); return checkReadiness(true); }
 
   return <article id="strategy-2-maker" className="strategy-card strategy-two-card botsettings-ref" data-reference={BOT_SETTINGS_REFERENCE}>
-    <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>
+    {!embedded && <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>}
 
     <section className="slot-overview" aria-label="Slot-overzicht">
       <header><span className="slot-icon">◇</span><div><b>Slot-overzicht</b><small>Bezetting van beschikbare botslots</small></div><span className="slot-cross">⇄ <b>CROSS</b></span><span className="slot-candidates">♙ <b>{candidateCount}</b> kandidaten</span></header>
