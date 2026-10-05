@@ -190,3 +190,5 @@ jobs:
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --set-env-vars "DIAG_REPO=$GITHUB_REPOSITORY,DIAG_GH_TOKEN=${{ github.token }},PRODUCTION_SOURCE_COMMIT=$PRODUCTION_SOURCE_COMMIT" --quiet
           EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
           test -n "$EXECUTION"
+
+# rerun after Build 506 deploy/recovery request
