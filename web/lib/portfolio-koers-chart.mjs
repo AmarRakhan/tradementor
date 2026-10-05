@@ -137,7 +137,7 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
         notionalUsd:finite(raw.notionalUsd),
         realizedPnlUsd:finite(raw.realizedPnlUsd),
         amountUsd:finite(raw.amountUsd),
-        originZones,soldierRoles,activityTypes,trades,entries,entries,
+        originZones,soldierRoles,activityTypes,trades,entries,
       });
       continue;
     }
@@ -151,7 +151,7 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
       notionalUsd:Math.max(Math.abs(finite(existing.notionalUsd)),Math.abs(finite(raw.notionalUsd))),
       realizedPnlUsd:Math.abs(finite(raw.realizedPnlUsd))>Math.abs(finite(existing.realizedPnlUsd))?finite(raw.realizedPnlUsd):finite(existing.realizedPnlUsd),
       amountUsd:Math.abs(finite(raw.amountUsd))>Math.abs(finite(existing.amountUsd))?finite(raw.amountUsd):finite(existing.amountUsd),
-      originZones,soldierRoles,activityTypes,trades,
+      originZones,soldierRoles,activityTypes,trades,entries,
       source:preferRaw?String(raw.source||existing.source||""):String(existing.source||raw.source||""),
       label:preferRaw?String(raw.label||existing.label||""):String(existing.label||raw.label||""),
     });
