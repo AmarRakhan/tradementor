@@ -781,3 +781,37 @@ def test_today_blocked_recovery_adds_to_existing_buffer_once_without_spot_transf
     assert restored["recoveredProfitSweep"] is True
     assert restored["recoveryReason"] == "TODAY_BLOCKED_EVIDENCE_BACKFILL"
     assert restored["thresholdTransferStatus"] == "RECOVERY_BUFFERED_NO_TRANSFER"
+
+
+def test_history_read_failure_does_not_drop_proven_exchange_close(monkeypatch):
+    monkeypatch.setenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED", "true")
+
+    class HistoryFailClient(StrategyNeutralMismatchClient):
+        def user_trades(self, symbol, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("legacy history temporarily unavailable")
+            return list(self.post)
+
+    user = FakeUserRef(enabled=True, percent=5, asset="USDC", minimum=1.0)
+    client = HistoryFailClient(close_qty="50", realized="3")
+    prepared = prepare_close_sweep(
+        uid="history-fail",
+        user_ref=user,
+        client=client,
+        intent_id="near-history-fail",
+        symbol="NEARUSDT",
+        position_side="LONG",
+        close_quantity="50",
+    )
+    assert prepared is not None
+    assert prepared.open_quantity == Decimal("100")
+    assert prepared.calculation_evidence == "PARTIAL_COST_EVIDENCE"
+
+    result = finalize_close_sweep(
+        prepared,
+        client=client,
+        confirmed_order={"orderId": 99, "positionSide": "LONG", "side": "SELL", "status": "FILLED"},
+    )
+    assert result["status"] == "BUFFERED"
+    assert Decimal(result["contribution"]) > 0
