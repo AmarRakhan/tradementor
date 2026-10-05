@@ -1274,7 +1274,7 @@ export function PortfolioKoersChart({
     soldierActivity,
   });
 
-  return <section ref={shellRef} className={`portfolio-koers-card portfolio-zone-map portfolio-koers-ui41 ${advisorEnabled?"beta-zone-advisor":""}`} aria-label="Portfolio Koers" data-reference={PORTFOLIO_KOERS_UI41_REFERENCE} data-structure-reference={PORTFOLIO_STRUCTURE_REFERENCE} data-structure-baseline-reference={PORTFOLIO_STRUCTURE_BASELINE_REFERENCE} data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
+  return <><section ref={shellRef} className={`portfolio-koers-card portfolio-zone-map portfolio-koers-ui41 ${advisorEnabled?"beta-zone-advisor":""}`} aria-label="Portfolio Koers" data-reference={PORTFOLIO_KOERS_UI41_REFERENCE} data-structure-reference={PORTFOLIO_STRUCTURE_REFERENCE} data-structure-baseline-reference={PORTFOLIO_STRUCTURE_BASELINE_REFERENCE} data-zone-advisor-reference={advisorEnabled?ZONE_ADVISOR_REFERENCE:undefined}>
     <header className="portfolio-koers-header portfolio-koers-ui41-header">
       <div className="portfolio-koers-ui41-top">
         <div className="portfolio-koers-heading">
@@ -1374,7 +1374,6 @@ export function PortfolioKoersChart({
       <span className="portfolio-koers-ui41-info" title="Bollinger Band 20,2 · actieve zone uit live portfolio-equity">i</span>
     </div>
     <div className="portfolio-koers-active-zone-seat" data-reference="file_00000000796c8210aa150351316f20d1"><ActiveZoneSeatBlock summary={activeZoneSeatSummary ?? null} liveActiveZone={activeZoneSeatLiveZone ?? null} /></div>
-    <TradeIntelligenceAdvisorCenter dayRangePosition={tradeIntelligenceDayRangePosition} />
     {viewMode==="active"?<section className="portfolio-koers-active-summary" aria-label="Actieve Trades Samenvatting">
       <h3>Actieve Trades Samenvatting</h3>
       <div className="portfolio-koers-active-summary-grid">
@@ -1440,5 +1439,5 @@ export function PortfolioKoersChart({
       </span>
     </section>:null}
     <span className="portfolio-koers-current-sr">Actuele portfolio waarde {latest===null?"onbekend":compactUsd(latest)}</span>
-  </section>;
+  </section><TradeIntelligenceAdvisorCenter dayRangePosition={tradeIntelligenceDayRangePosition} /></>;
 }
