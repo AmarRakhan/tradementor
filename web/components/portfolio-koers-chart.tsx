@@ -864,7 +864,6 @@ export function PortfolioKoersChart({
           return [{label:level.label,price:Number(level.price),top,side:level.side}] as StructureLevelLayout[];
         });
         const r1Level=levels.find((level)=>level.label==="R1");
-        const s1Level=levels.find((level)=>level.label==="S1");
         const activeUpperY=Number.isFinite(Number(activeUpper))?series.priceToCoordinate(Number(activeUpper)):null;
         const activeLowerY=Number.isFinite(Number(activeLower))?series.priceToCoordinate(Number(activeLower)):null;
         const activeTop=activeUpperY!==null&&activeLowerY!==null?Math.min(Number(activeUpperY),Number(activeLowerY)):null;
