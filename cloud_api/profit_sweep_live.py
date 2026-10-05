@@ -1464,3 +1464,192 @@ def finalize_close_sweep(
         ref.set({"status": "FAILED_INTERNAL", "reason": str(exc)[:500], "updatedAt": _now()}, merge=True)
         return {"status": "FAILED_INTERNAL"}
 
+
+
+def recover_blocked_close_to_buffer(
+    *,
+    uid: str,
+    user_ref: Any,
+    client: Any,
+    sweep_id: str,
+    exchange_order_id: str,
+    expected_pre_close_quantity: Any,
+    recovery_reason: str = "TODAY_BLOCKED_EVIDENCE_BACKFILL",
+) -> dict[str, Any]:
+    """Idempotently restore one proven blocked close to pendingSavings only.
+
+    This helper never initiates a Futures->Spot transfer. It exists for the
+    explicitly selected 2026-10-05 recovery and uses the original sweep ledger
+    as the idempotency boundary.
+    """
+    ledger_ref = user_ref.collection("asterProfitSweeps").document(str(sweep_id))
+    ledger = ledger_ref.get().to_dict() or {}
+    if not ledger:
+        return {"status": "NOT_FOUND"}
+    if ledger.get("bufferBooked") is True:
+        return {
+            "status": "ALREADY_BOOKED",
+            "pendingSavings": str((user_ref.collection("asterProfitSweepState").document("current").get().to_dict() or {}).get("pendingSavings", "0")),
+        }
+    if ledger.get("recoveredProfitSweep") is True:
+        return {"status": "ALREADY_RECOVERED"}
+    if str(ledger.get("status", "")).upper() != "BLOCKED_EVIDENCE":
+        return {"status": "NOT_RECOVERABLE", "sourceStatus": str(ledger.get("status", ""))}
+
+    symbol = str(ledger.get("symbol", "")).upper().strip()
+    position_side = str(ledger.get("positionSide", "")).upper().strip()
+    if not symbol or position_side not in {"LONG", "SHORT"}:
+        return {"status": "INVALID_LEDGER"}
+
+    order_id = str(exchange_order_id or "").strip()
+    pre_close_qty = abs(_d(expected_pre_close_quantity))
+    if not order_id or pre_close_qty <= 0:
+        return {"status": "INVALID_RECOVERY_EVIDENCE"}
+
+    rows = client.user_trades(symbol, limit=1000)
+    target = [
+        row for row in rows
+        if str(row.get("orderId", "")) == order_id
+        and str(row.get("symbol", symbol)).upper() == symbol
+        and str(row.get("positionSide", "")).upper() == position_side
+        and is_closing_fill(row, position_side)
+    ]
+    if not target:
+        return {"status": "CLOSE_FILLS_NOT_FOUND"}
+
+    closed_qty = sum((_fill_quantity(row) for row in target), Decimal("0"))
+    if closed_qty <= 0 or closed_qty > pre_close_qty + Decimal("0.00000001"):
+        return {"status": "CLOSE_QUANTITY_MISMATCH"}
+
+    target_start_ms = min((_fill_time(row) for row in target if _fill_time(row) > 0), default=0)
+    pre_rows = [
+        row for row in rows
+        if str(row.get("positionSide", "")).upper() == position_side
+        and str(row.get("orderId", "")) != order_id
+        and (target_start_ms <= 0 or _fill_time(row) < target_start_ms)
+    ]
+    history_qty, fee_pool, cycle_start = open_inventory(pre_rows, position_side)
+
+    realized = sum((_d(row.get("realizedPnl", row.get("realizedProfit"))) for row in target), Decimal("0"))
+    exit_notional = sum((_fill_quantity(row) * abs(_d(row.get("price")))) for row in target)
+    exit_price = exit_notional / closed_qty if closed_qty > 0 else Decimal("0")
+    derived_entry_price = Decimal("0")
+    if exit_price > 0 and closed_qty > 0:
+        per_unit_realized = realized / closed_qty
+        derived_entry_price = (
+            exit_price - per_unit_realized
+            if position_side == "LONG"
+            else exit_price + per_unit_realized
+        )
+        if derived_entry_price < 0:
+            derived_entry_price = Decimal("0")
+
+    negative_funding = Decimal("0")
+    if cycle_start > 0 and target_start_ms > cycle_start:
+        funding_rows = client.income_history(
+            symbol=symbol,
+            income_type="FUNDING_FEE",
+            start_time=cycle_start,
+            end_time=target_start_ms,
+            limit=1000,
+        )
+        negative_funding = sum(
+            (min(Decimal("0"), _d(row.get("income"))) for row in funding_rows),
+            Decimal("0"),
+        )
+
+    try:
+        percent = normalize_sweep_percent(ledger.get("sweepPercent", 0))
+    except ProfitSweepError:
+        return {"status": "INVALID_SWEEP_PERCENT"}
+    if percent <= 0:
+        return {"status": "INVALID_SWEEP_PERCENT"}
+
+    control = user_ref.collection("executionControls").document("aster").get().to_dict() or {}
+    settings = control.get("profitSweep") if isinstance(control.get("profitSweep"), dict) else {}
+    asset = str(ledger.get("asset") or settings.get("transferAsset") or DEFAULT_TRANSFER_ASSET).upper()
+    if asset not in SUPPORTED_TRANSFER_ASSETS:
+        asset = DEFAULT_TRANSFER_ASSET
+    threshold = _d(settings.get("minimumTransfer", DEFAULT_MINIMUM_TRANSFER))
+    if threshold <= 0:
+        threshold = DEFAULT_MINIMUM_TRANSFER
+
+    prepared = PreparedSweep(
+        uid=uid,
+        sweep_id=str(sweep_id),
+        intent_id=str(ledger.get("closureId", sweep_id)),
+        client_tran_id=str(ledger.get("clientTranId", "")),
+        symbol=symbol,
+        position_side=position_side,
+        sweep_percent=percent,
+        transfer_asset=asset,
+        minimum_transfer=threshold,
+        user_ref=user_ref,
+        ledger_ref=ledger_ref,
+        open_quantity=pre_close_qty,
+        entry_commission_pool=fee_pool,
+        cycle_start_ms=cycle_start,
+        negative_funding=negative_funding,
+        evidence_entry_fees=Decimal("0"),
+        evidence_funding=Decimal("0"),
+        evidence_other_costs=Decimal("0"),
+        pre_close_entry_price=derived_entry_price,
+        requested_close_quantity=closed_qty,
+        calculation_evidence="RECOVERY_PARTIAL_COST_EVIDENCE",
+    )
+    net, detail = net_realized_for_order(
+        target_fills=target,
+        position_side=position_side,
+        pre_open_quantity=pre_close_qty,
+        pre_entry_commission_pool=fee_pool,
+        negative_funding=negative_funding,
+        pre_entry_price=derived_entry_price,
+        calculation_evidence=prepared.calculation_evidence,
+    )
+    contribution = sweep_contribution(net, percent, enabled=True)
+
+    ledger_ref.set({
+        "exchangeOrderId": order_id,
+        "openQuantityBeforeClose": _plain(pre_close_qty),
+        "historicalOpenQuantityBeforeClose": _plain(history_qty),
+        "preCloseEntryPrice": _plain(derived_entry_price),
+        "netRealizedProfit": _plain(net),
+        "sweepContribution": _plain(contribution),
+        "minimumTransfer": _plain(threshold),
+        "calculationEvidence": prepared.calculation_evidence,
+        "calculation": detail,
+        "recoveryReason": recovery_reason,
+        "recoveryCalculatedAt": _now(),
+    }, merge=True)
+
+    if contribution <= 0:
+        ledger_ref.set({
+            "status": "SKIPPED_NONPOSITIVE",
+            "recoveredProfitSweep": True,
+            "recoveryReason": recovery_reason,
+            "completedAt": _now(),
+        }, merge=True)
+        return {"status": "SKIPPED_NONPOSITIVE", "contribution": "0"}
+
+    booked = _book_contribution(prepared, contribution)
+    state = user_ref.collection("asterProfitSweepState").document("current").get().to_dict() or {}
+    pending = _d(state.get("pendingSavings"))
+    ledger_ref.set({
+        "status": "BUFFERED",
+        "recoveredProfitSweep": True,
+        "recoveryReason": recovery_reason,
+        "recoveredAt": _now(),
+        "pendingSavingsAfter": _plain(pending),
+        "todayTransferredAfter": str(state.get("todayTransferred", "0")),
+        "thresholdTransferStatus": "RECOVERY_BUFFERED_NO_TRANSFER",
+        "updatedAt": _now(),
+    }, merge=True)
+    return {
+        "status": "BUFFERED",
+        "recovered": True,
+        "alreadyBooked": bool(booked.get("alreadyBooked")),
+        "contribution": _plain(contribution),
+        "pendingSavings": _plain(pending),
+        "todayTransferred": str(state.get("todayTransferred", "0")),
+        "transferred": "0",
+    }
