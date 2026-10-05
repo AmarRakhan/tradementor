@@ -24,6 +24,7 @@ def snapshot(**overrides):
         "minInstances": 1,
         "periodicWorkerRecent": True,
         "periodicWorkerErrors": 0,
+        "generatedAtMs": NOW,
         "accounts": [],
     }
     base.update(overrides)
@@ -184,3 +185,48 @@ def test_runtime_phase_regression_to_data_hold_fails():
     )
     assert result.ok is False
     assert "acct:RUNTIME_PHASE_REGRESSED_TO_DATA_HOLD" in result.failures
+
+
+def test_preexisting_stale_scanner_is_warning_not_deploy_regression():
+    before_generated = NOW - 180_000
+    stale_scanner = before_generated - 600_000
+    prior = account(
+        phase="DATA_HOLD",
+        lastTickAtMs=NOW - 180_000,
+        scannerUpdatedAtMs=stale_scanner,
+    )
+    current = account(
+        phase="DATA_HOLD",
+        lastTickAtMs=NOW - 5_000,
+        scannerUpdatedAtMs=stale_scanner,
+    )
+    before = snapshot(generatedAtMs=before_generated, accounts=[prior])
+    after = snapshot(generatedAtMs=NOW, accounts=[current])
+
+    result = gate.evaluate_runtime_contract(before, after, now_ms=NOW)
+
+    assert result.ok is True
+    assert "acct:PREEXISTING_SCANNER_HEARTBEAT_STALE" in result.warnings
+    assert "acct:PREEXISTING_SCANNER_DID_NOT_ADVANCE" in result.warnings
+    assert "acct:SCANNER_HEARTBEAT_STALE" not in result.failures
+    assert "acct:SCANNER_DID_NOT_ADVANCE" not in result.failures
+
+
+def test_scanner_that_becomes_stale_during_deploy_still_fails():
+    before_generated = NOW - 180_000
+    prior = account(
+        lastTickAtMs=NOW - 180_000,
+        scannerUpdatedAtMs=before_generated - 90_000,
+    )
+    current = account(
+        lastTickAtMs=NOW - 5_000,
+        scannerUpdatedAtMs=prior["scannerUpdatedAtMs"],
+    )
+    before = snapshot(generatedAtMs=before_generated, accounts=[prior])
+    after = snapshot(generatedAtMs=NOW, accounts=[current])
+
+    result = gate.evaluate_runtime_contract(before, after, now_ms=NOW)
+
+    assert result.ok is False
+    assert "acct:SCANNER_HEARTBEAT_STALE" in result.failures
+    assert "acct:SCANNER_DID_NOT_ADVANCE" in result.failures
