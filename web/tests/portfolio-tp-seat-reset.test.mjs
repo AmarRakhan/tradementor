@@ -9,7 +9,7 @@ const target = fs.readFileSync(new URL("../components/portfolio-tp-seat-reset-ta
 const shell = fs.readFileSync(new URL("../components/aster-strategy2-entry.tsx", import.meta.url), "utf8");
 const route = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts", import.meta.url), "utf8");
 
-test("Portfolio TP seat reset 2.0 is exposed by legacy, STABLE V2 and BETA V3", () => {
+test("Portfolio TP seat reset 2.0 stays exposed in legacy, retained V2 code and opt-in V3", () => {
   assert.match(v3, /file_00000000369082108949b160b28e0965/);
   assert.match(v3, /PortfolioTpSeatResetTarget/);
   assert.match(v2, /PortfolioTpSeatResetTarget/);
@@ -18,8 +18,8 @@ test("Portfolio TP seat reset 2.0 is exposed by legacy, STABLE V2 and BETA V3", 
   assert.match(target, /SHORT na reset/);
   assert.match(target, /Resetwaarden opslaan/);
   assert.match(target, /data-feature="portfolio-tp-seat-reset-target-2"/);
-  assert.match(v3, /data-beta-only="true"/);
-  assert.match(shell, /release\?\.channel === "BETA"/);
+  assert.match(v3, /data-rollout="opt-in-beta"/);
+  assert.match(shell, /type BotSettingsMode = "legacy" \| "configurator3"/);
 });
 
 test("shared reset target uses one server-side PUT and protected backend fields", () => {
