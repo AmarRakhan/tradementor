@@ -116,6 +116,33 @@ jobs:
 
               latest.sort(key=lambda x:x["createdAt"], reverse=True)
               near.sort(key=lambda x:x["createdAt"], reverse=True)
+              manual_intents=[]
+              for snap in user.reference.collection("asterManualCloseIntents").stream():
+                  row=snap.to_dict() or {}
+                  created=as_utc(row.get("createdAt"))
+                  completed=as_utc(row.get("completedAt"))
+                  stamp=created or completed
+                  if stamp is None or stamp < day_start or stamp > now:
+                      continue
+                  if str(row.get("symbol","")).upper()!="NEARUSDT":
+                      continue
+                  result=row.get("result") if isinstance(row.get("result"),dict) else {}
+                  order=result.get("result") if isinstance(result.get("result"),dict) else {}
+                  manual_intents.append({
+                      "id":snap.id,
+                      "status":str(row.get("status","")),
+                      "symbol":str(row.get("symbol","")).upper(),
+                      "side":str(row.get("side","")).upper(),
+                      "expectedQuantity":str(row.get("expectedQuantity","")),
+                      "percentage":str(row.get("percentage","")),
+                      "closedQuantity":str(row.get("closedQuantity","")),
+                      "remainingQuantity":str(row.get("remainingQuantity","")),
+                      "orderId":str(order.get("orderId","")),
+                      "clientOrderId":str(order.get("clientOrderId","")),
+                      "createdAt":created.isoformat() if created else "",
+                      "completedAt":completed.isoformat() if completed else "",
+                  })
+              manual_intents.sort(key=lambda x:x["createdAt"], reverse=True)
               accounts.append({
                   "transferAsset":str(settings.get("transferAsset","")),
                   "minimumTransfer":str(settings.get("minimumTransfer","")),
