@@ -1,7 +1,7 @@
 {
   "action": "ensure-production-aster-scheduler",
   "confirmation": "ENSURE_PRODUCTION_ASTER_SCHEDULER",
-  "expectedBackendSourceCommit": "ab6f4e303fd47297781bf6361adf1ce35d2a80d2",
+  "expectedBackendSourceCommit": "1df891031f1838462217199f70b07112667ffd78",
   "requestedBy": "AmarRakhan",
-  "requestId": "restore-aster-scheduler-after-p0-tp-self-heal-20261001"
+  "requestId": "reactivate-aster-scheduler-build534-20261006"
 }
