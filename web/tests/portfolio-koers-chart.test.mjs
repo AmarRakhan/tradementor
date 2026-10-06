@@ -454,3 +454,18 @@ test("Build 521 keeps all touch gestures inside Portfolio Koers while allowing c
   assert.match(css,/\.portfolio-koers-stage\{[^}]*touch-action:none[^}]*overscroll-behavior:none/);
   assert.match(css,/\.portfolio-koers-canvas\{[^}]*touch-action:none!important[^}]*overscroll-behavior:none/);
 });
+
+
+test("Build 549 keeps chart price levels visible when price-zone entries are disabled or refresh temporarily fails",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("lastConfirmedZoneLadderRef"));
+  assert.ok(component.includes("const chartZoneLadder=freshChartZoneLadder??lastConfirmedZoneLadderRef.current"));
+  assert.ok(component.includes("const activeZone=liveDisplayActiveZone"));
+  assert.ok(component.includes("activeZone:operationalActiveZone??activeZone"));
+  assert.ok(component.includes("last confirmed 15m zone basis")||component.includes("laatst bevestigde prijsniveaus blijven zichtbaar"));
+  const advisorCatch=component.slice(component.indexOf("}catch(reason){",component.indexOf("const loadAdvisor=")),component.indexOf("},[user?.uid])",component.indexOf("const loadAdvisor=")));
+  assert.equal(advisorCatch.includes("setAdvisorZones([])"),false);
+  assert.equal(advisorCatch.includes("setAdvisorTimeline(null)"),false);
+  assert.match(component,/if\(viewMode==="account"&&zoneLadder\?\.zones\?\.length\)/);
+  assert.match(component,/portfolio-koers-structure-level/);
+});
