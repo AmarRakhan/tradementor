@@ -54,7 +54,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   technicalDetails: [
     "Frontend: web/components/aster-strategy2-entry.tsx + web/components/aster-strategy2-maker.tsx.",
-    "Release-identiteit: Webapp V46 build 547."
+    "Release-identiteit: Webapp V46 build 548."
   ],
   confidence: "confirmed",
 };

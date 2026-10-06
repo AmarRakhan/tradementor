@@ -555,8 +555,8 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       {v.priceZoneSeatsEnabled && <section className="price-zone-seat-editor" aria-label="Prijszone-stoelen instellen" style={{ marginTop: 10, padding: 12, border: "1px solid rgba(214,181,90,.24)", borderRadius: 12, background: "rgba(0,0,0,.22)" }}>
         <div style={{ marginBottom: 10 }}><b style={{ display: "block", fontSize: 13 }}>Stoelen per actieve prijszone</b><small className="leverage-caption">Stel hier apart in hoeveel nieuwe LONG- en SHORT-posities één prijszone maximaal mag vullen.</small></div>
         <div className="live-config-grid" style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))" }}>
-          <Field label="LONG stoelen per prijszone" value={v.priceZoneLongSeats} set={(value) => change({ ...v, priceZoneLongSeats: value })} />
-          <Field label="SHORT stoelen per prijszone" value={v.priceZoneShortSeats} set={(value) => change({ ...v, priceZoneShortSeats: value })} />
+          <Field label="LONG per prijszone" value={v.priceZoneLongSeats} set={(value) => change({ ...v, priceZoneLongSeats: value })} />
+          <Field label="SHORT per prijszone" value={v.priceZoneShortSeats} set={(value) => change({ ...v, priceZoneShortSeats: value })} />
         </div>
         <small className="leverage-caption">0 is toegestaan per richting. Voorbeeld: max posities 10, LONG 2 en SHORT 0 betekent alleen LONG; maximaal 2 nieuwe LONG-posities per prijszone en voor 10 LONG-posities zijn minimaal 5 verschillende origin-zones nodig.</small>
       </section>}

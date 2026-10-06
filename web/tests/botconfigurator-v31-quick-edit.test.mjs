@@ -9,8 +9,8 @@ const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx",
 const version = fs.readFileSync(new URL("../lib/app-version.ts", import.meta.url), "utf8");
 const history = fs.readFileSync(new URL("../lib/release-history.ts", import.meta.url), "utf8");
 
-test("Build 547 is the live single-surface AsterBot release", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "547"/);
+test("Build 548 is the live single-surface AsterBot release", () => {
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "548"/);
   assert.match(shell, /AsterStrategy2Maker/);
   assert.doesNotMatch(shell, /ConfiguratorV3|Nieuwe configurator|Oude instellingen/);
   assert.match(maker, /Prijszone-stoelen/);
@@ -36,8 +36,8 @@ test("classic live surface keeps independent LONG SHORT entry and DCA values", (
     assert.match(maker, new RegExp(key));
   }
   assert.match(maker, /LONG per prijszone/);
-  assert.match(maker, /SHORT stoelen per prijszone/);
-  assert.match(maker, /LONG stoelen per prijszone/);
+  assert.match(maker, /SHORT per prijszone/);
+  assert.match(maker, /LONG per prijszone/);
   assert.match(maker, /0 is toegestaan per richting/);
   assert.match(maker, /shortSeatsPerZone: clampInt\(n\(v\.priceZoneShortSeats\), 0, 100\)/);
 });
