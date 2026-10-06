@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "1df891031f1838462217199f70b07112667ffd78",
+  "sourceCommit": "bffde54c563d11e9a05e8b65c93d7f18c5812555",
   "requestedBy": "AmarRakhan",
-  "requestId": "aster-stale-zone-seat-fix-20261006-1255"
+  "requestId": "zone-zero-side-backend-fix-20261006-1415"
 }
