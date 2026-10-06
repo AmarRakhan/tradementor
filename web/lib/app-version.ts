@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 558: true-black Portfolio Koers startup + fuller mobile candle framing; release contract synchronized.
-export const WEBAPP_BUILD_NUMBER = "558";
+// Build 559: approved Portfolio Koers startup + interactive event-label restoration.
+export const WEBAPP_BUILD_NUMBER = "559";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

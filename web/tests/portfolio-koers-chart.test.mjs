@@ -511,3 +511,21 @@ test("Build 555 keeps next-zone chart context available without backend zones",a
   assert.match(component,/const browserDerivedZones=canonical\.zones\.length/);
   assert.match(component,/const visualPayloadZones=payload\.zones\.length\?payload\.zones:localDisplayZones/);
 });
+
+
+test("Build 559 matches approved Portfolio Koers startup/event reference",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes("file_0000000065e08246a10dfd2cc721cc77"));
+  assert.equal(component.includes('className="portfolio-koers-gap-warning"'),false);
+  assert.ok(component.includes('data-level={level.label}'));
+  assert.equal(component.includes('<span>{level.label}</span>'),false);
+  assert.ok(component.includes('{tp:4,long:4,short:4,cashflow:1,other:1}'));
+  assert.ok(component.includes('safetyCap:12'));
+  assert.ok(css.includes("Visual reference: file_0000000065e08246a10dfd2cc721cc77"));
+  assert.ok(css.includes(".portfolio-koers-gap-warning"));
+  assert.ok(css.includes("display:none!important"));
+  assert.ok(css.includes(".portfolio-koers-event-chip.long"));
+  assert.ok(css.includes(".portfolio-koers-event-chip.short"));
+  assert.ok(css.includes(".portfolio-koers-event-chip.tp"));
+});

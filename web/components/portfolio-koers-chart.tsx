@@ -1034,8 +1034,12 @@ export function PortfolioKoersChart({
           width:copy.tone==="cashflow"?92:copy.tone==="tp"?86:58,height:copy.tone==="tp"?34:30,
         });
       }
-      const displayCandidates=selectPortfolioKoersReferenceCandidates(candidates,{tp:3,long:2,short:2,cashflow:1,other:1});
-      const markerLayout=layoutPortfolioKoersMarkers(displayCandidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:9});
+      // Build 559 · reference file_0000000065e08246a10dfd2cc721cc77
+      // Keep the confirmed event layer visibly populated on the default mobile
+      // viewport. This is display-only: it does not synthesize fills or alter
+      // any trading/runtime state.
+      const displayCandidates=selectPortfolioKoersReferenceCandidates(candidates,{tp:4,long:4,short:4,cashflow:1,other:1});
+      const markerLayout=layoutPortfolioKoersMarkers(displayCandidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:12});
       const reserved:StructureRect[]=[];
       if(structureDraft.activeZone){
         const zoneCenter=structureDraft.activeZone.top+structureDraft.activeZone.height/2;
@@ -1376,14 +1380,15 @@ export function PortfolioKoersChart({
     <div className="portfolio-koers-stage">
       <div ref={canvasRef} className="portfolio-koers-canvas"/>
       {!initialChartReady?<div className="portfolio-koers-state portfolio-koers-initial-state"><i/>Accountwaarde laden…</div>:null}
-      {viewMode!=="active"&&recentChartGap?<div className="portfolio-koers-gap-warning" role="status">⚠ Historiegat {clockTime(recentChartGap.fromTime)}–{clockTime(recentChartGap.toTime)} · geen koerswaarden verzonnen</div>:null}
+      {/* Build 559: history gaps remain internal data-quality truth but are no
+          longer painted as an obstructive chart overlay. */}
       {viewMode==="performance"?<div className="portfolio-koers-performance-note">PERFORMANCE · cashflow gecorrigeerd<span>Strategyzones staan alleen bij Accountwaarde</span></div>:null}
       {viewMode==="active"?<div className="portfolio-koers-active-note">ACTIEVE TRADES MARKTINDEX<span>Basis 100 · LONG mee · SHORT invers · gewogen op entry-notional</span></div>:null}
       <div className={`portfolio-koers-zones ${zoneLayout.length?"is-ready":""}`} aria-hidden="true">{zoneLayout.map((zone)=><div key={zone.index} className={`portfolio-koers-zone zone-${zone.tone} ${zoneLevelClass(zone.index)} ${zone.index===activeZone?"active":""}`} style={{top:`${zone.top}px`,height:`${zone.height}px`}}><span>{zone.label}</span></div>)}</div>
       <div className="portfolio-koers-zone-boundaries" aria-hidden="true">{zoneBoundaries.map((boundary,index)=>{const distance=portfolioZoneDistancePercent(boundary.price,currentZonePrice);return <div key={`${boundary.price}-${index}`} className={`portfolio-koers-zone-boundary ${boundary.kind}`} style={{top:`${boundary.top}px`}}>{boundary.kind!=="regular"?<span title={`Exacte grens ${levelUsd(boundary.price)}`}>{boundary.kind==="next-up"?"↑":"↓"} Z{signedZone(boundary.targetIndex)} · {percent2(distance)}</span>:null}</div>})}</div>
       {viewMode==="account"?<div className="portfolio-koers-structure-layer" data-reference={PORTFOLIO_STRUCTURE_REFERENCE} aria-hidden="true">
         {structureOverlay.activeZone?<div className="portfolio-koers-structure-zone" style={{top:`${structureOverlay.activeZone.top}px`,height:`${structureOverlay.activeZone.height}px`}}><span>{structureOverlay.activeZone.label}</span></div>:null}
-        {structureOverlay.levels.map((level)=><div key={level.label} className={`portfolio-koers-structure-level ${level.side}`} style={{top:`${level.top}px`}}><span>{level.label}</span></div>)}
+        {structureOverlay.levels.map((level)=><div key={level.label} className={`portfolio-koers-structure-level ${level.side}`} style={{top:`${level.top}px`}} data-level={level.label}/>)}
       </div>:null}
       <div className="portfolio-koers-event-layer">{eventLabels.map((label)=>{
         const connector=connectorStyle(label);

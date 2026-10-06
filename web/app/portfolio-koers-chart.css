@@ -1132,3 +1132,65 @@
   .portfolio-koers-view-toggle button{flex:1 1 0;padding:4px 3px;font-size:4.75px}
   .portfolio-koers-active-summary-grid{gap:5px}.portfolio-koers-active-summary-grid article{padding:6px}
 }
+
+
+/* Build 559 · Portfolio Koers approved startup/event presentation.
+   Visual reference: file_0000000065e08246a10dfd2cc721cc77
+   UI-only: no trading/runtime semantics. */
+.portfolio-koers-ui41 .portfolio-koers-stage,
+.portfolio-zone-map .portfolio-koers-stage{
+  background:#000!important;
+}
+
+/* Keep the support/resistance lines, remove only the old left-side R4..S4 pills. */
+.portfolio-koers-ui41 .portfolio-koers-structure-level>span,
+.portfolio-zone-map .portfolio-koers-structure-level>span{
+  display:none!important;
+}
+
+/* Data-quality gaps remain available to logic/telemetry but never cover candles. */
+.portfolio-koers-gap-warning{
+  display:none!important;
+}
+
+/* LONG, SHORT and TP now share one badge/chip family as in the approved reference. */
+.portfolio-koers-ui41 .portfolio-koers-event.portfolio-koers-event-chip{
+  min-width:58px;
+  height:29px;
+  padding:0 8px;
+  gap:5px;
+  border:1px solid currentColor;
+  border-radius:10px;
+  box-shadow:0 4px 12px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.08);
+  font-variant-numeric:tabular-nums;
+}
+.portfolio-koers-ui41 .portfolio-koers-event-chip.long{
+  color:#42edad;
+  background:linear-gradient(180deg,rgba(3,83,55,.98),rgba(2,31,23,.99));
+  box-shadow:0 4px 12px rgba(0,0,0,.42),0 0 12px rgba(39,235,163,.10),inset 0 1px 0 rgba(173,255,223,.08);
+}
+.portfolio-koers-ui41 .portfolio-koers-event-chip.short{
+  color:#ff6679;
+  background:linear-gradient(180deg,rgba(96,14,31,.98),rgba(37,4,13,.99));
+  box-shadow:0 4px 12px rgba(0,0,0,.42),0 0 12px rgba(255,91,116,.10),inset 0 1px 0 rgba(255,189,199,.08);
+}
+.portfolio-koers-ui41 .portfolio-koers-event-chip.tp{
+  min-width:74px;
+  height:29px;
+  padding:0 9px 0 7px;
+  border-radius:10px;
+}
+.portfolio-koers-ui41 .portfolio-koers-event-chip b{
+  font-size:8.4px;
+  font-weight:950;
+}
+@media(max-width:560px){
+  .portfolio-koers-ui41 .portfolio-koers-event.portfolio-koers-event-chip{
+    min-width:54px;
+    height:27px;
+    padding:0 7px;
+    border-radius:9px;
+  }
+  .portfolio-koers-ui41 .portfolio-koers-event-chip.tp{min-width:70px}
+  .portfolio-koers-ui41 .portfolio-koers-event-chip b{font-size:7.8px}
+}

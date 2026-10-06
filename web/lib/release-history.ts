@@ -26,15 +26,19 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Portfolio Koers · zwarte startweergave + vollere candles",
+  title: "Portfolio Koers · goedgekeurde startweergave + eventlabels",
   newItems: [
+    "Portfolio Koers volgt de goedgekeurde visuele referentie file_0000000065e08246a10dfd2cc721cc77.",
     "Portfolio Koers start met een echte zwarte chartachtergrond in plaats van de blauwzwarte tint.",
+    "LONG-, SHORT- en TP-events gebruiken opnieuw één uniforme interactieve badgefamilie op de chart.",
     "De standaard mobiele viewport toont minder candles tegelijk met ruimere bar-spacing, zodat candles bij openen voller en beter leesbaar zijn.",
     "De bevestigde Portfolio Koers-zones blijven beschikbaar wanneer een nieuwe sessie start of de nieuwste 15m-historie tijdelijk een gat bevat.",
     "De chart haalt voor de visuele zonebasis maximaal 600 15m-candles op en bewaart de laatst bevestigde zonebasis lokaal als display-cache.",
     "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
+    "De linker R4–R1/S1–S4-pilllabels en de history-gap overlay bedekten de gewenste chartpresentatie.",
+    "LONG/SHORT-events waren visueel lichter uitgevoerd dan TP en de zichtbare eventselectie was te beperkt voor de goedgekeurde referentie.",
     "De live chart was bij openen nog te blauw en de standaard candle-dichtheid week af van de handmatig ingezoomde referentie.",
     "Build 551 bevatte de R1–R4/S1–S4-rendering, maar bij een lege zonebron bleef de live chart alsnog op 'Zone —' staan en werden geen niveaus getekend.",
     "Een koude start had geen browser-side laatst-bevestigde zonebasis om tijdelijk op terug te vallen.",
@@ -44,6 +48,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "De horizontale support/resistance-lijnen blijven zichtbaar, maar de losse linker R4–R1/S1–S4-pilllabels worden niet meer gerenderd.",
+    "De history-gap waarschuwing blijft interne data-quality informatie maar wordt niet meer als obstructieve chartoverlay gerenderd.",
+    "LONG/SHORT/TP badges zijn qua hoogte, radius, border, schaduw en typografie gelijkgetrokken; kleurcodering blijft groen/rood/goud.",
+    "De zichtbare confirmed-event selectie is verruimd naar maximaal 4 TP, 4 LONG en 4 SHORT binnen de viewport, met layout safety-cap 12.",
     "Chartcanvas, stage en initial-state gebruiken nu #000000; grid en assen zijn neutraal en subtiel gehouden.",
     "De cold-start viewport is per timeframe compacter gemaakt met bredere candles; handmatig zoomen/pannen blijft daarna behouden.",
     "Laatste bevestigde 15m-zones worden display-only gecachet en bij een koude start direct teruggelezen.",
@@ -58,12 +66,13 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   now: [
     "Bij openen staat Accountwaarde direct op een zwarte, vollere mobiele chartweergave die dichter bij de goedgekeurde handmatige zoom ligt.",
     "Portfolio Koers hoort na openen meteen de volgende zone boven en onder de actuele accountwaarde te tekenen in plaats van terug te vallen naar 'Zone —'.",
-    "R1–R4, S1–S4 en de actieve-zoneband blijven een chartfunctie, onafhankelijk van of prijszone-stoelen aanstaan.",
+    "De support/resistance-lijnen en actieve-zoneband blijven een chartfunctie, onafhankelijk van of prijszone-stoelen aanstaan; de losse R/S-pilllabels links zijn verwijderd.",
+    "TP-geldzakjes en LONG/SHORT-entrychips blijven klikbaar en openen hun bestaande fill/entry-detailkaart.",
   ],
   technicalDetails: [
     "Frontend: web/components/portfolio-koers-chart.tsx.",
     "Regression: web/tests/portfolio-koers-chart.test.mjs + web/tests/portfolio-koers-zone-advisor-ui.test.mjs.",
-    "Release-identiteit: Webapp V46 build 558.",
+    "Release-identiteit: Webapp V46 build 559.",
   ],
   confidence: "confirmed",
 }
