@@ -27,7 +27,7 @@ jobs:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DIAG_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Read matching account and compare Aster truth
+      - name: Compare stored seats, Aster truth and cached seat model
         shell: bash
         run: |
           set -euo pipefail
@@ -38,88 +38,90 @@ jobs:
           print(s['containers'][0]['image']); print(s['serviceAccountName'])
           PY
           )
-          IMAGE="${V[0]}"; RUNTIME_SA="${V[1]}"; JOB="tm-zone-seat-${GITHUB_RUN_ID: -7}"; MARKER="ZONESEAT_${GITHUB_RUN_ID}"
+          IMAGE="${V[0]}"; RUNTIME_SA="${V[1]}"; JOB="tm-zone-seat-${GITHUB_RUN_ID: -7}"
           cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
           trap cleanup EXIT
           SCRIPT_B64="$(base64 -w0 <<'PY'
-          import json,os,time
+          import os
           from google.cloud import firestore
           from main import load_aster_secret, AsterV3Client, local_eip712_signer
           db=firestore.Client(project='tradementor-production')
-          def num(v,d=None):
+          def num(v,d=0):
               try:return int(round(float(v)))
               except:return d
           matches=[]
           for snap in db.collection('asterStrategy2').stream():
               raw=snap.to_dict() or {}
               s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
-              if num(s.get('zoneBaseLongSoldiers'))==2 and num(s.get('zoneBaseShortSoldiers'))==2 and num(s.get('maximumPositions'))==10:
+              if num(s.get('zoneBaseLongSoldiers'),-99)==2 and num(s.get('zoneBaseShortSoldiers'),-99)==2 and num(s.get('maximumPositions'),-99)==10:
                   matches.append((snap,raw,s))
-          if len(matches)!=1:
-              print(os.environ['MARKER']+'='+json.dumps({'matchCount':len(matches)}),flush=True)
-              raise SystemExit(0)
-          snap,raw,s=matches[0]; uid=snap.id
-          secret=load_aster_secret({'uid':uid})
-          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
-          rows=[r for r in client.position_risk() if abs(float(r.get('positionAmt') or 0))>0]
-          exL=[str(r.get('symbol','')) for r in rows if str(r.get('positionSide','')).upper()=='LONG']
-          exS=[str(r.get('symbol','')) for r in rows if str(r.get('positionSide','')).upper()=='SHORT']
-          managed=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
-          mL=sum(1 for k in managed if str(k).upper().endswith('|LONG'))
-          mS=sum(1 for k in managed if str(k).upper().endswith('|SHORT'))
-          rep=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
-          pz=raw.get('priceZoneSeats') if isinstance(raw.get('priceZoneSeats'),dict) else raw.get('zoneSoldiers') if isinstance(raw.get('zoneSoldiers'),dict) else {}
-          sm=pz.get('seatModel') if isinstance(pz.get('seatModel'),dict) else {}
-          out={
-            'matchCount':1,
-            'enabled':bool(raw.get('enabled')),
-            'settings':{
-              'zoneBaseLongSoldiers':s.get('zoneBaseLongSoldiers'),
-              'zoneBaseShortSoldiers':s.get('zoneBaseShortSoldiers'),
-              'maximumPositions':s.get('maximumPositions'),
-              'zoneSoldiersEnabled':s.get('zoneSoldiersEnabled'),
-              'zoneSoldiersOptInVersion':s.get('zoneSoldiersOptInVersion')
-            },
-            'exchange':{'long':len(exL),'short':len(exS),'total':len(rows),'longSymbols':exL,'shortSymbols':exS},
-            'managed':{'long':mL,'short':mS,'total':mL+mS},
-            'report':{'activeLong':rep.get('activeLong'),'activeShort':rep.get('activeShort'),'updatedAtMs':rep.get('updatedAtMs')},
-            'priceZoneSeats':{
-              'enabled':pz.get('enabled'),
-              'activeZone':sm.get('activeZone',pz.get('activeZone')),
-              'perZoneLong':sm.get('perZoneLong'),
-              'perZoneShort':sm.get('perZoneShort'),
-              'occupiedLongActiveZone':sm.get('occupiedLongActiveZone'),
-              'occupiedShortActiveZone':sm.get('occupiedShortActiveZone'),
-              'strategyOpenLong':sm.get('strategyOpenLong'),
-              'strategyOpenShort':sm.get('strategyOpenShort'),
-              'strategyOpenTotal':sm.get('strategyOpenTotal'),
-              'zoneOpenCounts':pz.get('zoneOpenCounts'),
-              'zoneOpenCountsReliable':pz.get('zoneOpenCountsReliable')
-            }
-          }
-          print(os.environ['MARKER']+'='+json.dumps(out,separators=(',',':'),sort_keys=True),flush=True)
+          metrics=[len(matches)]
+          if len(matches)==1:
+              snap,raw,s=matches[0]; uid=snap.id
+              secret=load_aster_secret({'uid':uid})
+              client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+              rows=[r for r in client.position_risk() if abs(float(r.get('positionAmt') or 0))>0]
+              exL=sum(1 for r in rows if str(r.get('positionSide','')).upper()=='LONG')
+              exS=sum(1 for r in rows if str(r.get('positionSide','')).upper()=='SHORT')
+              managed=raw.get('multiBbPositions') if isinstance(raw.get('multiBbPositions'),dict) else {}
+              mL=sum(1 for k in managed if str(k).upper().endswith('|LONG'))
+              mS=sum(1 for k in managed if str(k).upper().endswith('|SHORT'))
+              rep=raw.get('multiBbReport') if isinstance(raw.get('multiBbReport'),dict) else {}
+              pz=raw.get('priceZoneSeats') if isinstance(raw.get('priceZoneSeats'),dict) else raw.get('zoneSoldiers') if isinstance(raw.get('zoneSoldiers'),dict) else {}
+              sm=pz.get('seatModel') if isinstance(pz.get('seatModel'),dict) else {}
+              metrics += [
+                int(bool(raw.get('enabled'))),
+                num(s.get('zoneBaseLongSoldiers')),
+                num(s.get('zoneBaseShortSoldiers')),
+                num(s.get('maximumPositions')),
+                exL, exS, len(rows),
+                mL, mS,
+                num(rep.get('activeLong')),
+                num(rep.get('activeShort')),
+                num(sm.get('perZoneLong')),
+                num(sm.get('perZoneShort')),
+                num(sm.get('occupiedLongActiveZone')),
+                num(sm.get('occupiedShortActiveZone')),
+                num(sm.get('strategyOpenLong')),
+                num(sm.get('strategyOpenShort')),
+                num(sm.get('strategyOpenTotal')),
+                num(sm.get('activeZone'),99),
+              ]
+          idx=int(os.environ['CLOUD_RUN_TASK_INDEX'])
+          value=metrics[idx] if idx < len(metrics) else 0
+          raise SystemExit(min(max(int(value),0),249)+1)
           PY
           )"
-          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --set-env-vars "MARKER=$MARKER" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
-          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
-          for N in 1 2 3 4 5 6 7 8 9 10; do
-            gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB\"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=100 --order=desc --format=json > "$RUNNER_TEMP/logs.json" || echo '[]' > "$RUNNER_TEMP/logs.json"
-            python - "$MARKER" "$RUNNER_TEMP/logs.json" <<'PY'
-          import json,sys
-          marker=sys.argv[1]+'='
-          data=json.load(open(sys.argv[2],encoding='utf-8'))
-          def strings(obj):
-              if isinstance(obj,str): yield obj
-              elif isinstance(obj,dict):
-                  for v in obj.values(): yield from strings(v)
-              elif isinstance(obj,list):
-                  for v in obj: yield from strings(v)
-          for row in data if isinstance(data,list) else []:
-              for value in strings(row):
-                  if marker in value:
-                      print(value[value.index(marker):].splitlines()[0]); raise SystemExit(0)
-          raise SystemExit(1)
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --tasks 20 --parallelism 20 --max-retries 0 --task-timeout 120s --quiet
+          set +e
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null 2>&1
+          set -e
+          EXECUTION="$(gcloud run jobs executions list --job "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --limit 1 --sort-by='~metadata.creationTimestamp' --format='value(metadata.name)')"
+          TASKS_JSON="$(gcloud run jobs executions tasks list --execution "$EXECUTION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          python - "$RUNNER_TEMP/tasks.json" <<'PY'
           PY
-            [ "$?" -eq 0 ] && break
-            sleep 3
-          done
+          printf '%s' "$TASKS_JSON" > "$RUNNER_TEMP/tasks.json"
+          python - "$RUNNER_TEMP/tasks.json" <<'PY'
+          import json,sys
+          data=json.load(open(sys.argv[1]))
+          vals={}
+          def first_exit(obj):
+              if isinstance(obj,dict):
+                  if isinstance(obj.get('exitCode'),int): return obj['exitCode']
+                  for v in obj.values():
+                      x=first_exit(v)
+                      if x is not None:return x
+              if isinstance(obj,list):
+                  for v in obj:
+                      x=first_exit(v)
+                      if x is not None:return x
+              return None
+          for row in data:
+              idx=row.get('index')
+              if not isinstance(idx,int): continue
+              code=first_exit(row)
+              vals[idx]=(code-1 if isinstance(code,int) and code>=1 else None)
+          labels=['matchCount','enabled','settingPerZoneLong','settingPerZoneShort','settingMaxTotal','exchangeLong','exchangeShort','exchangeTotal','managedLong','managedShort','reportActiveLong','reportActiveShort','seatModelPerZoneLong','seatModelPerZoneShort','seatModelOccupiedLong','seatModelOccupiedShort','seatModelStrategyOpenLong','seatModelStrategyOpenShort','seatModelStrategyOpenTotal','activeZone']
+          for i,label in enumerate(labels):
+              print(f'DIAG {label}={vals.get(i)}')
+          PY
