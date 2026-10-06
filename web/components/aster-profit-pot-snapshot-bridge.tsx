@@ -35,15 +35,29 @@ function cycleIcon() {
 }
 
 function openPortfolioTakeProfitSettings() {
-  const maker = document.getElementById("strategy-2-maker");
-  if (!maker) return;
-  const portfolioButton = Array.from(maker.querySelectorAll<HTMLButtonElement>(".tp-tabs button"))
-    .find((button) => button.textContent?.trim().toLowerCase() === "portfolio");
-  portfolioButton?.click();
-  window.requestAnimationFrame(() => {
-    const panel = maker.querySelector<HTMLElement>(".portfolio-tp-panel") || maker;
-    panel.scrollIntoView({ behavior: "smooth", block: "center" });
-  });
+  const openPanel = (attempt = 0) => {
+    const maker = document.getElementById("strategy-2-maker");
+    if (!maker) {
+      if (attempt < 8) window.requestAnimationFrame(() => openPanel(attempt + 1));
+      return;
+    }
+    const portfolioButton = Array.from(maker.querySelectorAll<HTMLButtonElement>(".tp-tabs button"))
+      .find((button) => button.textContent?.trim().toLowerCase() === "portfolio");
+    portfolioButton?.click();
+    window.requestAnimationFrame(() => {
+      const panel = maker.querySelector<HTMLElement>(".portfolio-tp-panel") || maker;
+      panel.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
+  const settingsButton = Array.from(document.querySelectorAll<HTMLButtonElement>(".aster-subtabs button"))
+    .find((button) => button.textContent?.trim().toLowerCase().includes("instellingen"));
+  if (settingsButton && settingsButton.getAttribute("aria-pressed") !== "true") {
+    settingsButton.click();
+    window.requestAnimationFrame(() => openPanel());
+    return;
+  }
+  openPanel();
 }
 
 function PortfolioCycleCard({ state }: { state: PortfolioCycleCardState }) {
