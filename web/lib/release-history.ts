@@ -26,40 +26,54 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "AsterBot · klassieke instellingen + prijszone-stoelen",
+  title: "Portfolio Koers · prijsniveaus altijd zichtbaar",
   newItems: [
-    "Botinstellingen gebruikt weer één klassieke AsterBot-weergave; de tijdelijke keuze tussen Oude instellingen en Nieuwe configurator is verwijderd.",
-    "Prijszone-stoelen is als gewone optie toegevoegd aan die bestaande AsterBot-instellingen.",
-    "De webconfig schrijft naast tijdelijke legacy aliases ook het canonieke priceZoneSeats-object.",
-    "Bij ingeschakelde Prijszone-stoelen verschijnt nu direct in hetzelfde blok een expliciete LONG- en SHORT-invoer per prijszone; 0 is per richting toegestaan.",
+    "Support- en resistance-niveaus zijn voortaan een basisfunctie van Portfolio Koers en staan los van Prijszone-stoelen.",
+    "De actuele visuele prijszone wordt altijd uit portfolio-equity en de bevestigde 15m S/R-zonebasis bepaald.",
+    "Bij een tijdelijke fout in de 15m-zonefeed blijven de laatst bevestigde prijsniveaus zichtbaar in plaats van dat de overlay leeg wordt.",
   ],
   problems: [
-    "Zone Warriors werd als aparte strategie gepresenteerd terwijl de gewenste functie alleen extra capaciteit per prijszone is.",
-    "Dubbele strategie-identiteiten maakten toekomstige filters en instellingen onnodig gevoelig voor verschillende runtime-routes.",
+    "De chart koppelde de visuele actieve zone deels aan de operationele Zone Warriors/runtime-status.",
+    "Een tijdelijke lege of mislukte zone-refresh kon support/resistance in één keer van de grafiek verwijderen.",
   ],
   causes: [
-    "Historische uitbreidingen waren als aparte compatibiliteitslagen blijven bestaan.",
-    "UI-termen en runtimevelden maakten van prijszonecapaciteit een strategie-identiteit in plaats van een module.",
+    "Handelssturing en chartpresentatie deelden dezelfde actieve-zonevariabele.",
+    "De frontend wist de bevestigde advisor-zones bij een tijdelijke fetchfout in plaats van de laatste geldige basis te behouden.",
   ],
   fixes: [
-    "Eén live AsterBot-instellingenpagina: de klassieke configurator is opnieuw de enige route.",
-    "Prijszone-stoelen aan/uit blijft dezelfde bestaande instelling gebruiken, maar wordt nu ook canoniek als priceZoneSeats opgeslagen.",
-    "De per-zone velden zijn uit de compacte bovenrij gehaald en staan zichtbaar onder de Prijszone-stoelen schakelaar, inclusief voorbeeld 10 totaal / 2 LONG / 0 SHORT.",
-    "Bestaande accounts zonder prijszone-stoelen behouden hun normale AsterBot-gedrag.",
+    "Visuele prijszone en operationele tradingzone zijn gescheiden.",
+    "Portfolio Koers gebruikt een eigen chart-zone-ladder en bewaart de laatst bevestigde geldige ladder als fail-safe.",
+    "Prijszone-stoelen AAN/UIT beïnvloedt niet langer of support/resistance en de huidige prijszone zichtbaar zijn.",
+    "De command center-runtime kan nog steeds zijn operationele zone gebruiken zonder de chart te verplaatsen of leeg te maken.",
   ],
   now: [
-    "AsterBot blijft de basis; prijszone-stoelen voegt alleen LONG/SHORT-capaciteit per actieve zone toe.",
-    "Geen account wordt door deze UI-migratie automatisch gestart, gestopt of aangepast.",
-    "De backend unified-policy/admission-laag wordt afzonderlijk door backend-CI bewaakt.",
+    "Ook gebruikers die niet per prijszone instappen zien de prijsniveaus en hun actuele zone op de chart.",
+    "Een tijdelijke zone-API-storing wist geen reeds bevestigde S/R-overlay meer.",
+    "Tradinglogica, entries, DCA, TP en bestaande posities zijn door deze wijziging niet aangepast.",
   ],
   technicalDetails: [
-    "Frontend: web/components/aster-strategy2-entry.tsx + web/components/aster-strategy2-maker.tsx.",
-    "Release-identiteit: Webapp V46 build 548."
+    "Frontend: web/components/portfolio-koers-chart.tsx.",
+    "Regression: web/tests/portfolio-koers-chart.test.mjs.",
+    "Release-identiteit: Webapp V46 build 549."
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-548-price-zone-seat-controls",
+    version: "46",
+    build: "548",
+    releasedAt: "2026-10-06",
+    title: "AsterBot · klassieke instellingen + prijszone-stoelen",
+    newItems: ["Klassieke AsterBot-instellingen tonen expliciete LONG/SHORT-stoelen per prijszone."],
+    problems: ["Prijszone-stoelen waren na de unified UI-migratie niet direct instelbaar in de klassieke configurator."],
+    causes: ["De optionele module was inhoudelijk aanwezig maar de benodigde velden ontbraken op de gekozen instellingenpagina."],
+    fixes: ["Editable per-zone LONG/SHORT controls zijn toegevoegd; 0 per richting is toegestaan zolang totaal minimaal 1 is."],
+    now: ["Prijszone-stoelen kan als optie binnen dezelfde AsterBot worden ingesteld."],
+    confidence: "confirmed",
+  },
+
   {
     id: "v46-build-534-stale-aster-status-zone-seat-repair",
     version: "46",
