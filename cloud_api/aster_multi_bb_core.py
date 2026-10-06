@@ -127,6 +127,9 @@ class MultiBbConfig:
         entry_notional_usd=_f(raw.get("entryNotionalUsd", raw.get("baseNotional")), entry_margin_usd * max(1, minimum_leverage))
         asymmetric_enabled=bool(raw.get("asymmetricHedgeModeEnabled", False))
         manual_enabled=bool(raw.get("manualSymbolSelectionEnabled", False)) and not asymmetric_enabled
+        # Unified AsterBot naming. The legacy Zone Warriors fields remain input
+        # aliases during migration, but both names normalize into ONE policy.
+        price_zone_raw=raw.get("priceZoneSeats") if isinstance(raw.get("priceZoneSeats"),dict) else {}
         entry_sizing_mode=str(raw.get("entrySizingMode", "margin" if manual_enabled or asymmetric_enabled else "notional")).lower().strip()
         manual_rows=raw.get("manualSymbols") if isinstance(raw.get("manualSymbols"), list) else []
         manual_symbols=[]
@@ -159,10 +162,10 @@ class MultiBbConfig:
             exposure_refill_short_timeframe=normalize_bollinger_timeframe(raw.get("exposureRefillShortTimeframe", "1m")),
             exposure_refill_trigger_percent=_f(raw.get("exposureRefillTriggerPercent"), 20.0),
             exposure_refill_release_percent=_f(raw.get("exposureRefillReleasePercent"), 8.0),
-            zone_soldiers_enabled=bool(raw.get("zoneSoldiersEnabled", False)),
+            zone_soldiers_enabled=bool(price_zone_raw.get("enabled", raw.get("zoneSoldiersEnabled", False))),
             zone_soldiers_opt_in_version=max(0, _i(raw.get("zoneSoldiersOptInVersion"), 0)),
-            zone_base_long_soldiers=_i(raw.get("zoneBaseLongSoldiers"), 3),
-            zone_base_short_soldiers=_i(raw.get("zoneBaseShortSoldiers"), 3),
+            zone_base_long_soldiers=_i(price_zone_raw.get("longSeatsPerZone", raw.get("zoneBaseLongSoldiers")), 3),
+            zone_base_short_soldiers=_i(price_zone_raw.get("shortSeatsPerZone", raw.get("zoneBaseShortSoldiers")), 3),
             zone_exposure_balancer_enabled=bool(raw.get("zoneExposureBalancerEnabled", True)),
             zone_entry_growth_percent=_f(raw.get("zoneEntryGrowthPercent"), 2.0),
             zone_entry_max_multiplier=_f(raw.get("zoneEntryMaxMultiplier"), 1.20),
@@ -241,6 +244,14 @@ class MultiBbConfig:
             "zoneSoldiersOptInVersion": self.zone_soldiers_opt_in_version,
             "zoneBaseLongSoldiers": self.zone_base_long_soldiers,
             "zoneBaseShortSoldiers": self.zone_base_short_soldiers,
+            # Canonical public name. Legacy flat keys above remain read/write
+            # aliases until every client has migrated; they are not a second
+            # runtime source.
+            "priceZoneSeats": {
+                "enabled": self.zone_soldiers_enabled,
+                "longSeatsPerZone": self.zone_base_long_soldiers,
+                "shortSeatsPerZone": self.zone_base_short_soldiers,
+            },
             "zoneExposureBalancerEnabled": self.zone_exposure_balancer_enabled,
             "zoneEntryGrowthPercent": self.zone_entry_growth_percent, "zoneEntryMaxMultiplier": self.zone_entry_max_multiplier,
             "entryMarginUsd": self.entry_margin_usd, "entryNotionalUsd": self.entry_notional_usd, "entrySizingMode": self.entry_sizing_mode, "dcaDistance": self.dca_distance,
