@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "bffde54c563d11e9a05e8b65c93d7f18c5812555",
+  "sourceCommit": "3c73bb6a1b937c4ac00a45b133ab9553aa093537",
   "requestedBy": "AmarRakhan",
-  "requestId": "zone-zero-side-backend-fix-20261006-1415"
+  "requestId": "zone-zero-side-runtime-cap-sync-build539-20261006"
 }
