@@ -1391,3 +1391,32 @@ body.mode-items .categories-grid{
     grid-template-columns:repeat(2,minmax(0,1fr))!important;
   }
 }
+
+
+/* Version/build badge */
+.build-badge{
+  margin-left:auto;
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  height:28px;
+  padding:0 9px;
+  border:1px solid #d5e2ef;
+  border-radius:7px;
+  background:#f7fbff;
+  color:#607a98;
+  font-size:10px;
+  font-weight:700;
+  white-space:nowrap;
+}
+.build-version{color:#0b5fb8;font-weight:850}
+.build-separator{color:#9bb0c7}
+.build-number{color:#607a98}
+.mode-items .build-badge{
+  background:rgba(255,255,255,.12);
+  border-color:rgba(255,255,255,.28);
+  color:#eaf4ff;
+}
+.mode-items .build-version,
+.mode-items .build-number,
+.mode-items .build-separator{color:#eaf4ff}
