@@ -1693,6 +1693,21 @@
     let recognizedLines=0;
     let structuredLines=0;
 
+    function cleanRoundTripLine(raw){
+      let line=String(raw||'').trim();
+
+      // Accepteer ook tekst die via ChatGPT/markdown is gekopieerd:
+      // **Pakket: ...**, \- artikel, afsluitende backslash, HTML-spatie.
+      line=line
+        .replace(/&#x20;|&nbsp;/gi,' ')
+        .replace(/\\+\s*$/,'')
+        .replace(/^\*\*(.*?)\*\*$/,'$1')
+        .replace(/^\\([-•*])/,'$1')
+        .trim();
+
+      return line;
+    }
+
     function exactCatalogItem(name){
       const n=normalizeSmartText(name);
       if(!n) return null;
@@ -1704,7 +1719,20 @@
     function exactPackage(name){
       const n=normalizeSmartText(name);
       if(!n) return -1;
-      return data.packages.findIndex(pkg=>normalizeSmartText(pkg.name)===n);
+
+      // Eerst exact.
+      let index=data.packages.findIndex(pkg=>normalizeSmartText(pkg.name)===n);
+      if(index>=0) return index;
+
+      // Onze genummerde TOPdesk-weergave:
+      // "Werkplek compleet 1", "Werkplek compleet 2", enz.
+      const withoutOrdinal=n.replace(/\s+\d+$/,'').trim();
+      if(withoutOrdinal!==n){
+        index=data.packages.findIndex(pkg=>normalizeSmartText(pkg.name)===withoutOrdinal);
+        if(index>=0) return index;
+      }
+
+      return -1;
     }
 
     function ensurePackage(index){
@@ -1724,7 +1752,7 @@
     }
 
     rawLines.forEach((raw,lineIndex)=>{
-      const line=String(raw||'').trim();
+      const line=cleanRoundTripLine(raw);
 
       // Een lege regel sluit een pakketblok af.
       if(!line){
@@ -1735,7 +1763,9 @@
       const pkgMatch=line.match(/^pakket\s*:\s*(.+)$/i);
       if(pkgMatch){
         structuredLines++;
-        const index=exactPackage(pkgMatch[1].trim());
+        const packageLabel=pkgMatch[1].trim().replace(/^\*\*|\*\*$/g,'').trim();
+        const index=exactPackage(packageLabel);
+
         if(index>=0){
           const intent=ensurePackage(index);
           intent.qty+=1;
@@ -1762,26 +1792,43 @@
           return;
         }
 
-        const childMatch=line.match(/^[-•*]\s*(?:(\d+)\s*[x×]\s*)?(.+?)(?:\s*\|\s*serienummer\s*:\s*([A-Z0-9._-]+))?\s*$/i);
-        if(childMatch){
-          const childName=childMatch[2].trim();
-          const serial=(childMatch[3]||'').trim().toUpperCase();
+        // Binnen een pakket accepteren we beide vormen:
+        // - Artikelnaam | serienummer: ABC
+        // 1x Artikelnaam | serienummer: ABC
+        // - 1x Artikelnaam
+        // 1x Artikelnaam
+        let childText=line.replace(/^[-•*]\s*/,'').trim();
+        let childQty=1;
+        let qtyMatch=childText.match(/^(\d+)\s*[x×]\s+(.+)$/i);
+        if(qtyMatch){
+          childQty=Math.max(1,Number(qtyMatch[1])||1);
+          childText=qtyMatch[2].trim();
+        }
+
+        const serialMatch=childText.match(/^(.+?)(?:\s*\|\s*serienummer\s*:\s*([A-Z0-9._-]+))?\s*$/i);
+        if(serialMatch){
+          const childName=serialMatch[1].trim();
+          const serial=(serialMatch[2]||'').trim().toUpperCase();
           const pkg=data.packages[currentPackage.index];
+
           const item=(pkg?.items||[]).find(it=>{
             const info=orderItemInfo(it.code,it.label);
             return normalizeSmartText(info.name||it.label||'')===normalizeSmartText(childName);
           });
 
-          // In onze compacte pakketexport staan alleen relevante serialregels.
-          // Als de artikelnaam exact in dit pakket bestaat, koppel de SN aan die code.
+          // Als de regel een bestaand artikel uit dit pakket benoemt, is hij
+          // volledig door het pakket geconsumeerd. Hij mag daarna NOOIT nog
+          // als los artikel worden toegevoegd.
           if(item){
             if(serial){
               currentPackage.intent.serialsByCode[item.code]=currentPackage.intent.serialsByCode[item.code]||[];
-              currentPackage.intent.serialsByCode[item.code].push(serial);
+              for(let q=0;q<childQty;q++){
+                currentPackage.intent.serialsByCode[item.code].push(serial);
+              }
             }
             recognizedLines++;
+            return;
           }
-          return;
         }
       }
 
@@ -1812,7 +1859,9 @@
             looseByCode.set(item.code,row);
           }
           row.qty+=qty;
-          if(serial) row.serials.push(serial);
+          if(serial){
+            for(let q=0;q<qty;q++) row.serials.push(serial);
+          }
           recognizedLines++;
         }
       }
