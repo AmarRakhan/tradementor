@@ -26,7 +26,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Zone Warriors · zero-side runtime en max-cap synchronisatie",
+  title: "Zone Warriors · zero-side runtime en max-cap live",
   newItems: [
     "Zone Warriors accepteert nu in zowel de huidige als legacy configurator 0 LONG of 0 SHORT stoelen per zone.",
     "Een zijde op 0 blijft nu ook in de daadwerkelijke Zone Warriors runtime exact 0.",
@@ -55,7 +55,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   technicalDetails: [
     "Frontend: web/components/aster-strategy2-maker.tsx.",
-    "Release-identiteit: Webapp V46 build 539.",
+    "Release-identiteit: Webapp V46 build 540.",
   ],
   confidence: "confirmed",
 };
