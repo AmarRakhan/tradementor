@@ -81,3 +81,32 @@ def test_queue_does_not_misclassify_stopped_but_closing_portfolio_as_flat():
 def test_bot_off_flat_confirmation_disables_monitor_permanently():
     source = Path("aster_multi_bb_portfolio.py").read_text()
     assert 'extra={**base_extra, "monitor": False}' in source
+
+def test_portfolio_tp_preempts_dynamic_hedge_and_is_never_suppressed():
+    source = Path("main.py").read_text()
+    tick = source[source.index("def _run_aster_strategy2_tick("):]
+    preempt = tick.index("# Portfolio TP is the account-level risk reset")
+    dynamic = tick.index("dynamic=run_dynamic_hedge_sequence")
+    assert preempt < dynamic
+    assert 'portfolio_cycle_gate(' in tick[preempt:dynamic]
+    assert 'take_profit_mode="OFF"' not in tick[preempt:dynamic + 5000]
+    assert '"portfolioTpSuppressed":False' in tick
+
+
+def test_portfolio_tp_close_bypasses_only_auto_hedge_quantity_lock():
+    source = Path("main.py").read_text()
+    start = source.index("def _block_strategy2_order_during_conflict")
+    end = source.index("\n\ndef ", start + 1)
+    block = source[start:end]
+    assert 'str(intent.intent_id).lower().startswith("mbb-ptp-")' in block
+    assert '_block_order_during_close_all(uid,allow_auto_hedge_locked=True)' in block
+    assert 'normal_close_guard=_block_order_during_close_all(uid)' in block
+
+
+def test_dynamic_hedge_order_guard_never_owns_portfolio_tp_close():
+    source = Path("main.py").read_text()
+    start = source.index("def _run_aster_strategy2_tick(")
+    block = source[start:source.index("# Realtime Simple Mode legacy runtime below", start)]
+    assert "if not is_portfolio_tp_close:" in block
+    assert "dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)" in block
+
