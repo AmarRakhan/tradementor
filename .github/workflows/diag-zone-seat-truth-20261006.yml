@@ -116,11 +116,18 @@ jobs:
                       x=first_exit(v)
                       if x is not None:return x
               return None
-          for row in data:
-              idx=row.get('index')
+          def walk(obj):
+              if isinstance(obj,dict):
+                  yield obj
+                  for v in obj.values(): yield from walk(v)
+              elif isinstance(obj,list):
+                  for v in obj: yield from walk(v)
+          for row in walk(data):
+              idx=row.get('index') if isinstance(row,dict) else None
               if not isinstance(idx,int): continue
               code=first_exit(row)
-              vals[idx]=(code-1 if isinstance(code,int) and code>=1 else None)
+              if code is not None:
+                  vals[idx]=(code-1 if isinstance(code,int) and code>=1 else None)
           labels=['matchCount','enabled','settingPerZoneLong','settingPerZoneShort','settingMaxTotal','exchangeLong','exchangeShort','exchangeTotal','managedLong','managedShort','reportActiveLong','reportActiveShort','seatModelPerZoneLong','seatModelPerZoneShort','seatModelOccupiedLong','seatModelOccupiedShort','seatModelStrategyOpenLong','seatModelStrategyOpenShort','seatModelStrategyOpenTotal','activeZone']
           for i,label in enumerate(labels):
               print(f'DIAG {label}={vals.get(i)}')
