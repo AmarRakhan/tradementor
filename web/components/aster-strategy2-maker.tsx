@@ -335,8 +335,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       const priceZoneSeatsActive = settings.priceZoneSeats?.enabled === true;
       const zoneLong = Number(settings.priceZoneSeats?.longSeatsPerZone ?? 0);
       const zoneShort = Number(settings.priceZoneSeats?.shortSeatsPerZone ?? 0);
-      if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || (!priceZoneSeatsActive && settings.longSlots + settings.shortSlots !== settings.maximumPositions)) throw new Error("Positielimieten zijn ongeldig: maximaal 400 totaal; zonder prijszone-stoelen moet LONG + SHORT exact gelijk zijn aan totaal.");
+      if (settings.maximumPositions < 1 || settings.maximumPositions > MAX_TOTAL_POSITIONS || (!priceZoneSeatsActive && (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.longSlots + settings.shortSlots !== settings.maximumPositions))) throw new Error("Positielimieten zijn ongeldig: maximaal 400 totaal; zonder prijszone-stoelen moet LONG + SHORT exact gelijk zijn aan totaal.");
       if (priceZoneSeatsActive && (zoneLong < 0 || zoneLong > 100 || zoneShort < 0 || zoneShort > 100 || zoneLong + zoneShort < 1)) throw new Error("Prijszone-stoelen moeten tussen 0 en 100 liggen en samen minimaal 1 stoel bevatten.");
+      const longSideEnabled = priceZoneSeatsActive ? zoneLong > 0 : settings.longSlots > 0;
+      const shortSideEnabled = priceZoneSeatsActive ? zoneShort > 0 : settings.shortSlots > 0;
       // Minimum leverage is only a candidate floor. Automatic Top-N still resolves every
       // symbol at its actual maximum valid leverage unless Maximum leverage supplies an
       // optional cap, and skips symbols whose Aster maximum cannot satisfy the minimum.
@@ -344,11 +346,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       if (settings.maximumLeverage !== null && settings.maximumLeverage < settings.minimumLeverage) throw new Error("Maximum leverage moet gelijk aan of hoger zijn dan Minimum leverage.");
       if (settings.stopLossEnabled && (settings.stopLossLong <= 0 || settings.stopLossShort <= 0)) throw new Error("Stoploss LONG en SHORT moeten groter dan 0 zijn wanneer Stoploss aan staat.");
       if (outgoingSizingMode === "notional") {
-        if (settings.longSlots > 0 && finiteOr(outgoingSettings.entryNotionalLongUsd, settings.entryNotionalLongUsd) <= 0) throw new Error("Vul Vaste positie LONG expliciet in. De bestaande LONG-margin wordt niet automatisch omgerekend.");
-        if (settings.shortSlots > 0 && finiteOr(outgoingSettings.entryNotionalShortUsd, settings.entryNotionalShortUsd) <= 0) throw new Error("Vul Vaste positie SHORT expliciet in. De bestaande SHORT-margin wordt niet automatisch omgerekend.");
+        if (longSideEnabled && finiteOr(outgoingSettings.entryNotionalLongUsd, settings.entryNotionalLongUsd) <= 0) throw new Error("Vul Vaste positie LONG expliciet in. De bestaande LONG-margin wordt niet automatisch omgerekend.");
+        if (shortSideEnabled && finiteOr(outgoingSettings.entryNotionalShortUsd, settings.entryNotionalShortUsd) <= 0) throw new Error("Vul Vaste positie SHORT expliciet in. De bestaande SHORT-margin wordt niet automatisch omgerekend.");
       } else {
-        if (settings.longSlots > 0 && settings.entryMarginLongUsd <= 0) throw new Error("Instapmargin LONG moet groter dan 0 USDT zijn.");
-        if (settings.shortSlots > 0 && settings.entryMarginShortUsd <= 0) throw new Error("Instapmargin SHORT moet groter dan 0 USDT zijn.");
+        if (longSideEnabled && settings.entryMarginLongUsd <= 0) throw new Error("Instapmargin LONG moet groter dan 0 USDT zijn.");
+        if (shortSideEnabled && settings.entryMarginShortUsd <= 0) throw new Error("Instapmargin SHORT moet groter dan 0 USDT zijn.");
       }
       if (settings.longDcaDistance <= 0 || settings.shortDcaDistance <= 0 || settings.longDcaDistance > .5 || settings.shortDcaDistance > .5) throw new Error("DCA-afstand moet tussen 0,01% en 50% liggen.");
       if (settings.longDcaMarginUsd <= 0 || settings.shortDcaMarginUsd <= 0) throw new Error("DCA-bedrag LONG/SHORT moet positief zijn.");
@@ -437,7 +439,14 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   const strategyActiveShort = Number(state.shortLegs ?? rawReport.activeShort ?? 0);
   const activeLong = exchangeSlotTruthAvailable ? exchangeActiveLong : strategyActiveLong;
   const activeShort = exchangeSlotTruthAvailable ? exchangeActiveShort : strategyActiveShort;
-  const remainingLong = Math.max(0, n(v.longSlots) - activeLong); const remainingShort = Math.max(0, n(v.shortSlots) - activeShort);
+  const globalPositionCapacity = Math.max(1, clampInt(n(v.positions), 1, MAX_TOTAL_POSITIONS));
+  const zoneRemaining = Math.max(0, globalPositionCapacity - (activeLong + activeShort));
+  const remainingLong = v.priceZoneSeatsEnabled
+    ? (n(v.priceZoneLongSeats) > 0 ? zoneRemaining : 0)
+    : Math.max(0, n(v.longSlots) - activeLong);
+  const remainingShort = v.priceZoneSeatsEnabled
+    ? (n(v.priceZoneShortSeats) > 0 ? zoneRemaining : 0)
+    : Math.max(0, n(v.shortSlots) - activeShort);
   const displayRemainingLong = v.smartRescueEnabled ? Math.max(0, n(v.positions) - activeLong) : remainingLong;
   const displayRemainingShort = v.smartRescueEnabled ? 0 : remainingShort;
   const reportCurrent = Number(rawReport.configVersion ?? 0) === Number(state.configVersion ?? persisted.version ?? 0);
@@ -486,7 +495,9 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       total: Math.round(finiteOr(smart.dcaCountConfigured, levels.length)), armedIndex, nextTrigger: finiteOr(next?.triggerPrice, 0),
       localLow: finiteOr(smart.localLow, 0), recoveryTrigger: finiteOr(smart.recoveryTriggerPrice, 0), margin: finiteOr(smart.cumulativeActualMarginUsd, 0) }];
   });
-  const longCapacity = Math.max(0, n(v.longSlots)); const shortCapacity = Math.max(0, n(v.shortSlots)); const totalCapacity = Math.max(0, longCapacity + shortCapacity);
+  const longCapacity = v.priceZoneSeatsEnabled ? (n(v.priceZoneLongSeats) > 0 ? globalPositionCapacity : 0) : Math.max(0, n(v.longSlots));
+  const shortCapacity = v.priceZoneSeatsEnabled ? (n(v.priceZoneShortSeats) > 0 ? globalPositionCapacity : 0) : Math.max(0, n(v.shortSlots));
+  const totalCapacity = v.priceZoneSeatsEnabled ? globalPositionCapacity : Math.max(0, longCapacity + shortCapacity);
   const totalActive = activeLong + activeShort;
   const longFill = longCapacity > 0 ? Math.min(100, activeLong / longCapacity * 100) : 0;
   const shortFill = shortCapacity > 0 ? Math.min(100, activeShort / shortCapacity * 100) : 0;
@@ -534,8 +545,6 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         <Field label="Totaal posities" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} />
         {!v.priceZoneSeatsEnabled && <Field label="LONG slots" value={longDraft ?? v.longSlots} set={setLongDraft} onBlur={commitLong} />}
         {!v.priceZoneSeatsEnabled && <Field label="SHORT slots" value={shortDraft ?? v.shortSlots} set={setShortDraft} onBlur={commitShort} />}
-        {v.priceZoneSeatsEnabled && <Field label="LONG per prijszone" value={v.priceZoneLongSeats} set={(value) => change({ ...v, priceZoneLongSeats: value })} />}
-        {v.priceZoneSeatsEnabled && <Field label="SHORT per prijszone" value={v.priceZoneShortSeats} set={(value) => change({ ...v, priceZoneShortSeats: value })} />}
         <Field label="Minimum leverage" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
         <Field label="Maximum leverage" value={v.maxLeverage} set={(value) => change({ ...v, maxLeverage: value })} />
       </div>
@@ -543,7 +552,14 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         <span className="pair-icon">⌗</span><span><b>Prijszone-stoelen</b><small>Aan: dezelfde AsterBot gebruikt per actieve prijszone een vaste LONG/SHORT-cap. Geen aparte strategie.</small></span>
         <input type="checkbox" checked={v.priceZoneSeatsEnabled} onChange={(event) => change({ ...v, priceZoneSeatsEnabled: event.target.checked })} style={{ width: 22, height: 22 }} />
       </label>
-      {v.priceZoneSeatsEnabled && <small className="leverage-caption">0 per richting is toegestaan. Bijvoorbeeld: max 10 en LONG 2 per prijszone vereist voor 10 gelijktijdige LONG-posities minimaal 5 verschillende origin-zones.</small>}
+      {v.priceZoneSeatsEnabled && <section className="price-zone-seat-editor" aria-label="Prijszone-stoelen instellen" style={{ marginTop: 10, padding: 12, border: "1px solid rgba(214,181,90,.24)", borderRadius: 12, background: "rgba(0,0,0,.22)" }}>
+        <div style={{ marginBottom: 10 }}><b style={{ display: "block", fontSize: 13 }}>Stoelen per actieve prijszone</b><small className="leverage-caption">Stel hier apart in hoeveel nieuwe LONG- en SHORT-posities één prijszone maximaal mag vullen.</small></div>
+        <div className="live-config-grid" style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))" }}>
+          <Field label="LONG stoelen per prijszone" value={v.priceZoneLongSeats} set={(value) => change({ ...v, priceZoneLongSeats: value })} />
+          <Field label="SHORT stoelen per prijszone" value={v.priceZoneShortSeats} set={(value) => change({ ...v, priceZoneShortSeats: value })} />
+        </div>
+        <small className="leverage-caption">0 is toegestaan per richting. Voorbeeld: max posities 10, LONG 2 en SHORT 0 betekent alleen LONG; maximaal 2 nieuwe LONG-posities per prijszone en voor 10 LONG-posities zijn minimaal 5 verschillende origin-zones nodig.</small>
+      </section>}
       <small className="leverage-caption">{v.maxLeverage.trim() ? `Leverage wordt begrensd op ${Math.max(1, Math.round(n(v.maxLeverage)))}x.` : "Maximum leverage leeg = bestaande pair-maximumlogica."}</small>
     </section>
 

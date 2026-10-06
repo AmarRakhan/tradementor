@@ -31,6 +31,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Botinstellingen gebruikt weer één klassieke AsterBot-weergave; de tijdelijke keuze tussen Oude instellingen en Nieuwe configurator is verwijderd.",
     "Prijszone-stoelen is als gewone optie toegevoegd aan die bestaande AsterBot-instellingen.",
     "De webconfig schrijft naast tijdelijke legacy aliases ook het canonieke priceZoneSeats-object.",
+    "Bij ingeschakelde Prijszone-stoelen verschijnt nu direct in hetzelfde blok een expliciete LONG- en SHORT-invoer per prijszone; 0 is per richting toegestaan.",
   ],
   problems: [
     "Zone Warriors werd als aparte strategie gepresenteerd terwijl de gewenste functie alleen extra capaciteit per prijszone is.",
@@ -43,6 +44,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   fixes: [
     "Eén live AsterBot-instellingenpagina: de klassieke configurator is opnieuw de enige route.",
     "Prijszone-stoelen aan/uit blijft dezelfde bestaande instelling gebruiken, maar wordt nu ook canoniek als priceZoneSeats opgeslagen.",
+    "De per-zone velden zijn uit de compacte bovenrij gehaald en staan zichtbaar onder de Prijszone-stoelen schakelaar, inclusief voorbeeld 10 totaal / 2 LONG / 0 SHORT.",
     "Bestaande accounts zonder prijszone-stoelen behouden hun normale AsterBot-gedrag.",
   ],
   now: [
@@ -52,7 +54,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   technicalDetails: [
     "Frontend: web/components/aster-strategy2-entry.tsx + web/components/aster-strategy2-maker.tsx.",
-    "Release-identiteit: Webapp V46 build 546."
+    "Release-identiteit: Webapp V46 build 547."
   ],
   confidence: "confirmed",
 };
