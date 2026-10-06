@@ -26,36 +26,38 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Portfolio Koers · Build 512 zones hersteld",
+  title: "Portfolio Koers · cold-start zones hersteld",
   newItems: [
-    "De zichtbare R1–R4 en S1–S4 support/resistance-ladder is teruggezet zoals in de Build 512-weergave.",
-    "De gele actieve-zoneband met label 'Zone X actief' is opnieuw zichtbaar op Accountwaarde.",
-    "R/S-labels links op de horizontale niveaus zijn opnieuw zichtbaar.",
+    "De bevestigde Portfolio Koers-zones blijven beschikbaar wanneer een nieuwe sessie start of de nieuwste 15m-historie tijdelijk een gat bevat.",
+    "De chart haalt voor de visuele zonebasis maximaal 600 15m-candles op en bewaart de laatst bevestigde zonebasis lokaal als display-cache.",
+    "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
-    "Latere chart-cleanup had de actieve-zoneband expliciet verborgen met display:none en de R/S-labels eveneens verborgen.",
-    "De oorspronkelijke genummerde R/S-ladder was vervangen door generieke grenslevels zonder R1/R2/R3/R4 en S1/S2/S3/S4 presentatie.",
+    "Build 551 bevatte de R1–R4/S1–S4-rendering, maar bij een lege zonebron bleef de live chart alsnog op 'Zone —' staan en werden geen niveaus getekend.",
+    "Een koude start had geen browser-side laatst-bevestigde zonebasis om tijdelijk op terug te vallen.",
   ],
   causes: [
-    "Presentatielogica uit de Build 512 chart was tijdens latere chart-refactors versoberd terwijl de onderliggende zone-engine bleef bestaan.",
+    "De presentatie was hersteld, maar de zonebron kon tijdens een history gap of cold start leeg zijn.",
+    "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
-    "De Build 512 R1–R4/S1–S4 mapping is teruggezet op de huidige zone-ladder.",
-    "activeZone wordt weer als zichtbare band gerenderd.",
-    "CSS-verbergregels voor de zoneband en structure-level labels zijn verwijderd.",
-    "De huidige AsterBot-engine, prijszone-stoelen, DCA, TP en hedge-logica zijn niet teruggerold.",
+    "Laatste bevestigde 15m-zones worden display-only gecachet en bij een koude start direct teruggelezen.",
+    "Een lege of tijdelijk onveilige advisor-timeline wist de laatst bevestigde visuele zonebasis niet meer.",
+    "De 15m zone-history call is verruimd van 320 naar 600 candles.",
+    "De stale regressietests zijn op het nieuwe 600-candle contract uitgelijnd.",
+    "Tradinglogica, AsterBot entries, DCA, TP, hedge en prijszone-stoelen zijn niet gewijzigd.",
   ],
   now: [
-    "Portfolio Koers → Accountwaarde hoort weer dezelfde zonepresentatie te tonen als de referentiefoto van Build 512.",
-    "Prijszone-stoelen AAN/UIT blijft losstaan van het zichtbaar zijn van deze chartniveaus.",
+    "Portfolio Koers hoort na openen meteen zijn laatst bevestigde R/S-context te behouden in plaats van terug te vallen naar 'Zone —'.",
+    "R1–R4, S1–S4 en de actieve-zoneband blijven een chartfunctie, onafhankelijk van of prijszone-stoelen aanstaan.",
   ],
   technicalDetails: [
-    "Frontend: web/components/portfolio-koers-chart.tsx + web/app/portfolio-koers-chart.css.",
-    "Regression: chart, structure and live-surface contracts are aligned to the restored Build 512 visual reference.",
-    "Release-identiteit: Webapp V46 build 551."
+    "Frontend: web/components/portfolio-koers-chart.tsx.",
+    "Regression: web/tests/portfolio-koers-chart.test.mjs + web/tests/portfolio-koers-zone-advisor-ui.test.mjs.",
+    "Release-identiteit: Webapp V46 build 553.",
   ],
   confidence: "confirmed",
-};
+}
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
