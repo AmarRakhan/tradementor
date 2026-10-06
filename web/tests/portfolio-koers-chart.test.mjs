@@ -303,7 +303,7 @@ test("Build 479 keeps the reference-style longer timeline while visible data dri
     '"4u":{visibleBars:20',
     '"24u":{visibleBars:18',
   ]) assert.ok(component.includes(pair),pair);
-  assert.ok(component.includes("const rawFocusVisibleBars=Math.min(candles.length,view.visibleBars)"));
+  assert.ok(component.includes("const rawFocusVisibleBars=Math.min(candles.length,startupVisibleBars)"));
   assert.ok(component.includes('viewMode==="account"\n      ? portfolioKoersFocusBars(candles,rawFocusVisibleBars'));
   assert.equal(component.includes("guideLow"),false);
   assert.equal(component.includes("guideHigh"),false);
