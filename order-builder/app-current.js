@@ -342,6 +342,25 @@
         state.learnedAliases = saved.learnedAliases && typeof saved.learnedAliases==='object' ? saved.learnedAliases : {};
         state.customPackages = Array.isArray(saved.customPackages)?saved.customPackages:[];
         state.orderNote = typeof saved.orderNote==='string' ? saved.orderNote : '';
+
+        // Legacy order-state migration: G5 dock is superseded by G6.
+        state.packages.forEach(sel=>{
+          if(sel.serialsByCode && sel.serialsByCode['5TW10AA']){
+            sel.serialsByCode['9X3V1UT#ABB']=[
+              ...new Set([
+                ...((sel.serialsByCode['9X3V1UT#ABB']||[])),
+                ...((sel.serialsByCode['5TW10AA']||[]))
+              ])
+            ];
+            delete sel.serialsByCode['5TW10AA'];
+          }
+          if(Array.isArray(sel.excludedCodes) && sel.excludedCodes.includes('5TW10AA')){
+            sel.excludedCodes=[
+              ...new Set(sel.excludedCodes.map(code=>code==='5TW10AA'?'9X3V1UT#ABB':code))
+            ];
+          }
+        });
+
         state.customPackages.forEach(pkg=>{
           if(!data.packages.some(p=>p.customId&&p.customId===pkg.customId)) data.packages.push(pkg);
         });
@@ -1042,7 +1061,7 @@
     {code:'55968196#ABH', patterns:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
     {code:'55968165#ABH', patterns:['monteur laptop','monteurs laptop','monteurlaptop','monteurslaptop','management laptop','managementlaptop']},
     {code:'54337313#ABH', patterns:['tekenlaptop','teken laptop','cad laptop','cad-laptop']},
-    {code:'9X3V1UT#ABB', patterns:['standaard docking','standaard dock','standaard dockingstation']},
+    {code:'9X3V1UT#ABB', patterns:['standaard docking','standaard dock','standaard dockingstation','dock g5','hp usb-c dock g5','hp usb c dock g5','usb-c dock g5','usb c dock g5']},
     {code:'AW5M5UT#ABB', patterns:['cad docking','cad dock','tekendocking','teken docking','teken dock','cad dockingstation']},
     {code:'671R3AA#ABB', patterns:['65w usb-c lader','65w usb c lader','usb-c 65w','usb c 65w','65w lader','usb-c lader 65w']},
     {code:'75615', patterns:['rj45','usb-c rj45','usb c rj45','netwerkadapter','netwerk adapter','ethernet adapter']},
@@ -1400,7 +1419,7 @@
       {code:'55968196#ABH', terms:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
       {code:'55968165#ABH', terms:['monteur laptop','monteurs laptop','monteurlaptop','monteurslaptop','management laptop','managementlaptop']},
       {code:'54337313#ABH', terms:['tekenlaptop','teken laptop','cad laptop','cad-laptop']},
-      {code:'9X3V1UT#ABB', terms:['standaard docking','standaard dock','standaard dockingstation']},
+      {code:'9X3V1UT#ABB', terms:['standaard docking','standaard dock','standaard dockingstation','dock g5','hp usb-c dock g5','hp usb c dock g5','usb-c dock g5','usb c dock g5']},
       {code:'AW5M5UT#ABB', terms:['cad docking','cad dock','tekendocking','teken docking','teken dock','cad dockingstation']},
       {code:'D31431-RPET', terms:['laptop tas','laptoptas','tas laptop','standaard laptoptas','standaard laptop tas']}
     ];
@@ -1711,6 +1730,19 @@
     function exactCatalogItem(name){
       const n=normalizeSmartText(name);
       if(!n) return null;
+
+      // Legacy naming rule: "HP USB-C Dock G5" now means the current G6 dock.
+      if(
+        n==='hp usbc dock g5' ||
+        n==='usb c dock g5' ||
+        n==='usbc dock g5' ||
+        n==='dock g5'
+      ){
+        return getCatalogItem('9X3V1UT#ABB')
+          || data.items.find(item=>item.code==='9X3V1UT#ABB')
+          || null;
+      }
+
       return catalogItems().find(item=>normalizeSmartText(item.name)===n)
         || data.items.find(item=>normalizeSmartText(item.name)===n)
         || null;
@@ -1811,10 +1843,25 @@
           const serial=(serialMatch[2]||'').trim().toUpperCase();
           const pkg=data.packages[currentPackage.index];
 
-          const item=(pkg?.items||[]).find(it=>{
+          const normalizedChildName=normalizeSmartText(childName);
+          let item=(pkg?.items||[]).find(it=>{
             const info=orderItemInfo(it.code,it.label);
-            return normalizeSmartText(info.name||it.label||'')===normalizeSmartText(childName);
+            return normalizeSmartText(info.name||it.label||'')===normalizedChildName;
           });
+
+          // Legacy TOPdesk text may still say Dock G5. In current packages,
+          // bind that line (and its serial) to the G6 dock instead.
+          if(
+            !item &&
+            (
+              normalizedChildName==='hp usbc dock g5' ||
+              normalizedChildName==='usb c dock g5' ||
+              normalizedChildName==='usbc dock g5' ||
+              normalizedChildName==='dock g5'
+            )
+          ){
+            item=(pkg?.items||[]).find(it=>it.code==='9X3V1UT#ABB')||null;
+          }
 
           // Als de regel een bestaand artikel uit dit pakket benoemt, is hij
           // volledig door het pakket geconsumeerd. Hij mag daarna NOOIT nog
@@ -1930,7 +1977,7 @@
       {code:'55968196#ABH', terms:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
       {code:'55968165#ABH', terms:['monteur laptop','monteurs laptop','monteurlaptop','monteurslaptop','management laptop','managementlaptop']},
       {code:'54337313#ABH', terms:['tekenlaptop','teken laptop','cad laptop']},
-      {code:'9X3V1UT#ABB', terms:['standaard docking','standaard dock','standaard dockingstation']},
+      {code:'9X3V1UT#ABB', terms:['standaard docking','standaard dock','standaard dockingstation','dock g5','hp usb-c dock g5','hp usb c dock g5','usb-c dock g5','usb c dock g5']},
       {code:'AW5M5UT#ABB', terms:['cad docking','cad dock','tekendocking','teken docking']},
       {code:'D31431-RPET', terms:['laptop tas','laptoptas','tas laptop','standaard laptoptas','standaard laptop tas']}
     ];
