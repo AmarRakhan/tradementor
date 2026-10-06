@@ -178,6 +178,16 @@ function advisorSeatsFromPayload(payload:unknown):AdvisorSeats {
   };
 }
 const signedZone=(value:number|null)=>value===null?"—":value===0?"0":value>0?`+${value}`:`${value}`;
+
+function latestContiguousPortfolioCandles(candles:Candle[],timeframe:string):Candle[]{
+  const rows=Array.isArray(candles)?candles:[];
+  if(!rows.length)return [];
+  const health=portfolioKoersTimelineHealth(rows,timeframe,Date.now(),1);
+  const lastGap=Array.isArray(health.gaps)?health.gaps.at(-1):null;
+  if(!lastGap)return rows;
+  const start=Number(lastGap.beforeTime);
+  return Number.isFinite(start)&&start>0?rows.filter((row)=>Number(row.time)>=start):rows;
+}
 const zoneLevelClass=(value:number)=>value<0?`level-n${Math.abs(value)}`:value>0?`level-p${value}`:"level-0";
 const levelUsd=(value:number|null|undefined)=>Number.isFinite(Number(value))
   ? `${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value))}`
@@ -733,7 +743,8 @@ export function PortfolioKoersChart({
         candleSeriesRef.current.update({time:candle.time as UTCTimestamp,value:adjusted});
       }else{
         candleSeriesRef.current.update({time:candle.time as UTCTimestamp,open:candle.open,high:candle.high,low:candle.low,close:candle.close});
-        const bb=bollinger20x2(next);
+        const bbSource=latestContiguousPortfolioCandles(next,timeframe);
+        const bb=bbSource.length>=20?bollinger20x2(bbSource):{upper:[],middle:[],lower:[]};
         bbRefs.current.upper?.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
         bbRefs.current.middle?.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
         bbRefs.current.lower?.setData(bb.lower.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
@@ -811,7 +822,14 @@ export function PortfolioKoersChart({
     // Preserve the existing Accountwaarde/Performance viewport exactly.
     // Only sparse Active Trades history reserves the normal timeframe density so
     // a few real P&L candles are not stretched to screen width.
-    const focusVisibleBars=Math.min(candles.length,view.visibleBars);
+    const rawFocusVisibleBars=Math.min(candles.length,view.visibleBars);
+    const latestPrice=Number(candles.at(-1)?.close);
+    const focusContext=viewMode==="account"
+      ? portfolioZoneContextFromLadder(advisorZoneLadderRef.current,latestPrice)
+      : null;
+    const focusVisibleBars=viewMode==="account"
+      ? portfolioKoersFocusBars(candles,rawFocusVisibleBars,latestPrice,focusContext?.lowerBoundary,focusContext?.upperBoundary)
+      : rawFocusVisibleBars;
     const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
@@ -847,7 +865,8 @@ export function PortfolioKoersChart({
       if(Number.isFinite(currentPrice)&&currentPrice>0)series.createPriceLine({price:currentPrice,color:"#e4b84a",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:""});
     }
 
-    const bb=viewMode==="account"?bollinger20x2(candles):{upper:[],middle:[],lower:[]};
+    const bbSource=viewMode==="account"?latestContiguousPortfolioCandles(candles,timeframe):[];
+    const bb=viewMode==="account"&&bbSource.length>=20?bollinger20x2(bbSource):{upper:[],middle:[],lower:[]};
     if(viewMode==="account"){
       const upper=chart.addSeries(LineSeries,{color:"rgba(35,190,255,.82)",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
       const middle=chart.addSeries(LineSeries,{color:"rgba(218,231,236,.44)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});

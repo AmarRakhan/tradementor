@@ -26,11 +26,13 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Portfolio Koers · goedgekeurde startweergave + eventlabels",
+  title: "Portfolio Koers · live-zone startfocus + eventhistorie",
   newItems: [
     "Portfolio Koers volgt de goedgekeurde visuele referentie file_0000000065e08246a10dfd2cc721cc77.",
     "Portfolio Koers start met een echte zwarte chartachtergrond in plaats van de blauwzwarte tint.",
     "LONG-, SHORT- en TP-events gebruiken opnieuw één uniforme interactieve badgefamilie op de chart.",
+    "De startviewport focust op de actuele zone zodat een oude verre equity-spike de recente candles niet platdrukt.",
+    "Bollinger wordt alleen over de nieuwste aaneengesloten candle-run berekend en overspant geen historiegat.",
     "De standaard mobiele viewport toont minder candles tegelijk met ruimere bar-spacing, zodat candles bij openen voller en beter leesbaar zijn.",
     "De bevestigde Portfolio Koers-zones blijven beschikbaar wanneer een nieuwe sessie start of de nieuwste 15m-historie tijdelijk een gat bevat.",
     "De chart haalt voor de visuele zonebasis maximaal 600 15m-candles op en bewaart de laatst bevestigde zonebasis lokaal als display-cache.",
@@ -39,6 +41,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   problems: [
     "De linker R4–R1/S1–S4-pilllabels en de history-gap overlay bedekten de gewenste chartpresentatie.",
     "LONG/SHORT-events waren visueel lichter uitgevoerd dan TP en de zichtbare eventselectie was te beperkt voor de goedgekeurde referentie.",
+    "Een oude verre candle en Bollinger-berekening over een historiegat konden de y-schaal zo ver opentrekken dat recente candles als een dunne streep verschenen.",
     "De live chart was bij openen nog te blauw en de standaard candle-dichtheid week af van de handmatig ingezoomde referentie.",
     "Build 551 bevatte de R1–R4/S1–S4-rendering, maar bij een lege zonebron bleef de live chart alsnog op 'Zone —' staan en werden geen niveaus getekend.",
     "Een koude start had geen browser-side laatst-bevestigde zonebasis om tijdelijk op terug te vallen.",
@@ -52,6 +55,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De history-gap waarschuwing blijft interne data-quality informatie maar wordt niet meer als obstructieve chartoverlay gerenderd.",
     "LONG/SHORT/TP badges zijn qua hoogte, radius, border, schaduw en typografie gelijkgetrokken; kleurcodering blijft groen/rood/goud.",
     "De zichtbare confirmed-event selectie is verruimd naar maximaal 4 TP, 4 LONG en 4 SHORT binnen de viewport, met layout safety-cap 12.",
+    "De snelle read-only eventfeed kijkt 12 uur terug in plaats van 2 uur zodat eerder bevestigde LONG/SHORT/TP-events op teruggescrolde candles zichtbaar blijven.",
+    "De default Accountwaarde-viewport gebruikt de bestaande zone-focusfunctie om oude verre candles uit de startschaal te houden.",
     "Chartcanvas, stage en initial-state gebruiken nu #000000; grid en assen zijn neutraal en subtiel gehouden.",
     "De cold-start viewport is per timeframe compacter gemaakt met bredere candles; handmatig zoomen/pannen blijft daarna behouden.",
     "Laatste bevestigde 15m-zones worden display-only gecachet en bij een koude start direct teruggelezen.",
@@ -73,7 +78,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   technicalDetails: [
     "Frontend: web/components/portfolio-koers-chart.tsx.",
     "Regression: web/tests/portfolio-koers-chart.test.mjs + web/tests/portfolio-koers-zone-advisor-ui.test.mjs.",
-    "Release-identiteit: Webapp V46 build 559.",
+    "Release-identiteit: Webapp V46 build 560.",
   ],
   confidence: "confirmed",
 }

@@ -529,3 +529,13 @@ test("Build 559 matches approved Portfolio Koers startup/event reference",async(
   assert.ok(css.includes(".portfolio-koers-event-chip.short"));
   assert.ok(css.includes(".portfolio-koers-event-chip.tp"));
 });
+
+
+test("Build 560 focuses startup on the live zone and never bridges a history gap with Bollinger",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("latestContiguousPortfolioCandles"));
+  assert.ok(component.includes("portfolioKoersFocusBars(candles,rawFocusVisibleBars"));
+  assert.ok(component.includes("portfolioZoneContextFromLadder(advisorZoneLadderRef.current,latestPrice)"));
+  assert.ok(component.includes("bbSource.length>=20?bollinger20x2(bbSource)"));
+  assert.equal(component.includes("const bb=viewMode===\"account\"?bollinger20x2(candles)"),false);
+});

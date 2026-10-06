@@ -6514,17 +6514,18 @@ def _portfolio_chart_cashflows(user: dict[str, Any], client: AsterV3Client | Non
 def _portfolio_chart_recent_strategy_audit_rows(uid: str, *, now_utc: datetime | None = None) -> list[dict[str, Any]]:
     """Read only recent already-persisted Strategy-2 execution evidence.
 
-    No Aster exchange request is made here.  A short time window keeps Firestore
-    reads bounded while still covering the live 1m/5m event layer.
+    No Aster exchange request is made here. A bounded 12-hour window keeps
+    Firestore reads controlled while preserving the confirmed event labels users
+    expect when they scroll the Portfolio Koers chart back through the day.
     """
     current = now_utc or datetime.now(timezone.utc)
-    cutoff = current - timedelta(hours=2)
+    cutoff = current - timedelta(hours=12)
     reference = aster_strategy2_reference(uid).collection("audit")
     rows: list[dict[str, Any]] = []
     try:
         query = reference.where("timestamp", ">=", cutoff).order_by(
             "timestamp", direction=firestore.Query.DESCENDING
-        ).limit(250)
+        ).limit(600)
         for document in query.stream():
             row = document.to_dict() or {}
             stamp = _portfolio_chart_timestamp_ms(row.get("timestampMs", row.get("timestamp")))
