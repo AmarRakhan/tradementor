@@ -2,24 +2,19 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const v3 = fs.readFileSync(new URL("../components/aster-bot-configurator-v3.tsx", import.meta.url), "utf8");
-const v2 = fs.readFileSync(new URL("../components/aster-bot-configurator-v2.tsx", import.meta.url), "utf8");
 const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8");
 const target = fs.readFileSync(new URL("../components/portfolio-tp-seat-reset-target.tsx", import.meta.url), "utf8");
 const shell = fs.readFileSync(new URL("../components/aster-strategy2-entry.tsx", import.meta.url), "utf8");
 const route = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts", import.meta.url), "utf8");
 
-test("Portfolio TP seat reset 2.0 stays exposed in legacy, retained V2 code and opt-in V3", () => {
-  assert.match(v3, /file_00000000369082108949b160b28e0965/);
-  assert.match(v3, /PortfolioTpSeatResetTarget/);
-  assert.match(v2, /PortfolioTpSeatResetTarget/);
+test("Portfolio TP seat reset 2.0 stays exposed in the single live AsterBot settings UI", () => {
+  assert.match(shell, /AsterStrategy2Maker/);
   assert.match(maker, /PortfolioTpSeatResetTarget/);
   assert.match(target, /LONG na reset/);
   assert.match(target, /SHORT na reset/);
   assert.match(target, /Resetwaarden opslaan/);
   assert.match(target, /data-feature="portfolio-tp-seat-reset-target-2"/);
-  assert.match(v3, /data-rollout="opt-in-beta"/);
-  assert.match(shell, /type BotSettingsMode = "legacy" \| "configurator3"/);
+  assert.doesNotMatch(shell, /BotSettingsMode|ConfiguratorV3/);
 });
 
 test("shared reset target uses one server-side PUT and protected backend fields", () => {
