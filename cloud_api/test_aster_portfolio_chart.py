@@ -459,3 +459,16 @@ def test_confirmed_fill_markers_embed_entry_details_for_chart_without_second_fet
     assert entry["orderId"] == "pons-order-7"
     assert entry["clientOrderId"] == "mbb-pons-7"
     assert entry["exchangeConfirmed"] is True
+
+
+def test_portfolio_chart_route_uses_latest_established_zone_ladder_after_history_gap():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index('@app.get("/v1/me/aster/portfolio-chart")')
+    end = source.index('@app.get("/v1/me/aster/trade-events")', start + 1)
+    block = source[start:end]
+    assert "portfolio_chart_latest_zone_ladder_candles(" in block
+    assert "cycle_start_equity=cycle_start" in block
+    assert "min_bars=7" in block
+    assert "zone_candles = portfolio_chart_latest_contiguous_candles(candles, timeframe)" not in block
+    assert "zones = derive_equity_zones(zone_candles, cycle_start)" in block
+    assert '"ordersSent": 0' in block

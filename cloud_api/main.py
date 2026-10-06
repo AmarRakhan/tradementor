@@ -6719,8 +6719,7 @@ def aster_portfolio_chart(
     }
     trade_markers = portfolio_chart_trade_markers(marker_activity, timeframe)
     cashflow_markers = portfolio_chart_cashflow_markers(_portfolio_chart_cashflows(user, client), timeframe)
-    zone_candles = portfolio_chart_latest_contiguous_candles(candles, timeframe)
-    zones = derive_equity_zones(zone_candles, cycle_start)
+    # Chart price levels must survive a fresh history gap. Use the newest\n    # contiguous segment that actually contains enough confirmed swing/SR\n    # evidence for a zone ladder, rather than blindly taking the newest\n    # contiguous tail (which may be only a few candles after one missing bar).\n    zone_candles = portfolio_chart_latest_zone_ladder_candles(\n        candles, timeframe, cycle_start_equity=cycle_start, min_bars=7\n    )\n    zones = derive_equity_zones(zone_candles, cycle_start)
     latest_close = safe_float(candles[-1].get("close")) if candles else equity
     current_zone = active_portfolio_zone(zones, latest_close)
 
