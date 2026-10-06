@@ -26,24 +26,27 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Zone Warriors · 0 LONG/SHORT backend-contract hersteld",
+  title: "Zone Warriors · zero-side runtime en max-cap synchronisatie",
   newItems: [
     "Zone Warriors accepteert nu in zowel de huidige als legacy configurator 0 LONG of 0 SHORT stoelen per zone.",
-    "Een zijde op 0 blijft ook in runtime-status en flat-account weergave exact 0.",
+    "Een zijde op 0 blijft nu ook in de daadwerkelijke Zone Warriors runtime exact 0.",
   ],
   problems: [
     "De browser stond 0 aan één zijde toe, maar de centrale MultiBbConfig backend-validatie eiste nog steeds minimaal 1 per zijde.",
-    "De backend flat-status gebruikte bovendien `or 3`, waardoor een opgeslagen 0 visueel weer als 3 kon verschijnen.",
+    "De runtime forceerde `base_long/base_short` nog met `max(1, ...)`, waardoor 0 SHORT alsnog als minimaal één SHORT-stoel kon terugkomen.",
+    "De legacy instellingenweergave kon daarnaast een oude `maximumPositions` opnieuw opslaan en zo een nieuwe cap van 10 terugzetten naar 99.",
   ],
   causes: [
     "Dezelfde zone-seat validatie bestond dubbel in V2 en V3 en was niet in één gedeeld contract ondergebracht.",
-    "Een truthy fallback in de backend maakte geen onderscheid tussen ontbrekende waarde en de geldige waarde 0.",
+    "Validatie, weergave en runtime gebruikten niet overal hetzelfde zero-side contract.",
+    "De legacy saver behandelde de Zone Warriors-cap als onzichtbare oude state in plaats van als de zichtbare gebruikerswaarde.",
   ],
   fixes: [
     "Frontend én centrale backendconfig accepteren per zijde 0 t/m 100, met als enige ondergrens dat LONG + SHORT samen minimaal 1 is.",
     "Capaciteitsberekeningen mogen nu ook 0 capaciteit aan één zijde opleveren.",
-    "Backend flat-status behoudt expliciete 0-waarden in plaats van ze naar 3 te vervangen.",
-    "Bestaande posities, DCA, TP, hedge- en orderlogica blijven ongewijzigd.",
+    "Runtime initialisatie en eind-reconciliatie gebruiken nu `max(0, ...)`, zodat een uitgeschakelde zijde geen soldaten meer krijgt.",
+    "De legacy configurator leest en bewaart de zichtbare Zone Warriors max-cap in plaats van een stale serverwaarde te herstellen.",
+    "Bestaande posities, DCA, TP, hedge- en orderlogica blijven beheerd; alleen nieuwe Zone Warriors-capaciteit volgt het gecorrigeerde contract.",
   ],
   now: [
     "2 LONG + 0 SHORT per zone is geldig en opslaan mag niet meer blokkeren.",
@@ -52,7 +55,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   technicalDetails: [
     "Frontend: web/components/aster-strategy2-maker.tsx.",
-    "Release-identiteit: Webapp V46 build 538.",
+    "Release-identiteit: Webapp V46 build 539.",
   ],
   confidence: "confirmed",
 };
