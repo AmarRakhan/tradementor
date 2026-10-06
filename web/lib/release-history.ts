@@ -26,37 +26,38 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Aster Portfolio · volledige onderkant hersteld",
+  title: "Portfolio Koers · realtime accountwaarde",
   newItems: [
-    "Portfolio Koers behoudt na de nieuwe subtabs opnieuw alle bestaande content onder Portfolio Snapshot.",
-    "De beren/stieren Portfolio Impact-weergave met eigen timeframes is opnieuw zichtbaar.",
-    "Tradecentrum, instellingenstaart en overige bestaande content onderaan Aster blijven weer bereikbaar door verder te scrollen.",
+    "Portfolio Koers en Portfolio Snapshot volgen de Aster perpetuals-equity nu via de bestaande realtime mark-price stream.",
+    "Bij iedere relevante marktupdate wordt de open PnL en daarmee de zichtbare accountwaarde direct doorgerekend.",
+    "Een exchange-statusreconciliatie blijft elke 15 seconden actief voor wallet-, positie- en fillwijzigingen.",
   ],
   problems: [
-    "Build 525 verborg op de Portfolio-tab onbedoeld ook bestaande secties onder Portfolio Snapshot.",
-    "Daardoor bleef de timeframebalk zichtbaar terwijl de Portfolio Impact-weergave en verdere onderste content uit de scrollflow verdwenen.",
+    "De zichtbare accountwaarde kon merkbaar achterlopen op Aster doordat de kaart vooral afhankelijk was van legacy DOM/snapshot refreshes.",
+    "Daardoor leek Portfolio Koers soms stil te staan terwijl Aster Perpetuals al verder bewoog.",
   ],
   causes: [
-    "De eerste subtab-CSS gebruikte te brede selectors en zette Portfolio Impact, Tradecentrum en dashboard-grid op display:none binnen de Portfolio-tab.",
+    "De bestaande realtime Aster-feed werd al gebruikt voor marktdata, maar nog niet als directe bron voor de Portfolio Koers accountwaarde.",
+    "De chart-payload zelf heeft bewust een veel tragere duurzame refreshcyclus.",
   ],
   fixes: [
-    "De Portfolio-tab verbergt geen bestaande Aster-tail meer.",
-    "Alleen Advisor blijft werkelijk uit PortfolioKoersChart verplaatst.",
-    "Advisor, Posities en Instellingen behouden hun eigen geïsoleerde tabweergave.",
+    "De bestaande authenticated realtime SSE-route wordt nu read-only geconsumeerd door de Aster Portfolio UI.",
+    "applyAsterRealtimeMark herberekent per tick markPrice, unrealized PnL en perpetuals-equity zonder nieuwe order- of strategylogica.",
+    "Bij streamuitval blijft de laatst bevestigde waarde staan en wordt automatisch opnieuw verbonden; REST blijft fallback/reconciliatie.",
   ],
   now: [
-    "Op Portfolio Koers kun je weer onder Portfolio Snapshot door naar Portfolio Impact en de overige bestaande blokken scrollen.",
-    "De premium subtabs uit build 525 en de marker-detailfix uit build 526 blijven behouden.",
+    "De grote accountwaarde linksboven reageert normaal binnen circa één mark-price tick in plaats van te wachten op de chartrefresh.",
+    "Portfolio Snapshot gebruikt dezelfde realtime perpetuals-equity, zodat beide blokken onderling gelijk lopen.",
+    "Spot blijft een afzonderlijk saldo; Aster Est. total value kan daarom ongeveer het Spot-saldo hoger liggen dan de perpetuals-accountwaarde.",
     "Geen trading-, scanner-, DCA-, TP-, hedge-, recovery- of orderlogica gewijzigd.",
   ],
   technicalDetails: [
-    "Frontend-only hotfix in web/app/aster-subtabs.css.",
-    "Gebruikersreferentie: file_00000000d1b482108eef000bf3f35c62.",
-    "Release-identiteit: Webapp V46 build 527.",
+    "Frontend: web/components/aster-portfolio-snapshot-enhancer.tsx.",
+    "Bestaande infrastructuur hergebruikt: authenticatedStream + /api/exchanges/aster/realtime + applyAsterRealtimeMark.",
+    "Release-identiteit: Webapp V46 build 528.",
   ],
   confidence: "confirmed",
 };
-
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
     id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
