@@ -88,3 +88,18 @@ test("Build 481 Portfolio Cycle Snapshot is balanced when active and when UIT",a
   assert.match(css,/\.aps-cycle-inactive-copy em\{[\s\S]*font-size:6\.5px/);
   assert.match(css,/\.aps-cycle-active-head\{[\s\S]*display:grid/);
 });
+
+test("Portfolio Cycle card first opens Aster Instellingen before Portfolio TP panel",async()=>{
+  const { readFile }=await import("node:fs/promises");
+  const component=await readFile(new URL("../components/aster-profit-pot-snapshot-bridge.tsx",import.meta.url),"utf8");
+  const start=component.indexOf("function openPortfolioTakeProfitSettings");
+  const end=component.indexOf("function PortfolioCycleCard",start);
+  const block=component.slice(start,end);
+  assert.match(block,/\.aster-subtabs button/);
+  assert.match(block,/includes\("instellingen"\)/);
+  assert.match(block,/settingsButton\.click\(\)/);
+  assert.match(block,/\.tp-tabs button/);
+  assert.match(block,/portfolioButton\?\.click\(\)/);
+  assert.match(block,/requestAnimationFrame\(\(\) => openPanel\(\)\)/);
+});
+
