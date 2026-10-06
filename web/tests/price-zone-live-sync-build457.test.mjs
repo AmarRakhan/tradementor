@@ -51,3 +51,17 @@ test("Build 457 remains a presentation/status-sync fix and adds no trading mutat
   assert.equal(chart.includes('method:"PUT"'), false);
   assert.equal(chart.includes("/order"), false);
 });
+
+
+test("Build 530 makes zero-position exchange truth override stale Zone Warriors seat ownership", async () => {
+  const snapshot = await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8");
+  assert.match(snapshot, /const exchangeFlatConfirmed = reportActiveLong === 0 && reportActiveShort === 0/);
+  assert.match(snapshot, /firstNumber\(\[settings, seatModel\], \["zoneBaseLongSoldiers", "perZoneLong"\]\)/);
+  assert.match(snapshot, /firstNumber\(\[settings, seatModel\], \["zoneBaseShortSoldiers", "perZoneShort"\]\)/);
+  assert.match(snapshot, /const activeOpenLong = exchangeFlatConfirmed \? 0/);
+  assert.match(snapshot, /const strategyOpenLong = exchangeFlatConfirmed \? 0/);
+  assert.match(snapshot, /exchangeFlatConfirmed \? \{\} : record\(seatReport\.zoneOpenCounts\)/);
+  assert.match(snapshot, /if \(!exchangeFlatConfirmed && !zoneOpenCountsReliable\)/);
+  assert.match(snapshot, /openFromOldZones: exchangeFlatConfirmed \? 0/);
+  assert.match(snapshot, /strategyOpenTotal: exchangeFlatConfirmed \? 0/);
+});

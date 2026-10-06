@@ -26,6 +26,42 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
+  title: "Prijszone details · Aster zero-position truth",
+  newItems: [
+    "Prijszone-details gebruiken de actuele opgeslagen zonecapaciteit vóór een oudere seatModel-cache.",
+    "Wanneer de Aster/Strategy-2 live report 0 LONG en 0 SHORT bevestigt, toont de UI ook werkelijk 0 bezette stoelen.",
+  ],
+  problems: [
+    "Een leeg Aster futures-account kon in Prijszone details nog 4 LONG / 5 SHORT en 9/10 bezet tonen.",
+    "De kaart kon bovendien een oude 5L/5S-zoneformatie tonen terwijl de actuele configuratie 2L/2S was.",
+  ],
+  causes: [
+    "Oude multiBbPositions/seatModel-state bleef na gesloten posities beschikbaar als compatibiliteitscache.",
+    "De frontend liet die cache zwaarder wegen dan de actuele instellingen en de 0/0 live positie-report.",
+  ],
+  fixes: [
+    "Actuele settings zijn nu leidend voor per-zone capaciteit.",
+    "Een bevestigde 0 LONG / 0 SHORT live report forceert alle bezettings-, oude-zone- en totaalmeters naar nul.",
+    "De fallback die zonebezetting uit oude managed ownership afleidt wordt bij een bevestigd leeg account niet meer gebruikt.",
+  ],
+  now: [
+    "Een leeg Aster futures-account wordt ook in Prijszone details als leeg weergegeven.",
+    "De ingestelde 2 LONG + 2 SHORT per zone en max 10 blijven zichtbaar.",
+    "Geen posities, instellingen of tradingstate van het account zijn door deze fix gewijzigd.",
+  ],
+  technicalDetails: [
+    "Read-only diagnose bevestigde: opgeslagen settings 2L/2S, max 10; Aster live 0L/0S; multiBbReport 0L/0S; oude managed cache 4L/5S.",
+    "Frontend: web/components/aster-portfolio-snapshot-enhancer.tsx.",
+    "Release-identiteit: Webapp V46 build 530.",
+  ],
+  confidence: "confirmed",
+};
+
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [  {
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+  version: WEBAPP_VERSION,
+  build: WEBAPP_BUILD_NUMBER,
+  releasedAt: "2026-10-06",
   title: "Portfolio Cyclus · instellingen openen hersteld",
   newItems: [
     "De Portfolio Cyclus-kaart in Portfolio Snapshot opent opnieuw rechtstreeks de Portfolio Take Profit-instellingen.",
@@ -55,7 +91,6 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   confidence: "confirmed",
 };
 
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
     id: "v46-build-527-portfolio-tail-restore",
     version: "46",

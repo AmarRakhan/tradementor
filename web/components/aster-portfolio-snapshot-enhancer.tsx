@@ -268,15 +268,22 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   const currentZone = record(seatReport.currentZone);
   const oldZones = record(seatReport.oldZonesOpen);
   const strategyOwned = record(seatReport.strategyOwnedOpen);
-  const perZoneLong = Math.max(1, Math.round(firstNumber([seatModel, settings], ["perZoneLong", "zoneBaseLongSoldiers"]) ?? 3));
-  const perZoneShort = Math.max(1, Math.round(firstNumber([seatModel, settings], ["perZoneShort", "zoneBaseShortSoldiers"]) ?? 3));
+  const report = record(strategy2.multiBbReport);
+  const reportActiveLong = optionalNumber(report.activeLong);
+  const reportActiveShort = optionalNumber(report.activeShort);
+  const exchangeFlatConfirmed = reportActiveLong === 0 && reportActiveShort === 0;
+  // Saved user settings are authoritative for configured seat capacity. A
+  // cached seatModel may lag after a configuration change and must not replace
+  // the user's current formation.
+  const perZoneLong = Math.max(1, Math.round(firstNumber([settings, seatModel], ["zoneBaseLongSoldiers", "perZoneLong"]) ?? 3));
+  const perZoneShort = Math.max(1, Math.round(firstNumber([settings, seatModel], ["zoneBaseShortSoldiers", "perZoneShort"]) ?? 3));
   const activeZoneNumber = hasRuntimeTruth
     ? optionalNumber(runtimeTruth.activeZone)
     : firstNumber([seatModel, seatReport], ["activeZone"]);
-  const activeOpenLong = Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedLongActiveZone", "openLong"]) ?? 0));
-  const activeOpenShort = Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedShortActiveZone", "openShort"]) ?? 0));
-  const strategyOpenLong = Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenLong", "long"]) ?? 0));
-  const strategyOpenShort = Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenShort", "short"]) ?? 0));
+  const activeOpenLong = exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedLongActiveZone", "openLong"]) ?? 0));
+  const activeOpenShort = exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedShortActiveZone", "openShort"]) ?? 0));
+  const strategyOpenLong = exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenLong", "long"]) ?? 0));
+  const strategyOpenShort = exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenShort", "short"]) ?? 0));
   const maxTotal = Math.max(1, Math.round(
     (hasRuntimeTruth ? optionalNumber(runtimeTruth.maximumPositions) : null)
       ?? firstNumber([settings], ["maximumPositions"])
@@ -284,7 +291,7 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   ));
 
   let zoneOpenCounts: Record<string, { long: number; short: number; total: number }> = {};
-  for (const [rawZone, rawCounts] of Object.entries(record(seatReport.zoneOpenCounts))) {
+  for (const [rawZone, rawCounts] of Object.entries(exchangeFlatConfirmed ? {} : record(seatReport.zoneOpenCounts))) {
     const zone = Number(rawZone);
     if (!Number.isInteger(zone)) continue;
     const counts = record(rawCounts);
@@ -307,7 +314,7 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   // Backward-compatible bridge while backend/web releases overlap: derive the
   // same per-zone breakdown from managed Strategy-2 ownership only when its
   // totals exactly match the exchange-confirmed seat report. This never guesses.
-  if (!zoneOpenCountsReliable) {
+  if (!exchangeFlatConfirmed && !zoneOpenCountsReliable) {
     const derived: Record<string, { long: number; short: number; total: number }> = {};
     for (const [tradeKey, rawManaged] of Object.entries(record(strategy2.multiBbPositions))) {
       const managed = record(rawManaged);
@@ -352,11 +359,11 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     freeShortActiveZone: Math.max(0, Math.round(firstNumber([seatModel], ["freeShortActiveZone"]) ?? (perZoneShort - activeOpenShort))),
     occupiedLongActiveZone: activeOpenLong,
     occupiedShortActiveZone: activeOpenShort,
-    openFromOldZones: Math.max(0, Math.round(firstNumber([seatModel, oldZones], ["openFromOldZones", "total"]) ?? 0)),
+    openFromOldZones: exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, oldZones], ["openFromOldZones", "total"]) ?? 0)),
     maxTotal,
     strategyOpenLong,
     strategyOpenShort,
-    strategyOpenTotal: Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenTotal", "total"]) ?? (strategyOpenLong + strategyOpenShort))),
+    strategyOpenTotal: exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenTotal", "total"]) ?? (strategyOpenLong + strategyOpenShort))),
     zoneOpenCounts,
     zoneOpenCountsReliable,
     entryStatus: hasRuntimeTruth
