@@ -54,13 +54,13 @@ test("quick edit owns a local dirty draft that background server refresh cannot 
   assert.match(v3, /setQuickDraft\(normalizeQuickDraft\(confirmedSettings\)\)/);
 });
 
-test("strategy is read-only in quick edit and can only be changed in the full wizard", () => {
+test("quick edit keeps one AsterBot identity and leaves the price-zone module to the full configurator", () => {
   const quick = slice(v3, "if (quickEditOpen) {", 'return <article id="bot-configurator-v3" className="botconfig-v3"');
-  assert.match(quick, /Kan hier niet worden gewijzigd/);
+  assert.match(quick, /title="AsterBot"/);
   assert.match(quick, /confirmedStrategyName/);
   assert.doesNotMatch(quick, /updateQuick\("zoneSoldiersEnabled"/);
-  assert.match(v3, /chooseStrategy\(true\)/);
-  assert.match(v3, /chooseStrategy\(false\)/);
+  assert.doesNotMatch(v3, /chooseStrategy\(/);
+  assert.match(v3, /label="Prijszone-stoelen"/);
 });
 
 test("quick edit max seats preserves the explicit Zone Warriors maximumPositions contract", () => {
@@ -99,7 +99,7 @@ test("quick save uses only the existing state-preserving settings PUT and never 
 
 test("more settings exposes every existing advanced configuration family without fake runtime toggles", () => {
   for (const label of [
-    "Markt & selectie", "Zone Warriors", "DCA", "Leverage", "Positiegrootte",
+    "Markt & selectie", "Prijszone-stoelen", "DCA", "Leverage", "Positiegrootte",
     "Instapfilters", "Exposure refill", "Bescherming", "Smart Rescue", "Take profit & basis",
     "Cycle start", "Huidige waarde", "Aangepast",
   ]) assert.match(v3, new RegExp(label.replace(/[&]/g, "\\&")));

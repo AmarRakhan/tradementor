@@ -106,6 +106,9 @@ const compactPct = (value: unknown, digits = 2) => compactNumber(value, digits) 
 const editableDecimal = (value: unknown, digits = 2) => n(value, 0).toFixed(digits).replace(".", ",");
 
 function normalizeDraft(settings: Record<string, unknown>): Draft {
+  const priceZoneConfig = settings.priceZoneSeats && typeof settings.priceZoneSeats === "object"
+    ? settings.priceZoneSeats as Record<string, unknown>
+    : {};
   const legacyEntry = n(settings.entryMarginUsd, 5);
   const legacyDistance = n(settings.dcaDistance, .003);
   const legacyDca = n(settings.dcaMarginUsd, 2);
@@ -126,8 +129,8 @@ function normalizeDraft(settings: Record<string, unknown>): Draft {
     longSlots: textValue(settings.longSlots, 20),
     shortSlots: textValue(settings.shortSlots, 10),
     maximumPositions: textValue(settings.maximumPositions, n(settings.longSlots, 20) + n(settings.shortSlots, 10)),
-    zoneLongSeats: textValue(settings.zoneBaseLongSoldiers, 3),
-    zoneShortSeats: textValue(settings.zoneBaseShortSoldiers, 3),
+    zoneLongSeats: textValue(priceZoneConfig.longSeatsPerZone ?? settings.zoneBaseLongSoldiers, 3),
+    zoneShortSeats: textValue(priceZoneConfig.shortSeatsPerZone ?? settings.zoneBaseShortSoldiers, 3),
     minimumLeverage: textValue(settings.minimumLeverage, 50),
     maximumLeverage: settings.maximumLeverage === null || settings.maximumLeverage === undefined ? "" : textValue(settings.maximumLeverage, 0),
     manualEnabled: settings.manualSymbolSelectionEnabled === true,
@@ -141,7 +144,7 @@ function normalizeDraft(settings: Record<string, unknown>): Draft {
     exposureRefillShortTimeframe: tf(settings.exposureRefillShortTimeframe, "1m"),
     exposureRefillTriggerPercent: textValue(settings.exposureRefillTriggerPercent, 20),
     exposureRefillReleasePercent: textValue(settings.exposureRefillReleasePercent, 8),
-    zoneSoldiersEnabled: settings.zoneSoldiersEnabled === true && n(settings.zoneSoldiersOptInVersion, 0) >= 1,
+    zoneSoldiersEnabled: priceZoneConfig.enabled === true || (settings.zoneSoldiersEnabled === true && n(settings.zoneSoldiersOptInVersion, 0) >= 1),
     fixedPositionSize: String(settings.entrySizingMode || "margin").toLowerCase() === "notional",
     entryMarginLong: textValue(settings.entryMarginLongUsd ?? settings.entryMarginLong ?? legacyEntry, legacyEntry),
     entryMarginShort: textValue(settings.entryMarginShortUsd ?? settings.entryMarginShort ?? legacyEntry, legacyEntry),
@@ -323,7 +326,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
   const zoneSoldiersAvailable = feature("zone_soldiers").enabled === true;
   const savedZoneStrategyEnabled = zoneSoldiersAvailable && persisted.zoneSoldiersEnabled === true && n(persisted.zoneSoldiersOptInVersion, 0) >= 1;
   const zoneLifecycle = String(strategy2.zoneSoldierLifecycle || (savedZoneStrategyEnabled ? "ACTIVE" : "OFF")).toUpperCase();
-  const strategyBadge = savedZoneStrategyEnabled ? "STRATEGIE · ZONE WARRIORS" : zoneLifecycle === "DRAINING" ? "STRATEGIE · ZONE WARRIORS AFBOUWEN" : "STRATEGIE · CLASSIC DCA";
+  const strategyBadge = savedZoneStrategyEnabled ? "ASTERBOT · PRIJSZONE-STOELEN AAN" : zoneLifecycle === "DRAINING" ? "ASTERBOT · PRIJSZONE-STOELEN AFBOUWEN" : "ASTERBOT";
 
   const update = <K extends keyof Draft>(key: K, value: Draft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -472,6 +475,11 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
         exposureRefillReleasePercent: n(source.exposureRefillReleasePercent),
       } : {}),
       ...(zoneSoldiersAvailable ? {
+        priceZoneSeats: {
+          enabled: source.zoneSoldiersEnabled,
+          longSeatsPerZone: sourceZoneLongSeats,
+          shortSeatsPerZone: sourceZoneShortSeats,
+        },
         zoneSoldiersEnabled: source.zoneSoldiersEnabled,
         zoneSoldiersOptInVersion: source.zoneSoldiersEnabled ? 1 : 0,
         zoneBaseLongSoldiers: sourceZoneLongSeats,
@@ -479,7 +487,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
         zoneExposureBalancerEnabled: confirmedSettings.zoneExposureBalancerEnabled !== false,
         zoneEntryGrowthPercent: nDefault(confirmedSettings.zoneEntryGrowthPercent, 2),
         zoneEntryMaxMultiplier: nDefault(confirmedSettings.zoneEntryMaxMultiplier, 1.2),
-      } : { zoneSoldiersEnabled: false, zoneSoldiersOptInVersion: 0 }),
+      } : { priceZoneSeats: { enabled: false, longSeatsPerZone: 0, shortSeatsPerZone: 0 }, zoneSoldiersEnabled: false, zoneSoldiersOptInVersion: 0 }),
       ...sizing,
       entryMarginUsd: n(source.entryMarginLong),
       entryMarginLongUsd: n(source.entryMarginLong),
@@ -605,7 +613,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
 
   const confirmedDraft = useMemo(() => normalizeDraft(confirmedSettings), [JSON.stringify(confirmedSettings)]);
   const confirmedZoneEnabled = confirmedDraft.zoneSoldiersEnabled;
-  const confirmedStrategyName = confirmedZoneEnabled ? "Zone Warriors" : "Classic DCA";
+  const confirmedStrategyName = confirmedZoneEnabled ? "AsterBot · Prijszone-stoelen aan" : "AsterBot";
   const confirmedLongSeats = Math.max(0, Math.round(n(confirmedDraft.zoneLongSeats, 3)));
   const confirmedShortSeats = Math.max(0, Math.round(n(confirmedDraft.zoneShortSeats, 3)));
   const confirmedClassicLong = Math.max(0, Math.round(n(confirmedDraft.longSlots)));
@@ -701,14 +709,10 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
     }
   }
 
-  const strategyName = draft.zoneSoldiersEnabled ? "Zone Warriors" : "Classic DCA";
+  const strategyName = "AsterBot";
   const goTo = (step: number) => {
     setCurrentStep(Math.max(1, Math.min(4, step)));
     requestAnimationFrame(() => document.getElementById("bot-configurator-v3")?.scrollIntoView({ behavior: "smooth", block: "start" }));
-  };
-  const chooseStrategy = (zone: boolean) => {
-    if (zone && !zoneSoldiersAvailable) return;
-    update("zoneSoldiersEnabled", zone);
   };
   const next = () => goTo(currentStep + 1);
   const previous = () => goTo(currentStep - 1);
@@ -732,7 +736,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
       <section className="v31-quick">
         <div className="v31-info"><QuickIcon name="info"/><p>Hier kun je alleen de belangrijkste actieve instellingen aanpassen.<br/>Je strategie en andere geavanceerde instellingen blijven hetzelfde.</p></div>
 
-        <QuickSettingSection icon="layers" title="Strategie" subtitle="Kan hier niet worden gewijzigd.">
+        <QuickSettingSection icon="layers" title="AsterBot" subtitle="Prijszone-stoelen wijzig je in de volledige configurator.">
           <div className="v31-readonly-value">{confirmedStrategyName}</div>
         </QuickSettingSection>
 
@@ -782,7 +786,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
         {quickAdvanced&&<div className="v31-advanced" data-expanded="true">
           <section><h4>Markt & selectie</h4><div className="v3-grid two"><Field label="Top-N volume" value={quickDraft.universeTopN} onChange={(v)=>updateQuick("universeTopN",v)} min={1}/><Field label="Botnaam" type="text" value={quickDraft.name} onChange={(v)=>updateQuick("name",v)}/></div><Toggle label="Zelf munten kiezen" description="Uit = automatische Top-N. Aan = alleen jouw selectie." checked={quickDraft.manualEnabled} onChange={(v)=>updateQuick("manualEnabled",v)}/>{quickDraft.manualEnabled&&<Field label="Munten · SYMBOL:LONG / SYMBOL:SHORT" type="text" value={quickDraft.manualSymbols} onChange={(v)=>updateQuick("manualSymbols",v)}/>}</section>
 
-          {quickDraft.zoneSoldiersEnabled&&<section><h4>Zone Warriors</h4><div className="v3-grid two"><Field label="LONG stoelen per zone" value={quickDraft.zoneLongSeats} onChange={(v)=>updateQuick("zoneLongSeats",v)}/><Field label="SHORT stoelen per zone" value={quickDraft.zoneShortSeats} onChange={(v)=>updateQuick("zoneShortSeats",v)}/></div></section>}
+          {quickDraft.zoneSoldiersEnabled&&<section><h4>Prijszone-stoelen</h4><div className="v3-grid two"><Field label="LONG stoelen per zone" value={quickDraft.zoneLongSeats} onChange={(v)=>updateQuick("zoneLongSeats",v)}/><Field label="SHORT stoelen per zone" value={quickDraft.zoneShortSeats} onChange={(v)=>updateQuick("zoneShortSeats",v)}/></div></section>}
 
           <section><h4>DCA</h4><div className="v3-grid two"><Field label="LONG DCA-afstand" value={quickDraft.longDcaDistance} onChange={(v)=>updateQuick("longDcaDistance",v)} suffix="%"/><Field label="SHORT DCA-afstand" value={quickDraft.shortDcaDistance} onChange={(v)=>updateQuick("shortDcaDistance",v)} suffix="%"/><Field label="LONG Max DCA" value={quickDraft.maxDcaLong} onChange={(v)=>updateQuick("maxDcaLong",v)}/><Field label="SHORT Max DCA" value={quickDraft.maxDcaShort} onChange={(v)=>updateQuick("maxDcaShort",v)}/></div></section>
 
@@ -844,21 +848,23 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
     </header>
 
     {currentStep===1 && <section className="v3-screen" data-reference={VISUAL_REFERENCES.strategy}>
-      <ScreenTitle title="Kies je strategie" subtitle="Twee handelsstijlen. De exchange staat los van de strategienaam." />
+      <ScreenTitle title="AsterBot" subtitle="Eén bot, één beslispipeline. Extra functies zijn opties binnen dezelfde AsterBot." />
       <div className="v3-strategy-list">
-        <button type="button" className={"v3-strategy-card "+(draft.zoneSoldiersEnabled?"selected":"")} onClick={()=>chooseStrategy(true)} disabled={!zoneSoldiersAvailable}>
-          <img src="/zone-warriors-card-ref1-20260930.webp" alt="" />
-          <span><strong>Zone Warriors</strong><small>Handelt per prijszone met een vaste LONG/SHORT-verdeling.</small><em>{zoneSoldiersAvailable?"3 LONG + 3 SHORT per zone":"Nog niet vrijgegeven"}</em></span>
-          <i>{draft.zoneSoldiersEnabled?"✓":""}</i>
-        </button>
-        <button type="button" className={"v3-strategy-card "+(!draft.zoneSoldiersEnabled?"selected":"")} onClick={()=>chooseStrategy(false)}>
-          <img src="/classic-dca-card-ref8-20260930.webp" alt="" />
-          <span><strong>Classic DCA</strong><small>Traditionele strategie met vaste LONG/SHORT-capaciteit en optionele instapfilters en DCA.</small><em>Buy the dip · DCA · flexibel</em></span>
-          <i>{!draft.zoneSoldiersEnabled?"✓":""}</i>
-        </button>
+        <div className="v3-strategy-card selected">
+          <img src={draft.zoneSoldiersEnabled?"/zone-warriors-card-ref1-20260930.webp":"/classic-dca-card-ref8-20260930.webp"} alt="" />
+          <span><strong>AsterBot</strong><small>Scanner, filters, DCA, TP en toekomstige modules gebruiken dezelfde actuele configuratie en dezelfde execution-route.</small><em>{draft.zoneSoldiersEnabled?"Prijszone-stoelen actief":"Normale AsterBot-capaciteit"}</em></span>
+          <i>✓</i>
+        </div>
       </div>
-      {zoneLifecycle==="DRAINING" && !draft.zoneSoldiersEnabled && <p className="v3-warning">Bestaande Zone Warriors-posities worden veilig beheerd terwijl nieuwe zone-entries uit staan.</p>}
-      <p className="v3-info">Je kiest hier alleen de handelsstrategie. Alle bestaande instellingen blijven in de volgende schermen bereikbaar.</p>
+      <div className="v3-core-settings">
+        <Toggle label="Prijszone-stoelen" description={zoneSoldiersAvailable ? "Optionele AsterBot-module. Verdeel nieuwe LONG- en SHORT-entries per actieve prijszone." : "Deze optie is nog niet beschikbaar voor dit account."} checked={draft.zoneSoldiersEnabled} onChange={(value)=>update("zoneSoldiersEnabled",value)} disabled={!zoneSoldiersAvailable} />
+        {draft.zoneSoldiersEnabled&&<div className="v3-side-pair">
+          <StepperField label="LONG per zone" value={draft.zoneLongSeats} onChange={(value)=>update("zoneLongSeats",value)} tone="long" />
+          <StepperField label="SHORT per zone" value={draft.zoneShortSeats} onChange={(value)=>update("zoneShortSeats",value)} tone="short" />
+        </div>}
+      </div>
+      {zoneLifecycle==="DRAINING" && !draft.zoneSoldiersEnabled && <p className="v3-warning">Bestaande zoneposities blijven veilig beheerd; nieuwe prijszone-entries staan uit.</p>}
+      <p className="v3-info">Prijszone-stoelen verandert alleen de capaciteit voor nieuwe initial entries. Het is geen tweede strategie en geen tweede orderroute.</p>
     </section>}
 
     {currentStep===2 && <section className="v3-screen" data-reference={VISUAL_REFERENCES.settings}>
@@ -999,7 +1005,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
 
     {currentStep===4 && <section className="v3-screen" data-reference={VISUAL_REFERENCES.review}>
       <ScreenTitle title="Controleren & starten" subtitle="Bekijk alles nog één keer voordat je activeert." />
-      <div className="v3-review-hero"><img src={draft.zoneSoldiersEnabled?"/zone-warriors-icon.svg":"/classic-dca-icon.svg"} alt="" /><span><strong>{strategyName}</strong><small>{draft.zoneSoldiersEnabled?"Handelt per prijszone met een vaste verdeling.":"Traditionele DCA met vaste LONG/SHORT-capaciteit."}</small></span></div>
+      <div className="v3-review-hero"><img src={draft.zoneSoldiersEnabled?"/zone-warriors-icon.svg":"/classic-dca-icon.svg"} alt="" /><span><strong>{strategyName}</strong><small>{draft.zoneSoldiersEnabled?"Prijszone-stoelen actief binnen dezelfde AsterBot.":"Normale AsterBot-capaciteit zonder prijszone-module."}</small></span></div>
       <div className="v3-review-grid">
         <ReviewBlock title="Posities" rows={[["Verdeling",selectedPositionLabel]]} />
         <ReviewBlock title="Markt & selectie" rows={[["Top-N",draft.universeTopN],["Munten",draft.manualEnabled?"Eigen selectie":"Automatisch"]]} />
@@ -1066,7 +1072,7 @@ function ReviewBlock({title,rows}:{title:string;rows:Array<[string,string]>}){
   return <section className="v3-review-block"><h4>{title}</h4>{rows.map(([label,value])=><span key={label}><small>{label}</small><b>{value}</b></span>)}</section>;
 }
 function releaseLabel(key: string) {
-  return ({ bot_configurator_v2: "Botconfigurator 3.0", directional_bollinger: "Directional Bollinger", exposure_refill: "Exposure refill", margin_summary: "Margin summary", price_zones: "Price zones", zone_soldiers: "Zone Warriors", zone_command_center: "Prijszone-overzicht", auto_hedge_v2: "Auto Hedge 2.0", legacy_hedge_recovery: "Legacy Hedge Recovery" } as Record<string,string>)[key] || key;
+  return ({ bot_configurator_v2: "Botconfigurator 3.0", directional_bollinger: "Directional Bollinger", exposure_refill: "Exposure refill", margin_summary: "Margin summary", price_zones: "Price zones", zone_soldiers: "Prijszone-stoelen", zone_command_center: "Prijszone-overzicht", auto_hedge_v2: "Auto Hedge 2.0", legacy_hedge_recovery: "Legacy Hedge Recovery" } as Record<string,string>)[key] || key;
 }
 
 const styles = `
