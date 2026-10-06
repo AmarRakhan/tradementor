@@ -499,3 +499,11 @@ def test_zone_soldier_settings_reject_zero_on_both_sides():
             "zoneBaseLongSoldiers": 0,
             "zoneBaseShortSoldiers": 0,
         })
+
+
+def test_zero_sided_zone_seats_are_not_reinflated_by_runtime():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert 'base_long=max(1, int(getattr(settings, "zone_base_long_soldiers", 3)))' not in source
+    assert 'base_short=max(1, int(getattr(settings, "zone_base_short_soldiers", 3)))' not in source
+    assert source.count('base_long=max(0, int(getattr(settings, "zone_base_long_soldiers", 3)))') == 2
+    assert source.count('base_short=max(0, int(getattr(settings, "zone_base_short_soldiers", 3)))') == 2
