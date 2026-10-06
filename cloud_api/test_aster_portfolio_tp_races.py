@@ -89,6 +89,8 @@ def test_portfolio_tp_preempts_dynamic_hedge_and_is_never_suppressed():
     dynamic = tick.index("dynamic=run_dynamic_hedge_sequence")
     assert preempt < dynamic
     assert 'portfolio_cycle_gate(' in tick[preempt:dynamic]
+    assert 'portfolio_exit_active=str(cycle_state.get("cycleStatus") or "").upper() in ACTIVE_EXIT_STATES' in tick[preempt:dynamic]
+    assert 'or portfolio_exit_active:' in tick[preempt:dynamic]
     assert 'take_profit_mode="OFF"' not in tick[preempt:dynamic + 5000]
     assert '"portfolioTpSuppressed":False' in tick
 
