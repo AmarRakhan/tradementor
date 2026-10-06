@@ -57,6 +57,11 @@ from aster_unified_engine import policy_from_settings
 ENGINE = _core.ENGINE
 max_contract_leverage = _core.max_contract_leverage
 rank_top_volume = _core.rank_top_volume
+# Test/adapter compatibility hook: callers that historically monkeypatched
+# aster_multi_bb.execute_leg_once now intercept the unified execution boundary,
+# never the raw exchange executor.
+execute_leg_once = _core.execute_approved_leg_once
+_ORIGINAL_UNIFIED_EXECUTION_HOOK = _core.execute_approved_leg_once
 
 _SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,32}USDT$")
 _MAX_PAIR_DCA = 500
@@ -64,7 +69,7 @@ _TP_MODES = {"PER_TRADE", "PORTFOLIO", "OFF"}
 _PORTFOLIO_TP_INPUT_MODES = {"PERCENT", "USD"}
 _PORTFOLIO_TP_BASE_MODES = {"CYCLE_START", "CURRENT_VALUE", "CUSTOM"}
 _CORE_HOOK_NAMES = (
-    "execute_leg_once", "max_contract_leverage", "rank_top_volume",
+    "max_contract_leverage", "rank_top_volume",
     "is_definite_contract_rejection", "plan_pair", "resolve_entry",
     "resolve_dca", "tier_preview",
 )
@@ -105,6 +110,11 @@ def _sync_core_hooks() -> None:
     namespace = globals()
     for name, original in _ORIGINAL_CORE_HOOKS.items():
         setattr(_core, name, namespace[name] if name in namespace else original)
+    # Compatibility only: production value points to the unified boundary.
+    # Legacy tests/adapters may replace the facade hook without restoring a
+    # direct raw-executor path in the runtime source.
+    setattr(_core, "execute_approved_leg_once",
+            namespace.get("execute_leg_once", _ORIGINAL_UNIFIED_EXECUTION_HOOK))
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
