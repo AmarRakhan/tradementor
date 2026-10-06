@@ -592,7 +592,7 @@ export function PortfolioKoersChart({
       // Chart price levels are a core visual contract, not a trading-module
       // entitlement. Preserve the last confirmed 15m zone basis during a
       // transient refresh failure instead of blanking support/resistance.
-      setAdvisorMessage(advisorErrorText(reason,"15m-zonebasis tijdelijk niet beschikbaar; laatst bevestigde prijsniveaus blijven zichtbaar."));
+      setAdvisorMessage(advisorErrorText(reason,"15m-zonebasis tijdelijk niet beschikbaar; Portfolio Koers blijft informatief en laatst bevestigde prijsniveaus blijven zichtbaar."));
     }
   },[user?.uid]);
 

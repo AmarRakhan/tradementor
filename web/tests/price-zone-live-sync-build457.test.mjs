@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Runtime Contract V1 keeps Portfolio Koers and Portfolio Snapshot on one operational active-zone source", async () => {
+test("Build 550 keeps Portfolio Koers visual zone synced to Snapshot while runtime truth governs seat occupancy", async () => {
   const [chart, snapshot, activeZoneBlock] = await Promise.all([
     readFile(new URL("../components/portfolio-koers-chart.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8"),
@@ -11,7 +11,7 @@ test("Runtime Contract V1 keeps Portfolio Koers and Portfolio Snapshot on one op
 
   assert.match(chart, /onActiveZoneChange\?:\(zone:number\|null\)=>void/);
   assert.match(chart, /const liveDisplayActiveZone=zoneContext\?\.activeIndex\?\?confirmedActiveZone/);
-  assert.match(chart, /const activeZone=runtimeZoneActive\?signedIntegerOrNull\(runtimeTruth\.activeZone\):liveDisplayActiveZone/);
+  assert.match(chart, /const activeZone=liveDisplayActiveZone/);\n  assert.match(chart, /const operationalActiveZone=runtimeZoneActive\?signedIntegerOrNull\(runtimeTruth\.activeZone\):activeZone/);
   assert.match(chart, /onActiveZoneChange\?\.\(activeZone\)/);
 
   assert.match(snapshot, /const \[liveActiveZone, setLiveActiveZone\] = useState<number \| null>\(null\)/);

@@ -432,13 +432,13 @@ test("Build 437 moves Zone-Soldaten status off the chart and into an opaque dedi
 });
 
 
-test("Runtime Contract V1 phase 6 makes Portfolio Koers use canonical operational zone",async()=>{
+test("Build 550 separates always-visible chart zone from operational trading zone",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.match(component,/runtimeTruth:Record<string,unknown>/);
   assert.match(component,/const runtimeTruth=record\(strategy2\.runtimeTruth\)/);
   assert.match(component,/runtimeTruth\.source==="SERVER_RUNTIME"/);
   assert.match(component,/runtimeTruth\.strategyMode==="ZONE_WARRIORS"/);
-  assert.match(component,/const activeZone=runtimeZoneActive\?signedIntegerOrNull\(runtimeTruth\.activeZone\):liveDisplayActiveZone/);
+  assert.match(component,/const activeZone=liveDisplayActiveZone/);\n  assert.match(component,/const operationalActiveZone=runtimeZoneActive\?signedIntegerOrNull\(runtimeTruth\.activeZone\):activeZone/);
   assert.match(component,/onActiveZoneChange\?\.\(activeZone\)/);
   assert.match(component,/runtimeTruth\.zoneSafeForNewEntries===true/);
 });
