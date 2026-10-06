@@ -148,7 +148,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     const storedShortNotional = x.entryNotionalShortUsd ?? x.entryNotionalShort ?? (persistedFixedPositionSize ? x.entryNotionalUsd : undefined);
     const legacyDcaDistance = Number(x.dcaDistance ?? .003); const legacyDcaAmount = Number(x.dcaMarginUsd ?? 2); const legacyMax = Number(x.maxDca ?? 3); const legacyTp = Number(x.takeProfit ?? .015);
     setV({
-      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots)), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50), maxLeverage: x.maximumLeverage === null || x.maximumLeverage === undefined ? "" : String(x.maximumLeverage),
+      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, x.zoneSoldiersEnabled === true ? Math.max(1, Math.round(Number(x.maximumPositions ?? (longSlots + shortSlots)))) : (longSlots + shortSlots))), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50), maxLeverage: x.maximumLeverage === null || x.maximumLeverage === undefined ? "" : String(x.maximumLeverage),
       stopLossEnabled: x.stopLossEnabled === true, stopLossMode: String(x.stopLossMode || "PERCENT").toUpperCase() === "USD" ? "USD" : "PERCENT", stopLossLong: txt(x.stopLossLong, 5), stopLossShort: txt(x.stopLossShort, 5),
       fixedPositionSize: persistedFixedPositionSize,
       entryMarginLong: txt(legacyLongMargin, legacyEntry), entryMarginShort: txt(legacyShortMargin, legacyEntry),
@@ -201,10 +201,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     return {
       ...persisted,
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode, universeTopN: Math.max(1, Math.round(n(v.universe))),
-      // In Zone Warriors mode maximumPositions is the strategy-wide seat cap.
-      // The legacy UI has no zone-cap control, so a legacy save must preserve it.
+      // In Zone Warriors mode the visible total-position field is the global
+      // seat cap. Never silently restore a stale persisted cap during save.
       maximumPositions: persisted.zoneSoldiersEnabled === true
-        ? Math.max(1, Math.round(finiteOr(persisted.maximumPositions, longSlots + shortSlots)))
+        ? clampInt(n(v.positions), 1, MAX_TOTAL_POSITIONS)
         : Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots),
       longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage,
       ...sizingSettings,
