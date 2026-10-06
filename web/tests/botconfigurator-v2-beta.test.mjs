@@ -53,9 +53,11 @@ test("all binding Set A and Set B visual references are embedded in V3", () => {
   ]) assert.match(v3, new RegExp(id));
 });
 
-test("V3 display names are Zone Warriors and Classic DCA and Sniper is absent", () => {
-  assert.match(v3, />Zone Warriors</);
-  assert.match(v3, />Classic DCA</);
+test("V3 exposes one AsterBot with price-zone seats as an optional module and Sniper is absent", () => {
+  assert.match(v3, /title="AsterBot"/);
+  assert.match(v3, /label="Prijszone-stoelen"/);
+  assert.doesNotMatch(v3, /<strong>Zone Warriors<\/strong>/);
+  assert.doesNotMatch(v3, /<strong>Classic DCA<\/strong>/);
   assert.doesNotMatch(v3, />Sniper</);
 });
 
@@ -112,7 +114,7 @@ test("owner release center remains separate and never auto-publishes STABLE", ()
 });
 
 
-test("allows zero seats on exactly one Zone Warriors side", () => {
+test("allows zero seats on exactly one price-zone side", () => {
   assert.match(v2, /const zoneLongSeats = Math\.max\(0,/);
   assert.match(v2, /const zoneShortSeats = Math\.max\(0,/);
   assert.match(v2, /zoneLongSeats \+ zoneShortSeats < 1/);

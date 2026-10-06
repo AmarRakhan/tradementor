@@ -52,7 +52,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   technicalDetails: [
     "Frontend: web/components/aster-bot-configurator-v3.tsx.",
-    "Release-identiteit: Webapp V46 build 541.",
+    "Release-identiteit: Webapp V46 build 542.",
   ],
   confidence: "confirmed",
 };

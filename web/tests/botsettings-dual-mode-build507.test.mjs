@@ -64,9 +64,11 @@ test("new UI preference is user-scoped in cloud and proxied through the authenti
   assert.match(backend, /merge=True/);
 });
 
-test("Configurator 3 stays an explicit BETA UI while Zone Warriors requires a deliberate strategy save", () => {
+test("Configurator 3 stays an explicit BETA UI while price-zone seats require a deliberate settings save", () => {
   assert.match(v3, /data-rollout="opt-in-beta"/);
   assert.match(v3, /<span>BETA<\/span>/);
-  assert.match(v3, /chooseStrategy\(true\)/);
+  assert.match(v3, /label="Prijszone-stoelen"/);
+  assert.doesNotMatch(v3, /chooseStrategy\(/);
+  assert.match(v3, /priceZoneSeats:\s*\{/);
   assert.match(v3, /zoneSoldiersOptInVersion: source\.zoneSoldiersEnabled \? 1 : 0/);
 });
