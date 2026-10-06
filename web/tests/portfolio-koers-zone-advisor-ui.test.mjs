@@ -82,7 +82,7 @@ test("BETA semantic zone colors are no longer swapped",async()=>{
 
 test("Build 417 uses one canonical 15m informational zone source for every chart timeframe",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes('/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=320'));
+  assert.ok(component.includes('/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600'));
   assert.ok(component.includes("setAdvisorZones(canonical.zones)"));
   assert.ok(component.includes("advisorTimeline?.safeForAdvisor===true&&advisorZones.length?advisorZones:payload.zones"));
   assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
@@ -91,7 +91,7 @@ test("Build 417 uses one canonical 15m informational zone source for every chart
 
 test("Build 417 canonical 15m zones are informational for everyone and fail closed for trade steering",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes('/portfolio-chart?timeframe=15m&limit=320'));
+  assert.ok(component.includes('/portfolio-chart?timeframe=15m&limit=600'));
   assert.ok(component.includes("setAdvisorZones(canonical.zones)"));
   assert.ok(component.includes("setAdvisorTimeline(portfolioKoersTimelineHealth"));
   assert.ok(component.includes("zoneEntriesSafe"));
