@@ -594,6 +594,14 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
     timestamp_ms=kwargs["timestamp_ms"]; dry_run=bool(kwargs.get("dry_run",False)); order_budget=kwargs.get("order_budget"); before_order=kwargs.get("before_order")
 
     def guarded_before_order(intent:Any)->Any:
+        # Every mutating AsterBot action must still belong to the config version
+        # that is CURRENT at submit time. A settings save during a running tick
+        # invalidates the old decision; the next tick recalculates from scratch.
+        latest=runtime_ref.get().to_dict() or {}
+        latest_settings=latest.get("settings") if isinstance(latest.get("settings"),dict) else {}
+        latest_version=max(1,_integer(latest_settings.get("version"),settings.version))
+        if latest_version != int(settings.version):
+            raise RuntimeError(f"STALE_CONFIG_VERSION:{settings.version}->{latest_version}")
         assert_order_allowed(runtime_ref,intent,client=client)
         if before_order is not None:
             try: return before_order(intent)
