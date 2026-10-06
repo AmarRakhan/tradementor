@@ -1,0 +1,75 @@
+name: Verify Aster Scheduler Live 20261006
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/verify-aster-scheduler-live-20261006.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  SCHEDULER_JOB: tradementor-aster-automation-tick
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify scheduler and recent ticks
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/job.json" 2>/dev/null; then
+            EXISTS=true
+            STATE="$(python - "$RUNNER_TEMP/job.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          print(d.get("state",""))
+          PY
+          )"
+            SCHEDULE="$(python - "$RUNNER_TEMP/job.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          print(d.get("schedule",""))
+          PY
+          )"
+            URI="$(python - "$RUNNER_TEMP/job.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          print(d.get("httpTarget",{}).get("uri",""))
+          PY
+          )"
+          else
+            EXISTS=false
+            STATE=MISSING
+            SCHEDULE=""
+            URI=""
+          fi
+
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.requestUrl:"/internal/aster-automation/tick"'             --project "$GCP_PROJECT_ID" --freshness=15m --limit=20 --order=desc --format=json > "$RUNNER_TEMP/http.json" || echo '[]' > "$RUNNER_TEMP/http.json"
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_COMPLETE"'             --project "$GCP_PROJECT_ID" --freshness=15m --limit=20 --order=desc --format=json > "$RUNNER_TEMP/ticks.json" || echo '[]' > "$RUNNER_TEMP/ticks.json"
+
+          SUMMARY="$(python - "$RUNNER_TEMP/http.json" "$RUNNER_TEMP/ticks.json" <<'PY'
+          import json,sys
+          h=json.load(open(sys.argv[1])); t=json.load(open(sys.argv[2]))
+          def ts(row): return row.get("timestamp") or row.get("receiveTimestamp") or ""
+          http200=[r for r in h if str((r.get("httpRequest") or {}).get("status"))=="200"]
+          print(f"httpCount={len(h)} http200={len(http200)} lastHttp={ts(h[0]) if h else ''} tickCount={len(t)} lastTick={ts(t[0]) if t else ''}")
+          PY
+          )"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="ASTER_SCHEDULER_VERIFY exists=$EXISTS state=$STATE schedule=$SCHEDULE uri=$URI $SUMMARY"
