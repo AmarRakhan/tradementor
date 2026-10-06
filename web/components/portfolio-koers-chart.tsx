@@ -743,8 +743,7 @@ export function PortfolioKoersChart({
         candleSeriesRef.current.update({time:candle.time as UTCTimestamp,value:adjusted});
       }else{
         candleSeriesRef.current.update({time:candle.time as UTCTimestamp,open:candle.open,high:candle.high,low:candle.low,close:candle.close});
-        const bbSource=latestContiguousPortfolioCandles(next,timeframe);
-        const bb=bbSource.length>=20?bollinger20x2(bbSource):{upper:[],middle:[],lower:[]};
+        const bb=bollinger20x2(next);
         bbRefs.current.upper?.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
         bbRefs.current.middle?.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
         bbRefs.current.lower?.setData(bb.lower.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
@@ -865,8 +864,10 @@ export function PortfolioKoersChart({
       if(Number.isFinite(currentPrice)&&currentPrice>0)series.createPriceLine({price:currentPrice,color:"#e4b84a",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:""});
     }
 
-    const bbSource=viewMode==="account"?latestContiguousPortfolioCandles(candles,timeframe):[];
-    const bb=viewMode==="account"&&bbSource.length>=20?bollinger20x2(bbSource):{upper:[],middle:[],lower:[]};
+    // Build 562: Bollinger is a display indicator over the confirmed candle
+    // observations. A timeline gap must not make the bands disappear entirely.
+    // No candles are fabricated; the indicator uses only persisted/observed OHLC.
+    const bb=viewMode==="account"?bollinger20x2(candles):{upper:[],middle:[],lower:[]};
     if(viewMode==="account"){
       const upper=chart.addSeries(LineSeries,{color:"rgba(35,190,255,.82)",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
       const middle=chart.addSeries(LineSeries,{color:"rgba(218,231,236,.44)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});

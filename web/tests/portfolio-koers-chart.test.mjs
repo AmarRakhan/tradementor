@@ -531,13 +531,12 @@ test("Build 559 matches approved Portfolio Koers startup/event reference",async(
 });
 
 
-test("Build 560 focuses startup on the live zone and never bridges a history gap with Bollinger",async()=>{
+test("Build 562 focuses startup on the live zone while keeping Bollinger visible from confirmed candles",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("latestContiguousPortfolioCandles"));
   assert.ok(component.includes("portfolioKoersFocusBars(candles,rawFocusVisibleBars"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(advisorZoneLadderRef.current,latestPrice)"));
-  assert.ok(component.includes("bbSource.length>=20?bollinger20x2(bbSource)"));
-  assert.equal(component.includes("const bb=viewMode===\"account\"?bollinger20x2(candles)"),false);
+  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
+  assert.ok(component.includes("No candles are fabricated"));
 });
 
 
