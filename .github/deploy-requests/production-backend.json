@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "3c73bb6a1b937c4ac00a45b133ab9553aa093537",
+  "sourceCommit": "fee6ada9873540d3091906c8653c67830c1b6963",
   "requestedBy": "AmarRakhan",
-  "requestId": "zone-zero-side-runtime-cap-sync-build539-20261006"
+  "requestId": "zone-prune-stale-short-seats-20261006-1638"
 }
