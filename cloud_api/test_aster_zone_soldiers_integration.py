@@ -527,3 +527,13 @@ def test_reducing_zone_side_to_zero_prunes_flat_stale_soldiers_but_keeps_open_tr
     assert "p1:short:base:1" not in pool["soldiers"]
     assert "p1:short:base:2" in pool["soldiers"]
     assert available_soldiers(state, "SHORT") == []
+
+
+def test_zone_runtime_has_absolute_zero_side_and_per_zone_cap_gate():
+    source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert '"reason": "ZONE_SHORT_DISABLED"' in source
+    assert '"reason": "ZONE_LONG_DISABLED"' in source
+    assert 'configured_zone_short = max(0, int(getattr(settings, "zone_base_short_soldiers", 0)))' in source
+    assert 'configured_zone_long = max(0, int(getattr(settings, "zone_base_long_soldiers", 0)))' in source
+    assert 'eligible_zone_long = eligible_zone_long[:max(0, configured_zone_long - active_zone_open_long)]' in source
+    assert 'eligible_zone_short = eligible_zone_short[:max(0, configured_zone_short - active_zone_open_short)]' in source
