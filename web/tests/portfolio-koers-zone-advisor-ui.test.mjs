@@ -60,7 +60,8 @@ test("Build 550 keeps visual zone price-derived and server zone operational only
   assert.ok(component.includes("const liveDisplayActiveZone=zoneContext?.activeIndex??confirmedActiveZone"));
   assert.ok(component.includes('const runtimeTruthCanonical=runtimeTruth.source==="SERVER_RUNTIME"'));
   assert.ok(component.includes('const runtimeZoneActive=runtimeTruthCanonical&&runtimeTruth.strategyMode==="ZONE_WARRIORS"'));
-  assert.ok(component.includes("const activeZone=liveDisplayActiveZone"));\n  assert.ok(component.includes("const operationalActiveZone=runtimeZoneActive?signedIntegerOrNull(runtimeTruth.activeZone):activeZone"));
+  assert.ok(component.includes("const activeZone=liveDisplayActiveZone"));
+  assert.ok(component.includes("const operationalActiveZone=runtimeZoneActive?signedIntegerOrNull(runtimeTruth.activeZone):activeZone"));
   assert.equal(component.includes("zoneSoldierEnabled&&zoneSoldierActiveZone!==null?zoneSoldierActiveZone:liveDisplayActiveZone"),false);
 });
 
