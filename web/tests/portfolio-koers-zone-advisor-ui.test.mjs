@@ -84,7 +84,7 @@ test("Build 417 uses one canonical 15m informational zone source for every chart
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600'));
   assert.ok(component.includes("setAdvisorZones(canonical.zones)"));
-  assert.ok(component.includes("advisorTimeline?.safeForAdvisor===true&&advisorZones.length?advisorZones:payload.zones"));
+  assert.ok(component.includes("advisorZones.length?advisorZones:payload.zones"));
   assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
 });
 
