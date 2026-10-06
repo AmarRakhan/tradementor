@@ -194,7 +194,7 @@ def test_initial_entry_open_has_canonical_admission_immediately_before_submit():
     index = source.index(marker)
     before = source[max(0, index - 9000):index]
     assert "evaluate_initial_entry(" in before
-    assert "require_allowed(admission)" in before
+    assert "decision_provider=initial_entry_decision_provider" in before
     assert "client.position_risk()" in before
     assert 'latest_doc=ref.get().to_dict() or {}' in before
 
