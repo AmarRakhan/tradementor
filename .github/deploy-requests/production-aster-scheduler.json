@@ -1,7 +1,7 @@
 {
   "action": "ensure-production-aster-scheduler",
   "confirmation": "ENSURE_PRODUCTION_ASTER_SCHEDULER",
-  "expectedBackendSourceCommit": "1df891031f1838462217199f70b07112667ffd78",
+  "expectedBackendSourceCommit": "72ddf1572ef8b25a64df975a0b8d595c003833d9",
   "requestedBy": "AmarRakhan",
-  "requestId": "reactivate-aster-scheduler-build534-20261006"
+  "requestId": "reactivate-aster-scheduler-current-live-20261006"
 }
