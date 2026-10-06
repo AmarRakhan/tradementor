@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 534: publish stale Aster status and ghost Zone Warriors seat repair.
-export const WEBAPP_BUILD_NUMBER = "534";
+// Build 535: recover Aster bot toggle from stale pending status.
+export const WEBAPP_BUILD_NUMBER = "535";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
