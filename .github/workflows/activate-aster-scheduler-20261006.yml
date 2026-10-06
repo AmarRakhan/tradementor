@@ -1,0 +1,131 @@
+name: Activate Aster Scheduler 20261006
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/activate-aster-scheduler-20261006.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: tradementor-production-aster-scheduler
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  SCHEDULER_JOB: tradementor-aster-automation-tick
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  activate:
+    if: github.actor == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify fixed production target and healthy backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+          test "$GCP_REGION" = "europe-west4"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-api"
+          test "$SCHEDULER_JOB" = "tradementor-aster-automation-tick"
+
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          python - "$RUNNER_TEMP/service.json" > "$RUNNER_TEMP/service.env" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1],encoding="utf-8"))
+          spec=d["spec"]["template"]["spec"]
+          env={x["name"]:x.get("value","") for x in spec["containers"][0].get("env",[])}
+          url=d["status"]["url"].rstrip("/")
+          runtime_sa=spec.get("serviceAccountName") or ""
+          audience=(env.get("MEXC_AUTOMATION_BASE_URL") or env.get("MEXC_INTERNAL_AUDIENCE") or url).rstrip("/")
+          assert url.startswith("https://")
+          assert runtime_sa.endswith(".gserviceaccount.com")
+          assert audience.startswith("https://")
+          assert env.get("ASTER_LIVE_EXECUTION_ENABLED")=="true"
+          assert env.get("ASTER_STRATEGY2_LIVE_ENABLED")=="true"
+          print("SERVICE_URL="+url)
+          print("RUNTIME_SERVICE_ACCOUNT="+runtime_sa)
+          print("INTERNAL_AUDIENCE="+audience)
+          PY
+          cat "$RUNNER_TEMP/service.env" >> "$GITHUB_ENV"
+          . "$RUNNER_TEMP/service.env"
+          curl --fail --silent --show-error --retry 6 --retry-delay 2 "$SERVICE_URL/health" > "$RUNNER_TEMP/health.json"
+          python - "$RUNNER_TEMP/health.json" >> "$GITHUB_ENV" <<'PY'
+          import json,sys
+          h=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert h.get("status")=="ready"
+          assert h.get("multiUser") is True
+          src=h.get("sourceCommit") or h.get("imageSourceCommit") or ""
+          assert src
+          print("LIVE_SOURCE_COMMIT="+src)
+          PY
+
+      - name: Create or normalize scheduler
+        shell: bash
+        run: |
+          set -euo pipefail
+          URI="$SERVICE_URL/internal/aster-automation/tick"
+          if gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/before.json" 2>/dev/null; then
+            gcloud scheduler jobs update http "$SCHEDULER_JOB"               --project "$GCP_PROJECT_ID"               --location "$GCP_REGION"               --schedule="* * * * *"               --time-zone="Etc/UTC"               --uri="$URI"               --http-method=POST               --attempt-deadline=30s               --oidc-service-account-email="$RUNTIME_SERVICE_ACCOUNT"               --oidc-token-audience="$INTERNAL_AUDIENCE"
+          else
+            gcloud scheduler jobs create http "$SCHEDULER_JOB"               --project "$GCP_PROJECT_ID"               --location "$GCP_REGION"               --schedule="* * * * *"               --time-zone="Etc/UTC"               --uri="$URI"               --http-method=POST               --attempt-deadline=30s               --oidc-service-account-email="$RUNTIME_SERVICE_ACCOUNT"               --oidc-token-audience="$INTERNAL_AUDIENCE"
+          fi
+          STATE="$(gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format='value(state)')"
+          if [ "$STATE" = "PAUSED" ]; then
+            gcloud scheduler jobs resume "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION"
+          fi
+
+      - name: Verify scheduler contract and natural tick
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud scheduler jobs describe "$SCHEDULER_JOB" --project "$GCP_PROJECT_ID" --location "$GCP_REGION" --format=json > "$RUNNER_TEMP/after.json"
+          python - "$RUNNER_TEMP/after.json" "$SERVICE_URL" "$RUNTIME_SERVICE_ACCOUNT" "$INTERNAL_AUDIENCE" <<'PY'
+          import json,sys
+          j=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert j.get("state")=="ENABLED"
+          assert j.get("schedule")=="* * * * *"
+          assert j.get("httpTarget",{}).get("uri")==sys.argv[2]+"/internal/aster-automation/tick"
+          assert j.get("httpTarget",{}).get("httpMethod")=="POST"
+          tok=j.get("httpTarget",{}).get("oidcToken",{})
+          assert tok.get("serviceAccountEmail")==sys.argv[3]
+          assert str(tok.get("audience","")).rstrip("/")==sys.argv[4].rstrip("/")
+          PY
+
+          OK=false
+          for i in 1 2 3 4 5 6 7 8; do
+            sleep 15
+            gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.requestUrl:"/internal/aster-automation/tick" AND httpRequest.status=200'               --project "$GCP_PROJECT_ID" --freshness=5m --limit=5 --order=desc --format=json > "$RUNNER_TEMP/ticks.json" || echo '[]' > "$RUNNER_TEMP/ticks.json"
+            if python - "$RUNNER_TEMP/ticks.json" <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding="utf-8"))
+          raise SystemExit(0 if isinstance(rows,list) and rows else 1)
+          PY
+            then OK=true; break; fi
+          done
+          test "$OK" = "true"
+
+      - name: Publish activation proof
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="ASTER_SCHEDULER_ACTIVATED state=ENABLED cadence=every-minute http200=true sourceCommit=$LIVE_SOURCE_COMMIT"
