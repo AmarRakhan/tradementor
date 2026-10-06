@@ -4,7 +4,8 @@ import fs from "node:fs";
 const maker=fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx",import.meta.url),"utf8");
 test("Multi BB live start remains explicit, one-tap and readiness-gated",()=>{
   assert.match(maker,/async function toggleLive/);
-  assert.match(maker,/status\.pending \|\| busy/);
+  assert.match(maker,/if \(status\.pending\)/);
+  assert.match(maker,/disabled=\{busy\}/);
   assert.match(maker,/if \(liveReady\) return action\("start"\)/);
   assert.match(maker,/return checkReadiness\(true\)/);
   assert.match(maker,/startWhenReady && Boolean\(result\.liveReady\)/);
