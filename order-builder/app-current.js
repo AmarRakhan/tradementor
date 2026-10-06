@@ -1863,6 +1863,24 @@
             item=(pkg?.items||[]).find(it=>it.code==='9X3V1UT#ABB')||null;
           }
 
+          // Werkplek compleet round-trip substitutie:
+          // als TOPdesk expliciet K270 noemt, vervangt die het standaard
+          // HP 455 toetsenbord (4R177AA) uit het pakket. De K270-regel
+          // blijft daarna als losse regel doorlopen zodat hij exact 1x
+          // per genoemd pakketblok wordt toegevoegd.
+          if(!item){
+            const explicitLoose=exactCatalogItem(childName);
+            const currentPackageName=normalizeSmartText(pkg?.name||'');
+            if(
+              currentPackageName==='werkplek compleet' &&
+              explicitLoose?.code==='920-003736-1'
+            ){
+              if(!currentPackage.intent.excludedCodes.includes('4R177AA')){
+                currentPackage.intent.excludedCodes.push('4R177AA');
+              }
+            }
+          }
+
           // Als de regel een bestaand artikel uit dit pakket benoemt, is hij
           // volledig door het pakket geconsumeerd. Hij mag daarna NOOIT nog
           // als los artikel worden toegevoegd.
