@@ -185,7 +185,7 @@ def test_build457_zone_activation_does_not_bypass_existing_bollinger_entry_check
     source = (ROOT / "aster_multi_bb_core.py").read_text(encoding="utf-8")
     candidate_guard = source.index("def candidate_bb_pass(candidate_side: str) -> bool:")
     candidate_check = source.index("require_bollinger_entry(", candidate_guard)
-    order = source.index("execute_leg_once(client, plan", candidate_check)
+    order = source.index("execute_approved_leg_once(", candidate_check)
     assert candidate_guard < candidate_check < order
     assert "WAITING_BOLLINGER_ENTRY" in source
 
@@ -326,9 +326,9 @@ def test_build425_zone_entries_keep_existing_bollinger_candidate_and_preorder_gu
     candidate_guard = source.index("def candidate_bb_pass(candidate_side: str) -> bool:")
     candidate_check = source.index("require_bollinger_entry(", candidate_guard)
     planned_soldier = source.index("planned_soldier = None", candidate_check)
-    preorder = source.index("def entry_before_submit(intent: Any) -> None:", planned_soldier)
+    preorder = source.index("def initial_entry_decision_provider() -> Any:", planned_soldier)
     preorder_check = source.index("require_bollinger_entry(", preorder)
-    order = source.index("execute_leg_once(client, plan", preorder_check)
+    order = source.index("execute_approved_leg_once(", preorder_check)
     assert candidate_guard < candidate_check < planned_soldier < preorder < preorder_check < order
 
 
