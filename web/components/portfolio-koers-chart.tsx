@@ -538,6 +538,16 @@ export function PortfolioKoersChart({
   useEffect(()=>{loadBrowserHistory()},[loadBrowserHistory,payload.snapshotAtMs]);
 
   useEffect(()=>{
+    if(!user?.uid)return;
+    try{
+      const key=`tradementor.portfolioZones.v1.${encodeURIComponent(user.uid)}`;
+      const raw=JSON.parse(window.localStorage.getItem(key)||"[]");
+      const cached=normalizePortfolioKoersPayload({timeframe:"15m",zones:Array.isArray(raw)?raw:[]}) as Payload;
+      if(cached.zones.length)setAdvisorZones((current)=>current.length?current:cached.zones);
+    }catch{/* a corrupt display cache must never block Portfolio Koers */}
+  },[user?.uid]);
+
+  useEffect(()=>{
     if(!commandCenterAvailable||!user?.uid){setSoldierActivity([]);return}
     try{
       const key=`tradementor.zoneSoldierActivity.v1.${encodeURIComponent(user.uid)}`;
@@ -584,8 +594,13 @@ export function PortfolioKoersChart({
       setAdvisorSeats(EMPTY_ADVISOR);
     }
     try{
-      const canonical=normalizePortfolioKoersPayload(await authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=320",{cache:"no-store"})) as Payload;
-      setAdvisorZones(canonical.zones);
+      const canonical=normalizePortfolioKoersPayload(await authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600",{cache:"no-store"})) as Payload;
+      if(canonical.zones.length){
+        setAdvisorZones(canonical.zones);
+        if(user?.uid){
+          try{window.localStorage.setItem(`tradementor.portfolioZones.v1.${encodeURIComponent(user.uid)}`,JSON.stringify(canonical.zones))}catch{/* display cache is best-effort only */}
+        }
+      }
       setAdvisorTimeline(portfolioKoersTimelineHealth(canonical.candles,"15m",Date.now(),14));
       setAdvisorMessage("");
     }catch(reason){
@@ -721,7 +736,10 @@ export function PortfolioKoersChart({
       syncOverlaysRef.current();
       if(previousTime===null||candle.time>previousTime){
         setHover(null);
-        requestAnimationFrame(()=>{try{chartRef.current?.timeScale().scrollToRealTime()}catch{/* disposed */}});
+        const viewportKey=`${viewMode}:${timeframe}`;
+        if(manualViewportRef.current[viewportKey]!==true){
+          requestAnimationFrame(()=>{try{chartRef.current?.timeScale().scrollToRealTime()}catch{/* disposed */}});
+        }
       }
     }catch{/* the next confirmed payload rebuilds a stale chart safely */}
   },[liveEquityText,timeframe,viewMode]);
@@ -734,7 +752,7 @@ export function PortfolioKoersChart({
   const recentChartGap=chartTimeline.gaps?.filter((gap:any)=>gap.beforeTime>=visibleTimelineStart).at(-1)??null;
   const currentZonePrice=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
   const confirmedActiveZone=useMemo(()=>portfolioZoneForPrice(payload.zones,currentZonePrice),[payload.zones,currentZonePrice]);
-  const advisorZoneSource=useMemo(()=>advisorTimeline?.safeForAdvisor===true&&advisorZones.length?advisorZones:payload.zones,[advisorTimeline?.safeForAdvisor,advisorZones,payload.zones]);
+  const advisorZoneSource=useMemo(()=>advisorZones.length?advisorZones:payload.zones,[advisorZones,payload.zones]);
   const freshChartZoneLadder=useMemo(()=>{
     if(!advisorZoneSource.length)return null;
     const base=derivePortfolioZoneLadder(advisorZoneSource);
