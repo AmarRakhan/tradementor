@@ -195,8 +195,10 @@ class MultiBbConfig:
         if self.entry_margin_usd <= 0 or self.entry_notional_usd <= 0 or self.dca_margin_usd <= 0: raise ValueError("Entry-bedrag en DCA-margin moeten positief zijn")
         if not 0 < self.exposure_refill_trigger_percent <= 100: raise ValueError("Exposure refill startdrempel moet tussen 0 en 100% liggen")
         if not 0 <= self.exposure_refill_release_percent < self.exposure_refill_trigger_percent: raise ValueError("Exposure refill stopdrempel moet lager zijn dan de startdrempel")
-        if not 1 <= self.zone_base_long_soldiers <= 100 or not 1 <= self.zone_base_short_soldiers <= 100:
-            raise ValueError("LONG/SHORT-stoelen per prijszone moeten tussen 1 en 100 liggen")
+        if not 0 <= self.zone_base_long_soldiers <= 100 or not 0 <= self.zone_base_short_soldiers <= 100:
+            raise ValueError("LONG/SHORT-stoelen per prijszone moeten tussen 0 en 100 liggen")
+        if self.zone_soldiers_enabled and self.zone_base_long_soldiers + self.zone_base_short_soldiers < 1:
+            raise ValueError("Zone Warriors vereist samen minimaal 1 LONG- of SHORT-stoel per prijszone")
         if not 0 <= self.zone_entry_growth_percent <= 20:
             raise ValueError("Zone-inzetgroei moet tussen 0% en 20% per zone liggen")
         if not 1.0 <= self.zone_entry_max_multiplier <= 3.0:

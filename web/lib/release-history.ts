@@ -26,13 +26,13 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Zone Warriors · 0 LONG/SHORT volledig ondersteund",
+  title: "Zone Warriors · 0 LONG/SHORT backend-contract hersteld",
   newItems: [
     "Zone Warriors accepteert nu in zowel de huidige als legacy configurator 0 LONG of 0 SHORT stoelen per zone.",
     "Een zijde op 0 blijft ook in runtime-status en flat-account weergave exact 0.",
   ],
   problems: [
-    "Build 536 wijzigde alleen Botconfigurator V3; de nog bereikbare V2-validatie dwong LONG/SHORT per zone nog steeds naar minimaal 1.",
+    "De browser stond 0 aan één zijde toe, maar de centrale MultiBbConfig backend-validatie eiste nog steeds minimaal 1 per zijde.",
     "De backend flat-status gebruikte bovendien `or 3`, waardoor een opgeslagen 0 visueel weer als 3 kon verschijnen.",
   ],
   causes: [
@@ -40,7 +40,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een truthy fallback in de backend maakte geen onderscheid tussen ontbrekende waarde en de geldige waarde 0.",
   ],
   fixes: [
-    "V2 en V3 accepteren per zijde 0 t/m 100, met als enige ondergrens dat LONG + SHORT samen minimaal 1 is.",
+    "Frontend én centrale backendconfig accepteren per zijde 0 t/m 100, met als enige ondergrens dat LONG + SHORT samen minimaal 1 is.",
     "Capaciteitsberekeningen mogen nu ook 0 capaciteit aan één zijde opleveren.",
     "Backend flat-status behoudt expliciete 0-waarden in plaats van ze naar 3 te vervangen.",
     "Bestaande posities, DCA, TP, hedge- en orderlogica blijven ongewijzigd.",
@@ -52,7 +52,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   technicalDetails: [
     "Frontend: web/components/aster-strategy2-maker.tsx.",
-    "Release-identiteit: Webapp V46 build 537.",
+    "Release-identiteit: Webapp V46 build 538.",
   ],
   confidence: "confirmed",
 };

@@ -450,3 +450,52 @@ def test_zone_warriors_pre_order_refresh_blocks_race_past_global_account_cap():
     assert result["accountRemainingCapacity"] == 0
     assert result["scannerDiagnostics"]["LONG"]["availableCapacity"] == 0
     assert result["scannerDiagnostics"]["SHORT"]["availableCapacity"] == 0
+
+
+def test_zone_soldier_settings_allow_zero_on_one_side():
+    long_only = MultiBbConfig.from_mapping({
+        "engine": "multi_bb_v1",
+        "universeTopN": 30,
+        "maximumPositions": 10,
+        "longSlots": 10,
+        "shortSlots": 0,
+        "minimumLeverage": 20,
+        "zoneSoldiersEnabled": True,
+        "zoneSoldiersOptInVersion": 1,
+        "zoneBaseLongSoldiers": 2,
+        "zoneBaseShortSoldiers": 0,
+    })
+    assert long_only.zone_base_long_soldiers == 2
+    assert long_only.zone_base_short_soldiers == 0
+
+    short_only = MultiBbConfig.from_mapping({
+        "engine": "multi_bb_v1",
+        "universeTopN": 30,
+        "maximumPositions": 10,
+        "longSlots": 0,
+        "shortSlots": 10,
+        "minimumLeverage": 20,
+        "zoneSoldiersEnabled": True,
+        "zoneSoldiersOptInVersion": 1,
+        "zoneBaseLongSoldiers": 0,
+        "zoneBaseShortSoldiers": 2,
+    })
+    assert short_only.zone_base_long_soldiers == 0
+    assert short_only.zone_base_short_soldiers == 2
+
+
+def test_zone_soldier_settings_reject_zero_on_both_sides():
+    import pytest
+    with pytest.raises(ValueError, match="samen minimaal 1"):
+        MultiBbConfig.from_mapping({
+            "engine": "multi_bb_v1",
+            "universeTopN": 30,
+            "maximumPositions": 10,
+            "longSlots": 10,
+            "shortSlots": 0,
+            "minimumLeverage": 20,
+            "zoneSoldiersEnabled": True,
+            "zoneSoldiersOptInVersion": 1,
+            "zoneBaseLongSoldiers": 0,
+            "zoneBaseShortSoldiers": 0,
+        })
