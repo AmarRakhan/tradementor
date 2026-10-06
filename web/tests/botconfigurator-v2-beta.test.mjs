@@ -110,3 +110,11 @@ test("owner release center remains separate and never auto-publishes STABLE", ()
   assert.match(v3, /Vrijgeven/);
   assert.match(v3, /Terug naar BETA/);
 });
+
+
+test("allows zero seats on exactly one Zone Warriors side", () => {
+  assert.match(v2, /const zoneLongSeats = Math\.max\(0,/);
+  assert.match(v2, /const zoneShortSeats = Math\.max\(0,/);
+  assert.match(v2, /zoneLongSeats \+ zoneShortSeats < 1/);
+  assert.match(v2, /tussen 0 en 100 liggen; samen minimaal 1/);
+});
