@@ -13,7 +13,7 @@ for (const width of widths) {
   const overview = page.locator(".v31-current");
   await overview.waitFor({ state: "visible" });
   assert.match(await overview.innerText(), /Huidige instellingen/);
-  assert.match(await overview.innerText(), /Zone Warriors/);
+  assert.match(await overview.innerText(), /AsterBot · Prijszone-stoelen aan/);
   assert.match(await overview.innerText(), /3L \+ 3S per zone · max 130/);
   assert.match(await overview.innerText(), /LONG \$0,40 · SHORT \$0,30/);
   let overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
@@ -27,7 +27,7 @@ for (const width of widths) {
   assert.match(await quick.innerText(), /Instapbedrag/);
   assert.match(await quick.innerText(), /DCA-bedrag/);
   assert.match(await quick.innerText(), /Take profit/);
-  assert.match(await quick.innerText(), /Kan hier niet worden gewijzigd/);
+  assert.match(await quick.innerText(), /Prijszone-stoelen wijzig je in de volledige configurator/);
   overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 0, width + "px quick-edit horizontal overflow: " + overflow);
 
