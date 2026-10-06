@@ -23,6 +23,7 @@ class ActionType(str, Enum):
     INITIAL_ENTRY = "INITIAL_ENTRY"
     DCA_ADD = "DCA_ADD"
     HEDGE_OPEN = "HEDGE_OPEN"
+    HEDGE_CLOSE = "HEDGE_CLOSE"
     RECOVERY_OPEN = "RECOVERY_OPEN"
     CLOSE_TP = "CLOSE_TP"
     CLOSE_SL = "CLOSE_SL"
@@ -391,7 +392,7 @@ def evaluate_position_action(policy: AsterBotPolicy, context: PositionActionCont
 
     if context.action_type in {
         ActionType.CLOSE_SL, ActionType.CLOSE_MANUAL,
-        ActionType.HEDGE_OPEN, ActionType.RECOVERY_OPEN,
+        ActionType.HEDGE_OPEN, ActionType.HEDGE_CLOSE, ActionType.RECOVERY_OPEN,
     }:
         return result(DecisionStatus.ALLOW, "CURRENT_ACTION_POLICY_PASSED")
 
