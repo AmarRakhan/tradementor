@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 549: Portfolio Koers price zones/support-resistance are always-visible chart fundamentals.
+// Build 549: Portfolio Koers price zones/support-resistance are always-visible chart fundamentals; release bundle verified.
 export const WEBAPP_BUILD_NUMBER = "549";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
