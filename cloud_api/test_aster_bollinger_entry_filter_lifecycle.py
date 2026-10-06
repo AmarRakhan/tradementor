@@ -285,7 +285,7 @@ def test_pre_order_recheck_rejects_candidate_that_moved_back_inside_band(monkeyp
         submitted.append(symbol)
         return {"result": {"avgPrice": "100", "executedQty": "1"}}
 
-    monkeypatch.setattr(core, "execute_leg_once", fake_execute)
+    monkeypatch.setattr(core, "execute_approved_leg_once", fake_execute)
     result = _run(market, _cfg(maximum=1, longs=1, shorts=0, enabled=True), dry_run=False)
     assert submitted == []
     assert any(a.get("kind") == "ENTRY_SKIP" and a.get("stage") == "pre_order" for a in result["actions"])
