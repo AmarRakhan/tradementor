@@ -57,10 +57,11 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   confidence: "confirmed",
 };
 
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [  {
-  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
-  version: WEBAPP_VERSION,
-  build: WEBAPP_BUILD_NUMBER,
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+  id: "v46-build-529-portfolio-cycle-navigation",
+  version: "46",
+  build: "529",
   releasedAt: "2026-10-06",
   title: "Portfolio Cyclus · instellingen openen hersteld",
   newItems: [
@@ -89,7 +90,7 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [  {
     "Release-identiteit: Webapp V46 build 529.",
   ],
   confidence: "confirmed",
-};
+  },
 
   {
     id: "v46-build-527-portfolio-tail-restore",
