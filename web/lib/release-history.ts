@@ -55,7 +55,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Frontend: web/components/portfolio-koers-chart.tsx.",
     "Regression: web/tests/portfolio-koers-chart.test.mjs.",
     "Release-identiteit: Webapp V46 build 550.",
-    "Deploy-contract: app-versie, chartcontract en regressietests zijn samen gebundeld voor de canonieke webrelease."
+    "Deploy-contract: app-versie, chartcontract en regressietests zijn samen gebundeld; testsyntax is finaal gevalideerd."
   ],
   confidence: "confirmed",
 };

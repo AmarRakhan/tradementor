@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 550: always-visible Portfolio Koers price zones with aligned regression and deploy contract.
+// Build 550: always-visible Portfolio Koers price zones; final regression syntax aligned.
 export const WEBAPP_BUILD_NUMBER = "550";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 

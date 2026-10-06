@@ -438,7 +438,8 @@ test("Build 550 separates always-visible chart zone from operational trading zon
   assert.match(component,/const runtimeTruth=record\(strategy2\.runtimeTruth\)/);
   assert.match(component,/runtimeTruth\.source==="SERVER_RUNTIME"/);
   assert.match(component,/runtimeTruth\.strategyMode==="ZONE_WARRIORS"/);
-  assert.match(component,/const activeZone=liveDisplayActiveZone/);\n  assert.match(component,/const operationalActiveZone=runtimeZoneActive\?signedIntegerOrNull\(runtimeTruth\.activeZone\):activeZone/);
+  assert.match(component,/const activeZone=liveDisplayActiveZone/);
+  assert.match(component,/const operationalActiveZone=runtimeZoneActive\?signedIntegerOrNull\(runtimeTruth\.activeZone\):activeZone/);
   assert.match(component,/onActiveZoneChange\?\.\(activeZone\)/);
   assert.match(component,/runtimeTruth\.zoneSafeForNewEntries===true/);
 });

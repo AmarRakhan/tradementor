@@ -11,7 +11,8 @@ test("Build 550 keeps Portfolio Koers visual zone synced to Snapshot while runti
 
   assert.match(chart, /onActiveZoneChange\?:\(zone:number\|null\)=>void/);
   assert.match(chart, /const liveDisplayActiveZone=zoneContext\?\.activeIndex\?\?confirmedActiveZone/);
-  assert.match(chart, /const activeZone=liveDisplayActiveZone/);\n  assert.match(chart, /const operationalActiveZone=runtimeZoneActive\?signedIntegerOrNull\(runtimeTruth\.activeZone\):activeZone/);
+  assert.match(chart, /const activeZone=liveDisplayActiveZone/);
+  assert.match(chart, /const operationalActiveZone=runtimeZoneActive\?signedIntegerOrNull\(runtimeTruth\.activeZone\):activeZone/);
   assert.match(chart, /onActiveZoneChange\?\.\(activeZone\)/);
 
   assert.match(snapshot, /const \[liveActiveZone, setLiveActiveZone\] = useState<number \| null>\(null\)/);
