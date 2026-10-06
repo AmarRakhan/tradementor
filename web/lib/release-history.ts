@@ -58,6 +58,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een lege of tijdelijk onveilige advisor-timeline wist de laatst bevestigde visuele zonebasis niet meer.",
     "De 15m zone-history call is verruimd van 320 naar 600 candles.",
     "De stale regressietests zijn op het nieuwe 600-candle contract uitgelijnd.",
+    "Historische source-string regressieguards zijn uitgelijnd op de goedgekeurde Build 559 presentatie: zwarte grid, compactere startzoom, verborgen history-overlay en ruimere confirmed-event selectie.",
     "De canonical deploy-gate is in dezelfde releasecommit uitgelijnd zodat de fix daadwerkelijk gepubliceerd kan worden.",
     "De stale chart regression assertions zijn aangepast aan de nieuwe browser-side fallback zodat deployment niet meer door oude broncodeverwachtingen wordt geblokkeerd.",
     "Als de backend tijdelijk zones=[] levert, berekent de webapp display-only dezelfde bevestigde swing/SR/ATR-zonebasis uit de ontvangen 15m-candles en tekent daarmee direct de volgende-zone lijnen.",

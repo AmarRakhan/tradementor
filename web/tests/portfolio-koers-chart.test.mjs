@@ -159,8 +159,8 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(component.includes("layoutPortfolioKoersMarkers"));
   assert.ok(component.includes("getVisibleLogicalRange()"));
   assert.ok(component.includes("visibleMarkerRows"));
-  assert.ok(component.includes("selectPortfolioKoersReferenceCandidates(candidates,{tp:3,long:2,short:2,cashflow:1,other:1})"));
-  assert.ok(component.includes("safetyCap:9"));
+  assert.ok(component.includes("selectPortfolioKoersReferenceCandidates(candidates,{tp:4,long:4,short:4,cashflow:1,other:1})"));
+  assert.ok(component.includes("safetyCap:12"));
   assert.ok(component.includes("PRICE_AXIS_WIDTH=48"));
   assert.ok(component.includes("attributionLogo:false"));
   assert.equal(/authenticatedRequest\([^)]*method:\s*["']POST/.test(component),false);
@@ -230,7 +230,7 @@ test("Portfolio Koers follows a newly opened live candle and keeps gappy 15m his
   assert.ok(component.includes("Portfolio Koers blijft informatief"));
   assert.equal(component.includes("applySoldierInstruction"),false);
   assert.equal(component.includes('method:"PUT"'),false);
-  assert.ok(component.includes("portfolio-koers-gap-warning"));
+  assert.equal(component.includes('className="portfolio-koers-gap-warning"'),false);
 });
 
 test("Portfolio Koers always opens from the approved 15m default instead of restoring a stale saved timeframe",async()=>{
@@ -296,12 +296,12 @@ test("Build 413 initial focus drops old distant history while preserving recent 
 test("Build 479 keeps the reference-style longer timeline while visible data drives account autoscale",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   for(const pair of [
-    '"1m":{visibleBars:32',
-    '"5m":{visibleBars:31',
-    '"15m":{visibleBars:30',
-    '"1u":{visibleBars:28',
-    '"4u":{visibleBars:26',
-    '"24u":{visibleBars:24',
+    '"1m":{visibleBars:24',
+    '"5m":{visibleBars:24',
+    '"15m":{visibleBars:23',
+    '"1u":{visibleBars:22',
+    '"4u":{visibleBars:20',
+    '"24u":{visibleBars:18',
   ]) assert.ok(component.includes(pair),pair);
   assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
   assert.equal(component.includes('viewMode==="account"?portfolioKoersFocusBars(candles,view.visibleBars'),false);
@@ -333,14 +333,14 @@ test("Build 479 mobile geometry keeps UI 4.1 styling with the requested compact 
 test("Build 474 keeps the reference marker layer calm without deleting underlying events",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("selectPortfolioKoersReferenceCandidates"));
-  assert.ok(component.includes("{tp:3,long:2,short:2,cashflow:1,other:1}"));
+  assert.ok(component.includes("{tp:4,long:4,short:4,cashflow:1,other:1}"));
   assert.ok(component.includes("markerRowsRef.current.filter((row)=>row.time===time)"));
   assert.ok(component.includes("openEventCluster(label)"));
 });
 
 test("Build 446 keeps calm price-axis typography without a colored last-value badge",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes('textColor:"#9fb0ba",fontSize:10'));
+  assert.ok(component.includes('textColor:"#aeb6bb",fontSize:10'));
   assert.ok(component.includes("lastValueVisible:false"));
   assert.ok(component.includes("priceLineVisible:false"));
   assert.ok(component.includes("scaleMargins:{top:.06,bottom:.06}"));
@@ -355,7 +355,7 @@ test("Build 474 applies reference density only after filtering to the actual vis
   assert.ok(component.includes("candleIndex>=Math.floor(visibleRange.from)-1"));
   assert.ok(component.includes("candleIndex<=Math.ceil(visibleRange.to)+1"));
   assert.ok(densityIndex>rangeIndex);
-  assert.ok(component.includes("{tp:3,long:2,short:2,cashflow:1,other:1}"));
+  assert.ok(component.includes("{tp:4,long:4,short:4,cashflow:1,other:1}"));
 });
 
 test("Build 422 preserves event-to-candle identity while scrolling and adds no fetch on viewport change",async()=>{
@@ -414,7 +414,7 @@ test("Build 435 masks the cached startup chart until the first canonical Account
   assert.ok(component.includes("finally{setLoading(false);setInitialChartReady(true)}"));
   assert.ok(component.includes("!initialChartReady?<div className=\"portfolio-koers-state portfolio-koers-initial-state\""));
   assert.ok(component.includes("loading&&initialChartReady&&!baseCandles.length"));
-  assert.ok(css.includes(".portfolio-koers-state.portfolio-koers-initial-state{z-index:12;background:#03131b}"));
+  assert.ok(css.includes(".portfolio-koers-state.portfolio-koers-initial-state{z-index:12;background:#000}"));
 });
 
 test("Build 437 moves Zone-Soldaten status off the chart and into an opaque dedicated screen",async()=>{

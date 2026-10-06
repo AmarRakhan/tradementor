@@ -153,8 +153,8 @@ test("Build 417 Portfolio Koers contains no functional soldier write path",async
 
 test("Build 417 keeps one quiet chart grid for informational and zone-strategy modes",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes('vertLines:{color:"rgba(75,133,160,.035)"}'));
-  assert.ok(component.includes('horzLines:{color:"rgba(75,133,160,.045)"}'));
+  assert.ok(component.includes('vertLines:{color:"rgba(255,255,255,.028)"}'));
+  assert.ok(component.includes('horzLines:{color:"rgba(255,255,255,.04)"}'));
   assert.equal(component.includes('advisorEnabled?"rgba(75,133,160'),false);
 });
 
