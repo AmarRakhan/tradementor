@@ -26,10 +26,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "AsterBot Unified Engine · prijszone-stoelen geïntegreerd",
+  title: "AsterBot · klassieke instellingen + prijszone-stoelen",
   newItems: [
-    "Botconfigurator 3.0 toont voortaan één AsterBot in plaats van Classic DCA versus Zone Warriors.",
-    "Prijszone-stoelen is een optionele module binnen dezelfde AsterBot-configuratie.",
+    "Botinstellingen gebruikt weer één klassieke AsterBot-weergave; de tijdelijke keuze tussen Oude instellingen en Nieuwe configurator is verwijderd.",
+    "Prijszone-stoelen is als gewone optie toegevoegd aan die bestaande AsterBot-instellingen.",
     "De webconfig schrijft naast tijdelijke legacy aliases ook het canonieke priceZoneSeats-object.",
   ],
   problems: [
@@ -41,7 +41,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "UI-termen en runtimevelden maakten van prijszonecapaciteit een strategie-identiteit in plaats van een module.",
   ],
   fixes: [
-    "Eén AsterBot-identiteit in Botconfigurator 3.0.",
+    "Eén live AsterBot-instellingenpagina: de klassieke configurator is opnieuw de enige route.",
     "Prijszone-stoelen aan/uit blijft dezelfde bestaande instelling gebruiken, maar wordt nu ook canoniek als priceZoneSeats opgeslagen.",
     "Bestaande accounts zonder prijszone-stoelen behouden hun normale AsterBot-gedrag.",
   ],
@@ -51,8 +51,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De backend unified-policy/admission-laag wordt afzonderlijk door backend-CI bewaakt.",
   ],
   technicalDetails: [
-    "Frontend: web/components/aster-bot-configurator-v3.tsx.",
-    "Release-identiteit: Webapp V46 build 543.",
+    "Frontend: web/components/aster-strategy2-entry.tsx + web/components/aster-strategy2-maker.tsx.",
+    "Release-identiteit: Webapp V46 build 544.",
   ],
   confidence: "confirmed",
 };
