@@ -26,41 +26,51 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Portfolio Koers · prijsniveaus altijd zichtbaar",
+  title: "Portfolio Koers · Build 512 zones hersteld",
   newItems: [
-    "Support- en resistance-niveaus zijn voortaan een basisfunctie van Portfolio Koers en staan los van Prijszone-stoelen.",
-    "De actuele visuele prijszone wordt altijd uit portfolio-equity en de bevestigde 15m S/R-zonebasis bepaald.",
-    "Bij een tijdelijke fout in de 15m-zonefeed blijven de laatst bevestigde prijsniveaus zichtbaar in plaats van dat de overlay leeg wordt.",
+    "De zichtbare R1–R4 en S1–S4 support/resistance-ladder is teruggezet zoals in de Build 512-weergave.",
+    "De gele actieve-zoneband met label 'Zone X actief' is opnieuw zichtbaar op Accountwaarde.",
+    "R/S-labels links op de horizontale niveaus zijn opnieuw zichtbaar.",
   ],
   problems: [
-    "De chart koppelde de visuele actieve zone deels aan de operationele Zone Warriors/runtime-status.",
-    "Een tijdelijke lege of mislukte zone-refresh kon support/resistance in één keer van de grafiek verwijderen.",
+    "Latere chart-cleanup had de actieve-zoneband expliciet verborgen met display:none en de R/S-labels eveneens verborgen.",
+    "De oorspronkelijke genummerde R/S-ladder was vervangen door generieke grenslevels zonder R1/R2/R3/R4 en S1/S2/S3/S4 presentatie.",
   ],
   causes: [
-    "Handelssturing en chartpresentatie deelden dezelfde actieve-zonevariabele.",
-    "De frontend wist de bevestigde advisor-zones bij een tijdelijke fetchfout in plaats van de laatste geldige basis te behouden.",
+    "Presentatielogica uit de Build 512 chart was tijdens latere chart-refactors versoberd terwijl de onderliggende zone-engine bleef bestaan.",
   ],
   fixes: [
-    "Visuele prijszone en operationele tradingzone zijn gescheiden.",
-    "Portfolio Koers gebruikt een eigen chart-zone-ladder en bewaart de laatst bevestigde geldige ladder als fail-safe.",
-    "Prijszone-stoelen AAN/UIT beïnvloedt niet langer of support/resistance en de huidige prijszone zichtbaar zijn.",
-    "De command center-runtime kan nog steeds zijn operationele zone gebruiken zonder de chart te verplaatsen of leeg te maken.",
+    "De Build 512 R1–R4/S1–S4 mapping is teruggezet op de huidige zone-ladder.",
+    "activeZone wordt weer als zichtbare band gerenderd.",
+    "CSS-verbergregels voor de zoneband en structure-level labels zijn verwijderd.",
+    "De huidige AsterBot-engine, prijszone-stoelen, DCA, TP en hedge-logica zijn niet teruggerold.",
   ],
   now: [
-    "Ook gebruikers die niet per prijszone instappen zien de prijsniveaus en hun actuele zone op de chart.",
-    "Een tijdelijke zone-API-storing wist geen reeds bevestigde S/R-overlay meer.",
-    "Tradinglogica, entries, DCA, TP en bestaande posities zijn door deze wijziging niet aangepast.",
+    "Portfolio Koers → Accountwaarde hoort weer dezelfde zonepresentatie te tonen als de referentiefoto van Build 512.",
+    "Prijszone-stoelen AAN/UIT blijft losstaan van het zichtbaar zijn van deze chartniveaus.",
   ],
   technicalDetails: [
-    "Frontend: web/components/portfolio-koers-chart.tsx.",
+    "Frontend: web/components/portfolio-koers-chart.tsx + web/app/portfolio-koers-chart.css.",
     "Regression: web/tests/portfolio-koers-chart.test.mjs.",
-    "Release-identiteit: Webapp V46 build 550.",
-    "Deploy-contract: app-versie, chartcontract en regressietests zijn samen gebundeld; testsyntax is finaal gevalideerd; advisor-testsyntax hersteld."
+    "Release-identiteit: Webapp V46 build 551."
   ],
   confidence: "confirmed",
 };
 
 const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-550-always-visible-price-zones",
+    version: "46",
+    build: "550",
+    releasedAt: "2026-10-06",
+    title: "Portfolio Koers · zonebasis ontkoppeld van tradingmodule",
+    newItems: ["Visuele chartzone en operationele tradingzone zijn gescheiden."],
+    problems: ["De fix herstelde de data/fallback-koppeling maar nog niet alle Build 512-presentatie."],
+    causes: ["R/S-labels en actieve-zoneband waren in latere CSS/chartcode expliciet verborgen of vervangen."],
+    fixes: ["Opgevolgd door build 551 met volledige Build 512-presentatieherstel."],
+    now: ["Opgevolgd door build 551."],
+    confidence: "confirmed",
+  },
   {
     id: "v46-build-548-price-zone-seat-controls",
     version: "46",

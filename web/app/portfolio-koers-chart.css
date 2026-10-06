@@ -807,7 +807,6 @@
   background:linear-gradient(180deg,#031315 0%,#031012 100%);
 }
 .portfolio-koers-ui41 .portfolio-koers-structure-zone{
-  display:none!important;
   left:0;
   right:48px;
   min-height:18px;
@@ -825,9 +824,8 @@
   background:linear-gradient(180deg,rgba(53,40,5,.94),rgba(18,16,6,.94));
   font-size:8.5px;
 }
-.portfolio-koers-ui41 .portfolio-koers-structure-level{right:48px;border-top-width:1px;opacity:.82}
+.portfolio-koers-ui41 .portfolio-koers-structure-level{right:48px;border-top-width:1px}
 .portfolio-koers-ui41 .portfolio-koers-structure-level>span{
-  display:none!important;
   left:2px;
   min-width:28px;
   padding:4px 5px;

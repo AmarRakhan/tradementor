@@ -910,14 +910,24 @@ export function PortfolioKoersChart({
         const activeRow=rows.find((row:any)=>Number(row.index)===Number(activeIndex))??null;
         const activeLower=Number.isFinite(Number(activeRow?.lower))?Number(activeRow.lower):marketContext?.lowerBoundary??null;
         const activeUpper=Number.isFinite(Number(activeRow?.upper))?Number(activeRow.upper):marketContext?.upperBoundary??null;
-        const boundaryPrices=Array.from(new Set(rows.flatMap((row:any)=>[Number(row.lower),Number(row.upper)]).filter((price:any)=>Number.isFinite(price)&&price>0))) as number[];
-        const levels=boundaryPrices.flatMap((price)=>{
-          const coordinate=series.priceToCoordinate(price);
+        const resistanceLevels=Array.from({length:4},(_,offset)=>{
+          if(offset===0)return {label:"R1",price:activeUpper,side:"resistance" as const};
+          const row=rows.find((item:any)=>Number(item.index)===Number(activeIndex)+offset);
+          return {label:`R${offset+1}`,price:Number.isFinite(Number(row?.upper))?Number(row.upper):null,side:"resistance" as const};
+        });
+        const supportLevels=Array.from({length:4},(_,offset)=>{
+          if(offset===0)return {label:"S1",price:activeLower,side:"support" as const};
+          const row=rows.find((item:any)=>Number(item.index)===Number(activeIndex)-offset);
+          return {label:`S${offset+1}`,price:Number.isFinite(Number(row?.lower))?Number(row.lower):null,side:"support" as const};
+        });
+        const rawLevels=[...resistanceLevels,...supportLevels];
+        const levels=rawLevels.flatMap((level)=>{
+          if(!Number.isFinite(Number(level.price))||Number(level.price)<=0)return [];
+          const coordinate=series.priceToCoordinate(Number(level.price));
           if(coordinate===null)return [];
           const top=Number(coordinate);
           if(top<0||top>height)return [];
-          const side:StructureLevelLayout["side"]=structurePrice!==null&&price>Number(structurePrice)?"resistance":"support";
-          return [{label:`level-${price.toFixed(8)}`,price,top,side}] as StructureLevelLayout[];
+          return [{label:level.label,price:Number(level.price),top,side:level.side}] as StructureLevelLayout[];
         });
         const activeUpperY=Number.isFinite(Number(activeUpper))?series.priceToCoordinate(Number(activeUpper)):null;
         const activeLowerY=Number.isFinite(Number(activeLower))?series.priceToCoordinate(Number(activeLower)):null;
@@ -939,7 +949,7 @@ export function PortfolioKoersChart({
         const zoneLabel=Number.isInteger(Number(activeIndex))?`Zone ${Number(activeIndex)} actief`:"Zone actief";
         structureDraft={
           levels,
-          activeZone:null,
+          activeZone:activeTop!==null&&activeBottom!==null?{top:activeTop,height:Math.max(1,activeBottom-activeTop),label:zoneLabel}:null,
           roleFlip:roleX!==null&&roleY!==null&&Number(roleX)>70&&Number(roleX)<width-70?{left:Number(roleX),top:Number(roleY)}:null,
           newHigh:highX!==null&&highY!==null?{left:Math.max(92,Math.min(width-86,Number(highX))),top:Math.max(22,Number(highY)-28)}:null,
           breakout:null,

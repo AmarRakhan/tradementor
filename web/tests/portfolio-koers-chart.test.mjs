@@ -470,3 +470,21 @@ test("Build 549 keeps chart price levels visible when price-zone entries are dis
   assert.match(component,/if\(viewMode==="account"&&zoneLadder\?\.zones\?\.length\)/);
   assert.match(component,/portfolio-koers-structure-level/);
 });
+
+
+test("Build 551 restores the Build 512 R1-R4 S1-S4 structure and active-zone band",async()=>{
+  const [component,css]=await Promise.all([
+    readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
+    readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8"),
+  ]);
+  assert.ok(component.includes('label:"R1"'));
+  assert.ok(component.includes('label:`R${offset+1}`'));
+  assert.ok(component.includes('label:"S1"'));
+  assert.ok(component.includes('label:`S${offset+1}`'));
+  assert.ok(component.includes("const rawLevels=[...resistanceLevels,...supportLevels]"));
+  assert.ok(component.includes("activeZone:activeTop!==null&&activeBottom!==null"));
+  assert.ok(component.includes("label:zoneLabel"));
+  assert.doesNotMatch(css,/\.portfolio-koers-ui41 \.portfolio-koers-structure-zone\{\s*display:none!important/);
+  assert.doesNotMatch(css,/\.portfolio-koers-ui41 \.portfolio-koers-structure-level>span\{\s*display:none!important/);
+  assert.match(css,/\.portfolio-koers-ui41 \.portfolio-koers-structure-level\{right:48px;border-top-width:1px\}/);
+});
