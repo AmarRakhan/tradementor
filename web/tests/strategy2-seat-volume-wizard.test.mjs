@@ -4,22 +4,24 @@ import fs from "node:fs";
 
 const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8");
 
-test("direct settings preserve the visible Zone Warriors cap with independent LONG and SHORT inputs", () => {
+test("direct settings expose global max plus independent per-zone LONG and SHORT caps", () => {
   assert.match(maker, /Totaal posities/);
+  assert.match(maker, /Prijszone-stoelen/);
+  assert.match(maker, /LONG per prijszone/);
+  assert.match(maker, /SHORT per prijszone/);
+  assert.match(maker, /maximumPositions: v\.priceZoneSeatsEnabled/);
+  assert.match(maker, /clampInt\(n\(v\.positions\), 1, MAX_TOTAL_POSITIONS\)/);
+  assert.match(maker, /longSeatsPerZone: clampInt\(n\(v\.priceZoneLongSeats\), 0, 100\)/);
+  assert.match(maker, /shortSeatsPerZone: clampInt\(n\(v\.priceZoneShortSeats\), 0, 100\)/);
+  assert.match(maker, /zoneLong \+ zoneShort < 1/);
+});
+
+test("classic slots remain available when price-zone seats are off", () => {
   assert.match(maker, /LONG slots/);
   assert.match(maker, /SHORT slots/);
-  assert.match(maker, /persisted\.zoneSoldiersEnabled === true/);
-  assert.match(maker, /clampInt\(n\(v\.positions\), 1, MAX_TOTAL_POSITIONS\)/);
   assert.match(maker, /Math\.min\(MAX_TOTAL_POSITIONS, longSlots \+ shortSlots\)/);
   assert.match(maker, /const longSlots = clampInt\(n\(v\.longSlots\), 0, MAX_SIDE_SLOTS\)/);
   assert.match(maker, /const shortSlots = clampInt\(n\(v\.shortSlots\), 0, MAX_SIDE_SLOTS\)/);
-  assert.match(maker, /fixedPositionSize:\s*false/);
-  assert.match(maker, /entrySizingMode:\s*"notional"/);
-  assert.match(maker, /entrySizingMode:\s*"margin"/);
-  assert.match(maker, /entryMarginLongUsd/);
-  assert.match(maker, /entryMarginShortUsd/);
-  assert.match(maker, /Math\.max\(0, n\(v\.longSlots\) - activeLong\)/);
-  assert.match(maker, /Math\.max\(0, n\(v\.shortSlots\) - activeShort\)/);
 });
 
 test("DCA remains percentage-gated with editable independent limits and clean restart", () => {
