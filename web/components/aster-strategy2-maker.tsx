@@ -25,6 +25,7 @@ type TierPreview = {
 };
 type Values = {
   name: string; universe: string; positions: string; longSlots: string; shortSlots: string; minLeverage: string; maxLeverage: string;
+  priceZoneSeatsEnabled: boolean; priceZoneLongSeats: string; priceZoneShortSeats: string;
   stopLossEnabled: boolean; stopLossMode: StopLossMode; stopLossLong: string; stopLossShort: string;
   fixedPositionSize: boolean;
   entryMarginLong: string; entryMarginShort: string; entryNotionalLong: string; entryNotionalShort: string;
@@ -38,6 +39,7 @@ type Values = {
 
 const initial: Values = {
   name: "Aster Multi DCA", universe: "30", positions: "30", longSlots: "20", shortSlots: "10", minLeverage: "50", maxLeverage: "",
+  priceZoneSeatsEnabled: false, priceZoneLongSeats: "2", priceZoneShortSeats: "2",
   stopLossEnabled: false, stopLossMode: "PERCENT", stopLossLong: "5", stopLossShort: "5",
   fixedPositionSize: false, entryMarginLong: "5", entryMarginShort: "5", entryNotionalLong: "", entryNotionalShort: "",
   longDcaDistance: "0.30", shortDcaDistance: "0.30",
@@ -149,6 +151,9 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     const legacyDcaDistance = Number(x.dcaDistance ?? .003); const legacyDcaAmount = Number(x.dcaMarginUsd ?? 2); const legacyMax = Number(x.maxDca ?? 3); const legacyTp = Number(x.takeProfit ?? .015);
     setV({
       name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, x.zoneSoldiersEnabled === true ? Math.max(1, Math.round(Number(x.maximumPositions ?? (longSlots + shortSlots)))) : (longSlots + shortSlots))), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50), maxLeverage: x.maximumLeverage === null || x.maximumLeverage === undefined ? "" : String(x.maximumLeverage),
+      priceZoneSeatsEnabled: x.priceZoneSeats && typeof x.priceZoneSeats === "object" ? (x.priceZoneSeats as Record<string, unknown>).enabled === true : x.zoneSoldiersEnabled === true,
+      priceZoneLongSeats: txt(x.priceZoneSeats && typeof x.priceZoneSeats === "object" ? (x.priceZoneSeats as Record<string, unknown>).longSeatsPerZone : x.zoneBaseLongSoldiers, 2),
+      priceZoneShortSeats: txt(x.priceZoneSeats && typeof x.priceZoneSeats === "object" ? (x.priceZoneSeats as Record<string, unknown>).shortSeatsPerZone : x.zoneBaseShortSoldiers, 2),
       stopLossEnabled: x.stopLossEnabled === true, stopLossMode: String(x.stopLossMode || "PERCENT").toUpperCase() === "USD" ? "USD" : "PERCENT", stopLossLong: txt(x.stopLossLong, 5), stopLossShort: txt(x.stopLossShort, 5),
       fixedPositionSize: persistedFixedPositionSize,
       entryMarginLong: txt(legacyLongMargin, legacyEntry), entryMarginShort: txt(legacyShortMargin, legacyEntry),
@@ -201,12 +206,21 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     return {
       ...persisted,
       engine: "multi_bb_v1", strategyKind: "multi_bb_v1", name: v.name, mode: v.mode, universeTopN: Math.max(1, Math.round(n(v.universe))),
-      // In Zone Warriors mode the visible total-position field is the global
-      // seat cap. Never silently restore a stale persisted cap during save.
-      maximumPositions: persisted.zoneSoldiersEnabled === true
+      // In price-zone mode this is the absolute account-wide cap.
+      maximumPositions: v.priceZoneSeatsEnabled
         ? clampInt(n(v.positions), 1, MAX_TOTAL_POSITIONS)
         : Math.min(MAX_TOTAL_POSITIONS, longSlots + shortSlots),
       longSlots, shortSlots, minimumLeverage: minLeverage, maximumLeverage: maxLeverage,
+      priceZoneSeats: {
+        enabled: v.priceZoneSeatsEnabled,
+        longSeatsPerZone: clampInt(n(v.priceZoneLongSeats), 0, 100),
+        shortSeatsPerZone: clampInt(n(v.priceZoneShortSeats), 0, 100),
+      },
+      // Temporary persistence aliases. They feed the same canonical AsterBot policy.
+      zoneSoldiersEnabled: v.priceZoneSeatsEnabled,
+      zoneSoldiersOptInVersion: v.priceZoneSeatsEnabled ? 1 : 0,
+      zoneBaseLongSoldiers: clampInt(n(v.priceZoneLongSeats), 0, 100),
+      zoneBaseShortSoldiers: clampInt(n(v.priceZoneShortSeats), 0, 100),
       ...sizingSettings,
       // Base entry margins are always preserved exactly as entered. Enabling
       // fixed position size must never convert or overwrite these values.
@@ -239,6 +253,10 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   })();
 
   const setTotal = (raw: string) => {
+    if (v.priceZoneSeatsEnabled) {
+      change({ ...v, positions: String(clampInt(n(raw), 1, MAX_TOTAL_POSITIONS)) });
+      return;
+    }
     const slots = splitTotalPositions(raw);
     change({ ...v, positions: String(slots.total), longSlots: String(slots.long), shortSlots: String(slots.short) });
   };
@@ -314,8 +332,11 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     try {
       const outgoingSettings = kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
       const outgoingSizingMode = String(outgoingSettings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
-      const zoneWarriorsActive = persisted.zoneSoldiersEnabled === true && Number(persisted.zoneSoldiersOptInVersion ?? 0) >= 1;
-      if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || (!zoneWarriorsActive && settings.longSlots + settings.shortSlots !== settings.maximumPositions)) throw new Error("Positielimieten zijn ongeldig: maximaal 400 totaal; bij Classic DCA moet LONG + SHORT exact gelijk zijn aan totaal.");
+      const priceZoneSeatsActive = settings.priceZoneSeats?.enabled === true;
+      const zoneLong = Number(settings.priceZoneSeats?.longSeatsPerZone ?? 0);
+      const zoneShort = Number(settings.priceZoneSeats?.shortSeatsPerZone ?? 0);
+      if (settings.longSlots + settings.shortSlots < 1 || settings.longSlots > MAX_SIDE_SLOTS || settings.shortSlots > MAX_SIDE_SLOTS || settings.maximumPositions > MAX_TOTAL_POSITIONS || (!priceZoneSeatsActive && settings.longSlots + settings.shortSlots !== settings.maximumPositions)) throw new Error("Positielimieten zijn ongeldig: maximaal 400 totaal; zonder prijszone-stoelen moet LONG + SHORT exact gelijk zijn aan totaal.");
+      if (priceZoneSeatsActive && (zoneLong < 0 || zoneLong > 100 || zoneShort < 0 || zoneShort > 100 || zoneLong + zoneShort < 1)) throw new Error("Prijszone-stoelen moeten tussen 0 en 100 liggen en samen minimaal 1 stoel bevatten.");
       // Minimum leverage is only a candidate floor. Automatic Top-N still resolves every
       // symbol at its actual maximum valid leverage unless Maximum leverage supplies an
       // optional cap, and skips symbols whose Aster maximum cannot satisfy the minimum.
@@ -511,11 +532,18 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
         <Field label="Botnaam" value={v.name} set={(value) => change({ ...v, name: value })} text />
         <Field label="Top-N volume" value={v.universe} set={(value) => change({ ...v, universe: value })} />
         <Field label="Totaal posities" value={totalDraft ?? v.positions} set={setTotalDraft} onBlur={commitTotal} />
-        <Field label="LONG slots" value={longDraft ?? v.longSlots} set={setLongDraft} onBlur={commitLong} />
-        <Field label="SHORT slots" value={shortDraft ?? v.shortSlots} set={setShortDraft} onBlur={commitShort} />
+        {!v.priceZoneSeatsEnabled && <Field label="LONG slots" value={longDraft ?? v.longSlots} set={setLongDraft} onBlur={commitLong} />}
+        {!v.priceZoneSeatsEnabled && <Field label="SHORT slots" value={shortDraft ?? v.shortSlots} set={setShortDraft} onBlur={commitShort} />}
+        {v.priceZoneSeatsEnabled && <Field label="LONG per prijszone" value={v.priceZoneLongSeats} set={(value) => change({ ...v, priceZoneLongSeats: value })} />}
+        {v.priceZoneSeatsEnabled && <Field label="SHORT per prijszone" value={v.priceZoneShortSeats} set={(value) => change({ ...v, priceZoneShortSeats: value })} />}
         <Field label="Minimum leverage" value={v.minLeverage} set={(value) => change({ ...v, minLeverage: value })} />
         <Field label="Maximum leverage" value={v.maxLeverage} set={(value) => change({ ...v, maxLeverage: value })} />
       </div>
+      <label className="strategy-power-control ready" style={{ marginTop: 12 }}>
+        <span className="pair-icon">⌗</span><span><b>Prijszone-stoelen</b><small>Aan: dezelfde AsterBot gebruikt per actieve prijszone een vaste LONG/SHORT-cap. Geen aparte strategie.</small></span>
+        <input type="checkbox" checked={v.priceZoneSeatsEnabled} onChange={(event) => change({ ...v, priceZoneSeatsEnabled: event.target.checked })} style={{ width: 22, height: 22 }} />
+      </label>
+      {v.priceZoneSeatsEnabled && <small className="leverage-caption">0 per richting is toegestaan. Bijvoorbeeld: max 10 en LONG 2 per prijszone vereist voor 10 gelijktijdige LONG-posities minimaal 5 verschillende origin-zones.</small>}
       <small className="leverage-caption">{v.maxLeverage.trim() ? `Leverage wordt begrensd op ${Math.max(1, Math.round(n(v.maxLeverage)))}x.` : "Maximum leverage leeg = bestaande pair-maximumlogica."}</small>
     </section>
 
