@@ -1358,6 +1358,26 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             row for row in available_soldiers(zone_state or {}, "SHORT")
             if str(row.get("soldierId") or "") not in zone_soldiers_released_this_tick
         ]
+        # The current saved per-zone formation is an absolute admission contract.
+        # Stale pool rows may remain only for management of already-open exposure;
+        # they must never create NEW capacity beyond the configured side count.
+        configured_zone_long = max(0, int(getattr(settings, "zone_base_long_soldiers", 0)))
+        configured_zone_short = max(0, int(getattr(settings, "zone_base_short_soldiers", 0)))
+        active_zone_value = _i((zone_state or {}).get("activeZone"))
+        active_pool = ((zone_state or {}).get("pools") or {}).get(str(active_zone_value), {}) if active_zone_value or str(active_zone_value) in ((zone_state or {}).get("pools") or {}) else {}
+        active_soldiers = active_pool.get("soldiers") if isinstance(active_pool, dict) and isinstance(active_pool.get("soldiers"), dict) else {}
+        active_zone_open_long = sum(
+            1 for row in active_soldiers.values()
+            if isinstance(row, dict) and row.get("role") == ROLE_ZONE_BASE and row.get("side") == "LONG"
+            and str(row.get("status") or "").upper() in {"OPEN", "EXITING"}
+        )
+        active_zone_open_short = sum(
+            1 for row in active_soldiers.values()
+            if isinstance(row, dict) and row.get("role") == ROLE_ZONE_BASE and row.get("side") == "SHORT"
+            and str(row.get("status") or "").upper() in {"OPEN", "EXITING"}
+        )
+        eligible_zone_long = eligible_zone_long[:max(0, configured_zone_long - active_zone_open_long)]
+        eligible_zone_short = eligible_zone_short[:max(0, configured_zone_short - active_zone_open_short)]
         long_need = 0 if zone_migration_hold else len(eligible_zone_long)
         short_need = 0 if zone_migration_hold else len(eligible_zone_short)
         # Price-zone seats determine which side may enter, but maximumPositions
@@ -1616,6 +1636,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # This is deliberately separate from Strategy-2 ownership accounting:
         # untracked/manual positions may not consume refill seats, but they do
         # count toward the configured per-side hard ceiling.
+        if zone_mode:
+            # Final fail-closed direction gate. No later allocator/Bollinger
+            # fallback may override a configured zero side.
+            if side == "LONG" and max(0, int(getattr(settings, "zone_base_long_soldiers", 0))) <= 0:
+                long_need = 0
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": "ZONE_LONG_DISABLED", "stage": "final_side"})
+                continue
+            if side == "SHORT" and max(0, int(getattr(settings, "zone_base_short_soldiers", 0))) <= 0:
+                short_need = 0
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": "ZONE_SHORT_DISABLED", "stage": "final_side"})
+                continue
+
         if not dry_run:
             # Production Aster clients expose position_risk(); lightweight
             # test/adapter clients may not. In that compatibility case retain
