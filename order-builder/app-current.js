@@ -1309,7 +1309,7 @@
       /\b(lader|blokje|adapter)\b.{0,25}\b(niet geleverd|niet meegeleverd|ontbreekt)\b/.test(all);
 
     if(no20w){
-      const charger20wCodes=new Set(['MD3J4ZM/A','MHJE3ZM/A']);
+      const charger20wCodes=new Set(['MD3J4ZM/A']);
       found.forEach(x=>{
         const pkg=data.packages[x.index];
         (pkg?.items||[]).forEach(it=>{
@@ -1637,7 +1637,7 @@
     const packageRows=packageIntents.map(intent=>{
       const p=data.packages[intent.index];
       const exclusions=intent.excludedCodes||[];
-      const extra=(exclusions.includes('MD3J4ZM/A')||exclusions.includes('MHJE3ZM/A'))?' · zonder 20W-lader':'';
+      const extra=exclusions.includes('MD3J4ZM/A')?' · zonder 20W-lader':'';
       return `<div class="ticket-package-row">
         <div class="ticket-package-check">✓</div>
         <div class="ticket-package-name"><strong>${esc(p.name)}</strong>${esc(extra)}</div>
@@ -1754,7 +1754,7 @@
         if(/^[-•*]?\s*zonder\s+20\s*w[- ]?lader\s*$/i.test(line)){
           const pkg=data.packages[currentPackage.index];
           (pkg?.items||[]).forEach(it=>{
-            if((it.code==='MD3J4ZM/A'||it.code==='MHJE3ZM/A') && !currentPackage.intent.excludedCodes.includes(it.code)){
+            if(it.code==='MD3J4ZM/A' && !currentPackage.intent.excludedCodes.includes(it.code)){
               currentPackage.intent.excludedCodes.push(it.code);
             }
           });
@@ -2275,7 +2275,7 @@
         });
 
         // Alleen relevante afwijkingen van het standaardpakket blijven zichtbaar.
-        if((sel.excludedCodes||[]).some(code=>code==='MD3J4ZM/A'||code==='MHJE3ZM/A')){
+        if((sel.excludedCodes||[]).some(code=>code==='MD3J4ZM/A')){
           lines.push('- zonder 20W-lader');
         }
 
@@ -2340,7 +2340,7 @@
           }
         });
 
-        if((sel.excludedCodes||[]).some(code=>code==='MD3J4ZM/A'||code==='MHJE3ZM/A')){
+        if((sel.excludedCodes||[]).some(code=>code==='MD3J4ZM/A')){
           lines.push('- zonder 20W-lader');
         }
 
