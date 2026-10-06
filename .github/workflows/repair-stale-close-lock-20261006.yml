@@ -1,0 +1,132 @@
+name: Repair Stale Close Lock 20261006
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/repair-stale-close-lock-20261006.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: tradementor-production-stale-close-lock-repair
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run guarded flat-account stale-lock repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          IMAGE="$(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); print(d['spec']['template']['spec']['containers'][0]['image'])
+          PY
+          )"
+          RUNTIME_SA="$(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); print(d['spec']['template']['spec']['serviceAccountName'])
+          PY
+          )"
+          JOB="tm-lock-repair-${GITHUB_RUN_ID: -7}"
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,hashlib
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+          from main import load_aster_secret,AsterV3Client,local_eip712_signer
+
+          db=firestore.Client(project='tradementor-production')
+          now=datetime.now(timezone.utc)
+          def n(v,d=-999):
+              try:return int(round(float(v)))
+              except:return d
+
+          matches=[]
+          for snap in db.collection('asterStrategy2').where('monitor','==',True).stream():
+              raw=snap.to_dict() or {}; s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              if n(s.get('maximumPositions'))==10 and n(s.get('zoneBaseLongSoldiers'))==2:
+                  matches.append((snap,raw,s))
+          assert len(matches)==1, f'expected exactly one target account, got {len(matches)}'
+          snap,raw,s=matches[0]; uid=snap.id
+          assert raw.get('enabled') is True and raw.get('monitor') is True
+          q=raw.get('orderQueueState') if isinstance(raw.get('orderQueueState'),dict) else {}
+          assert not q.get('currentIntent') and q.get('haltedUncertain') is not True
+          growth_ref=db.collection('users').document(uid).collection('portfolioGrowth').document('aster')
+          growth=growth_ref.get().to_dict() or {}
+          lock=growth.get('closeLock') if isinstance(growth.get('closeLock'),dict) else {}
+          assert lock.get('active') is True, 'close lock is no longer active'
+          until=lock.get('until')
+          assert isinstance(until,datetime), 'close lock has no trustworthy expiry'
+          until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+          assert until>now, 'close lock already expired naturally'
+          action_id=str(lock.get('actionId') or '')
+          assert action_id, 'close lock has no action id'
+          action=growth_ref.collection('actions').document(action_id).get().to_dict() or {}
+          action_status=str(action.get('status') or 'UNKNOWN').upper()
+
+          secret=load_aster_secret({'uid':uid})
+          client=AsterV3Client(signer_address=secret.signer_address,sign_message=local_eip712_signer(secret),live_authorized=False)
+          positions=[p for p in client.position_risk() if abs(float(p.get('positionAmt') or 0))>0]
+          orders=client.open_orders()
+          assert len(positions)==0, f'exchange is not flat: {len(positions)} open positions'
+          assert len(orders)==0, f'exchange has {len(orders)} open orders'
+
+          tx=db.transaction()
+          @firestore.transactional
+          def release(txn):
+              current=growth_ref.get(transaction=txn).to_dict() or {}
+              current_lock=current.get('closeLock') if isinstance(current.get('closeLock'),dict) else {}
+              assert current_lock.get('active') is True
+              assert str(current_lock.get('actionId') or '')==action_id
+              txn.set(growth_ref,{'closeLock':{'active':False,'token':'','actionId':action_id,'releasedAt':now,'releaseReason':'STALE_FLAT_ACCOUNT_REPAIR'},'updatedAt':now},merge=True)
+              txn.set(growth_ref.collection('audit').document(),{'event':'STALE_CLOSE_LOCK_RELEASED','actionId':action_id,'previousActionStatus':action_status,'verifiedOpenPositions':0,'verifiedOpenOrders':0,'timestamp':now})
+          release(tx)
+          print('STALE_CLOSE_LOCK_REPAIRED '+json.dumps({'accountRef':hashlib.sha256(uid.encode()).hexdigest()[:10],'actionStatus':action_status,'openPositions':0,'openOrders':0,'released':True,'releasedAt':now.isoformat()},separators=(',',':')),flush=True)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+      - uses: google-github-actions/auth@v2
+        if: always()
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+      - name: Publish repair proof
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RESULT="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"STALE_CLOSE_LOCK_REPAIRED \"" --project "$GCP_PROJECT_ID" --freshness=15m --limit=10 --order=desc --format='value(textPayload)' | grep 'STALE_CLOSE_LOCK_REPAIRED ' | head -n1 || true)"
+          if [ -z "$RESULT" ]; then RESULT="STALE_CLOSE_LOCK_REPAIR_FAILED no-success-proof"; fi
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="$RESULT"
+      - uses: google-github-actions/auth@v2
+        if: always()
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - name: Cleanup
+        if: always()
+        run: gcloud run jobs delete "$JOB_NAME" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
