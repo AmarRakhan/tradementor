@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 560: live-zone focused startup + contiguous Bollinger + longer confirmed event window; regression contract aligned.
-export const WEBAPP_BUILD_NUMBER = "560";
+// Build 561: hotfix missing Portfolio Koers focus-helper import causing post-splash blank screen.
+export const WEBAPP_BUILD_NUMBER = "561";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

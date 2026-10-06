@@ -539,3 +539,11 @@ test("Build 560 focuses startup on the live zone and never bridges a history gap
   assert.ok(component.includes("bbSource.length>=20?bollinger20x2(bbSource)"));
   assert.equal(component.includes("const bb=viewMode===\"account\"?bollinger20x2(candles)"),false);
 });
+
+
+test("Build 561 imports the live-zone focus helper used by Portfolio Koers startup",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("portfolioKoersFocusBars"));
+  const importLine=component.split("\n").find((line)=>line.includes('from "@/lib/portfolio-koers-chart.mjs"'))||"";
+  assert.ok(importLine.includes("portfolioKoersFocusBars"));
+});
