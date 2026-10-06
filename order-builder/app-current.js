@@ -60,7 +60,7 @@
       // Samsung telefoon
       'SM-G556BZKDEEB',
       // Laptops
-      '54337282#ABH','54337265#ABH','55968165#ABH','54337313#ABH',
+      '54337282#ABH','55968196#ABH','54337265#ABH','55968165#ABH','54337313#ABH',
       // Docks
       '5TW10AA','9X3V1UT#ABB','AW5M5UT#ABB',
       // Apple Pencil
@@ -1039,7 +1039,7 @@
   }
 
   const smartAliasRules=[
-    {code:'54337282#ABH', patterns:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
+    {code:'55968196#ABH', patterns:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
     {code:'55968165#ABH', patterns:['monteur laptop','monteurs laptop','monteurlaptop','monteurslaptop','management laptop','managementlaptop']},
     {code:'54337313#ABH', patterns:['tekenlaptop','teken laptop','cad laptop','cad-laptop']},
     {code:'9X3V1UT#ABB', patterns:['standaard docking','standaard dock','standaard dockingstation']},
@@ -1397,7 +1397,7 @@
   function resolveFixedBusinessRule(query){
     const nq=ticketIntentText(query);
     const directRules=[
-      {code:'54337282#ABH', terms:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
+      {code:'55968196#ABH', terms:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
       {code:'55968165#ABH', terms:['monteur laptop','monteurs laptop','monteurlaptop','monteurslaptop','management laptop','managementlaptop']},
       {code:'54337313#ABH', terms:['tekenlaptop','teken laptop','cad laptop','cad-laptop']},
       {code:'9X3V1UT#ABB', terms:['standaard docking','standaard dock','standaard dockingstation']},
@@ -1878,7 +1878,7 @@
     // Dit voorkomt 0 stuks als een regel door catalogus-/cachelogica heen glipt.
     const wholeText=fragmentSearchText(text);
     const forcedRules=window.__ticketRoundTrip ? [] : [
-      {code:'54337282#ABH', terms:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
+      {code:'55968196#ABH', terms:['standaard laptop','m&r laptop','m en r laptop','m r laptop']},
       {code:'55968165#ABH', terms:['monteur laptop','monteurs laptop','monteurlaptop','monteurslaptop','management laptop','managementlaptop']},
       {code:'54337313#ABH', terms:['tekenlaptop','teken laptop','cad laptop']},
       {code:'9X3V1UT#ABB', terms:['standaard docking','standaard dock','standaard dockingstation']},
