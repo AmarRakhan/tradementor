@@ -84,7 +84,8 @@ test("Multi BB always exposes a personal live on/off control without bypassing r
   assert.match(source, /Aster live bot/);
   assert.match(source, /role="switch"/);
   assert.match(source, /async function toggleLive/);
-  assert.match(source, /status\.pending \|\| busy/);
+  assert.match(source, /if \(status\.pending\)/);
+  assert.match(source, /disabled=\{busy\}/);
   assert.match(source, /if \(liveReady\) return action\("start"\)/);
   assert.match(source, /return checkReadiness\(true\)/);
   assert.match(source, /startWhenReady && Boolean\(result\.liveReady\)/);
