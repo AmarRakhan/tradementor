@@ -494,7 +494,8 @@ test("Build 552 keeps confirmed chart zones across cold starts and history gaps"
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('portfolio-chart?timeframe=15m&limit=600'));
   assert.ok(component.includes('tradementor.portfolioZones.v1.'));
-  assert.ok(component.includes('const advisorZoneSource=useMemo(()=>advisorZones.length?advisorZones:payload.zones'));
+  assert.ok(component.includes('const advisorZoneSource=useMemo('));
+  assert.ok(component.includes('advisorZones.length?advisorZones:visualPayloadZones'));
   assert.equal(component.includes('advisorTimeline?.safeForAdvisor===true&&advisorZones.length?advisorZones:payload.zones'),false);
   assert.ok(component.includes('manualViewportRef.current[viewportKey]!==true'));
   assert.ok(component.includes('PORTFOLIO_KOERS_DEFAULT_TIMEFRAME'));
