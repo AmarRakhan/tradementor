@@ -102,7 +102,7 @@ from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
 from aster_zone_soldiers import confirmed_zone_from_display_zones, prepare_zone_runtime
 from aster_runtime_truth import build_multi_bb_runtime_truth
-from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_snapshot, reset_cycle_to_equity
+from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_gate, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
 from money_grabber_state import pair_from_mapping as money_pair_from_mapping, round_from_mapping as money_round_from_mapping
@@ -1659,10 +1659,20 @@ def _block_order_during_close_all(uid:str, *, allow_auto_hedge_locked:bool=False
 
 
 def _block_strategy2_order_during_conflict(uid:str):
-    """Final pre-submit owner guard for every Strategy-2 OPEN path."""
-    close_guard=_block_order_during_close_all(uid)
+    """Final pre-submit owner guard for Strategy-2 orders.
+
+    Portfolio TP is an explicit account-wide risk exit. Once its target is hit,
+    its deterministic mbb-ptp-* CLOSE intents may consume Auto Hedge-reserved
+    quantity; every other Strategy-2 close keeps the normal Auto Hedge lock.
+    """
+    normal_close_guard=_block_order_during_close_all(uid)
+    portfolio_tp_close_guard=_block_order_during_close_all(uid,allow_auto_hedge_locked=True)
     def guard(intent:AsterOrderIntent)->None:
-        close_guard(intent)
+        is_portfolio_tp_close=(
+            str(intent.action).upper()=="CLOSE"
+            and str(intent.intent_id).lower().startswith("mbb-ptp-")
+        )
+        (portfolio_tp_close_guard if is_portfolio_tp_close else normal_close_guard)(intent)
         if intent.risk_increasing():
             symbol = intent.symbol.upper()
             side = intent.position_side.value
@@ -2263,6 +2273,50 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     # side while its optional toggle is enabled.
     dynamic_ref=user_reference({"uid":uid}).collection("asterDynamicHedge").document("control")
     dynamic_stored=dynamic_ref.get().to_dict() or {}
+
+    # Portfolio TP is the account-level risk reset and therefore preempts every
+    # hedge/ownership overlay. If the configured equity target is reached, close
+    # all live futures exposure first, confirm flat, seed the next cycle from the
+    # real post-close equity, and only then resume the user's normal runtime.
+    if str(getattr(settings,"take_profit_mode","")).upper()=="PORTFOLIO":
+        portfolio_gate=portfolio_cycle_gate(
+            client=client,ref=ref,raw_state=raw,uid=uid,account=account,
+            positions=decision_positions,open_orders=orders,
+            timestamp_ms=int(now.timestamp()*1000),
+            take_profit_mode=settings.take_profit_mode,
+            portfolio_tp_percent=settings.portfolio_tp_percent,
+            portfolio_tp_input_mode=settings.portfolio_tp_input_mode,
+            portfolio_tp_value=settings.portfolio_tp_value,
+            portfolio_tp_base_mode=settings.portfolio_tp_base_mode,
+            portfolio_tp_custom_base_equity=settings.portfolio_tp_custom_base_equity,
+            config_version=settings.version,
+            current_long_slots=settings.long_slots,
+            current_short_slots=settings.short_slots,
+            current_maximum_positions=settings.maximum_positions,
+            reset_seats_after_portfolio_tp=settings.reset_seats_after_portfolio_tp,
+            dry_run=dry_run,order_budget=order_budget,before_order=before_order,
+        )
+        if portfolio_gate.handled and not portfolio_gate.restart:
+            cycle=portfolio_gate.report
+            report={"engine":MULTI_BB_ENGINE,"configVersion":settings.version,
+                "status":"simulated" if dry_run else "portfolio-tp-executing",
+                "action":"PORTFOLIO_TP",
+                "entryStatus":str(cycle.get("cycleStatus","PORTFOLIO_TP_EXECUTING")),
+                "entryReason":"Portfolio TP heeft absolute prioriteit op alle hedge- en ownershipfuncties",
+                "portfolioCycle":cycle,**cycle}
+            if not dry_run:ref.set({"multiBbReport":report},merge=True)
+            return report
+        if portfolio_gate.restart:
+            raw=portfolio_gate.raw_state
+            account=portfolio_gate.account
+            positions=portfolio_gate.positions
+            decision_positions=positions
+            orders=portfolio_gate.open_orders
+            order_budget=max(0,(15 if order_budget is None else int(order_budget))-portfolio_gate.orders_sent)
+            restarted_settings=raw.get("settings") if isinstance(raw,dict) else None
+            if isinstance(restarted_settings,dict):
+                settings=MultiBbConfig.from_mapping(restarted_settings)
+
     if bool(dynamic_stored.get("enabled",False)):
         dynamic=run_dynamic_hedge_sequence(client=client,control_ref=dynamic_ref,settings=settings,uid=uid,account=account,
             positions=positions,open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order)
@@ -2295,10 +2349,13 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         runtime_settings=settings
         if bool(getattr(runtime_settings,"asymmetric_hedge_enabled",False)):
             runtime_settings=replace(runtime_settings,asymmetric_hedge_enabled=False)
-        if str(getattr(runtime_settings,"take_profit_mode",""))=="PORTFOLIO":
-            runtime_settings=replace(runtime_settings,take_profit_mode="OFF")
         def dynamic_before_order(intent):
-            dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)
+            is_portfolio_tp_close=(
+                str(intent.action).upper()=="CLOSE"
+                and str(intent.intent_id).lower().startswith("mbb-ptp-")
+            )
+            if not is_portfolio_tp_close:
+                dynamic_strategy_order_guard(dynamic_ref,intent,account,positions)
             if before_order is not None:
                 try:return before_order(intent)
                 except TypeError:return before_order(intent,None)
@@ -2306,7 +2363,7 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
         report=run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=runtime_settings,uid=uid,account=account,positions=decision_positions,
             open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=dynamic_before_order,
             dynamic_hedge_blocked_side=blocked_side,zone_context=zone_context)
-        report["dynamicHedge"]={**dynamic,"blockedStrategySide":blocked_side or None,"portfolioTpSuppressed":str(getattr(settings,"take_profit_mode",""))=="PORTFOLIO"}
+        report["dynamicHedge"]={**dynamic,"blockedStrategySide":blocked_side or None,"portfolioTpSuppressed":False}
         return report
     return run_multi_bb_step(client=client,ref=ref,raw_state=raw,settings=settings,uid=uid,account=account,positions=decision_positions,
         open_orders=orders,timestamp_ms=int(now.timestamp()*1000),dry_run=dry_run,order_budget=order_budget,before_order=before_order,
