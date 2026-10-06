@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "88f39d5efe721acd5486004310d60818f41190d4",
+  "sourceCommit": "3f3873024c4987492a404a15c0d53cafe6c50b09",
   "requestedBy": "AmarRakhan",
-  "requestId": "zone-absolute-side-and-per-zone-cap-20261006-1640"
+  "requestId": "asterbot-unified-engine-price-zone-live-config-20261006"
 }
