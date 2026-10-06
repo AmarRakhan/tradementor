@@ -86,6 +86,61 @@ def test_price_zone_two_long_never_admits_third():
     assert denied.reason_code == "ZONE_LONG_CAP_REACHED"
 
 
+
+def test_price_zone_two_long_with_global_ten_requires_five_distinct_origin_zones():
+    policy = policy_from_settings(settings(
+        maximum_positions=10,
+        zone_soldiers_enabled=True,
+        zone_base_long_soldiers=2,
+        zone_base_short_soldiers=0,
+    ))
+    account_open = 0
+    occupied_by_zone: dict[int, int] = {}
+
+    for zone in range(5):
+        for _ in range(2):
+            decision = evaluate_initial_entry(
+                policy,
+                context(
+                    side="LONG",
+                    account_position_count=account_open,
+                    side_position_count=account_open,
+                    active_zone=zone,
+                    active_zone_side_count=occupied_by_zone.get(zone, 0),
+                ),
+            )
+            assert decision.allowed, (zone, decision.reason_code)
+            occupied_by_zone[zone] = occupied_by_zone.get(zone, 0) + 1
+            account_open += 1
+
+        third_same_zone = evaluate_initial_entry(
+            policy,
+            context(
+                side="LONG",
+                account_position_count=account_open,
+                side_position_count=account_open,
+                active_zone=zone,
+                active_zone_side_count=occupied_by_zone[zone],
+            ),
+        )
+        assert third_same_zone.reason_code in {"ZONE_LONG_CAP_REACHED", "GLOBAL_POSITION_CAP_REACHED"}
+
+    assert account_open == 10
+    assert len([zone for zone, count in occupied_by_zone.items() if count == 2]) == 5
+
+    eleventh = evaluate_initial_entry(
+        policy,
+        context(
+            side="LONG",
+            account_position_count=10,
+            side_position_count=10,
+            active_zone=5,
+            active_zone_side_count=0,
+        ),
+    )
+    assert eleventh.reason_code == "GLOBAL_POSITION_CAP_REACHED"
+
+
 def test_global_max_is_absolute_for_price_zone_module():
     policy = policy_from_settings(settings(zone_soldiers_enabled=True))
     denied = evaluate_initial_entry(
