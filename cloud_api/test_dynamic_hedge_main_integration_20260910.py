@@ -51,10 +51,13 @@ def test_fast_sequence_is_not_limited_by_strategy2_scan_order_budget():
     assert '"oneOrderPerTick"] = False' in seq
 
 
-def test_old_asymmetric_and_portfolio_tp_are_suppressed_only_during_dynamic_ownership():
+def test_asymmetric_is_suppressed_but_portfolio_tp_preempts_dynamic_ownership():
     text = segment("def _run_aster_strategy2_tick(", "def _run_aster_strategy2_queue_scan(")
     assert 'replace(runtime_settings,asymmetric_hedge_enabled=False)' in text
-    assert 'replace(runtime_settings,take_profit_mode="OFF")' in text
+    assert 'replace(runtime_settings,take_profit_mode="OFF")' not in text
+    assert '# Portfolio TP is the account-level risk reset' in text
+    assert text.index('portfolio_cycle_gate(') < text.index('run_dynamic_hedge_sequence(')
+    assert '"portfolioTpSuppressed":False' in text
     assert 'if bool(dynamic_stored.get("enabled",False))' in text
 
 
