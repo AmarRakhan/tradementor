@@ -1,0 +1,46 @@
+name: Diagnose Current Backend Source 20261006
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diag-current-backend-source-20261006.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read exact production source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          REV="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName)')"
+          HEALTH="$(curl --fail --silent --show-error --retry 4 --retry-delay 2 "$URL/health")"
+          SOURCE="$(python - "$HEALTH" <<'PY'
+          import json,sys
+          h=json.loads(sys.argv[1])
+          print(h.get("sourceCommit") or h.get("imageSourceCommit") or "")
+          PY
+          )"
+          test -n "$SOURCE"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="BACKEND_SOURCE_DIAG sourceCommit=$SOURCE latestReadyRevision=$REV"
