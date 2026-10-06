@@ -1,0 +1,112 @@
+name: Diagnose Target Account Blockers 20261006
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diag-target-account-blockers-20261006.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Run read-only target blocker probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          IMAGE="$(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); print(d['spec']['template']['spec']['containers'][0]['image'])
+          PY
+          )"
+          RUNTIME_SA="$(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); print(d['spec']['template']['spec']['serviceAccountName'])
+          PY
+          )"
+          JOB="tm-target-block-${GITHUB_RUN_ID: -7}"
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,hashlib
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+          db=firestore.Client(project='tradementor-production')
+          now=datetime.now(timezone.utc)
+          matches=[]
+          def n(v,d=-999):
+              try:return int(round(float(v)))
+              except:return d
+          def dt(v):
+              if isinstance(v,datetime):
+                  v=v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)
+                  return {'iso':v.isoformat(),'future':v>now,'deltaSec':round((v-now).total_seconds(),1)}
+              return None
+          for snap in db.collection('asterStrategy2').where('monitor','==',True).stream():
+              raw=snap.to_dict() or {}; s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              if n(s.get('maximumPositions'))!=10 or n(s.get('zoneBaseLongSoldiers'))!=2: continue
+              growth=db.collection('users').document(snap.id).collection('portfolioGrowth').document('aster').get().to_dict() or {}
+              coord=db.collection('asterAccountCoordination').document(snap.id).get().to_dict() or {}
+              q=raw.get('orderQueueState') if isinstance(raw.get('orderQueueState'),dict) else {}
+              ql=raw.get('orderQueueLease') if isinstance(raw.get('orderQueueLease'),dict) else {}
+              cl=growth.get('closeLock') if isinstance(growth.get('closeLock'),dict) else {}
+              co=coord.get('lease') if isinstance(coord.get('lease'),dict) else {}
+              matches.append({
+                'accountRef':hashlib.sha256(snap.id.encode()).hexdigest()[:10],
+                'enabled':raw.get('enabled') is True,'monitor':raw.get('monitor') is True,
+                'phase':str(raw.get('phase') or ''),'lastReason':str(raw.get('lastReason') or '')[:200],
+                'lastTickAt':dt(raw.get('lastTickAt')),'leaseUntil':dt(raw.get('leaseUntil')),
+                'orderQueueLeaseUntil':dt(ql.get('until')),'coordUntil':dt(co.get('until')),
+                'coordOwner':str(co.get('owner') or ''),'coordPurpose':str(co.get('purpose') or ''),
+                'closeLockActive':cl.get('active') is True,'closeLockUntil':dt(cl.get('until')),
+                'closeLockActionIdPresent':bool(cl.get('actionId')),
+                'hasCurrentIntent':bool(q.get('currentIntent')),'haltedUncertain':q.get('haltedUncertain') is True,
+                'pendingReopens':len(raw.get('pendingReopens') or []) if isinstance(raw.get('pendingReopens'),list) else -1,
+                'zoneBaseShort':n(s.get('zoneBaseShortSoldiers'))
+              })
+          print('TARGET_BLOCKERS '+json.dumps({'now':now.isoformat(),'matches':matches},separators=(',',':')),flush=True)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+      - uses: google-github-actions/auth@v2
+        if: always()
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+      - name: Publish sanitized result
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RESULT="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"TARGET_BLOCKERS \"" --project "$GCP_PROJECT_ID" --freshness=15m --limit=10 --order=desc --format='value(textPayload)' | grep 'TARGET_BLOCKERS ' | head -n1 || true)"
+          test -n "$RESULT"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="$RESULT"
+      - uses: google-github-actions/auth@v2
+        if: always()
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - name: Cleanup
+        if: always()
+        run: gcloud run jobs delete "$JOB_NAME" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
