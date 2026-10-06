@@ -13,8 +13,9 @@ from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execu
 from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
 from aster_unified_engine import (
-    FilterResult, FilterStatus, InitialEntryContext, evaluate_initial_entry,
-    policy_from_settings, require_allowed,
+    ActionType, FilterResult, FilterStatus, InitialEntryContext, PositionActionContext,
+    evaluate_initial_entry, evaluate_position_action, policy_from_settings,
+    require_allowed, require_position_action_allowed,
 )
 from aster_zone_soldiers import (
     ROLE_EXPOSURE_BALANCER, ROLE_LEGACY_UNASSIGNED, ROLE_ZONE_BASE,
@@ -1089,7 +1090,17 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit)
         tp_due = settings.take_profit_enabled and not asym["blockLongTp"] and not asym["disableShortTp"] and (mark >= tp_price if side == "LONG" else mark <= tp_price)
         if tp_due:
-            actions.append({"kind": "TP", "symbol": symbol, "side": side, "mark": mark, "entry": entry, "target": tp_price})
+            tp_decision=evaluate_position_action(
+                policy_from_settings(settings),
+                PositionActionContext(
+                    uid=uid,symbol=symbol,side=side,action_type=ActionType.CLOSE_TP,
+                    position_open=True,trigger_met=True,dca_count=_i(st0.get("dcaCount")),
+                    take_profit_enabled=bool(settings.take_profit_enabled),
+                ),
+            )
+            require_position_action_allowed(tp_decision)
+            actions.append({"kind": "TP", "symbol": symbol, "side": side, "mark": mark, "entry": entry, "target": tp_price,
+                            "decision":tp_decision.public_dict()})
             if not dry_run:
                 plan = PairExecutionPlan(symbol, Decimal(str(qty)), Decimal(str(qty * mark)), max(1, _i(row.get("leverage"))))
                 evidence = _close_evidence(client, uid, st0, row, side, mark)
@@ -1133,6 +1144,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 ref.set(tp_write, merge=True)
                 ref.collection("audit").add({
                     "event": "MULTI_BB_TP", "symbol": symbol, "side": side, "target": tp_price,
+                    "decisionId":tp_decision.decision_id,"decision":tp_decision.public_dict(),
                     "originZone": st0.get("originZone"), "soldierId": st0.get("soldierId"),
                     "soldierRole": st0.get("soldierRole"), "homecoming": homecoming,
                     "zoneMission": zone_mission,
@@ -1214,6 +1226,19 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 ref.set({"multiBbPositions":state,"lastTickAt":datetime.now(timezone.utc)},merge=True)
         if not projected_due:
             continue
+        dca_decision=evaluate_position_action(
+            policy_from_settings(settings),
+            PositionActionContext(
+                uid=uid,symbol=symbol,side=side,action_type=ActionType.DCA_ADD,
+                position_open=True,trigger_met=True,dca_count=dca_count,
+                take_profit_enabled=bool(settings.take_profit_enabled),
+            ),
+        )
+        if not dca_decision.allowed:
+            actions.append({"kind":"DCA_BLOCKED","symbol":symbol,"side":side,
+                            "reason":dca_decision.reason_code,"decision":dca_decision.public_dict()})
+            continue
+        require_position_action_allowed(dca_decision)
         row_info=info_map.get(symbol); leverage=max(1,_i(row.get("leverage")))
         if row_info is None: continue
         try: plan,tier=_plan_add(client,row_info,mark,settings.dca_margin_usd,leverage,qty*mark,settings.minimum_leverage)
@@ -1221,7 +1246,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         required=float(tier["additionalMarginRequired"])
         if available<required*1.05:
             actions.append({"kind":"DCA_MARGIN_WAIT","symbol":symbol,"side":side,"reason":"INSUFFICIENT_MARGIN_FOR_TIER_LEVERAGE_REDUCTION" if tier["tierReduction"] else "INSUFFICIENT_AVAILABLE_MARGIN","requiredMargin":required,"targetLeverage":tier["leverage"]}); continue
-        actions.append({"kind":"DCA","symbol":symbol,"side":side,"number":dca_count+1,"trigger":trigger,"catchup":False,"leverage":tier["leverage"],"previousLeverage":tier["previousLeverage"],"tierReduction":tier["tierReduction"],"projectedNotional":tier["projectedNotional"]})
+        actions.append({"kind":"DCA","symbol":symbol,"side":side,"number":dca_count+1,"trigger":trigger,"catchup":False,"leverage":tier["leverage"],"previousLeverage":tier["previousLeverage"],"tierReduction":tier["tierReduction"],"projectedNotional":tier["projectedNotional"],"decision":dca_decision.public_dict()})
         if not dry_run:
             try:
                 result=execute_leg_once(client,plan,side=PositionSide(side),action="OPEN",id_prefix=f"mbb-dca-{hashlib.sha256((uid+key+str(dca_count+1)+str(timestamp_ms)).encode()).hexdigest()[:12]}",confirm=True,new_position_leverage=int(tier["leverage"]),allow_existing_contract_leverage_change=True,before_submit=before_order)
@@ -1263,6 +1288,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 "anchorPrice":anchor,"triggerPrice":trigger,"fillPrice":fill_price,"fillQuantity":fill_qty,
                 "orderId":str(fill.get("orderId",fill.get("orderID","")) or ""),
                 "clientOrderId":str(fill.get("clientOrderId",fill.get("clientOrderID","")) or ""),
+                "decisionId":dca_decision.decision_id,"decision":dca_decision.public_dict(),
                 "exchangeConfirmed":True,"timestamp":datetime.now(timezone.utc)
             })
         available-=required; sent+=1
