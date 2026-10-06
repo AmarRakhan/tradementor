@@ -1,5 +1,5 @@
 name: Probe Production Strategy 2 State
-# current read-only trace trigger 2026-10-06T13:37+02:00 post-scheduler-activation-check
+# current read-only trace trigger 2026-10-06T13:44+02:00 lease-root-cause
 
 on:
   push:
@@ -330,6 +330,9 @@ jobs:
                   "rawReleaseChannel":str(raw.get("releaseChannel") or ""),
                   "rawEnabled":raw.get("enabled") is True,
                   "rawMonitor":raw.get("monitor") is True,
+                  "leaseUntil":str(raw.get("leaseUntil") or ""),
+                  "orderQueueLease":raw.get("orderQueueLease") if isinstance(raw.get("orderQueueLease"),dict) else {},
+                  "accountCoordination":(db.collection("asterAccountCoordination").document(uid).get().to_dict() or {}).get("lease") or {},
                   "readiness":raw.get("readiness") if isinstance(raw.get("readiness"),dict) else {},
                   "exchangePositions":[{"symbol":str(p.get("symbol") or "").upper(),"side":str(p.get("positionSide") or "").upper(),"qty":str(p.get("positionAmt") or "")} for p in positions if abs(float(p.get("positionAmt") or 0))>0],
                   "profileReleaseChannel":str(profile.get("releaseChannel") or ""),
