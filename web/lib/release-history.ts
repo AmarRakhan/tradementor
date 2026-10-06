@@ -52,7 +52,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   technicalDetails: [
     "Read-only diagnose bevestigde: opgeslagen settings 2L/2S, max 10; Aster live 0L/0S; multiBbReport 0L/0S; oude managed cache 4L/5S.",
     "Frontend: web/components/aster-portfolio-snapshot-enhancer.tsx.",
-    "Release-identiteit: Webapp V46 build 530.",
+    "Release-identiteit: Webapp V46 build 531.",
   ],
   confidence: "confirmed",
 };
