@@ -235,3 +235,12 @@ test("Build 417 removes the old instruction button and global seat mutation enti
   assert.ok(component.includes("Portfolio Koers blijft informatief"));
 });
 
+
+
+test("Build 554 keeps the canonical 15m zone basis alive through cold starts",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600'));
+  assert.ok(component.includes('tradementor.portfolioZones.v1.'));
+  assert.ok(component.includes('advisorZones.length?advisorZones:payload.zones'));
+  assert.ok(component.includes('derivePortfolioZoneLadder(advisorZoneSource)'));
+});

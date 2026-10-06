@@ -26,7 +26,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Portfolio Koers · cold-start zones hersteld",
+  title: "Portfolio Koers · cold-start zones hersteld en gepubliceerd",
   newItems: [
     "De bevestigde Portfolio Koers-zones blijven beschikbaar wanneer een nieuwe sessie start of de nieuwste 15m-historie tijdelijk een gat bevat.",
     "De chart haalt voor de visuele zonebasis maximaal 600 15m-candles op en bewaart de laatst bevestigde zonebasis lokaal als display-cache.",
@@ -45,6 +45,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een lege of tijdelijk onveilige advisor-timeline wist de laatst bevestigde visuele zonebasis niet meer.",
     "De 15m zone-history call is verruimd van 320 naar 600 candles.",
     "De stale regressietests zijn op het nieuwe 600-candle contract uitgelijnd.",
+    "De canonical deploy-gate is in dezelfde releasecommit uitgelijnd zodat de fix daadwerkelijk gepubliceerd kan worden.",
     "Tradinglogica, AsterBot entries, DCA, TP, hedge en prijszone-stoelen zijn niet gewijzigd.",
   ],
   now: [
@@ -54,7 +55,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   technicalDetails: [
     "Frontend: web/components/portfolio-koers-chart.tsx.",
     "Regression: web/tests/portfolio-koers-chart.test.mjs + web/tests/portfolio-koers-zone-advisor-ui.test.mjs.",
-    "Release-identiteit: Webapp V46 build 553.",
+    "Release-identiteit: Webapp V46 build 554.",
   ],
   confidence: "confirmed",
 }
