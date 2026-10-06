@@ -373,8 +373,8 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
   const activeLong = Number.isFinite(liveLongRaw) ? Math.max(0, Math.round(liveLongRaw)) : null;
   const activeShort = Number.isFinite(liveShortRaw) ? Math.max(0, Math.round(liveShortRaw)) : null;
   const activeTotal = activeLong !== null && activeShort !== null ? activeLong + activeShort : null;
-  const zoneLongSeats = Math.max(1, Math.round(n(draft.zoneLongSeats, 3)));
-  const zoneShortSeats = Math.max(1, Math.round(n(draft.zoneShortSeats, 3)));
+  const zoneLongSeats = Math.max(0, Math.round(n(draft.zoneLongSeats, 3)));
+  const zoneShortSeats = Math.max(0, Math.round(n(draft.zoneShortSeats, 3)));
   const maxActiveSeats = Math.max(1, Math.round(n(draft.maximumPositions, totals.totalSlots || 30)));
   const zoneActiveRaw = Number(seatModel.activeZone ?? priceZoneSeats.activeZone);
   const zoneActive = Number.isFinite(zoneActiveRaw) ? Math.round(zoneActiveRaw) : null;
@@ -387,7 +387,7 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
   const strategyOpenShort = Math.max(0, Math.round(n(seatModel.strategyOpenShort, activeShort ?? 0)));
   const strategyOpenTotal = Math.max(0, Math.round(n(seatModel.strategyOpenTotal, strategyOpenLong + strategyOpenShort)));
   const sideWeightTotal = Math.max(1, zoneLongSeats + zoneShortSeats);
-  const globalLongCapacity = Math.max(1, Math.round(maxActiveSeats * zoneLongSeats / sideWeightTotal));
+  const globalLongCapacity = Math.max(0, Math.round(maxActiveSeats * zoneLongSeats / sideWeightTotal));
   const globalShortCapacity = Math.max(0, maxActiveSeats - globalLongCapacity);
   const zoneLabel = zoneActive === null ? "Zone —" : `Zone ${zoneActive}`;
   const slotFill = (active: number | null, capacity: number) => active === null
@@ -421,12 +421,12 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
 
   function buildSettingsFrom(source: Draft) {
     const sourceTotals = draftTotals(source);
-    const sourceZoneLongSeats = Math.max(1, Math.round(n(source.zoneLongSeats, 3)));
-    const sourceZoneShortSeats = Math.max(1, Math.round(n(source.zoneShortSeats, 3)));
+    const sourceZoneLongSeats = Math.max(0, Math.round(n(source.zoneLongSeats, 3)));
+    const sourceZoneShortSeats = Math.max(0, Math.round(n(source.zoneShortSeats, 3)));
     const sourceMaxActiveSeats = Math.max(1, Math.round(n(source.maximumPositions, sourceTotals.totalSlots || 30)));
     if (!source.zoneSoldiersEnabled && (sourceTotals.totalSlots < 1 || sourceTotals.totalSlots > 400)) throw new Error("LONG + SHORT moet tussen 1 en 400 posities liggen.");
     if (source.zoneSoldiersEnabled && (sourceMaxActiveSeats < 1 || sourceMaxActiveSeats > 400)) throw new Error("Max actieve stoelen moet tussen 1 en 400 liggen.");
-    if (source.zoneSoldiersEnabled && (sourceZoneLongSeats < 1 || sourceZoneLongSeats > 100 || sourceZoneShortSeats < 1 || sourceZoneShortSeats > 100)) throw new Error("LONG/SHORT-stoelen per prijszone moeten tussen 1 en 100 liggen.");
+    if (source.zoneSoldiersEnabled && (sourceZoneLongSeats < 0 || sourceZoneLongSeats > 100 || sourceZoneShortSeats < 0 || sourceZoneShortSeats > 100 || sourceZoneLongSeats + sourceZoneShortSeats < 1)) throw new Error("LONG/SHORT-stoelen per prijszone moeten tussen 0 en 100 liggen; samen minimaal 1.");
     const minLev = Math.max(1, Math.round(n(source.minimumLeverage)));
     const maxLev = source.maximumLeverage.trim() ? Math.max(1, Math.round(n(source.maximumLeverage))) : null;
     if (maxLev !== null && maxLev < minLev) throw new Error("Maximum leverage kan niet lager zijn dan minimum leverage.");
@@ -606,8 +606,8 @@ export function AsterBotConfiguratorV3({ snapshot, serverConfirmed, onConfirmed,
   const confirmedDraft = useMemo(() => normalizeDraft(confirmedSettings), [JSON.stringify(confirmedSettings)]);
   const confirmedZoneEnabled = confirmedDraft.zoneSoldiersEnabled;
   const confirmedStrategyName = confirmedZoneEnabled ? "Zone Warriors" : "Classic DCA";
-  const confirmedLongSeats = Math.max(1, Math.round(n(confirmedDraft.zoneLongSeats, 3)));
-  const confirmedShortSeats = Math.max(1, Math.round(n(confirmedDraft.zoneShortSeats, 3)));
+  const confirmedLongSeats = Math.max(0, Math.round(n(confirmedDraft.zoneLongSeats, 3)));
+  const confirmedShortSeats = Math.max(0, Math.round(n(confirmedDraft.zoneShortSeats, 3)));
   const confirmedClassicLong = Math.max(0, Math.round(n(confirmedDraft.longSlots)));
   const confirmedClassicShort = Math.max(0, Math.round(n(confirmedDraft.shortSlots)));
   const confirmedMaximum = confirmedZoneEnabled
