@@ -1,0 +1,25 @@
+name: Dispatch Strategy 2 Shared Live Test Deploy 2026-10-06
+
+on:
+  push:
+    branches:
+      - amar-crypto-bot-2026-cloud
+    paths:
+      - ".github/workflows/dispatch-strategy2-test-live-20261006.yml"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch exact Strategy 2 test-live deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run deploy-cloud-strategy2-test-live.yml \
+            --repo AmarRakhan/tradementor \
+            --ref amar-crypto-bot-2026-cloud \
+            -f confirmation=DEPLOY_STRATEGY2_TEST_LIVE
