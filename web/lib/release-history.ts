@@ -57,7 +57,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   technicalDetails: [
     "Frontend: web/components/portfolio-koers-chart.tsx.",
     "Regression: web/tests/portfolio-koers-chart.test.mjs + web/tests/portfolio-koers-zone-advisor-ui.test.mjs.",
-    "Release-identiteit: Webapp V46 build 556.",
+    "Release-identiteit: Webapp V46 build 557.",
   ],
   confidence: "confirmed",
 }
