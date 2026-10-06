@@ -280,8 +280,9 @@ def test_pre_order_recheck_rejects_candidate_that_moved_back_inside_band(monkeyp
 
     def fake_execute(client, plan, *, side, action, before_submit=None, **kwargs):
         market.prices[symbol] = 100
-        assert before_submit is not None
-        before_submit(SimpleNamespace(symbol=symbol, side=side, action=action))
+        decision_provider = kwargs.get("decision_provider")
+        assert decision_provider is not None
+        decision_provider()
         submitted.append(symbol)
         return {"result": {"avgPrice": "100", "executedQty": "1"}}
 
