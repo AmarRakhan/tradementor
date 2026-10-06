@@ -60,6 +60,7 @@ const PORTFOLIO_KOERS_UI41_REFERENCE="file_00000000e2fc820a9057c8f60c1ec845";
 const PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE="file_00000000267082109428370054535e59";
 const EMPTY_STRUCTURE_OVERLAY:StructureOverlayLayout={levels:[],activeZone:null,roleFlip:null,newHigh:null,breakout:null};
 const PRICE_AXIS_WIDTH=48;
+const ACCOUNT_STARTUP_VISIBLE_BARS:Record<string,number>={"1m":20,"5m":18,"15m":12,"1u":12,"4u":10,"24u":8};
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
   // Build 558: mobile cold-start framing. Fewer visible bars + wider spacing
   // matches the user's manually zoomed reference without affecting stored data.
@@ -821,7 +822,13 @@ export function PortfolioKoersChart({
     // Preserve the existing Accountwaarde/Performance viewport exactly.
     // Only sparse Active Trades history reserves the normal timeframe density so
     // a few real P&L candles are not stretched to screen width.
-    const rawFocusVisibleBars=Math.min(candles.length,view.visibleBars);
+    // Build 563: the approved Accountwaarde start state is deliberately tighter
+    // than the full timeframe history. Keep older confirmed candles available for
+    // indicators/scrolling, but do not let them flatten the live-zone startup.
+    const startupVisibleBars=viewMode==="account"
+      ? Math.min(view.visibleBars,ACCOUNT_STARTUP_VISIBLE_BARS[timeframe]??view.visibleBars)
+      : view.visibleBars;
+    const rawFocusVisibleBars=Math.min(candles.length,startupVisibleBars);
     const latestPrice=Number(candles.at(-1)?.close);
     const focusContext=viewMode==="account"
       ? portfolioZoneContextFromLadder(advisorZoneLadderRef.current,latestPrice)

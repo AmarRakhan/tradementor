@@ -546,3 +546,13 @@ test("Build 561 imports the live-zone focus helper used by Portfolio Koers start
   const importLine=component.split("\n").find((line)=>line.includes('from "@/lib/portfolio-koers-chart.mjs"'))||"";
   assert.ok(importLine.includes("portfolioKoersFocusBars"));
 });
+
+
+test("Build 563 keeps the approved Accountwaarde startup tight without deleting history",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('ACCOUNT_STARTUP_VISIBLE_BARS:Record<string,number>={"1m":20,"5m":18,"15m":12,"1u":12,"4u":10,"24u":8}'));
+  assert.ok(component.includes('const startupVisibleBars=viewMode==="account"'));
+  assert.ok(component.includes('Math.min(view.visibleBars,ACCOUNT_STARTUP_VISIBLE_BARS[timeframe]??view.visibleBars)'));
+  assert.ok(component.includes('const rawFocusVisibleBars=Math.min(candles.length,startupVisibleBars)'));
+  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
+});
