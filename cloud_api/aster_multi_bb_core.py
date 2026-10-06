@@ -9,7 +9,8 @@ import copy, hashlib, math, time
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed
 from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
-from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
+from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, is_definite_contract_rejection, plan_pair
+from aster_unified_execution import execute_approved_leg_once
 from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
 from aster_unified_engine import (
@@ -1040,9 +1041,20 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                             "activeShort": fresh_short_count, "shortSlots": settings.short_slots,
                         })
                         continue
-                actions.append({"kind": "ASYM_SHORT_RECOVERY", "symbol": symbol, "multiplier": settings.short_start_multiplier})
+                hedge_decision=evaluate_position_action(
+                    policy_from_settings(settings),
+                    PositionActionContext(
+                        uid=uid,symbol=symbol,side="SHORT",action_type=ActionType.HEDGE_OPEN,
+                        position_open=long_row is not None,trigger_met=True,dca_count=_i(st0.get("dcaCount")),
+                    ),
+                )
+                require_position_action_allowed(hedge_decision)
+                actions.append({"kind": "ASYM_SHORT_RECOVERY", "symbol": symbol, "multiplier": settings.short_start_multiplier,
+                                "decision":hedge_decision.public_dict()})
                 if not dry_run:
-                    recovered = execute_leg_once(client, short_plan, side=PositionSide.SHORT, action="OPEN", id_prefix=f"mbb-asym-short-{st0.get('cycleId')}", confirm=True, new_position_leverage=current_lev, before_submit=before_order)
+                    recovered = execute_approved_leg_once(client, short_plan, side=PositionSide.SHORT, action="OPEN", id_prefix=f"mbb-asym-short-{st0.get('cycleId')}", confirm=True,
+                                                          expected_action=ActionType.HEDGE_OPEN,decision=hedge_decision,
+                                                          new_position_leverage=current_lev, before_submit=before_order)
                     sf = recovered.get("result") or {}; sp = _f(sf.get("avgPrice"), prices[symbol]); sq = _f(sf.get("executedQty"), float(short_plan.quantity))
                     _record_order_attribution(
                         ref, sf, settings=settings, symbol=symbol, side="SHORT",
@@ -1073,7 +1085,16 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 plan = PairExecutionPlan(symbol, Decimal(str(qty)), Decimal(str(qty * mark)), max(1, _i(row.get("leverage"))))
                 evidence = _close_evidence(client, uid, st0, row, side, mark)
                 try:
-                    execute_leg_once(client, plan, side=PositionSide.SHORT, action="CLOSE", id_prefix=f"mbb-asym-close-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
+                    hedge_close_decision=evaluate_position_action(
+                        policy_from_settings(settings),
+                        PositionActionContext(
+                            uid=uid,symbol=symbol,side="SHORT",action_type=ActionType.HEDGE_CLOSE,
+                            position_open=True,trigger_met=True,dca_count=_i(st0.get("dcaCount")),
+                        ),
+                    )
+                    require_position_action_allowed(hedge_close_decision)
+                    execute_approved_leg_once(client, plan, side=PositionSide.SHORT, action="CLOSE", id_prefix=f"mbb-asym-close-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
+                                     expected_action=ActionType.HEDGE_CLOSE,decision=hedge_close_decision,
                                      close_evidence=evidence, before_submit=before_order)
                 except (AsterCloseBlocked, AutoHedgeCloseBlocked) as exc:
                     actions.append({"kind": "ASYM_SHORT_CLOSE_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
@@ -1105,7 +1126,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 plan = PairExecutionPlan(symbol, Decimal(str(qty)), Decimal(str(qty * mark)), max(1, _i(row.get("leverage"))))
                 evidence = _close_evidence(client, uid, st0, row, side, mark)
                 try:
-                    closed = execute_leg_once(client, plan, side=PositionSide(side), action="CLOSE", id_prefix=f"mbb-tp-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
+                    closed = execute_approved_leg_once(client, plan, side=PositionSide(side), action="CLOSE", id_prefix=f"mbb-tp-{hashlib.sha256((uid+key+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
+                                              expected_action=ActionType.CLOSE_TP, decision=tp_decision,
                                               close_evidence=evidence, before_submit=before_order)
                 except (AsterCloseBlocked, AutoHedgeCloseBlocked) as exc:
                     actions.append({"kind": "TP_BLOCKED", "symbol": symbol, "side": side, "reason": str(exc)})
@@ -1249,7 +1271,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         actions.append({"kind":"DCA","symbol":symbol,"side":side,"number":dca_count+1,"trigger":trigger,"catchup":False,"leverage":tier["leverage"],"previousLeverage":tier["previousLeverage"],"tierReduction":tier["tierReduction"],"projectedNotional":tier["projectedNotional"],"decision":dca_decision.public_dict()})
         if not dry_run:
             try:
-                result=execute_leg_once(client,plan,side=PositionSide(side),action="OPEN",id_prefix=f"mbb-dca-{hashlib.sha256((uid+key+str(dca_count+1)+str(timestamp_ms)).encode()).hexdigest()[:12]}",confirm=True,new_position_leverage=int(tier["leverage"]),allow_existing_contract_leverage_change=True,before_submit=before_order)
+                result=execute_approved_leg_once(client,plan,side=PositionSide(side),action="OPEN",id_prefix=f"mbb-dca-{hashlib.sha256((uid+key+str(dca_count+1)+str(timestamp_ms)).encode()).hexdigest()[:12]}",confirm=True,expected_action=ActionType.DCA_ADD,decision=dca_decision,new_position_leverage=int(tier["leverage"]),allow_existing_contract_leverage_change=True,before_submit=before_order)
             except Exception as exc:
                 if not is_definite_contract_rejection(exc): raise
                 blocked={"kind":"DCA_BLOCKED","symbol":symbol,"side":side,"reason":str(exc)}
@@ -1923,7 +1945,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 f"plannedNotional={_f(entry_sizing.get('plannedInputNotionalUsd'))}",
                 flush=True,
             )
-            def entry_before_submit(intent: Any) -> None:
+            def initial_entry_decision_provider() -> Any:
                 effective_timeframe=_effective_entry_timeframe(settings, side, exposure_refill)
                 require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
                                         timeframe=effective_timeframe, live_price=None, force_refresh=True, stage="pre_order")
@@ -1983,14 +2005,17 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                             **admission.public_dict(),
                             "timestamp":datetime.now(timezone.utc),
                         })
-                    require_allowed(admission)
                 entry_action["admission"]=admission.public_dict()
-                if before_order is not None:
-                    before_order(intent)
+                return admission
             try:
-                result = execute_leg_once(client, plan, side=PositionSide(side), action="OPEN", id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}", confirm=True,
-                                          new_position_leverage=plan.leverage,
-                                          before_submit=entry_before_submit)
+                result = execute_approved_leg_once(
+                    client, plan, side=PositionSide(side), action="OPEN",
+                    id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}",
+                    confirm=True, expected_action=ActionType.INITIAL_ENTRY,
+                    decision_provider=initial_entry_decision_provider,
+                    new_position_leverage=plan.leverage,
+                    before_submit=before_order,
+                )
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason_code, "bollingerEntryFilter15m": True, "stage": "pre_order"})
                 continue
@@ -2086,7 +2111,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 actions.append({"kind": "ASYM_SHORT_ENTRY_PENDING", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_PREEXISTING_LONG"})
             if paired and short_plan is not None and short_action is not None and not defer_paired_short:
                 try:
-                    short_result = execute_leg_once(client, short_plan, side=PositionSide.SHORT, action="OPEN", id_prefix=f"mbb-asym-short-{cycle_id}", confirm=True, new_position_leverage=short_plan.leverage, before_submit=before_order)
+                    paired_hedge_decision=evaluate_position_action(
+                        policy_from_settings(settings),
+                        PositionActionContext(
+                            uid=uid,symbol=symbol,side="SHORT",action_type=ActionType.HEDGE_OPEN,
+                            position_open=True,trigger_met=True,dca_count=0,
+                        ),
+                    )
+                    require_position_action_allowed(paired_hedge_decision)
+                    short_action["decision"]=paired_hedge_decision.public_dict()
+                    short_result = execute_approved_leg_once(client, short_plan, side=PositionSide.SHORT, action="OPEN", id_prefix=f"mbb-asym-short-{cycle_id}", confirm=True,
+                                                             expected_action=ActionType.HEDGE_OPEN,decision=paired_hedge_decision,
+                                                             new_position_leverage=short_plan.leverage, before_submit=before_order)
                 except Exception as exc:
                     pending = dict(state[key]); pending.update({"pairedShortPending": True, "pairedShortLastError": str(exc), "updatedAtMs": timestamp_ms}); state[key] = pending
                     ref.set({"multiBbPositions": state, "phase": "RUNNING", "lastReason": f"Asymmetrische hedge: LONG {symbol} open; initiële SHORT wacht op veilige recovery"}, merge=True)
