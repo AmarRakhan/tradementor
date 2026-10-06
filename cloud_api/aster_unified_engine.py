@@ -304,3 +304,101 @@ def require_allowed(decision: AdmissionDecision, *, action_type: ActionType = Ac
 
 def all_filters_pass(results: Iterable[FilterResult]) -> bool:
     return all(item.status in {FilterStatus.PASS, FilterStatus.SKIP} for item in results)
+
+
+@dataclass(frozen=True)
+class PositionActionContext:
+    uid: str
+    symbol: str
+    side: str
+    action_type: ActionType
+    position_open: bool
+    trigger_met: bool
+    dca_count: int = 0
+    take_profit_enabled: bool = True
+
+
+@dataclass(frozen=True)
+class PositionActionDecision:
+    status: DecisionStatus
+    reason_code: str
+    decision_id: str
+    config_version: int
+    action_type: ActionType
+    symbol: str
+    side: str
+    current_policy: dict[str, Any]
+
+    @property
+    def allowed(self) -> bool:
+        return self.status is DecisionStatus.ALLOW
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "decisionId": self.decision_id,
+            "status": self.status.value,
+            "reasonCode": self.reason_code,
+            "configVersion": self.config_version,
+            "actionType": self.action_type.value,
+            "symbol": self.symbol,
+            "side": self.side,
+            "currentPolicy": dict(self.current_policy),
+        }
+
+
+def evaluate_position_action(policy: AsterBotPolicy, context: PositionActionContext) -> PositionActionDecision:
+    """Evaluate a future action against current policy, never position-copied policy."""
+    side = context.side.upper()
+    current = policy.current_position_policy(side)
+    identity = json.dumps({
+        "uid": context.uid,
+        "symbol": context.symbol.upper(),
+        "side": side,
+        "action": context.action_type.value,
+        "configVersion": policy.config_version,
+        "dcaCount": max(0, int(context.dca_count)),
+        "triggerMet": bool(context.trigger_met),
+    }, sort_keys=True, separators=(",", ":"))
+    decision_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+
+    def result(status: DecisionStatus, reason: str) -> PositionActionDecision:
+        return PositionActionDecision(
+            status, reason, decision_id, policy.config_version, context.action_type,
+            context.symbol.upper(), side, current,
+        )
+
+    if not context.position_open:
+        return result(DecisionStatus.DENY, "POSITION_NOT_OPEN")
+    if not context.trigger_met:
+        return result(DecisionStatus.DENY, "TRIGGER_NOT_MET")
+
+    if context.action_type is ActionType.DCA_ADD:
+        maximum = int(current["maxDca"])
+        if maximum <= 0:
+            return result(DecisionStatus.DENY, "DCA_DISABLED")
+        if int(context.dca_count) >= maximum:
+            return result(DecisionStatus.DENY, "MAX_DCA_REACHED")
+        if float(current["dcaAmount"]) <= 0:
+            return result(DecisionStatus.DENY, "DCA_AMOUNT_INVALID")
+        return result(DecisionStatus.ALLOW, "CURRENT_DCA_POLICY_PASSED")
+
+    if context.action_type is ActionType.CLOSE_TP:
+        if not context.take_profit_enabled:
+            return result(DecisionStatus.DENY, "TAKE_PROFIT_DISABLED")
+        if float(current["takeProfit"]) <= 0:
+            return result(DecisionStatus.DENY, "TAKE_PROFIT_INVALID")
+        return result(DecisionStatus.ALLOW, "CURRENT_TP_POLICY_PASSED")
+
+    if context.action_type in {
+        ActionType.CLOSE_SL, ActionType.CLOSE_MANUAL,
+        ActionType.HEDGE_OPEN, ActionType.RECOVERY_OPEN,
+    }:
+        return result(DecisionStatus.ALLOW, "CURRENT_ACTION_POLICY_PASSED")
+
+    return result(DecisionStatus.DENY, "UNSUPPORTED_POSITION_ACTION")
+
+
+def require_position_action_allowed(decision: PositionActionDecision) -> PositionActionDecision:
+    if not decision.allowed:
+        raise PermissionError(f"ASTERBOT_POSITION_ACTION_DENIED:{decision.reason_code}")
+    return decision
