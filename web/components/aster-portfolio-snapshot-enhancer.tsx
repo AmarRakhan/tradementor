@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { authenticatedRequest } from "@/lib/cloud-client";
+import { authenticatedRequest, authenticatedStream } from "@/lib/cloud-client";
+import { applyAsterRealtimeMark, parseSseChunk } from "@/lib/aster-realtime.mjs";
 import { AsterHedgeManager } from "./aster-hedge-manager";
 import { PortfolioKoersChart } from "./portfolio-koers-chart";
 import { TradeIntelligenceAdvisorCenter } from "./trade-intelligence-advisor-center";
@@ -1062,6 +1063,7 @@ async function loadProfitPreview(): Promise<ProfitPreview> {
 export function AsterPortfolioSnapshotEnhancer() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
+  const [realtimeEquity, setRealtimeEquity] = useState<number | null>(null);
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
@@ -1075,6 +1077,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [asterSubtab, setAsterSubtab] = useState<AsterSubtab>("portfolio");
   const [advisorDayRangePosition, setAdvisorDayRangePosition] = useState<"low"|"middle"|"high">("middle");
   const valuesRef = useRef<SnapshotValues>(EMPTY);
+  const realtimeAccountRef = useRef<Record<string, unknown> | null>(null);
   const detailScrollY = useRef(0);
   const syncing = useRef(false);
 
@@ -1130,6 +1133,75 @@ export function AsterPortfolioSnapshotEnhancer() {
   }, []);
 
   useEffect(() => { if (host) setAsterSubtab("portfolio"); }, [host]);
+
+  useEffect(() => {
+    if (!host) {
+      realtimeAccountRef.current = null;
+      setRealtimeEquity(null);
+      return;
+    }
+    let alive = true;
+    const controller = new AbortController();
+    let reconnectTimer = 0;
+    const applyEquity = (payload: unknown) => {
+      const root = record(payload);
+      realtimeAccountRef.current = root;
+      const equity = firstNumber([root, record(root.data), record(root.account), record(root.snapshot)], ["equity", "totalMarginBalance"]);
+      if (alive && equity !== null && equity > 0) setRealtimeEquity(equity);
+    };
+    const reconcile = async () => {
+      try {
+        applyEquity(await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }));
+      } catch {
+        // Keep the last exchange-confirmed/realtime value; the legacy DOM value
+        // remains the final fallback if realtime has not produced a value yet.
+      }
+    };
+    const connect = async () => {
+      try {
+        const response = await authenticatedStream("/api/exchanges/aster/realtime", { signal: controller.signal });
+        const reader = response.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (alive) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const parsed = parseSseChunk(buffer, decoder.decode(value, { stream: true }));
+          buffer = parsed.rest;
+          for (const event of parsed.events) {
+            const current = realtimeAccountRef.current;
+            if (!current) continue;
+            const next = applyAsterRealtimeMark(current, event) as Record<string, unknown>;
+            realtimeAccountRef.current = next;
+            const equity = optionalNumber(next.equity);
+            if (alive && equity !== null && equity > 0) setRealtimeEquity(equity);
+          }
+        }
+      } catch {
+        // A short disconnect is recovered below. REST reconciliation stays active.
+      } finally {
+        if (alive && !controller.signal.aborted) {
+          reconnectTimer = window.setTimeout(() => { void connect(); }, 1500);
+        }
+      }
+    };
+    void reconcile().then(() => { if (alive) void connect(); });
+    const reconcileTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void reconcile();
+    }, 15_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void reconcile();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      controller.abort();
+      window.clearInterval(reconcileTimer);
+      window.clearTimeout(reconnectTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [host]);
 
   useEffect(() => {
     if (!host) return;
@@ -1324,6 +1396,9 @@ export function AsterPortfolioSnapshotEnhancer() {
   const confirmBucket = confirmScope && profitPreview
     ? confirmScope === "LONG" ? profitPreview.long : confirmScope === "SHORT" ? profitPreview.short : profitPreview.all
     : null;
+  const liveValues = realtimeEquity !== null
+    ? { ...values, equity: money(realtimeEquity) }
+    : values;
 
   return host ? createPortal(
     <>
@@ -1337,7 +1412,7 @@ export function AsterPortfolioSnapshotEnhancer() {
 
         {asterSubtab==="portfolio" ? <>
           <PortfolioKoersChart
-            liveEquityText={values.equity}
+            liveEquityText={liveValues.equity}
             liveAvailableText={values.available}
             liveLongText={values.longs}
             liveShortText={values.shorts}
@@ -1347,7 +1422,7 @@ export function AsterPortfolioSnapshotEnhancer() {
             onDayRangePositionChange={setAdvisorDayRangePosition}
           />
           <Snapshot
-            values={values}
+            values={liveValues}
             profitPreview={profitPreview}
             liquidationDiagnostics={liquidationDiagnostics}
             profitBusy={profitBusy}
