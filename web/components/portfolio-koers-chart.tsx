@@ -61,12 +61,14 @@ const PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE="file_00000000267082109428370054535e
 const EMPTY_STRUCTURE_OVERLAY:StructureOverlayLayout={levels:[],activeZone:null,roleFlip:null,newHigh:null,breakout:null};
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
-  "1m":{visibleBars:32,barSpacing:7.2,rightOffset:1.5},
-  "5m":{visibleBars:31,barSpacing:7.4,rightOffset:1.5},
-  "15m":{visibleBars:30,barSpacing:7.6,rightOffset:1.6},
-  "1u":{visibleBars:28,barSpacing:7.8,rightOffset:1.6},
-  "4u":{visibleBars:26,barSpacing:8.0,rightOffset:1.8},
-  "24u":{visibleBars:24,barSpacing:8.2,rightOffset:2.0},
+  // Build 558: mobile cold-start framing. Fewer visible bars + wider spacing
+  // matches the user's manually zoomed reference without affecting stored data.
+  "1m":{visibleBars:24,barSpacing:9.0,rightOffset:1.5},
+  "5m":{visibleBars:24,barSpacing:9.0,rightOffset:1.5},
+  "15m":{visibleBars:23,barSpacing:9.2,rightOffset:1.6},
+  "1u":{visibleBars:22,barSpacing:9.4,rightOffset:1.6},
+  "4u":{visibleBars:20,barSpacing:9.6,rightOffset:1.8},
+  "24u":{visibleBars:18,barSpacing:9.8,rightOffset:2.0},
 };
 const localTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("nl-NL",{timeZone:"Europe/Amsterdam",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockTime=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
@@ -813,11 +815,11 @@ export function PortfolioKoersChart({
     const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
-      layout:{background:{type:ColorType.Solid,color:"#03131b"},textColor:"#9fb0ba",fontSize:10,attributionLogo:false} as any,
-      grid:{vertLines:{color:"rgba(75,133,160,.035)"},horzLines:{color:"rgba(75,133,160,.045)"}},
-      crosshair:{mode:CrosshairMode.MagnetOHLC,vertLine:{color:"rgba(106,198,255,.48)",labelBackgroundColor:"#17394a"},horzLine:{color:"rgba(106,198,255,.48)",labelBackgroundColor:"#17394a"}},
-      rightPriceScale:{borderColor:"rgba(85,160,190,.22)",minimumWidth:PRICE_AXIS_WIDTH,scaleMargins:{top:.06,bottom:.06}},
-      timeScale:{borderColor:"rgba(85,160,190,.28)",timeVisible:true,secondsVisible:false,rightOffset:view.rightOffset,barSpacing:view.barSpacing,minBarSpacing:3,tickMarkFormatter:(time:unknown)=>{
+      layout:{background:{type:ColorType.Solid,color:"#000000"},textColor:"#aeb6bb",fontSize:10,attributionLogo:false} as any,
+      grid:{vertLines:{color:"rgba(255,255,255,.028)"},horzLines:{color:"rgba(255,255,255,.04)"}},
+      crosshair:{mode:CrosshairMode.MagnetOHLC,vertLine:{color:"rgba(210,220,225,.34)",labelBackgroundColor:"#202326"},horzLine:{color:"rgba(210,220,225,.34)",labelBackgroundColor:"#202326"}},
+      rightPriceScale:{borderColor:"rgba(255,255,255,.14)",minimumWidth:PRICE_AXIS_WIDTH,scaleMargins:{top:.06,bottom:.06}},
+      timeScale:{borderColor:"rgba(255,255,255,.14)",timeVisible:true,secondsVisible:false,rightOffset:view.rightOffset,barSpacing:view.barSpacing,minBarSpacing:3,tickMarkFormatter:(time:unknown)=>{
         const sec=typeof time==="number"?time:0;
         if(!sec)return"";
         const date=new Date(sec*1000);
