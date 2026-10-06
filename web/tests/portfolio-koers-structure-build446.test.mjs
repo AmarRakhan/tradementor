@@ -10,20 +10,21 @@ test("Build 446 binds Portfolio Koers Graph 3.0 to the approved structure refere
   assert.ok(component.includes(`PORTFOLIO_STRUCTURE_REFERENCE="${REFERENCE}"`));
   assert.ok(component.includes(`PORTFOLIO_STRUCTURE_BASELINE_REFERENCE="${BASELINE}"`));
   assert.ok(component.includes("portfolio-koers-structure-layer"));
-  assert.ok(component.includes("boundaryPrices"));
-  assert.ok(component.includes("structurePrice!==null&&price>Number(structurePrice)?\"resistance\":\"support\""));
-  assert.equal(component.includes('label:"R1"'),false);
-  assert.equal(component.includes('label:"S1"'),false);
+  assert.ok(component.includes("const rawLevels=[...resistanceLevels,...supportLevels]"));
+  assert.ok(component.includes('label:"R1"'));
+  assert.ok(component.includes('label:"S1"'));
+  assert.ok(component.includes('label:`R${offset+1}`'));
+  assert.ok(component.includes('label:`S${offset+1}`'));
 });
 
-test("Build 513 removes the in-chart active-zone block while keeping footer context",async()=>{
+test("Build 551 supersedes the Build 513 cleanup and restores the in-chart active-zone block",async()=>{
   const [component,css]=await Promise.all([
     readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
     readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8"),
   ]);
-  assert.ok(component.includes("activeZone:null"));
+  assert.ok(component.includes("activeZone:activeTop!==null&&activeBottom!==null"));
   assert.ok(css.includes(".portfolio-koers-ui41 .portfolio-koers-structure-zone{"));
-  assert.ok(css.includes("display:none!important"));
+  assert.doesNotMatch(css,/\.portfolio-koers-ui41 \.portfolio-koers-structure-zone\{\s*display:none!important/);
   assert.equal(component.includes("voormalige R1 → nieuwe support"),false);
 });
 
@@ -68,13 +69,13 @@ test("Build 479 is the advertised webapp build while Build 447 Graph 3.1 regress
 });
 
 
-test("Build 513 renders every visible ladder boundary without an R/S display cap",async()=>{
+test("Build 551 restores the reference R1-R4 and S1-S4 display cap",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,4)"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(zoneLadder,structurePrice)"));
-  assert.ok(component.includes("const boundaryPrices=Array.from(new Set(rows.flatMap"));
+  assert.ok(component.includes("const resistanceLevels=Array.from({length:4}"));
+  assert.ok(component.includes("const supportLevels=Array.from({length:4}"));
   assert.ok(component.includes("if(top<0||top>height)return []"));
-  assert.equal(component.includes("Array.from({length:4}"),false);
 });
 
 test("Build 513 disables legacy breakout structure notes",async()=>{

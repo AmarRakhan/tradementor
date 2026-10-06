@@ -51,7 +51,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   ],
   technicalDetails: [
     "Frontend: web/components/portfolio-koers-chart.tsx + web/app/portfolio-koers-chart.css.",
-    "Regression: web/tests/portfolio-koers-chart.test.mjs.",
+    "Regression: chart, structure and live-surface contracts are aligned to the restored Build 512 visual reference.",
     "Release-identiteit: Webapp V46 build 551."
   ],
   confidence: "confirmed",

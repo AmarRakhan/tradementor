@@ -9,8 +9,8 @@ const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx",
 const version = fs.readFileSync(new URL("../lib/app-version.ts", import.meta.url), "utf8");
 const history = fs.readFileSync(new URL("../lib/release-history.ts", import.meta.url), "utf8");
 
-test("Build 550 keeps the live single-surface AsterBot release contract", () => {
-  assert.match(version, /WEBAPP_BUILD_NUMBER = "550"/);
+test("Build 551 keeps the live single-surface AsterBot release contract", () => {
+  assert.match(version, /WEBAPP_BUILD_NUMBER = "551"/);
   assert.match(shell, /AsterStrategy2Maker/);
   assert.doesNotMatch(shell, /ConfiguratorV3|Nieuwe configurator|Oude instellingen/);
   assert.match(maker, /Prijszone-stoelen/);

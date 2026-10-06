@@ -183,7 +183,7 @@ test("Build 509 makes Bollinger, active-zone shading and day high/low visibly ex
   assert.ok(component.includes("High vandaag"));
   assert.ok(component.includes("Low vandaag"));
   assert.ok(component.includes('timeZone:"Europe/Amsterdam"'));
-  assert.ok(component.includes("const boundaryPrices=Array.from(new Set(rows.flatMap"));
+  assert.ok(component.includes("const rawLevels=[...resistanceLevels,...supportLevels]"));
   assert.ok(css.includes("portfolio-koers-day-range"));
   assert.ok(css.includes(".portfolio-koers-structure-level.resistance{color:#ff5967}"));
   assert.ok(css.includes(".portfolio-koers-structure-level.support{color:#19dda0}"));
