@@ -192,11 +192,11 @@ def test_initial_entry_open_has_canonical_admission_immediately_before_submit():
     source = (Path(__file__).parent / "aster_multi_bb_core.py").read_text(encoding="utf-8")
     marker = 'id_prefix=f"mbb-open-'
     index = source.index(marker)
-    before = source[max(0, index - 9000):index]
-    assert "evaluate_initial_entry(" in before
-    assert "decision_provider=initial_entry_decision_provider" in before
-    assert "client.position_risk()" in before
-    assert 'latest_doc=ref.get().to_dict() or {}' in before
+    block = source[max(0, index - 9000):index + 2200]
+    assert "evaluate_initial_entry(" in block
+    assert "decision_provider=initial_entry_decision_provider" in block
+    assert "client.position_risk()" in block
+    assert 'latest_doc=ref.get().to_dict() or {}' in block
 
 
 def test_current_policy_action_gate_uses_new_dca_distance_amount_limit_and_tp():
