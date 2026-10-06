@@ -328,6 +328,10 @@ jobs:
               result["betaAccount"]={
                   "accountRef":hashlib.sha256(uid.encode()).hexdigest()[:10],
                   "rawReleaseChannel":str(raw.get("releaseChannel") or ""),
+                  "rawEnabled":raw.get("enabled") is True,
+                  "rawMonitor":raw.get("monitor") is True,
+                  "readiness":raw.get("readiness") if isinstance(raw.get("readiness"),dict) else {},
+                  "exchangePositions":[{"symbol":str(p.get("symbol") or "").upper(),"side":str(p.get("positionSide") or "").upper(),"qty":str(p.get("positionAmt") or "")} for p in positions if abs(float(p.get("positionAmt") or 0))>0],
                   "profileReleaseChannel":str(profile.get("releaseChannel") or ""),
                   "profileBetaOwner":profile.get("betaOwner") is True,
                   "storedZoneEnabled":stored.get("zoneSoldiersEnabled") is True,
