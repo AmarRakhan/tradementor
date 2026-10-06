@@ -234,3 +234,27 @@ def test_explicit_bot_off_blocks_initial_entry_but_does_not_mutate_positions():
         context(side="LONG", active_zone=1, bot_enabled=False),
     )
     assert denied.reason_code == "BOT_DISABLED"
+
+
+def test_multi_bb_runtime_has_no_direct_low_level_leg_execution_bypass():
+    source = (Path(__file__).parent / "aster_multi_bb_core.py").read_text(encoding="utf-8")
+    assert "from aster_unified_execution import execute_approved_leg_once" in source
+    assert "execute_leg_once(" not in source
+    assert source.count("execute_approved_leg_once(") >= 6
+    for action in [
+        "ActionType.INITIAL_ENTRY",
+        "ActionType.DCA_ADD",
+        "ActionType.CLOSE_TP",
+        "ActionType.HEDGE_OPEN",
+        "ActionType.HEDGE_CLOSE",
+    ]:
+        assert action in source
+
+
+def test_execution_boundary_rejects_missing_or_wrong_action_decision():
+    from aster_unified_execution import _validate_decision
+    policy = policy_from_settings(settings())
+    admission = evaluate_initial_entry(policy, context())
+    assert admission.allowed
+    with pytest.raises(PermissionError):
+        _validate_decision(admission, ActionType.DCA_ADD)
