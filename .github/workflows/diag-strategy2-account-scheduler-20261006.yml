@@ -1,0 +1,81 @@
+name: Diagnose Strategy2 Account Scheduler 20261006
+
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diag-strategy2-account-scheduler-20261006.yml]
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read target scheduler state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service.json"
+          IMAGE="$(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); print(d['spec']['template']['spec']['containers'][0]['image'])
+          PY
+          )"
+          RUNTIME_SA="$(python - "$RUNNER_TEMP/service.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); print(d['spec']['template']['spec']['serviceAccountName'])
+          PY
+          )"
+          JOB="tm-s2-sched-diag-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import json,hashlib
+          from datetime import datetime,timezone
+          from google.cloud import firestore
+          db=firestore.Client(project='tradementor-production')
+          now=datetime.now(timezone.utc)
+          rows=[]
+          for snap in db.collection('asterStrategy2').where('monitor','==',True).stream():
+              raw=snap.to_dict() or {}
+              s=raw.get('settings') if isinstance(raw.get('settings'),dict) else {}
+              def n(v,d=-999):
+                  try:return int(round(float(v)))
+                  except:return d
+              if n(s.get('maximumPositions'))!=10 or n(s.get('zoneBaseLongSoldiers'))!=2:
+                  continue
+              qlease=raw.get('orderQueueLease') if isinstance(raw.get('orderQueueLease'),dict) else {}
+              coord=db.collection('asterAccountCoordination').document(snap.id).get().to_dict() or {}
+              coordlease=coord.get('lease') if isinstance(coord.get('lease'),dict) else {}
+              def dt(v):
+                  if isinstance(v,datetime):
+                      v=v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)
+                      return {'iso':v.isoformat(),'future':v>now,'ageSec':round((now-v).total_seconds(),1)}
+                  return None
+              oqs=raw.get('orderQueueState') if isinstance(raw.get('orderQueueState'),dict) else {}
+              rows.append({'accountRef':hashlib.sha256(snap.id.encode()).hexdigest()[:10],'enabled':raw.get('enabled') is True,'monitor':raw.get('monitor') is True,'phase':str(raw.get('phase') or ''),'lastReason':str(raw.get('lastReason') or '')[:180],'lastTickAt':dt(raw.get('lastTickAt')),'updatedAt':dt(raw.get('updatedAt')),'leaseUntil':dt(raw.get('leaseUntil')),'orderQueueEnabled':raw.get('orderQueueEnabled') is True,'orderQueueLeaseUntil':dt(qlease.get('until')),'coordOwner':str(coordlease.get('owner') or ''),'coordPurpose':str(coordlease.get('purpose') or ''),'coordUntil':dt(coordlease.get('until')),'pendingReopens':len(raw.get('pendingReopens') or []) if isinstance(raw.get('pendingReopens'),list) else -1,'hasCurrentIntent':bool(oqs.get('currentIntent')),'haltedUncertain':bool(oqs.get('haltedUncertain')),'zoneBaseShort':n(s.get('zoneBaseShortSoldiers'))})
+          print('S2_ACCOUNT_SCHED_DIAG '+json.dumps({'now':now.isoformat(),'matches':rows},separators=(',',':')),flush=True)
+          PY
+          )"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 120s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          RESULT="$(gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"S2_ACCOUNT_SCHED_DIAG \"" --project "$GCP_PROJECT_ID" --freshness=10m --limit=10 --order=desc --format='value(textPayload)' | grep 'S2_ACCOUNT_SCHED_DIAG ' | head -n1)"
+          gh api "repos/$GITHUB_REPOSITORY/issues/41/comments" -f body="$RESULT"
