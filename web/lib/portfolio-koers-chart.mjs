@@ -482,3 +482,95 @@ export function markerVisual(row) {
   if(kind==="entry"&&side==="SHORT") return {position:"aboveBar",shape:"arrowDown",tone:"short",text:String(row.label||"ENTRY S")};
   return {position:"aboveBar",shape:"circle",tone:"tp",text:String(row?.label||"TP")};
 }
+
+
+/**
+ * Display-only fallback for Portfolio Koers zones.
+ * Mirrors the confirmed swing/SR/ATR chart derivation so the chart can draw
+ * next-zone lines even when the backend returns zones=[] during a cold start.
+ * This function is never used by the trading engine.
+ */
+export function derivePortfolioDisplayZones(candles = [], cycleStartEquity = 0) {
+  const number = (value) => {
+    const result = Number(value);
+    return Number.isFinite(result) ? result : 0;
+  };
+  const clean = (Array.isArray(candles) ? candles : [])
+    .filter((row) => row && typeof row === "object" && number(row.close) > 0);
+  if (clean.length < 7) return [];
+
+  const ranges = [];
+  let previousClose = 0;
+  for (const candle of clean) {
+    const high = number(candle.high), low = number(candle.low), close = number(candle.close);
+    if (Math.min(high, low, close) <= 0 || high < low) continue;
+    ranges.push(previousClose <= 0 ? high - low : Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose)));
+    previousClose = close;
+  }
+  const atrWindow = ranges.slice(-14);
+  const volatility = atrWindow.length ? atrWindow.reduce((sum, value) => sum + value, 0) / atrWindow.length : 0;
+  if (!(volatility > 0)) return [];
+
+  const swings = [];
+  const wing = 2;
+  for (let index = wing; index < clean.length - wing; index += 1) {
+    const candle = clean[index];
+    const high = number(candle.high), low = number(candle.low);
+    if (!(high > 0) || !(low > 0)) continue;
+    const left = clean.slice(index - wing, index);
+    const right = clean.slice(index + 1, index + wing + 1);
+    const leftHighs = left.map((row) => number(row.high));
+    const rightHighs = right.map((row) => number(row.high));
+    const leftLows = left.map((row) => number(row.low));
+    const rightLows = right.map((row) => number(row.low));
+    const rightCloses = right.map((row) => number(row.close));
+    const highIsLocal = high >= Math.max(...leftHighs, ...rightHighs) && (high > Math.max(...leftHighs) || high > Math.max(...rightHighs));
+    const lowIsLocal = low <= Math.min(...leftLows, ...rightLows) && (low < Math.min(...leftLows) || low < Math.min(...rightLows));
+    if (highIsLocal && rightCloses.some((close) => close > 0 && close < high)) swings.push({price: high, index});
+    if (lowIsLocal && rightCloses.some((close) => close > low)) swings.push({price: low, index});
+  }
+  if (swings.length < 2) return [];
+
+  const threshold = Math.max(volatility * 0.55, 1e-9);
+  const clusters = [];
+  for (const swing of swings.slice().sort((a, b) => a.price - b.price)) {
+    const target = clusters.find((cluster) => Math.abs(swing.price - cluster.center) <= threshold);
+    if (!target) {
+      clusters.push({center: swing.price, prices: [swing.price], touches: 1, latestIndex: swing.index});
+    } else {
+      target.prices.push(swing.price);
+      target.touches += 1;
+      target.latestIndex = Math.max(target.latestIndex, swing.index);
+      target.center = target.prices.reduce((sum, value) => sum + value, 0) / target.prices.length;
+    }
+  }
+
+  const recentCutoff = Math.max(0, clean.length - 30);
+  const qualified = clusters
+    .filter((cluster) => cluster.touches >= 2 || cluster.latestIndex >= recentCutoff)
+    .sort((a, b) => a.center - b.center);
+  if (!qualified.length) return [];
+
+  const latest = number(clean.at(-1)?.close);
+  const requestedAnchor = number(cycleStartEquity) || latest;
+  let anchorIndex = 0;
+  for (let index = 1; index < qualified.length; index += 1) {
+    if (Math.abs(qualified[index].center - requestedAnchor) < Math.abs(qualified[anchorIndex].center - requestedAnchor)) anchorIndex = index;
+  }
+  const halfWidth = volatility * 0.22;
+
+  return qualified.flatMap((cluster, index) => {
+    const relative = index - anchorIndex;
+    if (relative < -3 || relative > 3) return [];
+    return [{
+      index: relative,
+      label: relative === 0 ? "Zone 0" : `Zone ${relative > 0 ? "+" : ""}${relative}`,
+      center: cluster.center,
+      lower: Math.max(0, cluster.center - halfWidth),
+      upper: cluster.center + halfWidth,
+      touches: cluster.touches,
+      atr: volatility,
+      source: "browser-confirmed-swings+sr-cluster+atr",
+    }];
+  });
+}

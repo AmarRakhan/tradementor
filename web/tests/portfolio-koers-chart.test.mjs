@@ -500,3 +500,13 @@ test("Build 552 keeps confirmed chart zones across cold starts and history gaps"
   assert.ok(component.includes('PORTFOLIO_KOERS_DEFAULT_TIMEFRAME'));
   assert.ok(component.includes('const [viewMode,setViewMode]=useState<PortfolioViewMode>("account")'));
 });
+
+
+test("Build 555 keeps next-zone chart context available without backend zones",async()=>{
+  const library=await readFile(new URL("../lib/portfolio-koers-chart.mjs",import.meta.url),"utf8");
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.match(library,/export function derivePortfolioDisplayZones/);
+  assert.match(library,/browser-confirmed-swings\+sr-cluster\+atr/);
+  assert.match(component,/const browserDerivedZones=canonical\.zones\.length/);
+  assert.match(component,/const visualPayloadZones=payload\.zones\.length\?payload\.zones:localDisplayZones/);
+});

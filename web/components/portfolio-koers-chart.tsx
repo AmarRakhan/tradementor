@@ -8,7 +8,7 @@ import { useAuthSession } from "@/components/auth-provider";
 import { ActiveZoneSeatBlock, type ActiveZoneSeatSummary } from "@/components/active-zone-seat-block";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, derivePortfolioDisplayZones, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
@@ -595,10 +595,13 @@ export function PortfolioKoersChart({
     }
     try{
       const canonical=normalizePortfolioKoersPayload(await authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600",{cache:"no-store"})) as Payload;
-      if(canonical.zones.length){
-        setAdvisorZones(canonical.zones);
+      const browserDerivedZones=canonical.zones.length
+        ? canonical.zones
+        : derivePortfolioDisplayZones(canonical.candles,canonical.cycleStartEquity??0) as Zone[];
+      if(browserDerivedZones.length){
+        setAdvisorZones(browserDerivedZones);
         if(user?.uid){
-          try{window.localStorage.setItem(`tradementor.portfolioZones.v1.${encodeURIComponent(user.uid)}`,JSON.stringify(canonical.zones))}catch{/* display cache is best-effort only */}
+          try{window.localStorage.setItem(`tradementor.portfolioZones.v1.${encodeURIComponent(user.uid)}`,JSON.stringify(browserDerivedZones))}catch{/* display cache is best-effort only */}
         }
       }
       setAdvisorTimeline(portfolioKoersTimelineHealth(canonical.candles,"15m",Date.now(),14));
@@ -751,8 +754,16 @@ export function PortfolioKoersChart({
   const visibleTimelineStart=timelineCandles[Math.max(0,timelineCandles.length-((TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"]).visibleBars+3))]?.time??0;
   const recentChartGap=chartTimeline.gaps?.filter((gap:any)=>gap.beforeTime>=visibleTimelineStart).at(-1)??null;
   const currentZonePrice=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
-  const confirmedActiveZone=useMemo(()=>portfolioZoneForPrice(payload.zones,currentZonePrice),[payload.zones,currentZonePrice]);
-  const advisorZoneSource=useMemo(()=>advisorZones.length?advisorZones:payload.zones,[advisorZones,payload.zones]);
+  const localDisplayZones=useMemo(
+    ()=>derivePortfolioDisplayZones(baseCandles,payload.cycleStartEquity??0) as Zone[],
+    [baseCandles,payload.cycleStartEquity],
+  );
+  const visualPayloadZones=payload.zones.length?payload.zones:localDisplayZones;
+  const confirmedActiveZone=useMemo(()=>portfolioZoneForPrice(visualPayloadZones,currentZonePrice),[visualPayloadZones,currentZonePrice]);
+  const advisorZoneSource=useMemo(
+    ()=>advisorZones.length?advisorZones:visualPayloadZones,
+    [advisorZones,visualPayloadZones],
+  );
   const freshChartZoneLadder=useMemo(()=>{
     if(!advisorZoneSource.length)return null;
     const base=derivePortfolioZoneLadder(advisorZoneSource);

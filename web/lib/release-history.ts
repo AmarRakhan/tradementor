@@ -26,7 +26,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
-  title: "Portfolio Koers · cold-start zones hersteld en gepubliceerd",
+  title: "Portfolio Koers · volgende-zone lijnen direct hersteld",
   newItems: [
     "De bevestigde Portfolio Koers-zones blijven beschikbaar wanneer een nieuwe sessie start of de nieuwste 15m-historie tijdelijk een gat bevat.",
     "De chart haalt voor de visuele zonebasis maximaal 600 15m-candles op en bewaart de laatst bevestigde zonebasis lokaal als display-cache.",
@@ -46,16 +46,17 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De 15m zone-history call is verruimd van 320 naar 600 candles.",
     "De stale regressietests zijn op het nieuwe 600-candle contract uitgelijnd.",
     "De canonical deploy-gate is in dezelfde releasecommit uitgelijnd zodat de fix daadwerkelijk gepubliceerd kan worden.",
+    "Als de backend tijdelijk zones=[] levert, berekent de webapp display-only dezelfde bevestigde swing/SR/ATR-zonebasis uit de ontvangen 15m-candles en tekent daarmee direct de volgende-zone lijnen.",
     "Tradinglogica, AsterBot entries, DCA, TP, hedge en prijszone-stoelen zijn niet gewijzigd.",
   ],
   now: [
-    "Portfolio Koers hoort na openen meteen zijn laatst bevestigde R/S-context te behouden in plaats van terug te vallen naar 'Zone —'.",
+    "Portfolio Koers hoort na openen meteen de volgende zone boven en onder de actuele accountwaarde te tekenen in plaats van terug te vallen naar 'Zone —'.",
     "R1–R4, S1–S4 en de actieve-zoneband blijven een chartfunctie, onafhankelijk van of prijszone-stoelen aanstaan.",
   ],
   technicalDetails: [
     "Frontend: web/components/portfolio-koers-chart.tsx.",
     "Regression: web/tests/portfolio-koers-chart.test.mjs + web/tests/portfolio-koers-zone-advisor-ui.test.mjs.",
-    "Release-identiteit: Webapp V46 build 554.",
+    "Release-identiteit: Webapp V46 build 555.",
   ],
   confidence: "confirmed",
 }

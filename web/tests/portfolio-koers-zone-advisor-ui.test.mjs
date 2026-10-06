@@ -244,3 +244,12 @@ test("Build 554 keeps the canonical 15m zone basis alive through cold starts",as
   assert.ok(component.includes('advisorZones.length?advisorZones:payload.zones'));
   assert.ok(component.includes('derivePortfolioZoneLadder(advisorZoneSource)'));
 });
+
+
+test("Build 555 derives visual zones in-browser when the API returns an empty zone list",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("derivePortfolioDisplayZones(canonical.candles"));
+  assert.ok(component.includes("derivePortfolioDisplayZones(baseCandles"));
+  assert.ok(component.includes("payload.zones.length?payload.zones:localDisplayZones"));
+  assert.ok(component.includes("advisorZones.length?advisorZones:visualPayloadZones"));
+});
