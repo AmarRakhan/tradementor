@@ -1,5 +1,5 @@
 name: Probe Production Strategy 2 State
-# current read-only trace trigger 2026-10-06T13:12+02:00 no-position-entry-investigation
+# current read-only trace trigger 2026-10-06T13:37+02:00 post-scheduler-activation-check
 
 on:
   push:
