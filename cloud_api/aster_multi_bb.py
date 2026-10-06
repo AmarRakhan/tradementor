@@ -52,6 +52,7 @@ from aster_smart_rescue import (
 )
 from aster_smart_rescue_runtime import active_keys as smart_rescue_active_keys, run_gate as run_smart_rescue_gate
 from aster_stop_loss import run_stop_loss_gate
+from aster_unified_engine import policy_from_settings
 
 ENGINE = _core.ENGINE
 max_contract_leverage = _core.max_contract_leverage
@@ -694,7 +695,9 @@ def run_multi_bb_step(*,settings:MultiBbConfig,**kwargs:Any)->dict[str,Any]:
     core_kwargs.update({"raw_state":raw_state,"account":account,"positions":positions,"open_orders":open_orders,"order_budget":order_budget})
     smart_keys=smart_rescue_active_keys(raw_state)
     runtime_settings=replace(settings,take_profit_mode="OFF") if settings.profit_lock_ladder_enabled else settings
+    canonical_policy=policy_from_settings(settings)
     extra={"pairOverrideCount":len(settings.pair_overrides),"takeProfitMode":settings.take_profit_mode,
+        "engineIdentity":"ASTER_BOT_UNIFIED_V1","canonicalPolicy":canonical_policy.public_dict(),
         "dynamicHedgeBlockedSide":blocked_side or None,
         "entryMarginLongUsd":settings.entry_margin_long_usd,"entryMarginShortUsd":settings.entry_margin_short_usd,
         "longDcaDistance":settings.long_dca_distance,"shortDcaDistance":settings.short_dca_distance,
