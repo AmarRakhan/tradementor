@@ -475,6 +475,7 @@ export function PortfolioKoersChart({
   const tradeActivityCacheRef=useRef<Record<string,unknown>|null>(null);
   const syncOverlaysRef=useRef<()=>void>(()=>{});
   const advisorZoneLadderRef=useRef<any>(null);
+  const lastConfirmedZoneLadderRef=useRef<any>(null);
   const activeZoneRef=useRef<number|null>(null);
   const liveEquityTextRef=useRef(liveEquityText);
   const manualViewportRef=useRef<Record<string,boolean>>({});
@@ -588,9 +589,10 @@ export function PortfolioKoersChart({
       setAdvisorTimeline(portfolioKoersTimelineHealth(canonical.candles,"15m",Date.now(),14));
       setAdvisorMessage("");
     }catch(reason){
-      setAdvisorZones([]);
-      setAdvisorTimeline(null);
-      setAdvisorMessage(advisorErrorText(reason,"15m-zonebasis tijdelijk niet beschikbaar; Portfolio Koers blijft informatief."));
+      // Chart price levels are a core visual contract, not a trading-module
+      // entitlement. Preserve the last confirmed 15m zone basis during a
+      // transient refresh failure instead of blanking support/resistance.
+      setAdvisorMessage(advisorErrorText(reason,"15m-zonebasis tijdelijk niet beschikbaar; laatst bevestigde prijsniveaus blijven zichtbaar."));
     }
   },[user?.uid]);
 
@@ -733,12 +735,15 @@ export function PortfolioKoersChart({
   const currentZonePrice=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
   const confirmedActiveZone=useMemo(()=>portfolioZoneForPrice(payload.zones,currentZonePrice),[payload.zones,currentZonePrice]);
   const advisorZoneSource=useMemo(()=>advisorTimeline?.safeForAdvisor===true&&advisorZones.length?advisorZones:payload.zones,[advisorTimeline?.safeForAdvisor,advisorZones,payload.zones]);
-  const advisorZoneLadder=useMemo(()=>{
+  const freshChartZoneLadder=useMemo(()=>{
     if(!advisorZoneSource.length)return null;
     const base=derivePortfolioZoneLadder(advisorZoneSource);
-    return extendPortfolioZoneLadderToPrice(base,currentZonePrice,4);
+    const expanded=extendPortfolioZoneLadderToPrice(base,currentZonePrice,4);
+    return expanded?.zones?.length?expanded:null;
   },[advisorZoneSource,currentZonePrice]);
-  const zoneContext=useMemo(()=>portfolioZoneContextFromLadder(advisorZoneLadder,currentZonePrice),[advisorZoneLadder,currentZonePrice]);
+  if(freshChartZoneLadder?.zones?.length)lastConfirmedZoneLadderRef.current=freshChartZoneLadder;
+  const chartZoneLadder=freshChartZoneLadder??lastConfirmedZoneLadderRef.current;
+  const zoneContext=useMemo(()=>portfolioZoneContextFromLadder(chartZoneLadder,currentZonePrice),[chartZoneLadder,currentZonePrice]);
   const zoneSoldierReport=advisorSeats.zoneSoldiers;
   const runtimeTruth=advisorSeats.runtimeTruth;
   const runtimeTruthCanonical=runtimeTruth.source==="SERVER_RUNTIME";
@@ -746,16 +751,19 @@ export function PortfolioKoersChart({
   const zoneSoldierEnabled=advisorEnabled&&(runtimeZoneActive?runtimeTruth.enabled===true:zoneSoldierReport.enabled===true);
   const zoneSoldierLifecycle=String(zoneSoldierReport.lifecycle||"OFF").toUpperCase();
   const liveDisplayActiveZone=zoneContext?.activeIndex??confirmedActiveZone;
-  // Operational Zone Warriors status follows the server runtime contract.
-  // The price-derived zone remains an informational fallback while releases overlap.
-  const activeZone=runtimeZoneActive?signedIntegerOrNull(runtimeTruth.activeZone):liveDisplayActiveZone;
-  advisorZoneLadderRef.current=advisorZoneLadder;
+  // Visual price zones are a base Portfolio Koers feature and always follow
+  // portfolio-equity/SR data, even when price-zone entries are disabled.
+  const activeZone=liveDisplayActiveZone;
+  // Trading runtime state stays available for the command center only. It must
+  // never suppress or relocate the chart's informational price levels.
+  const operationalActiveZone=runtimeZoneActive?signedIntegerOrNull(runtimeTruth.activeZone):activeZone;
+  advisorZoneLadderRef.current=chartZoneLadder;
   activeZoneRef.current=activeZone;
 
-  // The chart and sibling snapshot consume the same operational active zone.
+  // The chart and sibling snapshot expose the visual current price zone.
   useEffect(()=>{onActiveZoneChange?.(activeZone)},[activeZone,onActiveZoneChange]);
   useEffect(()=>()=>{onActiveZoneChange?.(null)},[onActiveZoneChange]);
-  useEffect(()=>{syncOverlaysRef.current()},[advisorZoneLadder,activeZone]);
+  useEffect(()=>{syncOverlaysRef.current()},[chartZoneLadder,activeZone]);
   useEffect(()=>{setSelectedTpCluster(null);setTpDetailLoading(false);setTpDetailError("")},[timeframe,viewMode]);
 
   useEffect(()=>{
@@ -1248,7 +1256,7 @@ export function PortfolioKoersChart({
   const commandCenterVm=buildStrategyStatusCommandCenter({
     strategyEnabled:zoneSoldierEnabled,
     zoneSafe:zoneEntriesSafe,
-    activeZone,
+    activeZone:operationalActiveZone??activeZone,
     nextZone:nextUpIndex,
     previousZone:nextDownIndex,
     currentZoneLower:lowerTrigger,
