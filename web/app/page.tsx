@@ -571,7 +571,7 @@ function ExchangeView({ destination, refreshedAt, snapshot, cloudReady, onRefres
         </article>}
 
         {!positionsOnly && <aside className="side-stack">
-          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <fieldset className="aster-action-gate" disabled={!asterActionsEnabled}>{!asterActionsEnabled && <p className="aster-stale-lock">Acties zijn tijdelijk vergrendeld totdat de server een verse Aster-status heeft bevestigd.</p>}<AsterStrategy2Maker snapshot={snapshot.data} serverConfirmed={snapshot.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={onRefresh} /></fieldset>}
+          {destination === "hyperliquid" ? <HyperliquidStrategyControl cloudReady={cloudReady} onChanged={onRefresh} /> : <div className="aster-action-gate">{!asterActionsEnabled && <p className="aster-stale-lock">Aster-status wordt opnieuw bevestigd. Weergave wisselen blijft beschikbaar; live acties worden server-side gecontroleerd.</p>}<AsterStrategy2Maker snapshot={snapshot.data} serverConfirmed={snapshot.serverConfirmed} onConfirmed={onStrategy2Confirmed} onChanged={onRefresh} /></div>}
           {destination !== "aster" && <ExchangeLiveControl exchange={destination} cloudReady={cloudReady} snapshot={snapshot.data} onChanged={onRefresh} />}
         </aside>}
       </section>

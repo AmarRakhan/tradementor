@@ -26,6 +26,47 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-06",
+  title: "Aster status + Zone Warriors · stale-state repair",
+  newItems: [
+    "Oude instellingen en Nieuwe configurator blijven aanklikbaar terwijl een verse Aster-status opnieuw wordt bevestigd.",
+    "De klassieke bot-schakelaar kan bij een tijdelijke stale-status zelf de bestaande server-readinesscontrole starten.",
+    "Een door de runtime bevestigd leeg Aster-account forceert Zone Warriors-bezetting naar 0.",
+  ],
+  problems: [
+    "Een disabled fieldset blokkeerde niet alleen live acties maar ook de tabknop Oude instellingen.",
+    "De botknop bleef onbruikbaar zolang de algemene Aster snapshot geen verse serverbevestiging had.",
+    "Ghost multiBbPositions zorgden ervoor dat de statusroute telkens opnieuw Aster moest lezen en konden oude 4L/5S-seatstate blijven voeden.",
+  ],
+  causes: [
+    "De UI-action gate was te breed en omvatte puur lokale navigatie.",
+    "De statusroute beschouwde ontbrekende oude managed keys als reden om zelfs een verse lege exchange-snapshot opnieuw op te halen.",
+    "Prijszone-presentatie kon oude managed ownership zwaarder laten wegen dan runtimeTruth 0/0.",
+  ],
+  fixes: [
+    "De globale disabled fieldset is vervangen door een gewone container; alleen echte acties behouden hun eigen server-side veiligheidscontrole.",
+    "De legacy live-toggle mag bij pending status een readinesscontrole uitvoeren in plaats van niets te doen.",
+    "De statusroute gebruikt ghost managed rows niet langer als zelfstandige stale-trigger.",
+    "runtimeTruth activeLong=0, activeShort=0 en accountPositionCount=0 is nu expliciet leidend voor lege prijszonebezetting.",
+  ],
+  now: [
+    "Je kunt weer direct wisselen tussen Oude instellingen en Nieuwe configurator.",
+    "De botbediening kan herstellen van een tijdelijke stale browserstatus zonder de veiligheidschecks te omzeilen.",
+    "Bij 0 echte Aster-posities hoort de actieve zone 0 bezet en totaal 0/10 te tonen.",
+  ],
+  technicalDetails: [
+    "Backend: cloud_api/main.py.",
+    "Frontend: web/app/page.tsx, web/components/aster-strategy2-maker.tsx en web/components/aster-portfolio-snapshot-enhancer.tsx.",
+    "Geen order-, TP-, DCA-, hedge- of scannerstrategie gewijzigd.",
+    "Release-identiteit: Webapp V46 build 532.",
+  ],
+  confidence: "confirmed",
+};
+
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [  {
+  id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
+  version: WEBAPP_VERSION,
+  build: WEBAPP_BUILD_NUMBER,
+  releasedAt: "2026-10-06",
   title: "Prijszone details · Aster zero-position truth",
   newItems: [
     "Prijszone-details gebruiken de actuele opgeslagen zonecapaciteit vóór een oudere seatModel-cache.",
@@ -57,7 +98,6 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   confidence: "confirmed",
 };
 
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
   {
   id: "v46-build-529-portfolio-cycle-navigation",
   version: "46",

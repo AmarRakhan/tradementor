@@ -271,7 +271,12 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   const report = record(strategy2.multiBbReport);
   const reportActiveLong = optionalNumber(report.activeLong);
   const reportActiveShort = optionalNumber(report.activeShort);
-  const exchangeFlatConfirmed = reportActiveLong === 0 && reportActiveShort === 0;
+  const runtimeActiveLong = optionalNumber(runtimeTruth.activeLong);
+  const runtimeActiveShort = optionalNumber(runtimeTruth.activeShort);
+  const runtimeAccountPositionCount = optionalNumber(runtimeTruth.accountPositionCount);
+  const exchangeFlatConfirmed = hasRuntimeTruth
+    ? runtimeActiveLong === 0 && runtimeActiveShort === 0 && runtimeAccountPositionCount === 0
+    : reportActiveLong === 0 && reportActiveShort === 0;
   // Saved user settings are authoritative for configured seat capacity. A
   // cached seatModel may lag after a configuration change and must not replace
   // the user's current formation.

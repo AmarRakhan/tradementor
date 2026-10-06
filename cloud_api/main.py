@@ -1828,6 +1828,39 @@ def aster_strategy2_public(uid: str) -> dict[str, Any]:
         zone_report={**raw_zone_report,"enabled":zone_active,"lifecycle":zone_lifecycle,
             "drainingOpenCount":0 if zone_active else zone_owned_open_count,
             "safeForNewEntries":bool(raw_zone_report.get("safeForNewEntries")) if zone_active else False}
+        # Browser-facing zone occupancy must never resurrect stale managed rows
+        # after Aster has confirmed the account is flat.
+        report_active_long=int(safe_float(report.get("activeLong")))
+        report_active_short=int(safe_float(report.get("activeShort")))
+        report_account_count=int(safe_float(report.get("accountPositionCount")))
+        if report_active_long==0 and report_active_short==0 and report_account_count==0:
+            cached_seat_model=zone_report.get("seatModel") if isinstance(zone_report.get("seatModel"),dict) else {}
+            zone_report={
+                **zone_report,
+                "seatModel":{
+                    **cached_seat_model,
+                    "perZoneLong":int(safe_float(settings.get("zoneBaseLongSoldiers"))) or 3,
+                    "perZoneShort":int(safe_float(settings.get("zoneBaseShortSoldiers"))) or 3,
+                    "occupiedLongActiveZone":0,
+                    "occupiedShortActiveZone":0,
+                    "freeLongActiveZone":int(safe_float(settings.get("zoneBaseLongSoldiers"))) or 3,
+                    "freeShortActiveZone":int(safe_float(settings.get("zoneBaseShortSoldiers"))) or 3,
+                    "openFromOldZones":0,
+                    "openFromOldZonesLong":0,
+                    "openFromOldZonesShort":0,
+                    "strategyOpenTotal":0,
+                    "strategyOpenLong":0,
+                    "strategyOpenShort":0,
+                },
+                "currentZone":{"openLong":0,"openShort":0,
+                    "freeLong":int(safe_float(settings.get("zoneBaseLongSoldiers"))) or 3,
+                    "freeShort":int(safe_float(settings.get("zoneBaseShortSoldiers"))) or 3,
+                    "balancerOpen":0,"balancerFree":0},
+                "oldZonesOpen":{"total":0,"long":0,"short":0},
+                "strategyOwnedOpen":{"total":0,"long":0,"short":0},
+                "zoneOpenCounts":{},
+                "zoneOpenCountsReliable":True,
+            }
         long_count=sum(1 for key in managed if str(key).endswith("|LONG")); short_count=sum(1 for key in managed if str(key).endswith("|SHORT"))
         runtime_enabled=os.getenv("ASTER_STRATEGY2_LIVE_ENABLED","false").lower()=="true"
         dynamic_control=user_reference({"uid":uid}).collection("asterDynamicHedge").document("control").get().to_dict() or {}
@@ -5936,7 +5969,6 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         not isinstance(captured_at, datetime)
         or datetime.now(timezone.utc) - captured_at > timedelta(seconds=30)
         or strategy_newer_than_snapshot
-        or managed_position_missing_from_snapshot
     )
 
     if snapshot_stale:
