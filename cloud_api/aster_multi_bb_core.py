@@ -1966,6 +1966,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason_code, "bollingerEntryFilter15m": True, "stage": "pre_order"})
                 continue
+            except PermissionError as exc:
+                reason=str(exc).split("ASTERBOT_ACTION_DENIED:",1)[-1]
+                actions.append({"kind":"ENTRY_SKIP","symbol":symbol,"side":side,"reason":reason,"stage":"canonical_admission"})
+                continue
             except NewPositionLeverageBlocked as exc:
                 if orphan_priority:
                     print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=execution_block reason={exc.reason_code}", flush=True)
@@ -2044,6 +2048,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 "fillPrice": fill_price, "fillQuantity": fill_qty,
                 "orderId": str(fill.get("orderId", fill.get("orderID", "")) or ""),
                 "clientOrderId": str(fill.get("clientOrderId", fill.get("clientOrderID", "")) or ""),
+                "decisionId": (entry_action.get("admission") or {}).get("decisionId"),
+                "admission": entry_action.get("admission"),
                 "exchangeConfirmed": True, "timestamp": datetime.now(timezone.utc)})
             actions.append(entry_action)
             if paired and short_plan is not None and short_action is not None and defer_paired_short:
