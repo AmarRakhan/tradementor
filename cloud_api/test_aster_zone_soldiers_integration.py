@@ -507,3 +507,23 @@ def test_zero_sided_zone_seats_are_not_reinflated_by_runtime():
     assert 'base_short=max(1, int(getattr(settings, "zone_base_short_soldiers", 3)))' not in source
     assert source.count('base_long=max(0, int(getattr(settings, "zone_base_long_soldiers", 3)))') == 2
     assert source.count('base_short=max(0, int(getattr(settings, "zone_base_short_soldiers", 3)))') == 2
+
+
+def test_reducing_zone_side_to_zero_prunes_flat_stale_soldiers_but_keeps_open_trade():
+    from aster_zone_soldiers import normalize_zone_state, available_soldiers
+    raw = {
+        "activeZone": 1,
+        "pools": {
+            "1": {
+                "soldiers": {
+                    "p1:short:base:1": {"soldierId":"p1:short:base:1","side":"SHORT","role":"ZONE_BASE","status":"AVAILABLE","tradeKey":"","symbol":""},
+                    "p1:short:base:2": {"soldierId":"p1:short:base:2","side":"SHORT","role":"ZONE_BASE","status":"OPEN","tradeKey":"SOLUSDT|SHORT","symbol":"SOLUSDT"},
+                }
+            }
+        }
+    }
+    state = normalize_zone_state(raw, base_long=2, base_short=0, timestamp_ms=123)
+    pool = state["pools"]["1"]
+    assert "p1:short:base:1" not in pool["soldiers"]
+    assert "p1:short:base:2" in pool["soldiers"]
+    assert available_soldiers(state, "SHORT") == []
