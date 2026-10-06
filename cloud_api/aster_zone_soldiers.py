@@ -173,6 +173,17 @@ def _clean_pool(raw: Any, zone: int, *, base_long: int, base_short: int, timesta
                 continue
             soldier["originZone"] = zone
             soldier["originZoneCycleId"] = cycle_id
+            # Config reductions are authoritative for NEW capacity. Historical
+            # base soldiers above the configured ordinal (including an entire
+            # side reduced to zero) may remain only while they still represent
+            # a real open/exiting trade. Flat stale soldiers must be pruned or
+            # _activate_free_soldiers would make them AVAILABLE again.
+            if soldier["role"] == ROLE_ZONE_BASE:
+                configured = max(0, int(base_long if soldier["side"] == "LONG" else base_short))
+                allowed_ids = {_base_soldier_id(zone, soldier["side"], ordinal) for ordinal in range(1, configured + 1)}
+                is_live = soldier["status"] in {STATUS_OPEN, STATUS_EXITING} or bool(soldier.get("tradeKey"))
+                if soldier["soldierId"] not in allowed_ids and not is_live:
+                    continue
             soldiers[soldier["soldierId"]] = soldier
 
     def ensure_base(side: str, amount: int) -> None:
