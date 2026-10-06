@@ -4,8 +4,9 @@ from pathlib import Path
 import pytest
 
 from aster_unified_engine import (
-    ActionType, FilterResult, FilterStatus, InitialEntryContext,
-    DecisionStatus, evaluate_initial_entry, policy_from_settings, require_allowed,
+    ActionType, FilterResult, FilterStatus, InitialEntryContext, PositionActionContext,
+    DecisionStatus, evaluate_initial_entry, evaluate_position_action,
+    policy_from_settings, require_allowed,
 )
 from aster_multi_bb import MultiBbConfig, position_action_preview
 
@@ -196,3 +197,40 @@ def test_initial_entry_open_has_canonical_admission_immediately_before_submit():
     assert "require_allowed(admission)" in before
     assert "client.position_risk()" in before
     assert 'latest_doc=ref.get().to_dict() or {}' in before
+
+
+def test_current_policy_action_gate_uses_new_dca_distance_amount_limit_and_tp():
+    old = policy_from_settings(settings(
+        version=7, long_dca_distance=.10, long_dca_margin_usd=.50,
+        max_dca_long=10, long_take_profit_value=.10,
+    ))
+    new = policy_from_settings(settings(
+        version=8, long_dca_distance=.05, long_dca_margin_usd=.80,
+        max_dca_long=5, long_take_profit_value=.05,
+    ))
+    assert old.current_position_policy("LONG")["dcaDistance"] == pytest.approx(.10)
+    current = new.current_position_policy("LONG")
+    assert current["dcaDistance"] == pytest.approx(.05)
+    assert current["dcaAmount"] == pytest.approx(.80)
+    assert current["maxDca"] == 5
+    assert current["takeProfit"] == pytest.approx(.05)
+
+    allowed = evaluate_position_action(new, PositionActionContext(
+        uid="u1", symbol="BTCUSDT", side="LONG", action_type=ActionType.DCA_ADD,
+        position_open=True, trigger_met=True, dca_count=4,
+    ))
+    assert allowed.allowed
+    blocked = evaluate_position_action(new, PositionActionContext(
+        uid="u1", symbol="BTCUSDT", side="LONG", action_type=ActionType.DCA_ADD,
+        position_open=True, trigger_met=True, dca_count=5,
+    ))
+    assert blocked.reason_code == "MAX_DCA_REACHED"
+
+
+def test_explicit_bot_off_blocks_initial_entry_but_does_not_mutate_positions():
+    policy = policy_from_settings(settings(zone_soldiers_enabled=True))
+    denied = evaluate_initial_entry(
+        policy,
+        context(side="LONG", active_zone=1, bot_enabled=False),
+    )
+    assert denied.reason_code == "BOT_DISABLED"
