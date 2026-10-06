@@ -22,7 +22,8 @@ test("strategy maker reports current bot counts and never reuses stale slot bala
 });
 
 test("live toggle remains server/readiness gated", () => {
-  assert.match(maker, /status\.pending \|\| busy/);
+  assert.match(maker, /if \(status\.pending\)/);
+  assert.match(maker, /disabled=\{busy\}/);
   assert.match(maker, /if \(liveReady\) return action\("start"\)/);
   assert.match(maker, /return checkReadiness\(true\)/);
 });
