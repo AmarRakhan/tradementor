@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 558: true-black Portfolio Koers startup + fuller mobile candle framing.
+// Build 558: true-black Portfolio Koers startup + fuller mobile candle framing; release contract synchronized.
 export const WEBAPP_BUILD_NUMBER = "558";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
