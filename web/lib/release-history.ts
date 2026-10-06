@@ -28,41 +28,54 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   releasedAt: "2026-10-06",
   title: "Aster status + Zone Warriors · stale-state repair",
   newItems: [
-    "Oude instellingen en Nieuwe configurator blijven aanklikbaar terwijl een verse Aster-status opnieuw wordt bevestigd.",
-    "De klassieke bot-schakelaar kan bij een tijdelijke stale-status zelf de bestaande server-readinesscontrole starten.",
-    "Een door de runtime bevestigd leeg Aster-account forceert Zone Warriors-bezetting naar 0.",
+    "Oude instellingen en Nieuwe configurator blijven aanklikbaar terwijl Aster opnieuw synchroniseert.",
+    "De klassieke bot-schakelaar kan bij pending status zelf de bestaande readinesscontrole uitvoeren.",
+    "Een runtime-bevestigd leeg Aster-account forceert Zone Warriors-bezetting naar nul.",
   ],
   problems: [
-    "Een disabled fieldset blokkeerde niet alleen live acties maar ook de tabknop Oude instellingen.",
-    "De botknop bleef onbruikbaar zolang de algemene Aster snapshot geen verse serverbevestiging had.",
-    "Ghost multiBbPositions zorgden ervoor dat de statusroute telkens opnieuw Aster moest lezen en konden oude 4L/5S-seatstate blijven voeden.",
+    "De globale stale-status blokkeerde ook lokale tabnavigatie en maakte Oude instellingen niet klikbaar.",
+    "Ghost managed rows konden een verse lege account-snapshot telkens opnieuw als stale markeren.",
+    "Daardoor ontstonden onnodige Aster-reads, tijdelijke statusfouten en oude 4L/5S-bezetting in de UI.",
   ],
   causes: [
-    "De UI-action gate was te breed en omvatte puur lokale navigatie.",
-    "De statusroute beschouwde ontbrekende oude managed keys als reden om zelfs een verse lege exchange-snapshot opnieuw op te halen.",
-    "Prijszone-presentatie kon oude managed ownership zwaarder laten wegen dan runtimeTruth 0/0.",
+    "Een disabled fieldset omvatte zowel navigatie als echte live-acties.",
+    "managed_position_missing_from_snapshot was zelfstandig onderdeel van de status-stale conditie.",
+    "De prijszone-presentatie kon stale ownership tonen ondanks runtimeTruth 0/0.",
   ],
   fixes: [
-    "De globale disabled fieldset is vervangen door een gewone container; alleen echte acties behouden hun eigen server-side veiligheidscontrole.",
-    "De legacy live-toggle mag bij pending status een readinesscontrole uitvoeren in plaats van niets te doen.",
-    "De statusroute gebruikt ghost managed rows niet langer als zelfstandige stale-trigger.",
-    "runtimeTruth activeLong=0, activeShort=0 en accountPositionCount=0 is nu expliciet leidend voor lege prijszonebezetting.",
+    "Lokale instellingen-tabs zijn losgekoppeld van de live action gate.",
+    "De legacy live-toggle gebruikt bij pending status de bestaande server-readinessflow.",
+    "Ghost managed rows zijn geen zelfstandige stale-trigger meer; strategy tick freshness blijft wel leidend.",
+    "runtimeTruth 0 LONG / 0 SHORT / 0 accountposities forceert de zonebezetting naar nul.",
   ],
   now: [
-    "Je kunt weer direct wisselen tussen Oude instellingen en Nieuwe configurator.",
-    "De botbediening kan herstellen van een tijdelijke stale browserstatus zonder de veiligheidschecks te omzeilen.",
-    "Bij 0 echte Aster-posities hoort de actieve zone 0 bezet en totaal 0/10 te tonen.",
+    "Oude instellingen en Nieuwe configurator blijven bruikbaar tijdens resync.",
+    "Bij nul echte Aster-posities hoort 0 bezet te staan, niet 4/2 en 5/2.",
+    "Geen tradingstrategie, TP-, DCA-, hedge- of orderbeslissing is inhoudelijk gewijzigd.",
   ],
   technicalDetails: [
-    "Backend: cloud_api/main.py.",
-    "Frontend: web/app/page.tsx, web/components/aster-strategy2-maker.tsx en web/components/aster-portfolio-snapshot-enhancer.tsx.",
-    "Geen order-, TP-, DCA-, hedge- of scannerstrategie gewijzigd.",
-    "Release-identiteit: Webapp V46 build 532.",
+    "Backend: cloud_api/main.py en bijgewerkte status-regressietest.",
+    "Frontend: web/app/page.tsx, web/components/aster-strategy2-maker.tsx, web/components/aster-portfolio-snapshot-enhancer.tsx.",
+    "Release-identiteit: Webapp V46 build 533.",
   ],
   confidence: "confirmed",
 };
 
-const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [  {
+const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [
+  {
+    id: "v46-build-532-stale-aster-gate-zone-seat-repair",
+    version: "46",
+    build: "532",
+    releasedAt: "2026-10-06",
+    title: "Aster stale-state repair kandidaat",
+    newItems: ["Stale action-gate en ghost seat-state repair voorbereid."],
+    problems: ["De eerste kandidaat faalde CI door een release-history terminator en een verouderde regressietest."],
+    causes: ["Release-history object werd als top-level object afgesloten en de oude test vereiste nog de verwijderde ghost stale-trigger."],
+    fixes: ["Build 533 corrigeert syntax en testcontract zonder de inhoudelijke fix terug te draaien."],
+    now: ["Opgevolgd door build 533."],
+    confidence: "confirmed",
+  },
+  {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
@@ -96,7 +109,7 @@ const HISTORICAL_RELEASES: ReleaseHistoryEntry[] = [  {
     "Release-identiteit: Webapp V46 build 531.",
   ],
   confidence: "confirmed",
-};
+  },
 
   {
   id: "v46-build-529-portfolio-cycle-navigation",

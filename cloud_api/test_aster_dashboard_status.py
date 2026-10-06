@@ -223,7 +223,7 @@ def test_status_multi_bb_projection_rejects_stale_shared_sub_dollar_base_notiona
     assert '"baseNotional":max(1.0,multi_status_settings.entry_notional_long_usd,multi_status_settings.entry_notional_short_usd)' in status_route
 
 
-def test_status_invalidates_legacy_snapshot_when_strategy2_is_newer_or_managed_leg_is_missing():
+def test_status_invalidates_legacy_snapshot_when_strategy2_is_newer_without_looping_on_ghost_managed_rows():
     main_source = Path("main.py").read_text()
     start = main_source.index('def aster_status(')
     end = main_source.index('@app.get("/v1/me/aster/trade-events")')
@@ -232,7 +232,8 @@ def test_status_invalidates_legacy_snapshot_when_strategy2_is_newer_or_managed_l
     assert 'managed_position_missing_from_snapshot = bool(managed_keys - snapshot_keys)' in status_route
     assert 'strategy_newer_than_snapshot = bool(' in status_route
     assert 'or strategy_newer_than_snapshot' in status_route
-    assert 'or managed_position_missing_from_snapshot' in status_route
+    assert 'managed_position_missing_from_snapshot = bool(managed_keys - snapshot_keys)' in status_route
+    assert 'or managed_position_missing_from_snapshot' not in status_route
 
 
 def test_status_keeps_fresh_position_truth_when_only_open_orders_refresh_fails():
