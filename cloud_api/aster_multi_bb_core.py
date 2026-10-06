@@ -12,6 +12,10 @@ from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRA
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, execute_leg_once, is_definite_contract_rejection, plan_pair
 from aster_gateway import ContractRules, PositionSide
 from aster_leverage_tiers import bracket_rows as tier_bracket_rows, resolve_entry, resolve_dca, tier_preview
+from aster_unified_engine import (
+    FilterResult, FilterStatus, InitialEntryContext, evaluate_initial_entry,
+    policy_from_settings, require_allowed,
+)
 from aster_zone_soldiers import (
     ROLE_EXPOSURE_BALANCER, ROLE_LEGACY_UNASSIGNED, ROLE_ZONE_BASE,
     available_soldiers, claim_soldier, prepare_zone_runtime, settle_soldier_after_profitable_tp,
@@ -1172,7 +1176,32 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # +/- the CURRENT effective side distance. No historical level replay,
         # no queued catch-up and no alternate legacy trigger.
         trigger=anchor*(1-settings.dca_distance if side=="LONG" else 1+settings.dca_distance)
-        if not _dca_due(mark,trigger,side):
+        # Live-config recalculation: stored state contains execution facts, never
+        # policy authority. When the user changes DCA distance/max while this
+        # position is open, immediately project the next line from CURRENT config.
+        projected_due=_dca_due(mark,trigger,side)
+        projected_distance_usd=abs(trigger-mark)
+        projected_distance_pct=projected_distance_usd/mark*100.0 if mark>0 else None
+        if (
+            abs(_f(st0.get("nextDcaPrice"))-trigger) > max(1e-12, abs(trigger)*1e-12)
+            or _i(st0.get("nextDcaNumber")) != dca_count+1
+            or _i(st0.get("policyConfigVersion")) != _i(getattr(settings,"version",1),1)
+        ):
+            refreshed=dict(st0)
+            refreshed.update({
+                "nextDcaPrice":trigger,
+                "nextDcaDistanceUsd":projected_distance_usd,
+                "nextDcaDistancePct":projected_distance_pct,
+                "nextDcaDue":projected_due,
+                "nextDcaStatus":"DUE" if projected_due else "AHEAD",
+                "nextDcaNumber":dca_count+1,
+                "policyConfigVersion":_i(getattr(settings,"version",1),1),
+                "updatedAtMs":timestamp_ms,
+            })
+            state[key]=refreshed;st0=refreshed
+            if not dry_run:
+                ref.set({"multiBbPositions":state,"lastTickAt":datetime.now(timezone.utc)},merge=True)
+        if not projected_due:
             continue
         row_info=info_map.get(symbol); leverage=max(1,_i(row.get("leverage")))
         if row_info is None: continue
@@ -1858,8 +1887,65 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 flush=True,
             )
             def entry_before_submit(intent: Any) -> None:
+                effective_timeframe=_effective_entry_timeframe(settings, side, exposure_refill)
                 require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
-                                        timeframe=_effective_entry_timeframe(settings, side, exposure_refill), live_price=None, force_refresh=True, stage="pre_order")
+                                        timeframe=effective_timeframe, live_price=None, force_refresh=True, stage="pre_order")
+                # Canonical initial-entry admission runs immediately before the
+                # exchange submit. Re-read both Aster truth and Firestore truth:
+                # a config save or bot-toggle during this tick invalidates this
+                # decision instead of letting the stale candidate slip through.
+                latest_doc=ref.get().to_dict() or {}
+                latest_settings=latest_doc.get("settings") if isinstance(latest_doc.get("settings"),dict) else {}
+                latest_version=max(1,_i(latest_settings.get("version"),_i(getattr(settings,"version",1),1)))
+                latest_enabled=bool(latest_doc.get("enabled",False))
+                fresh_positions=_position_map(client.position_risk())
+                fresh_side_count=sum(1 for active_key in fresh_positions if active_key.endswith(f"|{side}"))
+                active_zone_value=_i((zone_state or {}).get("activeZone")) if zone_mode else None
+                active_zone_side_count=0
+                if zone_mode and active_zone_value is not None:
+                    active_pool=((zone_state or {}).get("pools") or {}).get(str(active_zone_value),{})
+                    active_soldiers=active_pool.get("soldiers") if isinstance(active_pool,dict) and isinstance(active_pool.get("soldiers"),dict) else {}
+                    active_zone_side_count=sum(
+                        1 for soldier_row in active_soldiers.values()
+                        if isinstance(soldier_row,dict)
+                        and str(soldier_row.get("role") or "")==ROLE_ZONE_BASE
+                        and str(soldier_row.get("side") or "").upper()==side
+                        and (
+                            str(soldier_row.get("status") or "").upper() in {"OPEN","EXITING"}
+                            or bool(soldier_row.get("tradeKey"))
+                        )
+                    )
+                filter_results=(
+                    FilterResult(
+                        "bollinger",
+                        FilterStatus.PASS if settings.bollinger_entry_filter_15m_enabled else FilterStatus.SKIP,
+                        values={"timeframe":effective_timeframe},
+                    ),
+                )
+                admission=evaluate_initial_entry(
+                    policy_from_settings(settings),
+                    InitialEntryContext(
+                        uid=uid,symbol=symbol,side=side,
+                        bot_enabled=latest_enabled,
+                        current_config_version=latest_version,
+                        observed_config_version=_i(getattr(settings,"version",1),1),
+                        account_position_count=len(fresh_positions),
+                        side_position_count=fresh_side_count,
+                        active_zone=active_zone_value if zone_mode else None,
+                        active_zone_side_count=active_zone_side_count,
+                        duplicate_position_open=f"{symbol}|{side}" in fresh_positions,
+                        filter_results=filter_results,
+                    ),
+                )
+                if not admission.allowed:
+                    if not dry_run:
+                        ref.collection("audit").add({
+                            "event":"ASTERBOT_INITIAL_ENTRY_DENIED",
+                            **admission.public_dict(),
+                            "timestamp":datetime.now(timezone.utc),
+                        })
+                    require_allowed(admission)
+                entry_action["admission"]=admission.public_dict()
                 if before_order is not None:
                     before_order(intent)
             try:
