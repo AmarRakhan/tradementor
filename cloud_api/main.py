@@ -2278,7 +2278,11 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     # hedge/ownership overlay. If the configured equity target is reached, close
     # all live futures exposure first, confirm flat, seed the next cycle from the
     # real post-close equity, and only then resume the user's normal runtime.
-    if str(getattr(settings,"take_profit_mode","")).upper()=="PORTFOLIO":
+    # Once an exit has started it remains transactional even if the user changes
+    # TP mode while FLAT_CONFIRMING/RESTARTING is still in progress.
+    cycle_state=raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"),dict) else {}
+    portfolio_exit_active=str(cycle_state.get("cycleStatus") or "").upper() in ACTIVE_EXIT_STATES
+    if str(getattr(settings,"take_profit_mode","")).upper()=="PORTFOLIO" or portfolio_exit_active:
         portfolio_gate=portfolio_cycle_gate(
             client=client,ref=ref,raw_state=raw,uid=uid,account=account,
             positions=decision_positions,open_orders=orders,
