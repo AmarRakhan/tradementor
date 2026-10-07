@@ -26,8 +26,11 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Prijszone Details · één waarheid voor stoelen en volledige prijsranges live",
+  title: "Portfolio Koers · device-onafhankelijke LONG/SHORT/TP markers",
   newItems: [
+    "Build 579 maakt markerzichtbaarheid afhankelijk van de werkelijk gerenderde chartcoördinaten in plaats van een tweede, tijdelijk verouderde logical-range snapshot.",
+    "LONG-, SHORT- en TP-markers gebruiken dezelfde canonieke eventstream op telefoon, Fold, tablet en bij resize/orientation change; er zijn geen device-specifieke codepaden toegevoegd.",
+    "ResizeObserver, window resize en visualViewport resize plannen dezelfde overlay-resync in de eerstvolgende animation frame, zonder candles, high/low, zones of tradinglogica te wijzigen.",
     "Build 578 synchroniseert de laatste historische regressietest met het nieuwe settings-only capaciteitcontract; productiegedrag blijft exact gelijk aan Build 577.",
     "Build 577 gebruikt voor LONG/SHORT capaciteit uitsluitend de opgeslagen Strategy-2 instellingen; een ingestelde 0 blijft dus exact 0 en kan niet meer door een oude seatModel-cache in 1 veranderen.",
     "Build 577 vult alle zichtbare prijsranges vanuit dezelfde canonieke portfolio-zone ladder die ook voor de chart wordt gebruikt, zodat tussenliggende zones niet meer als — verschijnen wanneer de backend slechts een deel van de zonecentra terugstuurt.",
@@ -82,6 +85,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
+    "De markerlaag gebruikte naast timeToCoordinate nog een aparte getVisibleLogicalRange-filter. Tijdens responsive relayout kon die logical-range snapshot kort achterlopen op de reeds gewijzigde chartgeometrie en alle geldige markers uitfilteren.",
     "De frontend forceerde perZoneLong/perZoneShort met Math.max(1), waardoor een expliciet ingestelde 0 onterecht als 1 werd weergegeven.",
     "De Zone-overzicht tabel gebruikte alleen rechtstreeks aanwezige chart-zones voor prijsranges; daardoor kregen geldige tussenliggende zones een — ondanks een bekende canonieke zoneafstand.",
     "De eerste Build 574 productie-run werd door twee verouderde regressietests gestopt: één test verwachtte nog build 573 en één test verwachtte nog de oude Zone-overzicht referentie.",
@@ -109,6 +113,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een koude start had geen browser-side laatst-bevestigde zonebasis om tijdelijk op terug te vallen.",
   ],
   causes: [
+    "Markerzichtbaarheid had twee onafhankelijke viewportgates: logical candle-index filtering en daarna chartcoördinaten. Die dubbele waarheid maakte de overlay gevoelig voor resize-timing.",
     "De capaciteitspresentatie combineerde opgeslagen settings met een cached seatModel fallback en voegde daar bovendien een minimum van 1 aan toe.",
     "De prijsrangeweergave bouwde geen volledige ladder over de reeds bewezen zonecentra heen.",
     "De release-tests waren op historische buildnummers en de vorige mockup-ID vastgepind, waardoor een correcte nieuwe UI-release als regressie werd behandeld.",
@@ -117,6 +122,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "Build 579 verwijdert de logical-range markerfilter en gebruikt één coordinate-based viewportgate met een kleine randtolerantie, gevolgd door de bestaande gedeelde markerlayout.",
+    "Na responsive geometry changes wordt markerprojectie opnieuw uitgevoerd in requestAnimationFrame; dezelfde code geldt voor elk apparaat.",
     "Per-zone capaciteit leest nu alleen settings.zoneBaseLongSoldiers/zoneBaseShortSoldiers (met dezelfde settings-key aliases) en accepteert 0 als geldige waarde.",
     "Prijsranges gebruiken derivePortfolioZoneLadder over exact dezelfde chart-zonebron en de volledige zichtbare zone-indexrange; er is geen tweede API-route of onafhankelijke prijsberekening toegevoegd.",
     "De stale release-asserties zijn bijgewerkt zonder productiecode, tradinglogica of runtime-state te wijzigen.",
@@ -158,6 +165,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Tradinglogica, AsterBot entries, DCA, TP, hedge en prijszone-stoelen zijn niet gewijzigd.",
   ],
   now: [
+    "De markerketen is nu: canonical events → normalisatie/merge → echte candle-ankering → timeToCoordinate/priceToCoordinate → één viewportgate → één markerlayout/renderer.",
+    "Regressiontests dekken 320, 390, 520 en 768 px viewports, randmarkers, ongeldige coördinaten en het ontbreken van device-specifieke markerbranches.",
     "Op mobiele breedtes zijn alle vijf zonekolommen tegelijk zichtbaar en blijft alleen verticaal paginascrollen nodig voor langere zonelijsten.",
     "De actieve zone blijft onmiddellijk herkenbaar via de volledige goud/oranje rijhighlight zonder apart ACTIEF-label.",
     "Bij openen staat Accountwaarde direct op een zwarte, vollere mobiele chartweergave die dichter bij de goedgekeurde handmatige zoom ligt.",

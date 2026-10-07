@@ -96,6 +96,17 @@ function clampedFallback(candidate,bounds,occupied,stackIndex=0) {
   return {...candidate,left,top,rect,compact:false,compressed,collisionFallback:true};
 }
 
+export function markerCoordinateInViewport(x,viewportWidth,{priceAxisWidth=48,edgeTolerance=16}={}) {
+  if(x===null||x===undefined||x==="")return false;
+  const coordinate=Number(x);
+  if(!Number.isFinite(coordinate))return false;
+  const width=Math.max(1,finite(viewportWidth,1));
+  const axisWidth=Math.max(0,finite(priceAxisWidth,48));
+  const tolerance=Math.max(0,finite(edgeTolerance,16));
+  const plotRight=Math.max(1,width-axisWidth-3);
+  return coordinate>=-tolerance&&coordinate<=plotRight+tolerance;
+}
+
 export function eventPriority(row) {
   const kind=String(row?.kind||"").toLowerCase();
   const base=kind==="entry"?300:kind==="tp"?220:kind==="cashflow"?100:150;
