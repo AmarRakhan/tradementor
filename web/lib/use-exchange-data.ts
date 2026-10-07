@@ -3,22 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest, authenticatedStream } from "./cloud-client";
 import { applyAsterRealtimeMark, parseSseChunk } from "./aster-realtime.mjs";
-import { loadAsterSnapshot, mergeAsterSnapshotWithHistoryFallback, preserveConfirmedAsterValues, saveAsterSnapshot, withBoundedRetry } from "./aster-snapshot-cache.mjs";
+import { withBoundedRetry } from "./bounded-retry.mjs";
 import { createLatestAsterRequestGate } from "./aster-strategy2-server-status.mjs";
 
 export type ExchangeId = "hyperliquid" | "aster";
-export type ExchangeSnapshot = { loading: boolean; data: Record<string, unknown> | null; error: string; updatedAt: number | null; serverUpdatedAt?: number | null; source: "none" | "cache" | "server"; serverConfirmed: boolean; timings?: Record<string, number> };
+export type ExchangeSnapshot = { loading: boolean; data: Record<string, unknown> | null; error: string; updatedAt: number | null; serverUpdatedAt?: number | null; source: "none" | "server"; serverConfirmed: boolean; timings?: Record<string, number> };
 export type ExchangeSnapshots = Record<ExchangeId, ExchangeSnapshot>;
 
 const emptySnapshot = (): ExchangeSnapshot => ({ loading: false, data: null, error: "", updatedAt: null, serverUpdatedAt: null, source: "none", serverConfirmed: false });
-
-function cachedAsterSnapshot(uid: string): ExchangeSnapshot {
-  if (typeof window === "undefined" || !uid) return emptySnapshot();
-  const cached = loadAsterSnapshot(window.localStorage, uid);
-  return cached
-    ? { loading: false, data: cached.data, error: "", updatedAt: cached.updatedAt, serverUpdatedAt: null, source: "cache", serverConfirmed: false }
-    : emptySnapshot();
-}
 
 const inFlight = new Map<string, Promise<{ data: Record<string, unknown>; timings: Record<string, number> }>>();
 
@@ -40,30 +32,20 @@ function fetchAsterSnapshot(uid: string, _generation: number) {
   const current = inFlight.get(key);
   if (current) return current;
   const started = performance.now();
-  const request = Promise.allSettled([
-    timedRead("/api/exchanges/aster"),
-    timedRead("/api/exchanges/aster/closed-trades"),
-  ]).then(([accountResult, historyResult]) => {
-    if (accountResult.status !== "fulfilled") throw accountResult.reason;
-    const account = accountResult.value;
-    const history = historyResult.status === "fulfilled" ? historyResult.value : null;
-    const previous = loadAsterSnapshot(window.localStorage, uid)?.data;
-    return {
-      data: mergeAsterSnapshotWithHistoryFallback(account.value, history?.value, previous) as Record<string, unknown>,
-      timings: {
-        statusMs: account.durationMs,
-        statusAttempts: account.attempts,
-        ...(history ? { historyMs: history.durationMs, historyAttempts: history.attempts } : { historyFailed: 1 }),
-        totalMs: Math.round(performance.now() - started),
-      },
-    };
-  }).finally(() => inFlight.delete(key));
+  const request = timedRead("/api/exchanges/aster").then((account) => ({
+    data: account.value as Record<string, unknown>,
+    timings: {
+      statusMs: account.durationMs,
+      statusAttempts: account.attempts,
+      totalMs: Math.round(performance.now() - started),
+    },
+  })).finally(() => inFlight.delete(key));
   inFlight.set(key, request);
   return request;
 }
 
 export function useExchangeData(cloudReady: boolean, uid: string) {
-  const [state, setState] = useState<{ uid: string; snapshots: ExchangeSnapshots }>(() => ({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAsterSnapshot(uid) } }));
+  const [state, setState] = useState<{ uid: string; snapshots: ExchangeSnapshots }>(() => ({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: emptySnapshot() } }));
   const mounted = useRef(true);
   const refreshAllInFlight = useRef<Promise<PromiseSettledResult<void>[]> | null>(null);
   const realtimeBatch = useRef<Map<string, Record<string, unknown>>>(new Map());
@@ -84,7 +66,7 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
   useEffect(() => {
     if (state.uid === uid) return;
     asterRequestGate.current = { uid, gate: createLatestAsterRequestGate() };
-    setState({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: cachedAsterSnapshot(uid) } });
+    setState({ uid, snapshots: { hyperliquid: emptySnapshot(), aster: emptySnapshot() } });
   }, [state.uid, uid]);
 
   const snapshots = useMemo(() => state.uid === uid ? state.snapshots : { hyperliquid: emptySnapshot(), aster: emptySnapshot() }, [state, uid]);
@@ -110,15 +92,9 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
       const timings = exchange === "aster" ? data.timings : undefined;
       setState((current) => {
         if (current.uid !== uid) return current;
-        const confirmedPayload = exchange === "aster"
-          ? preserveConfirmedAsterValues(current.snapshots.aster.data, payload)
-          : payload;
-        if (exchange === "aster") {
-          saveAsterSnapshot(window.localStorage, uid, confirmedPayload, updatedAt);
-          console.info("[TradeMentor Aster timing]", timings);
-        }
+        if (exchange === "aster") console.info("[TradeMentor Aster timing]", timings);
         return { ...current, snapshots: { ...current.snapshots, [exchange]: {
-          loading: false, data: confirmedPayload, error: "", updatedAt, serverUpdatedAt: updatedAt, source: "server", serverConfirmed: true, ...(timings ? { timings } : {})
+          loading: false, data: payload, error: "", updatedAt, serverUpdatedAt: updatedAt, source: "server", serverConfirmed: true, ...(timings ? { timings } : {})
         } } };
       });
     } catch (reason) {
@@ -136,7 +112,6 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
       if (current.uid !== uid) return current;
       const previous = current.snapshots.aster;
       const data = { ...(previous.data || {}), strategy2 };
-      saveAsterSnapshot(window.localStorage, uid, data, updatedAt);
       return {
         ...current,
         snapshots: {
@@ -216,9 +191,9 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
     refreshAll();
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") refreshAll();
-    // Account/history endpoints are snapshots, not ticker streams. Market
-    // prices use WebSockets elsewhere; polling these signed endpoints every
-    // 15 seconds can exhaust Aster's shared-IP request quota.
+    // Canonical account status is the sole browser account snapshot. Market
+    // prices use the realtime stream; no browser persistence or history merge
+    // is allowed to create a second account truth.
     }, 60_000);
     const visible = () => { if (document.visibilityState === "visible") refreshAll(); };
     document.addEventListener("visibilitychange", visible);
