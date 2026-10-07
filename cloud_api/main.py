@@ -100,6 +100,7 @@ from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
+from aster_native_order_shadow import build_native_order_shadow
 from aster_zone_soldiers import confirmed_zone_from_display_zones, prepare_zone_runtime
 from aster_runtime_truth import build_multi_bb_runtime_truth
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_gate, portfolio_cycle_snapshot, reset_cycle_to_equity
@@ -6586,6 +6587,68 @@ def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | Non
             "source": "order-attribution",
         })
     return rows
+
+
+@app.get("/v1/me/aster/native-order-shadow")
+def aster_native_order_shadow(
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Read-only projection of exchange-native TP/next-DCA orders.
+
+    Uses only the canonical stored Aster snapshot and strategy state. It does not
+    call Aster, submit/cancel/replace orders, or mutate strategy/runtime state.
+    """
+    uid = str(user["uid"])
+    strategy = aster_strategy2_reference(uid).get().to_dict() or {}
+    settings_raw = strategy.get("settings") if isinstance(strategy.get("settings"), dict) else {}
+    normalized = multi_bb_status_mapping(settings_raw)
+    if normalized is None:
+        return {
+            "mode": "SHADOW_ONLY",
+            "available": False,
+            "reason": "MULTI_BB_NOT_ACTIVE",
+            "ordersSent": 0,
+            "exchangeCalls": 0,
+            "rows": [],
+        }
+    settings = MultiBbConfig.from_mapping(normalized)
+    automation = aster_automation_reference(uid).get().to_dict() or {}
+    snapshot = automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"), dict) else {}
+    positions = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
+    managed = strategy.get("multiBbPositions") if isinstance(strategy.get("multiBbPositions"), dict) else {}
+
+    protected: set[str] = set()
+    try:
+        for doc in db.collection("asterPositionLossAutoHedge").document(uid).collection("pairs").stream():
+            value = doc.to_dict() or {}
+            status = str(value.get("status", "")).upper()
+            symbol = str(value.get("symbol") or doc.id).upper().strip()
+            if symbol and status and status != "CLOSED":
+                protected.add(symbol)
+    except Exception:
+        # Shadow reporting must never affect trading or fail the main app because
+        # optional lifecycle metadata is temporarily unavailable.
+        protected = set()
+
+    captured_at = snapshot.get("capturedAt")
+    captured_ms = _portfolio_chart_timestamp_ms(captured_at)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    report = build_native_order_shadow(
+        positions=positions,
+        managed_positions=managed,
+        settings=settings,
+        auto_hedge_symbols=protected,
+        account_equity=safe_float(snapshot.get("equity", snapshot.get("marginBalance"))),
+    )
+    return {
+        **report,
+        "available": True,
+        "snapshotAtMs": captured_ms if captured_ms > 0 else None,
+        "snapshotAgeMs": max(0, now_ms - captured_ms) if captured_ms > 0 else None,
+        "snapshotStale": captured_ms <= 0 or now_ms - captured_ms > 120_000,
+        "source": "STORED_CANONICAL_ASTER_SNAPSHOT",
+        "readOnly": True,
+    }
 
 
 @app.get("/v1/me/aster/portfolio-chart/events")
