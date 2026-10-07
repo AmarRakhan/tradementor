@@ -843,7 +843,6 @@ export function PortfolioKoersChart({
     }
 
     const candleByTime=new Map(candles.map((row)=>[row.time,row]));
-    const candleIndexByTime=new Map(candles.map((row,index)=>[row.time,index]));
     const bbUpperByTime=new Map(bb.upper.map((row:any)=>[Number(row.time),Number(row.value)]));
     const bbMiddleByTime=new Map(bb.middle.map((row:any)=>[Number(row.time),Number(row.value)]));
     const bbLowerByTime=new Map(bb.lower.map((row:any)=>[Number(row.time),Number(row.value)]));
