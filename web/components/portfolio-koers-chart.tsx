@@ -15,8 +15,8 @@ import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierO
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
-type EntryDetail={symbol:string;side:string;atMs:number;entryPrice:number|null;notionalUsd:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
-type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
+type EntryDetail={symbol:string;side:string;atMs:number;entryPrice:number|null;notionalUsd:number|null;marginUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
+type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null;marginUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
 type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];entries?:EntryDetail[];source?:string};
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
@@ -66,7 +66,7 @@ const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOf
   // Build 564 restores the proven Build 518 visual baseline.
   "1m":{visibleBars:32,barSpacing:7.2,rightOffset:1.5},
   "5m":{visibleBars:31,barSpacing:7.4,rightOffset:1.5},
-  "15m":{visibleBars:30,barSpacing:7.6,rightOffset:1.6},
+  "15m":{visibleBars:42,barSpacing:5.4,rightOffset:1.6},
   "1u":{visibleBars:28,barSpacing:7.8,rightOffset:1.6},
   "4u":{visibleBars:26,barSpacing:8.0,rightOffset:1.8},
   "24u":{visibleBars:24,barSpacing:8.2,rightOffset:2.0},
@@ -118,6 +118,7 @@ const markerEntryTrades=(rows:EntryDetail[]|undefined):TpTrade[]=>(
   entryPrice:Number.isFinite(Number(row.entryPrice))&&Number(row.entryPrice)>0?Number(row.entryPrice):null,
   openedAtMs:Number.isFinite(Number(row.atMs))&&Number(row.atMs)>0?Number(row.atMs):null,
   notionalUsd:Number.isFinite(Number(row.notionalUsd))&&Number(row.notionalUsd)>0?Number(row.notionalUsd):null,
+  marginUsd:Number.isFinite(Number(row.marginUsd))&&Number(row.marginUsd)>0?Number(row.marginUsd):null,
   activityType:String(row.activityType||"").toUpperCase(),
   originZone:Number.isInteger(Number(row.originZone))?Number(row.originZone):null,
   soldierId:String(row.soldierId||""),
@@ -144,7 +145,10 @@ function entryTradesForBucketFromActivity(activity:unknown,timeframe:string,buck
     if(!symbol)return [];
     const entryPrice=Number(row.entryPrice??row.averagePrice??row.avgPrice??row.price),quantity=Math.abs(Number(row.quantity??row.qty)||0),explicitNotional=Math.abs(Number(row.executedNotionalUsd??row.notionalUsd??row.notional)||0);
     const notionalUsd=explicitNotional>0?explicitNotional:Number.isFinite(entryPrice)&&entryPrice>0&&quantity>0?entryPrice*quantity:null;
-    return [{symbol,realizedPnlUsd:0,durationMinutes:null,side,entryPrice:Number.isFinite(entryPrice)&&entryPrice>0?entryPrice:null,openedAtMs:stamp,notionalUsd}];
+    const explicitMargin=Math.abs(Number(row.marginUsd??row.executedMarginUsd??row.initialMarginUsd)||0);
+    const leverage=Math.abs(Number(row.leverage)||0);
+    const marginUsd=explicitMargin>0?explicitMargin:notionalUsd&&leverage>0?notionalUsd/leverage:null;
+    return [{symbol,realizedPnlUsd:0,durationMinutes:null,side,entryPrice:Number.isFinite(entryPrice)&&entryPrice>0?entryPrice:null,openedAtMs:stamp,notionalUsd,marginUsd}];
   });
 }
 const integerOrNull=(value:unknown)=>{
@@ -1495,8 +1499,8 @@ export function PortfolioKoersChart({
           <header>{selectedTpCluster.tone==="tp"?<MoneyBagIcon/>:<DirectionArrow direction={selectedTpCluster.tone==="short"?"down":"up"}/>}<strong>{selectedTpCluster.tone==="tp"?<>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></>:<>{selectedTpCluster.tone==="short"?"SHORT":"LONG"} · <b>{selectedTpCluster.eventCount||1} entry-events</b></>}</strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
           <div className="portfolio-koers-tp-trades">
             {(selectedTpCluster.trades||[]).map((trade,index)=><div className="portfolio-koers-tp-trade" key={`${trade.symbol}-${index}`}>
-              <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}{selectedTpCluster.tone!=="tp"&&trade.activityType?<em>{trade.activityType==="DCA"?"DCA":trade.activityType==="ADD"?"ADD":"ENTRY"}</em>:null}</span></strong>
-              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b title="Entrykoers">{trade.entryPrice?`koers ${entryPriceText(trade.entryPrice)}`:trade.notionalUsd?`inzet ${accountUsd(trade.notionalUsd)}`:"ENTRY"}</b>}
+              <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}{selectedTpCluster.tone!=="tp"&&["DCA","ADD"].includes(String(trade.activityType||"").toUpperCase())?<em>{String(trade.activityType).toUpperCase()}</em>:null}</span></strong>
+              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b title="Gebruikte margin">{trade.marginUsd?accountUsd(trade.marginUsd):"—"}</b>}
               <span>{selectedTpCluster.tone==="tp"?durationLabel(trade.durationMinutes):entryClock(trade.openedAtMs)}</span>
             </div>)}
             {tpDetailLoading?<div className="portfolio-koers-tp-empty loading">{selectedTpCluster.tone==="tp"?"Bevestigde fills laden…":"Bevestigde entries laden…"}</div>:null}
