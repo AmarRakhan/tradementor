@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { normalizeAsterAccountTruth, type AsterAccountTruth } from "@/lib/aster-account-truth";
 import { AsterHedgeManager } from "./aster-hedge-manager";
 import { PortfolioKoersChart } from "./portfolio-koers-chart";
 import { TradeIntelligenceAdvisorCenter } from "./trade-intelligence-advisor-center";
@@ -462,45 +463,56 @@ async function loadScannerStatus(): Promise<ScannerStatusSnapshot> {
   };
 }
 
-function readSnapshot(): SnapshotValues {
-  const realizedRow = Array.from(document.querySelectorAll<HTMLElement>(".metric-strip .metric")).find((item) =>
-    item.querySelector("span")?.textContent?.trim().toUpperCase() === "GESLOTEN RESULTAAT VANDAAG",
-  );
-  const realized = realizedRow ? directText(realizedRow, "strong") : "—";
-  const tradesClosed = directText(document.querySelector(".realized-trades-count"), "strong");
-  const indexSummary = document.querySelector<HTMLElement>(".active-trades-index > small")?.textContent || "";
-  const counts = indexSummary.match(/(\d+)\s*posities\s*·\s*(\d+)L\s*\/\s*(\d+)S\s*·\s*(\d+)\s*DCA/i);
-  const longSlots = slotCount("long");
-  const shortSlots = slotCount("short");
-  const risk = document.querySelector<HTMLElement>(".liquidation-risk");
-  const riskClass = risk?.className || "";
+function readSnapshotUiState(): Pick<SnapshotValues, "closeDisabled"|"closeBusy"> {
   const closeButton = document.querySelector<HTMLButtonElement>(".portfolio-close-all");
-  const dailyGrowth = document.querySelector<HTMLElement>(".portfolio-growth-daily");
-  const dailyValues = dailyGrowth ? Array.from(dailyGrowth.querySelectorAll<HTMLElement>("strong")) : [];
-  const todayGrowth = dailyValues[0]?.textContent?.trim() || "—";
-  const averageDailyGrowth = dailyValues[1]?.textContent?.trim() || "—";
   return {
-    equity: metric("PORTFOLIOWAARDE"),
-    available: metric("AVAILABLE TO TRADE"),
-    activeCapital: metric("ACTIVE TRADE CAPITAL"),
-    activePositions: metric("ACTIEVE POSITIES"),
-    realized,
-    tradesClosed,
-    longs: longSlots.active || counts?.[2] || "—",
-    shorts: shortSlots.active || counts?.[3] || "—",
-    longCapacity: longSlots.capacity || "—",
-    shortCapacity: shortSlots.capacity || "—",
-    dca: counts?.[4] || "—",
-    liquidation: directText(risk, ".risk-core strong"),
-    todayGrowth,
-    averageDailyGrowth,
-    realizedTone: realizedRow?.classList.contains("positive") ? "positive" : realizedRow?.classList.contains("negative") ? "negative" : "neutral",
-    todayGrowthTone: percentageTone(todayGrowth),
-    averageDailyGrowthTone: percentageTone(averageDailyGrowth),
-    riskTone: riskClass.includes("risk-safe") ? "safe" : riskClass.includes("risk-caution") ? "caution" : riskClass.includes("risk-high") ? "high" : riskClass.includes("risk-critical") ? "critical" : "unknown",
     closeDisabled: !closeButton || closeButton.disabled,
     closeBusy: Boolean(closeButton && /sluiten…|bezig|wachten/i.test(closeButton.textContent || "")),
   };
+}
+
+function percentText(value:number|null) {
+  return value===null||!Number.isFinite(value)
+    ? "—"
+    : `${value>0?"+":value<0?"−":""}${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(value))}%`;
+}
+
+function snapshotValuesFromTruth(truth:AsterAccountTruth):SnapshotValues {
+  const realized=truth.performance.closedTodayReliable?truth.performance.realizedPnlToday:null;
+  const todayGrowth=truth.performance.growthReliable?truth.performance.todayGrowthPercentage:null;
+  const averageGrowth=truth.performance.growthReliable?truth.performance.averageDailyGrowthPercentage:null;
+  const liquidation=truth.account.liquidationRiskPct;
+  const realizedText=money(realized);
+  const todayGrowthText=percentText(todayGrowth);
+  const averageGrowthText=percentText(averageGrowth);
+  return {
+    equity:money(truth.account.equity),
+    available:money(truth.account.availableBalance),
+    activeCapital:money(truth.account.activeTradeCapital),
+    activePositions:String(truth.positions.count),
+    realized:realizedText,
+    tradesClosed:truth.performance.closedTodayReliable&&truth.performance.tradesClosedToday!==null?String(Math.round(truth.performance.tradesClosedToday)):"—",
+    longs:String(truth.positions.longCount),
+    shorts:String(truth.positions.shortCount),
+    longCapacity:truth.strategy.summary.longCapacity===null?"—":String(Math.round(truth.strategy.summary.longCapacity)),
+    shortCapacity:truth.strategy.summary.shortCapacity===null?"—":String(Math.round(truth.strategy.summary.shortCapacity)),
+    dca:String(truth.strategy.summary.dcaCount),
+    liquidation:liquidation===null?"—":`${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(liquidation)}%`,
+    todayGrowth:todayGrowthText,
+    averageDailyGrowth:averageGrowthText,
+    realizedTone:realized===null?"neutral":realized>0?"positive":realized<0?"negative":"neutral",
+    todayGrowthTone:percentageTone(todayGrowthText),
+    averageDailyGrowthTone:percentageTone(averageGrowthText),
+    riskTone:liquidation===null?"unknown":liquidation<25?"safe":liquidation<50?"caution":liquidation<75?"high":"critical",
+    ...readSnapshotUiState(),
+  };
+}
+
+async function loadCanonicalSnapshotValues():Promise<SnapshotValues>{
+  const payload=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
+  const truth=normalizeAsterAccountTruth(payload);
+  if(truth.stale)throw new Error("Canonical Aster account truth is stale.");
+  return snapshotValuesFromTruth(truth);
 }
 
 function valuesEqual(a: SnapshotValues, b: SnapshotValues) {
@@ -1117,6 +1129,28 @@ export function AsterPortfolioSnapshotEnhancer() {
   const detailScrollY = useRef(0);
   const syncing = useRef(false);
 
+  useEffect(()=>{
+    let alive=true;
+    const refresh=async()=>{
+      try{
+        const next=await loadCanonicalSnapshotValues();
+        if(!alive)return;
+        valuesRef.current=next;
+        setValues(next);
+      }catch{
+        if(!alive)return;
+        const failed={...EMPTY,...readSnapshotUiState()};
+        valuesRef.current=failed;
+        setValues(failed);
+      }
+    };
+    void refresh();
+    const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void refresh()},10_000);
+    const visible=()=>{if(document.visibilityState==="visible")void refresh()};
+    document.addEventListener("visibilitychange",visible);
+    return()=>{alive=false;window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
+  },[]);
+
   useEffect(() => {
     let observer: MutationObserver | null = null;
     let frame = 0;
@@ -1143,9 +1177,10 @@ export function AsterPortfolioSnapshotEnhancer() {
         const battleRoot = impact.parentElement;
         if (battleRoot?.parentElement && (mount.parentElement !== battleRoot.parentElement || mount.nextElementSibling !== battleRoot)) battleRoot.parentElement.insertBefore(mount, battleRoot);
         setHost((current) => current === mount ? current : mount);
-        const next = readSnapshot();
-        if (!valuesEqual(valuesRef.current, next)) {
-          valuesRef.current = next;
+        const uiState=readSnapshotUiState();
+        const next={...valuesRef.current,...uiState};
+        if (!valuesEqual(valuesRef.current,next)) {
+          valuesRef.current=next;
           setValues(next);
         }
       });
