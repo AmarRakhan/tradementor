@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 571: canonical Aster account truth, browser business-truth removal and cross-surface SSOT gates.
-export const WEBAPP_BUILD_NUMBER = "571";
+// Build 572: Price-zone cycle overview no longer gets stuck when chart/event reads are slow or partially unavailable.
+export const WEBAPP_BUILD_NUMBER = "572";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

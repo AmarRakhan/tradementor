@@ -17,7 +17,7 @@ test("zone overview reuses the canonical Aster seat snapshot and only polls char
   assert.match(snapshot, /authenticatedRequest\("\/api\/exchanges\/aster"/);
   assert.match(snapshot, /openZonePositionKeys/);
   assert.doesNotMatch(overview, /authenticatedRequest\("\/api\/exchanges\/aster"\s*,/);
-  assert.match(overview, /portfolio-chart\?timeframe=15m&limit=600/);
+  assert.match(overview, /portfolio-chart\?timeframe=15m&limit=320/);
   assert.match(overview, /portfolio-chart\/events\?timeframe=15m/);
   assert.doesNotMatch(overview, /method:\s*["']POST["']/);
   assert.doesNotMatch(overview, /strategy2\/(start|stop|settings|tick)/);
@@ -37,4 +37,13 @@ test("approved mobile visual contract keeps internal table scroll and sticky Zon
   assert.match(css, /\.aps-zco-table-wrap\{[^}]*overflow-x:auto/);
   assert.match(css, /\.aps-zco-table th:first-child,.aps-zco-table td:first-child\{[^}]*position:sticky;left:0/);
   assert.match(css, /\.aps-zco-table tr\.is-active td\{[^}]*#e7b836/);
+});
+
+
+test("Build 572 cannot remain indefinitely on the zone loading state", () => {
+  assert.match(overview, /Promise\.allSettled/);
+  assert.match(overview, /window\.setTimeout\(\(\) => controller\.abort\(\), 8000\)/);
+  assert.match(overview, /if \(!seatTruth\) return null/);
+  assert.doesNotMatch(overview, /setSeatTruth\(/);
+  assert.match(overview, /Geen betrouwbare zonegegevens beschikbaar/);
 });

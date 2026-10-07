@@ -266,6 +266,7 @@ export function PriceZoneCycleOverview({
 }) {
   const [chartTruth, setChartTruth] = useState<ChartTruth | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadWarning, setLoadWarning] = useState("");
 
   const seatTruth = useMemo<SeatTruth | null>(() => seatSummary ? {
     activeZone: seatSummary.activeZone,
@@ -279,19 +280,43 @@ export function PriceZoneCycleOverview({
 
   useEffect(() => {
     let alive = true;
+    let refreshBusy = false;
     const refresh = async () => {
+      if (refreshBusy) return;
+      refreshBusy = true;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 8000);
       try {
-        const [chart, events] = await Promise.all([
-          authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600", { cache: "no-store" }),
-          authenticatedRequest("/api/exchanges/aster/portfolio-chart/events?timeframe=15m", { cache: "no-store" }),
+        const [chartResult, eventsResult] = await Promise.allSettled([
+          authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=320", { cache: "no-store", signal: controller.signal }),
+          authenticatedRequest("/api/exchanges/aster/portfolio-chart/events?timeframe=15m", { cache: "no-store", signal: controller.signal }),
         ]);
         if (!alive) return;
-        setChartTruth(chartTruthFrom(chart, events));
-      } catch {
-        if (!alive) return;
-        setSeatTruth(null);
-        setChartTruth(null);
+        const chart = chartResult.status === "fulfilled" ? chartResult.value : {};
+        const events = eventsResult.status === "fulfilled" ? eventsResult.value : {};
+        if (chartResult.status === "fulfilled" || eventsResult.status === "fulfilled") {
+          setChartTruth((current) => {
+            const next = chartTruthFrom(chart, events);
+            return {
+              currentEquity: next.currentEquity ?? current?.currentEquity ?? null,
+              currentZone: next.currentZone ?? current?.currentZone ?? null,
+              zones: next.zones.length ? next.zones : current?.zones ?? [],
+              markers: next.markers.length ? next.markers : current?.markers ?? [],
+            };
+          });
+          setLoadWarning(
+            chartResult.status === "rejected"
+              ? "Prijsniveaus worden tijdelijk niet bijgewerkt."
+              : eventsResult.status === "rejected"
+                ? "Cyclus-events worden tijdelijk niet bijgewerkt."
+                : "",
+          );
+        } else {
+          setLoadWarning("Zonehistorie kon tijdelijk niet worden bijgewerkt.");
+        }
       } finally {
+        window.clearTimeout(timeout);
+        refreshBusy = false;
         if (alive) setLoading(false);
       }
     };
@@ -309,9 +334,10 @@ export function PriceZoneCycleOverview({
   }, []);
 
   const derived = useMemo(() => {
-    if (!seatTruth || !chartTruth) return null;
-    const cycle = deriveCycle(seatTruth, chartTruth);
-    return { cycle, indexes: visibleZoneIndexes(seatTruth, chartTruth, cycle) };
+    if (!seatTruth) return null;
+    const safeChart = chartTruth ?? { currentEquity: null, currentZone: null, zones: [], markers: [] };
+    const cycle = deriveCycle(seatTruth, safeChart);
+    return { cycle, indexes: visibleZoneIndexes(seatTruth, safeChart, cycle) };
   }, [seatTruth, chartTruth]);
 
   const activeZone = seatTruth?.activeZone ?? liveActiveZone ?? chartTruth?.currentZone ?? null;
@@ -374,7 +400,7 @@ export function PriceZoneCycleOverview({
                 </tr>
               );
             })}
-            {!derived?.indexes.length ? <tr><td colSpan={7} className="empty">Zonegegevens worden geladen…</td></tr> : null}
+            {!derived?.indexes.length ? <tr><td colSpan={7} className="empty">{loading ? "Zonegegevens worden geladen…" : "Geen betrouwbare zonegegevens beschikbaar."}</td></tr> : null}
           </tbody>
         </table>
       </div>
@@ -404,6 +430,7 @@ export function PriceZoneCycleOverview({
         <span><b>›</b>Huidige prijs</span>
       </div>
 
+      {loadWarning ? <p className="aps-zco-truth-note">ⓘ {loadWarning}</p> : null}
       {cycle && !cycle.reliable && (seatTruth?.strategyOpenTotal ?? 0) > 0 ? (
         <p className="aps-zco-truth-note">ⓘ De cyclusstart kan met de beschikbare bevestigde eventhistorie nog niet volledig worden bewezen. Onbekende waarden blijven daarom bewust op —.</p>
       ) : null}
