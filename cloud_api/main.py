@@ -72,7 +72,7 @@ from aster_gateway import (
 )
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, full_leg_closes_from_sweep_ledgers, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
-from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, zone_shadow_backtest
+from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -6548,20 +6548,7 @@ def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | Non
     current = now_utc or datetime.now(timezone.utc)
     cutoff_ms = int((current - timedelta(hours=36)).timestamp() * 1000)
     raw = aster_strategy2_reference(uid).get().to_dict() or {}
-    settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
     rows: list[dict[str, Any]] = []
-
-    def configured_margin(side: str, action: str) -> float:
-        keys = (
-            (f"{side.lower()}DcaMarginUsd", "dcaMarginUsd", f"{side.lower()}DcaAmount")
-            if action == "ADD_DCA"
-            else (f"entryMargin{side.title()}Usd", f"{side.lower()}EntryMarginUsd", "entryMarginUsd", "baseMarginUsd")
-        )
-        for key in keys:
-            value = safe_float(settings.get(key))
-            if value > 0:
-                return value
-        return 0.0
     allowed = {
         "INITIAL_OPEN_LEG", "OPEN_LEG", "ADD_DCA", "AUTO_RESTART",
         "PENDING_REOPEN", "PENDING_REOPEN_CONFIRMED",
@@ -6596,7 +6583,7 @@ def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | Non
             "exchangeConfirmed": True,
             "auditId": f"attribution:{order_id or client_order_id}",
             "activityType": "DCA" if action == "ADD_DCA" else "TP" if event == "FULL_TP" else "ENTRY",
-            "marginUsd": safe_float(item.get("marginUsd", item.get("executedMarginUsd"))) or configured_margin(side, action),
+            "marginUsd": safe_float(item.get("marginUsd", item.get("executedMarginUsd"))) or None,
             "source": "order-attribution",
         })
     return rows
@@ -6625,6 +6612,126 @@ def aster_portfolio_chart_events(
         "readOnly": True,
         "ordersSent": 0,
         "source": "confirmed Strategy-2 audit + durable order attribution events; no exchange polling",
+    }
+
+
+
+@app.get("/v1/me/aster/portfolio-chart/audit")
+def aster_portfolio_chart_audit(
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Read-only Portfolio Koers reconciliation across exchange/state/chart truth."""
+    uid=str(user["uid"])
+    now_utc=datetime.now(timezone.utc)
+    now_ms=int(now_utc.timestamp()*1000)
+    secret=load_aster_secret(user)
+    client=AsterV3Client(
+        signer_address=secret.signer_address,
+        sign_message=local_eip712_signer(secret),
+        live_authorized=False,
+    )
+
+    positions=[
+        row for row in client.position_risk()
+        if isinstance(row,dict) and abs(safe_float(row.get("positionAmt",row.get("quantity"))))>0
+    ]
+    exchange_long=sum(1 for row in positions if str(row.get("positionSide",row.get("side",""))).upper()=="LONG")
+    exchange_short=sum(1 for row in positions if str(row.get("positionSide",row.get("side",""))).upper()=="SHORT")
+
+    automation=aster_automation_reference(uid).get().to_dict() or {}
+    snapshot=automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"),dict) else {}
+    snapshot_positions=[
+        row for row in snapshot.get("positions",[])
+        if isinstance(row,dict) and abs(safe_float(row.get("positionAmt",row.get("quantity"))))>0
+    ]
+    snapshot_long=sum(1 for row in snapshot_positions if str(row.get("positionSide",row.get("side",""))).upper()=="LONG")
+    snapshot_short=sum(1 for row in snapshot_positions if str(row.get("positionSide",row.get("side",""))).upper()=="SHORT")
+
+    strategy_state=aster_strategy2_reference(uid).get().to_dict() or {}
+    audit_rows=_portfolio_chart_recent_strategy_audit_rows(uid,now_utc=now_utc)
+    attribution_rows=_portfolio_chart_order_attribution_rows(uid,now_utc=now_utc)
+
+    markers={}
+    integrity={}
+    for timeframe in ("1m","5m","15m"):
+        candles=_read_portfolio_chart_candles(user,timeframe,600)
+        integrity[timeframe]=portfolio_chart_candle_integrity_report(candles,timeframe)
+        current_markers=portfolio_chart_strategy_audit_markers([*audit_rows,*attribution_rows],timeframe)
+        markers[timeframe]=current_markers
+
+    today_start=datetime(now_utc.year,now_utc.month,now_utc.day,tzinfo=timezone.utc)
+    income=client.income_history(income_type="REALIZED_PNL",start_time=int(today_start.timestamp()*1000),limit=1000)
+    realized_today=[
+        {
+            "symbol":str(row.get("symbol","")).upper(),
+            "timeMs":int(safe_float(row.get("time"))),
+            "realizedPnlUsd":safe_float(row.get("income")),
+        }
+        for row in income if isinstance(row,dict) and abs(safe_float(row.get("income")))>1e-12
+    ]
+    attribution_closes=[
+        row for row in attribution_rows
+        if str(row.get("event","")).upper() in {"FULL_TP","PARTIAL_TP","TAKE_PROFIT_CLOSE","PORTFOLIO_TP"}
+        or portfolio_chart_classify_close(row)!="OTHER_CONFIRMED_CLOSE"
+    ]
+    entry_markers_15=[row for row in markers["15m"] if str(row.get("kind","")).lower()=="entry"]
+    tp_markers_15=[row for row in markers["15m"] if str(row.get("kind","")).lower()=="tp"]
+
+    entry_marker_rows=sum(int(safe_float(row.get("count"))) for row in entry_markers_15)
+    entry_detail_rows=sum(len(row.get("entries",[])) for row in entry_markers_15 if isinstance(row.get("entries"),list))
+    tp_marker_rows=sum(int(safe_float(row.get("count"))) for row in tp_markers_15)
+    tp_detail_rows=sum(len(row.get("trades",[])) for row in tp_markers_15 if isinstance(row.get("trades"),list))
+
+    return {
+        "readOnly":True,
+        "ordersSent":0,
+        "generatedAtMs":now_ms,
+        "exchange":{
+            "openPositions":len(positions),
+            "long":exchange_long,
+            "short":exchange_short,
+            "positions":[{
+                "symbol":str(row.get("symbol","")).upper(),
+                "side":str(row.get("positionSide",row.get("side",""))).upper(),
+                "quantity":abs(safe_float(row.get("positionAmt",row.get("quantity")))),
+                "entryPrice":safe_float(row.get("entryPrice")),
+                "leverage":safe_float(row.get("leverage")),
+                "notionalUsd":abs(safe_float(row.get("notional",row.get("notionalUsd")))),
+            } for row in positions],
+            "realizedPnlToday":realized_today,
+        },
+        "snapshot":{
+            "openPositions":len(snapshot_positions),
+            "long":snapshot_long,
+            "short":snapshot_short,
+        },
+        "durableState":{
+            "managedPositions":len(strategy_state.get("multiBbPositions",{})) if isinstance(strategy_state.get("multiBbPositions"),dict) else 0,
+            "orderAttributions":len(strategy_state.get("orderAttributions",[])) if isinstance(strategy_state.get("orderAttributions"),list) else 0,
+            "recentAuditRows":len(audit_rows),
+            "recentAttributionRows":len(attribution_rows),
+        },
+        "chart":{
+            "integrity":integrity,
+            "entryMarkers15m":entry_markers_15,
+            "tpMarkers15m":tp_markers_15,
+            "entryMarkerCount":entry_marker_rows,
+            "entryDetailCount":entry_detail_rows,
+            "tpMarkerCount":tp_marker_rows,
+            "tpDetailCount":tp_detail_rows,
+        },
+        "closeReconciliation":{
+            "realizedIncomeRowsToday":len(realized_today),
+            "confirmedAttributedCloses":len(attribution_closes),
+            "tpMarkers15m":tp_marker_rows,
+        },
+        "checks":{
+            "exchangeOpenEqualsSnapshot":len(positions)==len(snapshot_positions),
+            "exchangeLongEqualsSnapshot":exchange_long==snapshot_long,
+            "exchangeShortEqualsSnapshot":exchange_short==snapshot_short,
+            "entryMarkerCountEqualsDetails":entry_marker_rows==entry_detail_rows,
+            "tpMarkerCountEqualsDetails":tp_marker_rows==tp_detail_rows,
+        },
     }
 
 
@@ -6794,6 +6901,7 @@ def aster_portfolio_chart(
         "timeframe": timeframe,
         "candles": candles,
         "markers": [*trade_markers, *cashflow_markers],
+        "integrity": portfolio_chart_candle_integrity_report(candles, timeframe),
         "zones": zones,
         "zoneSourceCandles": len(zone_candles),
         "zoneTimelineContiguous": len(zone_candles) == len(candles),
