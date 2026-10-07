@@ -482,12 +482,13 @@ test("Build 551 restores the Build 512 R1-R4 S1-S4 structure and active-zone ban
 });
 
 
-test("Build 552 keeps confirmed chart zones across cold starts and history gaps",async()=>{
+test("Build 571 keeps confirmed chart zones server-owned across cold starts and history gaps",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('portfolio-chart?timeframe=15m&limit=600'));
-  assert.ok(component.includes('tradementor.portfolioZones.v1.'));
+  assert.ok(component.includes('setAdvisorZones(canonical.zones)'));
   assert.ok(component.includes('const advisorZoneSource=useMemo('));
-  assert.ok(component.includes('advisorZones.length?advisorZones:visualPayloadZones'));
+  assert.ok(component.includes('const visualPayloadZones=payload.zones'));
+  assert.equal(component.includes('tradementor.portfolioZones.v1.'),false);
   assert.equal(component.includes('advisorTimeline?.safeForAdvisor===true&&advisorZones.length?advisorZones:payload.zones'),false);
   assert.ok(component.includes('manualViewportRef.current[viewportKey]!==true'));
   assert.ok(component.includes('PORTFOLIO_KOERS_DEFAULT_TIMEFRAME'));
