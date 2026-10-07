@@ -97,6 +97,7 @@ function clampedFallback(candidate,bounds,occupied,stackIndex=0) {
 }
 
 export function markerCoordinateInViewport(x,viewportWidth,{priceAxisWidth=48,edgeTolerance=16}={}) {
+  if(x===null||x===undefined||x==="")return false;
   const coordinate=Number(x);
   if(!Number.isFinite(coordinate))return false;
   const width=Math.max(1,finite(viewportWidth,1));
