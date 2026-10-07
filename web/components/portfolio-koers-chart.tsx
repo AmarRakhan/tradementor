@@ -8,7 +8,7 @@ import { useAuthSession } from "@/components/auth-provider";
 import { ActiveZoneSeatBlock, type ActiveZoneSeatSummary } from "@/components/active-zone-seat-block";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, derivePortfolioDisplayZones, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioKoersFocusBars, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, derivePortfolioDisplayZones, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
@@ -60,16 +60,14 @@ const PORTFOLIO_KOERS_UI41_REFERENCE="file_00000000e2fc820a9057c8f60c1ec845";
 const PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE="file_00000000267082109428370054535e59";
 const EMPTY_STRUCTURE_OVERLAY:StructureOverlayLayout={levels:[],activeZone:null,roleFlip:null,newHigh:null,breakout:null};
 const PRICE_AXIS_WIDTH=48;
-const ACCOUNT_STARTUP_VISIBLE_BARS:Record<string,number>={"1m":20,"5m":18,"15m":12,"1u":12,"4u":10,"24u":8};
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
-  // Build 558: mobile cold-start framing. Fewer visible bars + wider spacing
-  // matches the user's manually zoomed reference without affecting stored data.
-  "1m":{visibleBars:24,barSpacing:9.0,rightOffset:1.5},
-  "5m":{visibleBars:24,barSpacing:9.0,rightOffset:1.5},
-  "15m":{visibleBars:23,barSpacing:9.2,rightOffset:1.6},
-  "1u":{visibleBars:22,barSpacing:9.4,rightOffset:1.6},
-  "4u":{visibleBars:20,barSpacing:9.6,rightOffset:1.8},
-  "24u":{visibleBars:18,barSpacing:9.8,rightOffset:2.0},
+  // Build 564 restores the proven Build 518 visual baseline.
+  "1m":{visibleBars:32,barSpacing:7.2,rightOffset:1.5},
+  "5m":{visibleBars:31,barSpacing:7.4,rightOffset:1.5},
+  "15m":{visibleBars:30,barSpacing:7.6,rightOffset:1.6},
+  "1u":{visibleBars:28,barSpacing:7.8,rightOffset:1.6},
+  "4u":{visibleBars:26,barSpacing:8.0,rightOffset:1.8},
+  "24u":{visibleBars:24,barSpacing:8.2,rightOffset:2.0},
 };
 const localTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("nl-NL",{timeZone:"Europe/Amsterdam",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockTime=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
@@ -819,23 +817,10 @@ export function PortfolioKoersChart({
     const performancePoints=cashflowAdjustedPortfolioSeries(candles,markerRowsRef.current);
     const performanceByTime=new Map(performancePoints.map((row:any)=>[Number(row.time),Number(row.value)]));
     const view=TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"];
-    // Preserve the existing Accountwaarde/Performance viewport exactly.
-    // Only sparse Active Trades history reserves the normal timeframe density so
-    // a few real P&L candles are not stretched to screen width.
-    // Build 563: the approved Accountwaarde start state is deliberately tighter
-    // than the full timeframe history. Keep older confirmed candles available for
-    // indicators/scrolling, but do not let them flatten the live-zone startup.
-    const startupVisibleBars=viewMode==="account"
-      ? Math.min(view.visibleBars,ACCOUNT_STARTUP_VISIBLE_BARS[timeframe]??view.visibleBars)
-      : view.visibleBars;
-    const rawFocusVisibleBars=Math.min(candles.length,startupVisibleBars);
-    const latestPrice=Number(candles.at(-1)?.close);
-    const focusContext=viewMode==="account"
-      ? portfolioZoneContextFromLadder(advisorZoneLadderRef.current,latestPrice)
-      : null;
-    const focusVisibleBars=viewMode==="account"
-      ? portfolioKoersFocusBars(candles,rawFocusVisibleBars,latestPrice,focusContext?.lowerBoundary,focusContext?.upperBoundary)
-      : rawFocusVisibleBars;
+    // Build 564: exact Build 518 startup geometry. Keep the full recent visual
+    // window; do not apply later arbitrary Accountwaarde caps or zone-driven
+    // auto-cropping. Sparse Active Trades still reserves normal timeframe density.
+    const focusVisibleBars=Math.min(candles.length,view.visibleBars);
     const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
@@ -1016,22 +1001,35 @@ export function PortfolioKoersChart({
         structureDraft=EMPTY_STRUCTURE_OVERLAY;
       }
 
-      const markerRows=markerRowsRef.current.filter((row)=>candleByTime.has(row.time));
+      const markerStep=ENTRY_TIMEFRAME_SECONDS[timeframe]||0;
+      const candleTimes=candles.map((row)=>Number(row.time));
+      const markerRows=markerRowsRef.current.flatMap((row)=>{
+        if(candleByTime.has(row.time))return [{row,renderTime:Number(row.time)}];
+        if(markerStep<=0||!candleTimes.length)return [];
+        let renderTime:number|null=null,delta=Number.POSITIVE_INFINITY;
+        for(const candleTime of candleTimes){
+          const nextDelta=Math.abs(candleTime-Number(row.time));
+          if(nextDelta<delta){delta=nextDelta;renderTime=candleTime}
+        }
+        // Never invent a candle. A confirmed event may attach only to a real
+        // adjacent timeframe candle; the original event bucket stays markerTime.
+        return renderTime!==null&&delta<=markerStep?[{row,renderTime}]:[];
+      });
       const visibleRange=chart.timeScale().getVisibleLogicalRange();
-      const visibleMarkerRows=markerRows.filter((row)=>{
-        const candleIndex=candleIndexByTime.get(row.time);
+      const visibleMarkerRows=markerRows.filter(({renderTime})=>{
+        const candleIndex=candleIndexByTime.get(renderTime);
         if(candleIndex===undefined)return false;
         if(!visibleRange)return true;
         return candleIndex>=Math.floor(visibleRange.from)-1&&candleIndex<=Math.ceil(visibleRange.to)+1;
       });
       const candidates:any[]=[];
       for(let index=0;index<visibleMarkerRows.length;index+=1){
-        const row=visibleMarkerRows[index],candle=candleByTime.get(row.time);
+        const {row,renderTime}=visibleMarkerRows[index],candle=candleByTime.get(renderTime);
         if(!candle)continue;
         const visual=markerVisual(row);
-        const x=chart.timeScale().timeToCoordinate(row.time as UTCTimestamp);
+        const x=chart.timeScale().timeToCoordinate(renderTime as UTCTimestamp);
         const rawPrice=visual.position==="belowBar"?candle.low:candle.high;
-        const performancePrice=performanceByTime.get(row.time);
+        const performancePrice=performanceByTime.get(renderTime);
         const markerPrice=viewMode==="performance"&&Number.isFinite(performancePrice)?Number(performancePrice):rawPrice;
         const y=series.priceToCoordinate(markerPrice);
         if(x===null||y===null)continue;
@@ -1049,7 +1047,7 @@ export function PortfolioKoersChart({
         const copy=markerPresentation(row);
         candidates.push({
           id:`${row.time}-${row.kind||""}-${row.side||""}-${index}`,
-          x:Number(x),y:Number(y),time:row.time,kind:row.kind,
+          x:Number(x),y:Number(y),time:renderTime,kind:row.kind,
           priority:eventPriority(row),eventCount:Math.max(1,Number(row.count)||1),
           position,
           tone:copy.tone,title:copy.title,value:"",glyph:copy.glyph,multiplier:copy.multiplier,
@@ -1061,12 +1059,9 @@ export function PortfolioKoersChart({
           width:copy.tone==="cashflow"?92:copy.tone==="tp"?86:58,height:copy.tone==="tp"?34:30,
         });
       }
-      // Build 559 · reference file_0000000065e08246a10dfd2cc721cc77
-      // Keep the confirmed event layer visibly populated on the default mobile
-      // viewport. This is display-only: it does not synthesize fills or alter
-      // any trading/runtime state.
-      const displayCandidates=selectPortfolioKoersReferenceCandidates(candidates,{tp:4,long:4,short:4,cashflow:1,other:1});
-      const markerLayout=layoutPortfolioKoersMarkers(displayCandidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:12});
+      // Build 564: restore the proven Build 518 marker density/composition.
+      const displayCandidates=selectPortfolioKoersReferenceCandidates(candidates,{tp:3,long:2,short:2,cashflow:1,other:1});
+      const markerLayout=layoutPortfolioKoersMarkers(displayCandidates,{width,height},{priceAxisWidth:PRICE_AXIS_WIDTH,safetyCap:9});
       const reserved:StructureRect[]=[];
       if(structureDraft.activeZone){
         const zoneCenter=structureDraft.activeZone.top+structureDraft.activeZone.height/2;

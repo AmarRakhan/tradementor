@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 563: restore approved tight Portfolio Koers startup while keeping Bollinger visible; deploy contract synchronized.
-export const WEBAPP_BUILD_NUMBER = "563";
+// Build 564: restore proven Build 518 Portfolio Koers geometry with current live data contracts.
+export const WEBAPP_BUILD_NUMBER = "564";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

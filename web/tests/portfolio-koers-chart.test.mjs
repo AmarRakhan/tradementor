@@ -159,8 +159,8 @@ test("Portfolio Koers is mounted before the existing Portfolio Snapshot and rema
   assert.ok(component.includes("layoutPortfolioKoersMarkers"));
   assert.ok(component.includes("getVisibleLogicalRange()"));
   assert.ok(component.includes("visibleMarkerRows"));
-  assert.ok(component.includes("selectPortfolioKoersReferenceCandidates(candidates,{tp:4,long:4,short:4,cashflow:1,other:1})"));
-  assert.ok(component.includes("safetyCap:12"));
+  assert.ok(component.includes("selectPortfolioKoersReferenceCandidates(candidates,{tp:3,long:2,short:2,cashflow:1,other:1})"));
+  assert.ok(component.includes("safetyCap:9"));
   assert.ok(component.includes("PRICE_AXIS_WIDTH=48"));
   assert.ok(component.includes("attributionLogo:false"));
   assert.equal(/authenticatedRequest\([^)]*method:\s*["']POST/.test(component),false);
@@ -296,15 +296,15 @@ test("Build 413 initial focus drops old distant history while preserving recent 
 test("Build 479 keeps the reference-style longer timeline while visible data drives account autoscale",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   for(const pair of [
-    '"1m":{visibleBars:24',
-    '"5m":{visibleBars:24',
-    '"15m":{visibleBars:23',
-    '"1u":{visibleBars:22',
-    '"4u":{visibleBars:20',
-    '"24u":{visibleBars:18',
+    '"1m":{visibleBars:32',
+    '"5m":{visibleBars:31',
+    '"15m":{visibleBars:30',
+    '"1u":{visibleBars:28',
+    '"4u":{visibleBars:26',
+    '"24u":{visibleBars:24',
   ]) assert.ok(component.includes(pair),pair);
-  assert.ok(component.includes("const rawFocusVisibleBars=Math.min(candles.length,startupVisibleBars)"));
-  assert.ok(component.includes('viewMode==="account"\n      ? portfolioKoersFocusBars(candles,rawFocusVisibleBars'));
+  assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
+  assert.equal(component.includes("ACCOUNT_STARTUP_VISIBLE_BARS"),false);
   assert.equal(component.includes("guideLow"),false);
   assert.equal(component.includes("guideHigh"),false);
   assert.equal(component.includes("fitContent()"),false);
@@ -333,7 +333,7 @@ test("Build 479 mobile geometry keeps UI 4.1 styling with the requested compact 
 test("Build 474 keeps the reference marker layer calm without deleting underlying events",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("selectPortfolioKoersReferenceCandidates"));
-  assert.ok(component.includes("{tp:4,long:4,short:4,cashflow:1,other:1}"));
+  assert.ok(component.includes("{tp:3,long:2,short:2,cashflow:1,other:1}"));
   assert.ok(component.includes("markerRowsRef.current.filter((row)=>row.time===time)"));
   assert.ok(component.includes("openEventCluster(label)"));
 });
@@ -355,7 +355,7 @@ test("Build 474 applies reference density only after filtering to the actual vis
   assert.ok(component.includes("candleIndex>=Math.floor(visibleRange.from)-1"));
   assert.ok(component.includes("candleIndex<=Math.ceil(visibleRange.to)+1"));
   assert.ok(densityIndex>rangeIndex);
-  assert.ok(component.includes("{tp:4,long:4,short:4,cashflow:1,other:1}"));
+  assert.ok(component.includes("{tp:3,long:2,short:2,cashflow:1,other:1}"));
 });
 
 test("Build 422 preserves event-to-candle identity while scrolling and adds no fetch on viewport change",async()=>{
@@ -520,8 +520,8 @@ test("Build 559 matches approved Portfolio Koers startup/event reference",async(
   assert.equal(component.includes('className="portfolio-koers-gap-warning"'),false);
   assert.ok(component.includes('data-level={level.label}'));
   assert.equal(component.includes('<span>{level.label}</span>'),false);
-  assert.ok(component.includes('{tp:4,long:4,short:4,cashflow:1,other:1}'));
-  assert.ok(component.includes('safetyCap:12'));
+  assert.ok(component.includes('{tp:3,long:2,short:2,cashflow:1,other:1}'));
+  assert.ok(component.includes('safetyCap:9'));
   assert.ok(css.includes("Visual reference: file_0000000065e08246a10dfd2cc721cc77"));
   assert.ok(css.includes(".portfolio-koers-gap-warning"));
   assert.ok(css.includes("display:none!important"));
@@ -548,11 +548,26 @@ test("Build 561 imports the live-zone focus helper used by Portfolio Koers start
 });
 
 
-test("Build 563 keeps the approved Accountwaarde startup tight without deleting history",async()=>{
+test("Build 564 restores the proven Build 518 viewport and confirmed-event anchoring",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes('ACCOUNT_STARTUP_VISIBLE_BARS:Record<string,number>={"1m":20,"5m":18,"15m":12,"1u":12,"4u":10,"24u":8}'));
-  assert.ok(component.includes('const startupVisibleBars=viewMode==="account"'));
-  assert.ok(component.includes('Math.min(view.visibleBars,ACCOUNT_STARTUP_VISIBLE_BARS[timeframe]??view.visibleBars)'));
-  assert.ok(component.includes('const rawFocusVisibleBars=Math.min(candles.length,startupVisibleBars)'));
+  assert.ok(component.includes('"15m":{visibleBars:30,barSpacing:7.6,rightOffset:1.6}'));
+  assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
+  assert.equal(component.includes("ACCOUNT_STARTUP_VISIBLE_BARS"),false);
+  assert.ok(component.includes("delta<=markerStep"));
+  assert.ok(component.includes("markerTime:row.time"));
+  assert.ok(component.includes("time:renderTime"));
+  assert.ok(component.includes('{tp:3,long:2,short:2,cashflow:1,other:1}'));
+  assert.ok(component.includes("safetyCap:9"));
   assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
+});
+
+
+test("Build 564 keeps current black/no-pill/no-gap presentation on the Build 518 chart geometry",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
+  assert.ok(component.includes('color:"#000000"'));
+  assert.equal(component.includes('<span>{level.label}</span>'),false);
+  assert.equal(component.includes('className="portfolio-koers-gap-warning"'),false);
+  assert.ok(css.includes(".portfolio-koers-gap-warning"));
+  assert.ok(css.includes("display:none!important"));
 });

@@ -83,9 +83,9 @@ test("Build 486 keeps Active Trades visually aligned with the existing chart", a
 
 test("Build 486 does not auto-zoom sparse Active Trades candles", async () => {
   const component = await readFile(new URL("../components/portfolio-koers-chart.tsx", import.meta.url), "utf8");
-  assert.ok(component.includes("const rawFocusVisibleBars=Math.min(candles.length,startupVisibleBars)"));
+  assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
   assert.ok(component.includes('const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;'));
   assert.ok(component.includes('from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:Math.max(-.5,candles.length-focusVisibleBars-.5),'));
-  assert.ok(component.includes("Math.min(candles.length,startupVisibleBars)"));
+  assert.ok(component.includes("Math.min(candles.length,view.visibleBars)"));
   assert.ok(component.includes("Math.max(-.5,candles.length-focusVisibleBars-.5)"));
 });
