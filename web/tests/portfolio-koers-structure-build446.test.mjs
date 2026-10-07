@@ -69,13 +69,13 @@ test("Build 479 is the advertised webapp build while Build 447 Graph 3.1 regress
 });
 
 
-test("Build 551 restores the reference R1-R4 and S1-S4 display cap",async()=>{
+test("Build 567 supersedes the old 4+4 display cap with persistent chart-native S/R",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,18)"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(zoneLadder,structurePrice)"));
-  assert.ok(component.includes("const resistanceLevels=Array.from({length:4}"));
-  assert.ok(component.includes("const supportLevels=Array.from({length:4}"));
-  assert.ok(component.includes("if(top<0||top>height)return []"));
+  assert.ok(component.includes("series.createPriceLine({"));
+  assert.ok(component.includes("prices.slice(-48)"));
+  assert.ok(component.includes("axisLabelVisible:false"));
 });
 
 test("Build 513 disables legacy breakout structure notes",async()=>{
