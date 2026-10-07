@@ -151,7 +151,7 @@ test("Build 568 shows entry margin dollars without duplicate ENTRY labels and in
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('"15m":{visibleBars:42,barSpacing:5.4,rightOffset:1.6}'));
   assert.ok(component.includes('title="Gebruikte margin"'));
-  assert.ok(component.includes('trade.marginUsd?accountUsd(trade.marginUsd):"—"'));
+  assert.ok(component.includes('trade.marginUsd?accountUsd(trade.marginUsd):"Margin niet beschikbaar"'));
   assert.equal(component.includes('trade.activityType==="DCA"?"DCA":trade.activityType==="ADD"?"ADD":"ENTRY"'),false);
   assert.ok(component.includes('["DCA","ADD"].includes(String(trade.activityType||"").toUpperCase())'));
 });
