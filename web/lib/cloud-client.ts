@@ -15,6 +15,7 @@ type AsterSnapshotListener = (payload: unknown, updatedAt: number) => void;
 let sharedAsterSnapshotCache: SharedAsterSnapshotCache | null = null;
 let sharedAsterSnapshotInFlight: { uid: string; promise: Promise<unknown> } | null = null;
 const sharedAsterSnapshotListeners = new Set<AsterSnapshotListener>();
+let sharedAsterSnapshotFeedTimer: number | null = null;
 
 function publishSharedAsterSnapshot(payload: unknown, updatedAt: number) {
   for (const listener of sharedAsterSnapshotListeners) {
@@ -22,12 +23,32 @@ function publishSharedAsterSnapshot(payload: unknown, updatedAt: number) {
   }
 }
 
+function stopSharedAsterSnapshotFeedIfUnused() {
+  if (sharedAsterSnapshotListeners.size || sharedAsterSnapshotFeedTimer === null) return;
+  window.clearInterval(sharedAsterSnapshotFeedTimer);
+  sharedAsterSnapshotFeedTimer = null;
+}
+
+function ensureSharedAsterSnapshotFeed() {
+  if (typeof window === "undefined" || sharedAsterSnapshotFeedTimer !== null) return;
+  void sharedAsterSnapshotRequest({ cache: "no-store" }).catch(() => {});
+  sharedAsterSnapshotFeedTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") {
+      void sharedAsterSnapshotRequest({ cache: "no-store" }).catch(() => {});
+    }
+  }, ASTER_SHARED_SNAPSHOT_MAX_AGE_MS);
+}
+
 export function subscribeSharedAsterSnapshot(listener: AsterSnapshotListener) {
   sharedAsterSnapshotListeners.add(listener);
   const current = sharedAsterSnapshotCache;
   const uid = firebaseAuth.currentUser?.uid || "";
   if (current && uid && current.uid === uid) listener(current.payload, current.updatedAt);
-  return () => sharedAsterSnapshotListeners.delete(listener);
+  ensureSharedAsterSnapshotFeed();
+  return () => {
+    sharedAsterSnapshotListeners.delete(listener);
+    stopSharedAsterSnapshotFeedIfUnused();
+  };
 }
 
 export function readSharedAsterSnapshot() {
