@@ -57,8 +57,9 @@ test("Build 457 remains a presentation/status-sync fix and adds no trading mutat
 test("Build 530 makes zero-position exchange truth override stale Zone Warriors seat ownership", async () => {
   const snapshot = await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8");
   assert.match(snapshot, /const exchangeFlatConfirmed = hasRuntimeTruth[\s\S]*runtimeActiveLong === 0 && runtimeActiveShort === 0 && runtimeAccountPositionCount === 0[\s\S]*reportActiveLong === 0 && reportActiveShort === 0/);
-  assert.match(snapshot, /firstNumber\(\[settings, seatModel\], \["zoneBaseLongSoldiers", "perZoneLong"\]\)/);
-  assert.match(snapshot, /firstNumber\(\[settings, seatModel\], \["zoneBaseShortSoldiers", "perZoneShort"\]\)/);
+  assert.match(snapshot, /firstNumber\(\[settings\], \["zoneBaseLongSoldiers", "perZoneLong"\]\)/);
+  assert.match(snapshot, /firstNumber\(\[settings\], \["zoneBaseShortSoldiers", "perZoneShort"\]\)/);
+  assert.doesNotMatch(snapshot, /firstNumber\(\[settings, seatModel\], \["zoneBase(Long|Short)Soldiers", "perZone(Long|Short)"\]\)/);
   assert.match(snapshot, /const activeOpenLong = exchangeFlatConfirmed \? 0/);
   assert.match(snapshot, /const strategyOpenLong = exchangeFlatConfirmed \? 0/);
   assert.match(snapshot, /exchangeFlatConfirmed \? \{\} : record\(seatReport\.zoneOpenCounts\)/);
