@@ -6642,6 +6642,11 @@ def aster_portfolio_chart_active_trades(
             current = aster_dashboard_snapshot(client.account_information(), client.position_risk())
             snapshot = {**snapshot, **current, "capturedAt": now_utc}
             captured_ms = now_ms
+            # Share this fresh read-only exchange snapshot with the canonical Aster
+            # status/chart readers. Without this write-through, an open Active Trades
+            # tab can re-fetch account + position truth every 5-15 seconds even after
+            # it just refreshed the same evidence itself.
+            automation_ref.set({"accountSnapshot": snapshot}, merge=True)
         except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, HTTPException, ValueError):
             pass
 
