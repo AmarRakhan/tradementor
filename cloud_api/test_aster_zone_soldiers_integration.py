@@ -76,7 +76,7 @@ def test_build457_live_equity_selects_active_zone_without_current_candle_close_g
     assert "history_fresh = bool(len(contiguous) >= 7 and latest_bucket >= current_bucket)" in source
     assert "zones = derive_equity_zones(established, cycle_start) if history_ready else []" in source
     assert "equity = multi_bb_exchange_equity(account)" in source
-    assert "active = confirmed_zone_from_display_zones(zones, equity)" in source
+    assert "display_zones = canonical_display_zone_ladder(" in source\n    assert "active = confirmed_zone_from_display_zones(" in source
     assert "zone_ready = bool(active is not None)" in source
     assert '"ladderFallbackUsed": ladder_fallback_used' in source
     assert '"zoneActivationRequiresCandleClose": False' in source
