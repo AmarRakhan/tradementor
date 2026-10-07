@@ -7,7 +7,7 @@ import { authenticatedRequest } from "@/lib/cloud-client";
 import { ActiveZoneSeatBlock, type ActiveZoneSeatSummary } from "@/components/active-zone-seat-block";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersMarkers, normalizePortfolioKoersPayload, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
-import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
+import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, markerCoordinateInViewport, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
@@ -978,19 +978,18 @@ export function PortfolioKoersChart({
         // adjacent timeframe candle; the original event bucket stays markerTime.
         return renderTime!==null&&delta<=markerStep?[{row,renderTime}]:[];
       });
-      const visibleRange=chart.timeScale().getVisibleLogicalRange();
-      const visibleMarkerRows=markerRows.filter(({renderTime})=>{
-        const candleIndex=candleIndexByTime.get(renderTime);
-        if(candleIndex===undefined)return false;
-        if(!visibleRange)return true;
-        return candleIndex>=Math.floor(visibleRange.from)-1&&candleIndex<=Math.ceil(visibleRange.to)+1;
-      });
+      // Build 579: marker visibility follows the chart's rendered coordinates, not a
+      // separately sampled logical-range snapshot. During responsive relayouts
+      // lightweight-charts can briefly expose a stale logical range while the rendered
+      // geometry is already changing. That old double gate could drop every valid marker.
+      const visibleMarkerRows=markerRows;
       const candidates:any[]=[];
       for(let index=0;index<visibleMarkerRows.length;index+=1){
         const {row,renderTime}=visibleMarkerRows[index],candle=candleByTime.get(renderTime);
         if(!candle)continue;
         const visual=markerVisual(row);
         const x=chart.timeScale().timeToCoordinate(renderTime as UTCTimestamp);
+        if(x===null||!markerCoordinateInViewport(Number(x),width,{priceAxisWidth:PRICE_AXIS_WIDTH,edgeTolerance:16}))continue;
         const rawPrice=visual.position==="belowBar"?candle.low:candle.high;
         const performancePrice=performanceByTime.get(renderTime);
         const markerPrice=viewMode==="performance"&&Number.isFinite(performancePrice)?Number(performancePrice):rawPrice;
@@ -1056,11 +1055,22 @@ export function PortfolioKoersChart({
     };
     const markViewportManual=()=>{manualViewportRef.current[viewportKey]=true};
     chart.timeScale().subscribeVisibleLogicalRangeChange(rememberViewport);
+    let resizeFrame=0;
+    const syncAfterResize=()=>{
+      if(resizeFrame)cancelAnimationFrame(resizeFrame);
+      resizeFrame=requestAnimationFrame(()=>{resizeFrame=0;sync()});
+    };
     const resize=new ResizeObserver(()=>{
       if(chartRef.current!==chart||!container.isConnected)return;
-      try{chart.applyOptions({width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight)});sync()}catch{/* disposed */}
+      try{
+        chart.applyOptions({width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight)});
+        syncAfterResize();
+      }catch{/* disposed */}
     });
     resize.observe(container);
+    // Shared geometry signals only: no iPhone/Android/Fold branching.
+    window.addEventListener("resize",syncAfterResize,{passive:true});
+    window.visualViewport?.addEventListener("resize",syncAfterResize,{passive:true});
     container.addEventListener("pointermove",rememberViewport,{passive:true});
     container.addEventListener("touchmove",rememberViewport,{passive:true});
     container.addEventListener("pointerdown",markViewportManual,{passive:true});
@@ -1086,7 +1096,8 @@ export function PortfolioKoersChart({
     sync();
 
     return()=>{
-      resize.disconnect();chart.timeScale().unsubscribeVisibleLogicalRangeChange(rememberViewport);
+      resize.disconnect();if(resizeFrame)cancelAnimationFrame(resizeFrame);chart.timeScale().unsubscribeVisibleLogicalRangeChange(rememberViewport);
+      window.removeEventListener("resize",syncAfterResize);window.visualViewport?.removeEventListener("resize",syncAfterResize);
       container.removeEventListener("pointermove",rememberViewport);container.removeEventListener("touchmove",rememberViewport);
       container.removeEventListener("pointerdown",markViewportManual);container.removeEventListener("touchstart",markViewportManual);container.removeEventListener("wheel",markViewportManual);
       try{chart.unsubscribeCrosshairMove(onCrosshair);chart.remove()}catch{/* disposed */}
