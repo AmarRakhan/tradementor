@@ -73,6 +73,15 @@ const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOf
 };
 const localTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("nl-NL",{timeZone:"Europe/Amsterdam",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockTime=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+const amsterdamDateKey=(seconds:number)=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Amsterdam",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(seconds*1000));
+function currentAmsterdamSession(candles:Candle[]):Candle[]{
+  const rows=Array.isArray(candles)?candles:[];
+  const latest=rows.at(-1);
+  if(!latest)return [];
+  const key=amsterdamDateKey(Number(latest.time));
+  return rows.filter((row)=>amsterdamDateKey(Number(row.time))===key);
+}
+
 const advisorErrorText=(reason:unknown,fallback:string)=>{
   const message=reason instanceof Error?reason.message.trim():"";
   if(!message)return fallback;
@@ -744,7 +753,9 @@ export function PortfolioKoersChart({
         candleSeriesRef.current.update({time:candle.time as UTCTimestamp,value:adjusted});
       }else{
         candleSeriesRef.current.update({time:candle.time as UTCTimestamp,open:candle.open,high:candle.high,low:candle.low,close:candle.close});
-        const bb=bollinger20x2(next);
+        const liveSession=currentAmsterdamSession(next);
+        const liveBbInput=liveSession.length>=20?liveSession:next;
+        const bb=bollinger20x2(liveBbInput);
         bbRefs.current.upper?.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
         bbRefs.current.middle?.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
         bbRefs.current.lower?.setData(bb.lower.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
@@ -861,7 +872,9 @@ export function PortfolioKoersChart({
     // Build 562: Bollinger is a display indicator over the confirmed candle
     // observations. A timeline gap must not make the bands disappear entirely.
     // No candles are fabricated; the indicator uses only persisted/observed OHLC.
-    const bb=viewMode==="account"?bollinger20x2(candles):{upper:[],middle:[],lower:[]};
+    const sessionCandles=viewMode==="account"?currentAmsterdamSession(candles):[];
+    const bbInput=viewMode==="account"&&sessionCandles.length>=20?sessionCandles:candles;
+    const bb=viewMode==="account"?bollinger20x2(bbInput):{upper:[],middle:[],lower:[]};
     if(viewMode==="account"){
       const upper=chart.addSeries(LineSeries,{color:"rgba(35,190,255,.82)",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
       const middle=chart.addSeries(LineSeries,{color:"rgba(218,231,236,.44)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
@@ -1107,7 +1120,15 @@ export function PortfolioKoersChart({
     container.addEventListener("wheel",markViewportManual,{passive:true});
     const defaultTo=candles.length-1+view.rightOffset;
     const savedViewport=savedViewportRef.current[viewportKey];
-    const initialRange=savedViewport?(savedViewport.followLatest?{from:defaultTo-savedViewport.span,to:defaultTo}:{from:savedViewport.from,to:savedViewport.to}):{from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:Math.max(-.5,candles.length-focusVisibleBars-.5),to:defaultTo};
+    const sessionStartIndex=viewMode==="account"&&sessionCandles.length
+      ? Math.max(0,candles.length-sessionCandles.length)
+      : 0;
+    const accountDefaultFrom=viewMode==="account"
+      ? Math.max(sessionStartIndex,candles.length-focusVisibleBars-.5)
+      : Math.max(-.5,candles.length-focusVisibleBars-.5);
+    const initialRange=savedViewport
+      ? (savedViewport.followLatest?{from:defaultTo-savedViewport.span,to:defaultTo}:{from:savedViewport.from,to:savedViewport.to})
+      : {from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:accountDefaultFrom,to:defaultTo};
     viewportSyncGuardRef.current=true;
     chart.timeScale().setVisibleLogicalRange(initialRange);
     requestAnimationFrame(()=>{viewportSyncGuardRef.current=false;sync()});

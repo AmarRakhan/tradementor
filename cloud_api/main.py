@@ -6531,7 +6531,7 @@ def _portfolio_chart_recent_strategy_audit_rows(uid: str, *, now_utc: datetime |
             stamp = _portfolio_chart_timestamp_ms(row.get("timestampMs", row.get("timestamp")))
             if stamp <= 0:
                 continue
-            rows.append({**row, "timestampMs": stamp})
+            rows.append({**row, "timestampMs": stamp, "auditId": document.id})
     except Exception:
         return []
     return rows

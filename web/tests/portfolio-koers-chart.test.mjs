@@ -572,3 +572,13 @@ test("Build 564 keeps current black/no-pill/no-gap presentation on the Build 518
   assert.ok(css.includes(".portfolio-koers-gap-warning"));
   assert.ok(css.includes("display:none!important"));
 });
+
+
+test("Build 565 uses current Amsterdam session for 15m startup and Bollinger display",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("function currentAmsterdamSession"));
+  assert.ok(component.includes("sessionCandles.length>=20?sessionCandles:candles"));
+  assert.ok(component.includes("const sessionStartIndex=viewMode===\"account\"&&sessionCandles.length"));
+  assert.ok(component.includes("Math.max(sessionStartIndex,candles.length-focusVisibleBars-.5)"));
+  assert.ok(component.includes("file_0000000047d081f4b2c4348a14e0db2f"));
+});

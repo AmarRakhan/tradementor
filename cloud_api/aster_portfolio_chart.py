@@ -589,11 +589,23 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
     if timeframe not in TIMEFRAME_MS:
         return []
     event_map = {
+        # Legacy Multi-BB audit names retained for historical compatibility.
         "MULTI_BB_ENTRY": ("entry", None, "ENTRY"),
         "MULTI_BB_DCA": ("entry", None, "DCA"),
         "MULTI_BB_TP": ("tp", "ALL", "TP"),
         "MULTI_BB_ASYM_SHORT_ENTRY": ("entry", "SHORT", "ENTRY"),
         "MANUAL_DCA_DETECTED": ("entry", None, "ADD"),
+        # Current unified AsterBot/Strategy-2 execution names. These audit rows
+        # are written only after the corresponding confirmed execution path.
+        "INITIAL_OPEN_LEG": ("entry", None, "ENTRY"),
+        "OPEN_LEG": ("entry", None, "ENTRY"),
+        "ADD_DCA": ("entry", None, "DCA"),
+        "PENDING_REOPEN_CONFIRMED": ("entry", None, "ENTRY"),
+        "FULL_TP": ("tp", "ALL", "TP"),
+    }
+    trusted_confirmed_events = {
+        "INITIAL_OPEN_LEG", "OPEN_LEG", "ADD_DCA",
+        "PENDING_REOPEN_CONFIRMED", "FULL_TP",
     }
     groups: dict[tuple[int, str, str], dict[str, Any]] = {}
     seen_entry_execution_ids: set[str] = set()
@@ -612,14 +624,15 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         if kind == "entry" and side not in {"LONG", "SHORT"}:
             continue
         if kind == "entry":
-            # The fast Portfolio Koers feed must represent executions, not
-            # reconciliation/snapshot observations. A Strategy-2 audit row is
-            # eligible only when the execution path explicitly confirmed the
-            # exchange result and persisted a stable order/fill identity.
-            if raw.get("exchangeConfirmed") is not True:
+            # The fast feed must represent executions, not observations. Legacy
+            # rows require explicit exchange proof. Current unified-engine audit
+            # names are themselves post-confirmation records; their Firestore
+            # document id provides stable identity for already-persisted rows.
+            trusted_confirmed = event in trusted_confirmed_events and bool(str(raw.get("auditId", "")).strip())
+            if raw.get("exchangeConfirmed") is not True and not trusted_confirmed:
                 continue
             execution_id = ""
-            for field in ("orderId", "clientOrderId", "exchangeTradeId", "tradeId", "fillId"):
+            for field in ("orderId", "clientOrderId", "exchangeTradeId", "tradeId", "fillId", "auditId"):
                 value = str(raw.get(field, "") or "").strip()
                 if value:
                     execution_id = f"{field}:{value}"
@@ -652,9 +665,11 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         group["count"] += 1
         if activity_type not in group["activityTypes"]:
             group["activityTypes"].append(activity_type)
+        if kind == "tp":
+            group["realizedPnlUsd"] += _number(raw.get("realizedPnlUsd", raw.get("realizedPnl", raw.get("pnl"))))
         if kind == "entry":
             entry_price = _number(raw.get("entryPrice", raw.get("fillPrice", raw.get("price"))))
-            notional_usd = _number(raw.get("executedNotionalUsd", raw.get("notionalUsd", raw.get("plannedInputNotionalUsd", raw.get("configuredNotionalUsd")))))
+            notional_usd = _number(raw.get("executedNotionalUsd", raw.get("filledNotional", raw.get("notionalUsd", raw.get("plannedInputNotionalUsd", raw.get("configuredBaseNotional", raw.get("configuredNotionalUsd")))))))
             entry_detail = {
                 "symbol": str(raw.get("symbol", "")).upper().strip(),
                 "side": side,

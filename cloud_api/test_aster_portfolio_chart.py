@@ -485,3 +485,26 @@ def test_portfolio_chart_uses_stable_15m_zone_basis_for_every_display_timeframe(
     assert 'zone_history, zone_timeframe' in block
     assert 'if not zones and len(zone_history) >= 7:' in block
     assert 'zones = derive_equity_zones(zone_candles, cycle_start)' in block
+
+
+def test_current_unified_engine_audit_names_render_as_confirmed_chart_markers():
+    rows = [
+        {"event": "INITIAL_OPEN_LEG", "timestampMs": 61_000, "auditId": "a1", "symbol": "BTCUSDT", "side": "LONG", "filledNotional": 12.0},
+        {"event": "OPEN_LEG", "timestampMs": 62_000, "auditId": "a2", "symbol": "ETHUSDT", "side": "SHORT", "filledNotional": 9.0},
+        {"event": "ADD_DCA", "timestampMs": 63_000, "auditId": "a3", "symbol": "SOLUSDT", "side": "LONG", "filledNotional": 5.0},
+        {"event": "FULL_TP", "timestampMs": 64_000, "auditId": "a4", "symbol": "BTCUSDT", "side": "LONG", "realizedPnlUsd": 2.04},
+    ]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    long_entry = next(row for row in markers if row["kind"] == "entry" and row["side"] == "LONG")
+    short_entry = next(row for row in markers if row["kind"] == "entry" and row["side"] == "SHORT")
+    tp = next(row for row in markers if row["kind"] == "tp")
+    assert long_entry["count"] == 2
+    assert sorted(long_entry["activityTypes"]) == ["DCA", "ENTRY"]
+    assert short_entry["count"] == 1
+    assert tp["count"] == 1
+    assert tp["realizedPnlUsd"] == 2.04
+
+
+def test_unified_engine_entry_without_audit_identity_still_fails_closed():
+    rows = [{"event": "OPEN_LEG", "timestampMs": 61_000, "symbol": "BTCUSDT", "side": "LONG"}]
+    assert strategy_audit_trade_markers(rows, "1m") == []
