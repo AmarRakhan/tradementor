@@ -1,6 +1,6 @@
 export const WEBAPP_VERSION = "46";
-// Build 569: Portfolio Koers data-truth audit, contiguous startup viewport, provenance-safe margins and confirmed-close reconciliation.
-export const WEBAPP_BUILD_NUMBER = "569";
+// Build 570: Prijszone Details current-cycle overview with origin-zone occupancy, confirmed profit attribution and data-truth fallbacks.
+export const WEBAPP_BUILD_NUMBER = "570";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
