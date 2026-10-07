@@ -26,8 +26,14 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Portfolio Koers · data-truth + candle continuity + TP-audit",
+  title: "Prijszone Details · Zone overzicht huidige cyclus",
   newItems: [
+    "Build 570 voegt onder Prijszone-strategie het nieuwe Zone overzicht (huidige cyclus) toe volgens referentie file_00000000941881f48d08a2c072cf8ad7.",
+    "Per zone worden prijsniveau, LONG/SHORT bezetting, vrije stoelen, bevestigde profit-events en status in één operationele tabel samengebracht.",
+    "De actieve zone krijgt een gouden highlight; origin-zone ownership blijft leidend en de tabel blijft op mobiel intern horizontaal scrollbaar met een sticky Zone-kolom.",
+    "Eerste entry, laatste profit en totaal profits van de bewezen huidige cyclus staan onder de tabel; onbewezen historische waarden worden bewust als — getoond in plaats van verzonnen nullen.",
+    "Build 570 verrijkt uitsluitend de read-only TP-markerprojectie met originZone, soldierId, soldierRole en activityType; order-, scanner-, DCA-, TP-, hedge- en sizinglogica blijven onaangeroerd.",
+
     "Build 569 voegt een read-only Portfolio Koers audit toe die exchange-posities, snapshot, durable state, candle-integriteit en chartmarkers reconcilieert zonder orders te sturen.",
     "Build 569 opent Accountwaarde op de nieuwste aaneengesloten reeks echte candles, zodat historische datagaten niet meer als enorme lege startvlakken domineren; ontbrekende OHLC wordt nooit verzonnen.",
     "Build 569 gebruikt alleen margin die op execution/resultaat of duurzame orderAttribution is vastgelegd; ontbrekende historische margin wordt expliciet als niet beschikbaar getoond.",
