@@ -101,6 +101,7 @@ from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
 from aster_native_order_shadow import build_native_order_shadow
+from aster_runtime_retirement import retirement_contract
 from aster_native_order_deprecation import deprecation_plan as aster_native_order_deprecation_plan
 from aster_zone_soldiers import confirmed_zone_from_display_zones, prepare_zone_runtime
 from aster_runtime_truth import build_multi_bb_runtime_truth
@@ -6588,6 +6589,21 @@ def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | Non
             "source": "order-attribution",
         })
     return rows
+
+
+@app.get("/v1/me/aster/runtime-retirement")
+def aster_runtime_retirement(
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Read-only modernization/cleanup contract; no runtime mutation."""
+    _ = user
+    return {
+        **retirement_contract(),
+        "readOnly": True,
+        "ordersSent": 0,
+        "settingsChanged": False,
+        "runtimeChanged": False,
+    }
 
 
 @app.get("/v1/me/aster/native-order-shadow")
