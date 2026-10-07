@@ -322,7 +322,7 @@ def build_canonical_zone_state(
         },
         "activeZone": active_zone,
         "zones": zone_rows,
-        "nextLongLevels": _canonical_long_next_levels(zone_rows, runtime_sync.get("currentEquity"), reliable=bool(runtime_sync.get("zones")) and bool(reconciliationRaw) if False else account_total == strategy_total + other_total and strategy_total == assigned_total + unassigned_total),
+        "nextLongLevels": _canonical_long_next_levels(zone_rows, runtime_sync.get("currentEquity"), reliable=bool(ladder_rows) and account_total == strategy_total + other_total and strategy_total == assigned_total + unassigned_total),
         "strategyPositions": strategy_positions,
         "unassignedStrategyPositions": unassigned,
         "otherOpenPositions": other,
