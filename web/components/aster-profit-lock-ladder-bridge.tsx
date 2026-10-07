@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { authenticatedRequest } from "@/lib/cloud-client";
+import { authenticatedRequest, subscribeSharedAsterSnapshot } from "@/lib/cloud-client";
 import { AsterBollingerEntryFilter15mCard, type BollingerEntryTimeframe } from "./aster-bollinger-entry-filter-15m-card";
 import {
   AsterProfitLockLadderPanel,
@@ -80,22 +80,18 @@ export function AsterProfitLockLadderBridge() {
   const [bbBusy, setBbBusy] = useState(false);
   const [bbMessage, setBbMessage] = useState("");
 
-  const refresh = useCallback(async () => {
-    try {
-      const snapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
-      const next = extract(snapshot);
-      setSettings(next.settings);
-      setSummary(next.summary);
-      if (!bbBusy) {
-        setBbEnabled(next.settings.bollingerEntryFilter15mEnabled === true);
-        setBbTimeframe(normalizeBollingerTimeframe(next.settings.bollingerEntryFilterTimeframe));
-      }
-      if (!dirty) {
-        setEnabled(next.settings.profitLockLadderEnabled === true);
-        setLevels(parseProfitLockLevels(next.settings.profitLockLevels));
-      }
-    } catch {
-      // Existing settings remain authoritative while a refresh is temporarily unavailable.
+  const applySharedSnapshot = useCallback((value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    const next = extract(value as Record<string, unknown>);
+    setSettings(next.settings);
+    setSummary(next.summary);
+    if (!bbBusy) {
+      setBbEnabled(next.settings.bollingerEntryFilter15mEnabled === true);
+      setBbTimeframe(normalizeBollingerTimeframe(next.settings.bollingerEntryFilterTimeframe));
+    }
+    if (!dirty) {
+      setEnabled(next.settings.profitLockLadderEnabled === true);
+      setLevels(parseProfitLockLevels(next.settings.profitLockLevels));
     }
   }, [dirty, bbBusy]);
 
@@ -136,13 +132,8 @@ export function AsterProfitLockLadderBridge() {
   }, []);
 
   useEffect(() => {
-    const initial = window.setTimeout(() => { void refresh(); }, 0);
-    const timer = window.setInterval(() => void refresh(), 15000);
-    return () => {
-      window.clearTimeout(initial);
-      window.clearInterval(timer);
-    };
-  }, [refresh]);
+    return subscribeSharedAsterSnapshot((payload) => applySharedSnapshot(payload));
+  }, [applySharedSnapshot]);
 
   const conflictCount = Array.isArray(summary.normalShortConflicts) ? summary.normalShortConflicts.length : 0;
   const rows = Array.isArray(summary.positions) ? summary.positions : [];
