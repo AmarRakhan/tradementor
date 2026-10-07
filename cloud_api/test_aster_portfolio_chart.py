@@ -526,3 +526,18 @@ def test_portfolio_event_endpoint_merges_durable_order_attribution_evidence():
     assert "_portfolio_chart_order_attribution_rows" in endpoint
     assert "[*audit_rows, *attribution_rows]" in endpoint
     assert "AsterV3Client(" not in endpoint
+
+
+def test_build568_strategy_audit_marker_preserves_entry_margin_dollars():
+    rows = [{
+        "event": "OPEN_LEG",
+        "timestampMs": 61_000,
+        "symbol": "BTCUSDT",
+        "side": "LONG",
+        "marginUsd": 0.4,
+        "orderId": "o-568",
+        "exchangeConfirmed": True,
+        "auditId": "audit-568",
+    }]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert markers[0]["entries"][0]["marginUsd"] == 0.4

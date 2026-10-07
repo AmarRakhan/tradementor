@@ -17,6 +17,7 @@ function normalizeEntryDetails(rows) {
     const symbol=String(raw.symbol||"").toUpperCase().trim();
     const entryPrice=finite(raw.entryPrice||raw.fillPrice||raw.price);
     const notionalUsd=finite(raw.notionalUsd||raw.executedNotionalUsd||raw.plannedInputNotionalUsd||raw.configuredNotionalUsd);
+    const marginUsd=finite(raw.marginUsd||raw.executedMarginUsd||raw.initialMarginUsd||raw.configuredMarginUsd);
     const originRaw=raw.originZone;
     const originZone=(typeof originRaw==="number"&&Number.isInteger(originRaw))||(typeof originRaw==="string"&&originRaw.trim()!==""&&Number.isInteger(Number(originRaw)))?Number(originRaw):null;
     return [{
@@ -24,6 +25,7 @@ function normalizeEntryDetails(rows) {
       side,
       atMs,
       entryPrice:entryPrice>0?entryPrice:null,
+      marginUsd:marginUsd>0?marginUsd:null,
       notionalUsd:notionalUsd>0?notionalUsd:null,
       activityType:String(raw.activityType||"").toUpperCase().trim(),
       originZone,
@@ -55,6 +57,7 @@ function mergeEntryDetails(left,right) {
       ...existing,
       ...row,
       entryPrice:row.entryPrice??existing.entryPrice??null,
+      marginUsd:row.marginUsd??existing.marginUsd??null,
       notionalUsd:row.notionalUsd??existing.notionalUsd??null,
       originZone:row.originZone??existing.originZone??null,
       soldierRole:row.soldierRole||existing.soldierRole||"",
