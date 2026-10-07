@@ -1,4 +1,4 @@
-name: Diagnose Build 574 Account Chart
+name: Diagnose Build 574 Current Revision
 on:
   push:
     branches: [amar-crypto-bot-2026-cloud]
@@ -11,6 +11,7 @@ env:
   GCP_REGION: europe-west4
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DIAGNOSTIC_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  TARGET_REVISION: tradementor-api-src-1617c96a-087367
 jobs:
   diagnose:
     runs-on: ubuntu-latest
@@ -20,28 +21,24 @@ jobs:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DIAGNOSTIC_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Read account/chart production errors
+      - name: Verify current Portfolio Koers revision
         shell: bash
         run: |
           set -euo pipefail
-          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND severity>=ERROR' --project "$GCP_PROJECT_ID" --freshness=3h --limit=300 --order=desc --format=json > errors.json
+          gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"tradementor-api\" AND resource.labels.revision_name=\"$TARGET_REVISION\" AND httpRequest.requestUrl:\"/v1/me/aster/portfolio-chart\"" --project "$GCP_PROJECT_ID" --freshness=15m --limit=200 --order=desc --format=json > chart.json
           python - <<'PY'
-          import json
-          rows=json.load(open("errors.json",encoding="utf-8"))
-          for r in rows:
-              req=r.get("httpRequest") or {}
-              url=str(req.get("requestUrl") or "")
-              text=str(r.get("textPayload") or "")
-              payload=r.get("jsonPayload")
-              msg=text or (json.dumps(payload,ensure_ascii=False) if payload else "")
-              if req.get("status")==500 or "Traceback" in msg or "Exception" in msg or "daily_equity_range" in msg or "_aster_account_daily_range" in msg:
-                  print(json.dumps({
-                    "ts":r.get("timestamp"),
-                    "severity":r.get("severity"),
-                    "revision":(r.get("resource") or {}).get("labels",{}).get("revision_name"),
-                    "status":req.get("status"),
-                    "url":url,
-                    "trace":r.get("trace"),
-                    "message":msg[:12000]
-                  },ensure_ascii=False))
+          import json, os
+          rows=json.load(open("chart.json",encoding="utf-8"))
+          statuses=[int((r.get("httpRequest") or {}).get("status") or 0) for r in rows]
+          errors=[r for r,s in zip(rows,statuses) if s>=500]
+          ok=[r for r,s in zip(rows,statuses) if 200<=s<300]
+          print("TARGET_REVISION", os.environ.get("TARGET_REVISION"))
+          print("TOTAL", len(rows))
+          print("HTTP_2XX", len(ok))
+          print("HTTP_5XX", len(errors))
+          for r in rows[:20]:
+              q=r.get("httpRequest") or {}
+              print(r.get("timestamp"), q.get("status"), q.get("requestUrl"))
+          if errors:
+              raise SystemExit("Build 574 current revision still has Portfolio Koers 5xx")
           PY
