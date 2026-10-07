@@ -3,7 +3,6 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { AreaSeries, BarSeries, CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSeries, createChart, createSeriesMarkers, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { authenticatedRequest } from "@/lib/cloud-client";
-import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
 import { layoutVerifiedTradeMarkers, type VerifiedTradeEvent } from "@/lib/trade-marker-layout";
 import type { AsterAccountDisplay } from "@/lib/aster-account-display";
 import { layoutFocusLabelYs } from "@/lib/focus-chart-label-layout.mjs";
@@ -48,8 +47,6 @@ const timeframes = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h
 const timeframeSeconds:Record<string,number>={"1m":60,"3m":180,"5m":300,"15m":900,"30m":1800,"1h":3600,"2h":7200,"4h":14400,"6h":21600,"12h":43200,"1D":86400,"1W":604800};
 const indicators: Array<[IndicatorId, string]> = [["ema9","EMA 9"],["ema21","EMA 21"],["ema50","EMA 50"],["ema100","EMA 100"],["ema200","EMA 200"],["sma20","SMA 20"],["sma50","SMA 50"],["sma200","SMA 200"],["bb","Bollinger Bands"],["rsi","RSI 14"],["macd","MACD"],["atr","ATR"],["volume","Volume"]];
 const colors = ["#43e5c4", "#55a7ff", "#9b7cff", "#ffb74d", "#f06292", "#26c6da", "#ffee58", "#ab47bc"];
-const PORTFOLIO_HISTORY_KEY = "tradementor.test.portfolioEquity.v1";
-const RISK_HISTORY_KEY = "tradementor.test.riskTimeline.v1";
 const AMSTERDAM_TIME_ZONE = "Europe/Amsterdam";
 
 // Lightweight Charts keeps numeric timestamps in UTC. Only localize labels here;
@@ -96,26 +93,6 @@ function formatAmsterdamTickMark(time: unknown, tickMarkType: number) {
 
 function formatAmsterdamDateTime(timestampMs: number) {
   return new Date(timestampMs).toLocaleString("nl-NL", { timeZone: AMSTERDAM_TIME_ZONE, hourCycle:"h23" });
-}
-
-function portfolioCandles(timeframe: string): Candle[] {
-  const seconds = ({"1m":60,"3m":180,"5m":300,"15m":900,"30m":1800,"1h":3600,"2h":7200,"4h":14400,"6h":21600,"12h":43200,"1D":86400,"1W":604800} as Record<string, number>)[timeframe] ?? 900;
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(PORTFOLIO_HISTORY_KEY) || "[]");
-    const riskStored = JSON.parse(window.localStorage.getItem(RISK_HISTORY_KEY) || "[]");
-    const rows = sanitizePortfolioEquityRows([
-      ...(Array.isArray(stored) ? stored : []),
-      ...(Array.isArray(riskStored) ? riskStored.filter((row) => row?.exchange === "all").map((row) => ({ at:row.at, total:row.equity })) : []),
-    ]);
-    const buckets = new Map<number, number[]>();
-    for (const row of rows) {
-      const at = Number(row?.at), value = Number(row?.total);
-      if (!Number.isFinite(at) || !Number.isFinite(value) || value <= 0) continue;
-      const bucket = Math.floor(at / 1000 / seconds) * seconds;
-      buckets.set(bucket, [...(buckets.get(bucket) || []), value]);
-    }
-    return [...buckets.entries()].sort((a,b)=>a[0]-b[0]).map(([time, values]) => ({ time, open:values[0], high:Math.max(...values), low:Math.min(...values), close:values[values.length-1], volume:0 }));
-  } catch { return []; }
 }
 
 function average(values: number[], period: number, exponential: boolean) {
@@ -200,11 +177,10 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
     setLoading(true); setError("");
     try {
       if (selection.exchange === "portfolio") {
-        const history = portfolioCandles(timeframe);
-        if (!history.length) throw new Error("Portfoliohistorie wordt vanaf betrouwbare exchange-metingen opgebouwd.");
-        candleDataRef.current=history;
-        setCandles(history); setSource("Jouw exchange-bevestigde equitymetingen"); setDatasetVersion(version=>version+1);
-        return;
+        // Build 571 SSOT: the generic combined-portfolio chart has no canonical
+        // server history contract yet. Fail visible rather than reading browser
+        // history or inventing a merged financial timeline.
+        throw new Error("Gecombineerde portfoliohistorie is tijdelijk niet beschikbaar zonder centrale serverbron.");
       }
       const params = new URLSearchParams({exchange:selection.exchange,symbol:selection.symbol,interval:timeframe.toLowerCase(),limit:"600"});
       const response = await fetch(`/api/market-data?${params}`);

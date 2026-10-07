@@ -121,6 +121,37 @@ def latest_established_contiguous_candles(
             return segment
     return segments[-1] if segments else []
 
+def daily_equity_range(
+    candles: list[dict[str, Any]] | None,
+    *,
+    day_start_ms: int,
+    day_end_ms: int,
+) -> dict[str, float | None]:
+    """Return observed account-equity high/low inside one account day.
+
+    This helper is server-side by design. Browser history, localStorage and the
+    selected chart timeframe must never determine account-day financial truth.
+    """
+    start, end = int(day_start_ms), int(day_end_ms)
+    if start <= 0 or end <= start:
+        return {"high": None, "low": None}
+    highs: list[float] = []
+    lows: list[float] = []
+    for raw in candles or []:
+        if not isinstance(raw, dict):
+            continue
+        at_ms = int(_number(raw.get("atMs"))) or int(_number(raw.get("time"))) * 1000
+        high, low = _number(raw.get("high")), _number(raw.get("low"))
+        if not (start <= at_ms < end) or high <= 0 or low <= 0 or high < low:
+            continue
+        highs.append(high)
+        lows.append(low)
+    return {
+        "high": max(highs) if highs else None,
+        "low": min(lows) if lows else None,
+    }
+
+
 def collection_for_timeframe(timeframe: str) -> str:
     try:
         return COLLECTION_BY_TIMEFRAME[str(timeframe)]

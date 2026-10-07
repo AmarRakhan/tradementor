@@ -18,7 +18,6 @@ import { TradeReportControl } from "@/components/trade-report-control";
 import { SupportCenter } from "@/components/support-center";
 import { SafeTradingChart, type TradeSelection } from "@/components/trading-chart";
 import { BacktestComparison } from "@/components/backtest-comparison";
-import { isCompletePortfolioSnapshot, sanitizePortfolioEquityRows, type PortfolioEquityRow } from "@/lib/portfolio-equity-history";
 import { AdminPortal } from "@/components/admin-portal";
 import { AdminMfaControl } from "@/components/admin-mfa-control";
 import { ASTER_FINANCIAL_DATA_CONTRACT, optionalFinancialNumber, positionDisplayReturnPercent } from "@/lib/financial-data-contract";
@@ -123,32 +122,7 @@ function TradeMentorHome() {
   const [adminDeviceEnrolled, setAdminDeviceEnrolled] = useState(false);
   const { snapshots, refresh, refreshAll, confirmAsterStrategy2 } = useExchangeData(cloudReady, user?.uid || "");
 
-  useEffect(() => {
-    const hyperliquid = exchangeView("hyperliquid", snapshots.hyperliquid).equityNumber;
-    const aster = exchangeView("aster", snapshots.aster).equityNumber;
-    const total = (hyperliquid ?? 0) + (aster ?? 0);
-    if (total <= 0 || (!snapshots.hyperliquid.updatedAt && !snapshots.aster.updatedAt)) return;
-    try {
-      const key = `tradementor.portfolioEquity.v2.${encodeURIComponent(user?.uid || "")}`;
-      const rows = JSON.parse(window.localStorage.getItem(key) || "[]");
-      const history = sanitizePortfolioEquityRows(Array.isArray(rows) ? rows : []);
-      const latest = history[history.length - 1];
-      const now = Date.now();
-      if (latest && now - Number(latest.at) < 10_000) return;
-      const next: PortfolioEquityRow = { at: now, total, hyperliquid, aster };
-      const persistHistory = () => {
-        const overflow = history.length - 20_000;
-        if (overflow > 0) history.splice(0, overflow);
-        window.localStorage.setItem(key, JSON.stringify(history));
-      };
-      if (!isCompletePortfolioSnapshot(latest, next)) {
-        persistHistory();
-        return;
-      }
-      history.push(next);
-      persistHistory();
-    } catch { /* Een beschadigde lokale historie mag actuele exchange-data nooit blokkeren. */ }
-  }, [snapshots.hyperliquid.updatedAt, snapshots.aster.updatedAt, user?.uid]);
+  // Build 571 SSOT: no financial/account history is persisted in the browser.
 
   useEffect(() => {
     const route = destinationFromLocation();

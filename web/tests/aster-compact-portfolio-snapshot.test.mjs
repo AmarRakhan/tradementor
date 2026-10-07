@@ -31,11 +31,14 @@ test("Aster compact Portfolio Snapshot follows the approved reference and preser
   for (const label of ["PORTFOLIO SNAPSHOT", "PORTFOLIOWAARDE", "AVAILABLE TO TRADE", "ACTIEF TRADE CAPITAL", "ACTIEVE POSITIES", "GESLOTEN RESULTAAT", "TRADES GESLOTEN", "LIQUIDATIERISICO", "RENDEMENT VANDAAG", "GEMIDDELD PER DAG", "ALLES SLUITEN"]) assert.match(component, new RegExp(label));
   assert.match(component, /portfolio-close-all/);
   assert.match(component, /legacy\.click\(\)/);
-  assert.match(component, /active-trades-index > small/);
+  assert.match(component, /normalizeAsterAccountTruth/);
+  assert.match(component, /loadCanonicalSnapshotValues/);
+  assert.match(component, /truth\.performance\.todayGrowthPercentage/);
+  assert.match(component, /truth\.performance\.averageDailyGrowthPercentage/);
+  assert.doesNotMatch(component, /active-trades-index > small/);
+  assert.doesNotMatch(component, /\.portfolio-growth-daily/);
+  assert.doesNotMatch(component, /dailyValues\[0\]|dailyValues\[1\]/);
   assert.match(component, /section\[aria-label\^="Portfolio impact\."\]/);
-  assert.match(component, /\.portfolio-growth-daily/);
-  assert.match(component, /dailyValues\[0\]/);
-  assert.match(component, /dailyValues\[1\]/);
   assert.match(growth, /todayPercentage/);
   assert.match(growth, /averageDailyPercentage/);
   assert.match(growth, /portfolio-growth-daily/);
@@ -80,18 +83,18 @@ test("Snapshot has three live-data profit actions with separate LONG SHORT and A
 });
 
 
-test("Portfolio Snapshot shows active versus configured LONG and SHORT slot capacity", async () => {
+test("Portfolio Snapshot shows canonical active versus configured LONG and SHORT capacity", async () => {
   const component = await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8");
 
-  assert.match(component, /function slotCount\(side: "long" \| "short"\)/);
-  assert.match(component, /\.slot-overview \.slot-row\.\$\{side\}/);
   assert.match(component, /longCapacity: string/);
   assert.match(component, /shortCapacity: string/);
-  assert.match(component, /longSlots\.active \|\| counts\?\.\[2\]/);
-  assert.match(component, /shortSlots\.active \|\| counts\?\.\[3\]/);
+  assert.match(component, /truth\.positions\.longCount/);
+  assert.match(component, /truth\.positions\.shortCount/);
+  assert.match(component, /truth\.strategy\.summary\.longCapacity/);
+  assert.match(component, /truth\.strategy\.summary\.shortCapacity/);
   assert.match(component, /values\.longs\}\/\$\{values\.longCapacity\}L/);
   assert.match(component, /values\.shorts\}\/\$\{values\.shortCapacity\}S/);
-  assert.match(component, /active-trades-index > small/);
+  assert.doesNotMatch(component, /function slotCount|\.slot-overview|active-trades-index > small/);
 });
 
 

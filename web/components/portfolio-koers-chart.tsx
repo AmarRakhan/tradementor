@@ -4,21 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { authenticatedRequest } from "@/lib/cloud-client";
-import { useAuthSession } from "@/components/auth-provider";
 import { ActiveZoneSeatBlock, type ActiveZoneSeatSummary } from "@/components/active-zone-seat-block";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
-import { sanitizePortfolioEquityRows } from "@/lib/portfolio-equity-history";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, derivePortfolioDisplayZones, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersMarkers, normalizePortfolioKoersPayload, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
-import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
+import { buildStrategyStatusCommandCenter, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
 type EntryDetail={symbol:string;side:string;atMs:number;entryPrice:number|null;notionalUsd:number|null;marginUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
 type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null;marginUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
 type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];entries?:EntryDetail[];source?:string};
-type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
+type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;dayHigh:number|null;dayLow:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
 type StructureLevelLayout={label:string;price:number;top:number;side:"resistance"|"support"};
@@ -220,7 +218,6 @@ const percent2=(value:number|null|undefined,signed=true)=>{
   return `${prefix}${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}%`;
 };
 
-const amsterdamDayKey=(value:number)=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Amsterdam",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(value));
 const numberOrNull=(value:unknown)=>Number.isFinite(Number(value))?Number(value):null;
 function normalizeActiveTradesPayload(value:unknown):ActiveTradesPayload{
   const root=record(value);
@@ -490,7 +487,6 @@ export function PortfolioKoersChart({
   onActiveZoneChange?:(zone:number|null)=>void;
   onDayRangePositionChange?:(position:"low"|"middle"|"high")=>void;
 }) {
-  const { user }=useAuthSession();
   const shellRef=useRef<HTMLElement>(null);
   const canvasRef=useRef<HTMLDivElement>(null);
   const chartRef=useRef<IChartApi|null>(null);
@@ -503,7 +499,6 @@ export function PortfolioKoersChart({
   const advisorZoneLadderRef=useRef<any>(null);
   const lastConfirmedZoneLadderRef=useRef<any>(null);
   const activeZoneRef=useRef<number|null>(null);
-  const liveEquityTextRef=useRef(liveEquityText);
   const manualViewportRef=useRef<Record<string,boolean>>({});
   const savedViewportRef=useRef<Record<string,{from:number;to:number;span:number;followLatest:boolean}>>({});
   const viewportSyncGuardRef=useRef(false);
@@ -514,7 +509,6 @@ export function PortfolioKoersChart({
   const [activeLoading,setActiveLoading]=useState(false);
   const [activeError,setActiveError]=useState("");
   const [recentMarkers,setRecentMarkers]=useState<Marker[]>([]);
-  const [browserCandles,setBrowserCandles]=useState<Candle[]>([]);
   const [error,setError]=useState("");
   const [loading,setLoading]=useState(true);
   const [initialChartReady,setInitialChartReady]=useState(false);
@@ -526,7 +520,6 @@ export function PortfolioKoersChart({
   const [tpDetailLoading,setTpDetailLoading]=useState(false);
   const [tpDetailError,setTpDetailError]=useState("");
   const [hover,setHover]=useState<{candle:Candle;markers:Marker[]}|null>(null);
-  const [liveEquity,setLiveEquity]=useState<number|null>(null);
   const [advisorEnabled,setAdvisorEnabled]=useState(false);
   const [commandCenterAvailable,setCommandCenterAvailable]=useState(false);
   const [activeTradesAvailable,setActiveTradesAvailable]=useState(false);
@@ -548,39 +541,14 @@ export function PortfolioKoersChart({
       .join("|"),
     [combinedMarkers],
   );
-  liveEquityTextRef.current=liveEquityText;
+  // Build 571: liveEquityText remains a compatibility prop only; it is never account truth.
+  void liveEquityText;
   markerRowsRef.current=combinedMarkers;
 
-  const loadBrowserHistory=useCallback(()=>{
-    if(!user?.uid){setBrowserCandles([]);return}
-    try{
-      const key=`tradementor.portfolioEquity.v2.${encodeURIComponent(user.uid)}`;
-      const raw=JSON.parse(window.localStorage.getItem(key)||"[]");
-      const rows=sanitizePortfolioEquityRows(Array.isArray(raw)?raw:[]);
-      setBrowserCandles(aggregatePortfolioEquityHistory(rows,timeframe,320) as Candle[]);
-    }catch{setBrowserCandles([])}
-  },[timeframe,user?.uid]);
-
-  useEffect(()=>{loadBrowserHistory()},[loadBrowserHistory,payload.snapshotAtMs]);
-
+  // Build 571 SSOT: browser storage is never a source for equity, zones or soldier state.
   useEffect(()=>{
-    if(!user?.uid)return;
-    try{
-      const key=`tradementor.portfolioZones.v1.${encodeURIComponent(user.uid)}`;
-      const raw=JSON.parse(window.localStorage.getItem(key)||"[]");
-      const cached=normalizePortfolioKoersPayload({timeframe:"15m",zones:Array.isArray(raw)?raw:[]}) as Payload;
-      if(cached.zones.length)setAdvisorZones((current)=>current.length?current:cached.zones);
-    }catch{/* a corrupt display cache must never block Portfolio Koers */}
-  },[user?.uid]);
-
-  useEffect(()=>{
-    if(!commandCenterAvailable||!user?.uid){setSoldierActivity([]);return}
-    try{
-      const key=`tradementor.zoneSoldierActivity.v1.${encodeURIComponent(user.uid)}`;
-      const stored=JSON.parse(window.localStorage.getItem(key)||"[]");
-      setSoldierActivity(mergeSoldierActivityHistory(Array.isArray(stored)?stored:[],[],Date.now()) as SoldierActivityEvent[]);
-    }catch{setSoldierActivity([])}
-  },[commandCenterAvailable,user?.uid]);
+    if(!commandCenterAvailable)setSoldierActivity([]);
+  },[commandCenterAvailable]);
 
   const loadAdvisor=useCallback(async()=>{
     try{
@@ -598,15 +566,8 @@ export function PortfolioKoersChart({
         const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
         const nextAdvisor=advisorSeatsFromPayload(account);
         setAdvisorSeats(nextAdvisor);
-        if(commandCenterAccess&&user?.uid){
-          setSoldierActivity((current)=>{
-            const merged=mergeSoldierActivityHistory(current,nextAdvisor.soldierOpenEvents,Date.now()) as SoldierActivityEvent[];
-            try{
-              const key=`tradementor.zoneSoldierActivity.v1.${encodeURIComponent(user.uid)}`;
-              window.localStorage.setItem(key,JSON.stringify(merged));
-            }catch{/* activity remains in memory when storage is unavailable */}
-            return merged;
-          });
+        if(commandCenterAccess){
+          setSoldierActivity(nextAdvisor.soldierOpenEvents);
         }
       }else{
         setAdvisorSeats(EMPTY_ADVISOR);
@@ -621,24 +582,16 @@ export function PortfolioKoersChart({
     }
     try{
       const canonical=normalizePortfolioKoersPayload(await authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600",{cache:"no-store"})) as Payload;
-      const browserDerivedZones=canonical.zones.length
-        ? canonical.zones
-        : derivePortfolioDisplayZones(canonical.candles,canonical.cycleStartEquity??0) as Zone[];
-      if(browserDerivedZones.length){
-        setAdvisorZones(browserDerivedZones);
-        if(user?.uid){
-          try{window.localStorage.setItem(`tradementor.portfolioZones.v1.${encodeURIComponent(user.uid)}`,JSON.stringify(browserDerivedZones))}catch{/* display cache is best-effort only */}
-        }
-      }
+      setAdvisorZones(canonical.zones);
       setAdvisorTimeline(portfolioKoersTimelineHealth(canonical.candles,"15m",Date.now(),14));
-      setAdvisorMessage("");
+      setAdvisorMessage(canonical.zones.length?"":"Prijszones tijdelijk niet beschikbaar · server truth ontbreekt.");
     }catch(reason){
       // Chart price levels are a core visual contract, not a trading-module
       // entitlement. Preserve the last confirmed 15m zone basis during a
       // transient refresh failure instead of blanking support/resistance.
       setAdvisorMessage(advisorErrorText(reason,"15m-zonebasis tijdelijk niet beschikbaar; Portfolio Koers blijft informatief en laatst bevestigde prijsniveaus blijven zichtbaar."));
     }
-  },[user?.uid]);
+  },[]);
 
   useEffect(()=>{
     void loadAdvisor();
@@ -711,10 +664,10 @@ export function PortfolioKoersChart({
     setLoading(true);
     void load();
     const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void load()},45_000);
-    const visible=()=>{if(document.visibilityState==="visible"){loadBrowserHistory();void load()}};
+    const visible=()=>{if(document.visibilityState==="visible")void load()};
     document.addEventListener("visibilitychange",visible);
     return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
-  },[load,loadBrowserHistory]);
+  },[load]);
 
 
   const loadActiveTrades=useCallback(async()=>{
@@ -738,55 +691,16 @@ export function PortfolioKoersChart({
     return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
   },[loadActiveTrades,viewMode,activeTradesAvailable]);
 
-  useEffect(()=>{
-    if(viewMode==="active")return;
-    const equity=parsePortfolioEquityText(liveEquityText);
-    if(!equity)return;
-    setLiveEquity(equity);
-    if(!candleSeriesRef.current||!candleDataRef.current.length)return;
-    const previousTime=candleDataRef.current.at(-1)?.time??null;
-    const next=mergeRealtimeEquitySample(candleDataRef.current,equity,Date.now(),timeframe) as Candle[];
-    candleDataRef.current=next;
-    const candle=next.at(-1);
-    if(!candle)return;
-    try{
-      if(viewMode==="performance"){
-        const anchorTime=next[0]?.time??candle.time;
-        const shift=portfolioCashflowShift(markerRowsRef.current,anchorTime,candle.time);
-        const adjusted=Math.max(Number.EPSILON,candle.close-shift);
-        candleSeriesRef.current.update({time:candle.time as UTCTimestamp,value:adjusted});
-      }else{
-        candleSeriesRef.current.update({time:candle.time as UTCTimestamp,open:candle.open,high:candle.high,low:candle.low,close:candle.close});
-        const liveSession=currentAmsterdamSession(next);
-        const liveBbInput=liveSession.length>=20?liveSession:next;
-        const bb=bollinger20x2(liveBbInput);
-        bbRefs.current.upper?.setData(bb.upper.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
-        bbRefs.current.middle?.setData(bb.middle.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
-        bbRefs.current.lower?.setData(bb.lower.map((row:any)=>({time:row.time as UTCTimestamp,value:row.value})));
-      }
-      syncOverlaysRef.current();
-      if(previousTime===null||candle.time>previousTime){
-        setHover(null);
-        const viewportKey=`${viewMode}:${timeframe}`;
-        if(manualViewportRef.current[viewportKey]!==true){
-          requestAnimationFrame(()=>{try{chartRef.current?.timeScale().scrollToRealTime()}catch{/* disposed */}});
-        }
-      }
-    }catch{/* the next confirmed payload rebuilds a stale chart safely */}
-  },[liveEquityText,timeframe,viewMode]);
+  // Account OHLC is server-owned. Do not synthesize candles from rendered DOM text.
 
-  const baseCandles=useMemo(()=>mergePortfolioKoersCandles(browserCandles,payload.candles,320) as Candle[],[browserCandles,payload.candles]);
+  const baseCandles=payload.candles;
   const activeCandles=activePayload.candles;
-  const timelineCandles=useMemo(()=>liveEquity?mergeRealtimeEquitySample(baseCandles,liveEquity,Date.now(),timeframe) as Candle[]:baseCandles,[baseCandles,liveEquity,timeframe]);
+  const timelineCandles=baseCandles;
   const chartTimeline=useMemo(()=>portfolioKoersTimelineHealth(timelineCandles,timeframe,Date.now(),1),[timelineCandles,timeframe]);
   const visibleTimelineStart=timelineCandles[Math.max(0,timelineCandles.length-((TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"]).visibleBars+3))]?.time??0;
   const recentChartGap=chartTimeline.gaps?.filter((gap:any)=>gap.beforeTime>=visibleTimelineStart).at(-1)??null;
-  const currentZonePrice=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
-  const localDisplayZones=useMemo(
-    ()=>derivePortfolioDisplayZones(baseCandles,payload.cycleStartEquity??0) as Zone[],
-    [baseCandles,payload.cycleStartEquity],
-  );
-  const visualPayloadZones=payload.zones.length?payload.zones:localDisplayZones;
+  const currentZonePrice=payload.currentEquity??baseCandles.at(-1)?.close??null;
+  const visualPayloadZones=payload.zones;
   const confirmedActiveZone=useMemo(()=>portfolioZoneForPrice(visualPayloadZones,currentZonePrice),[visualPayloadZones,currentZonePrice]);
   const advisorZoneSource=useMemo(
     ()=>advisorZones.length?advisorZones:visualPayloadZones,
@@ -825,10 +739,7 @@ export function PortfolioKoersChart({
 
   useEffect(()=>{
     const container=canvasRef.current;
-    const observedEquity=parsePortfolioEquityText(liveEquityTextRef.current);
-    const candles=(viewMode==="active"
-      ? activeCandles
-      : observedEquity?mergeRealtimeEquitySample(baseCandles,observedEquity,Date.now(),timeframe):baseCandles) as Candle[];
+    const candles=(viewMode==="active"?activeCandles:baseCandles) as Candle[];
     if(!container||!candles.length){candleDataRef.current=[];setZoneLayout([]);setZoneBoundaries([]);setStructureOverlay(EMPTY_STRUCTURE_OVERLAY);setEventLabels([]);return}
     candleDataRef.current=candles.map((row)=>({...row}));
     const performancePoints=cashflowAdjustedPortfolioSeries(candles,markerRowsRef.current);
@@ -997,7 +908,7 @@ export function PortfolioKoersChart({
       }
 
       if(viewMode==="account"&&zoneLadder?.zones?.length){
-        const structurePrice=parsePortfolioEquityText(liveEquityTextRef.current)??payload.currentEquity??candles.at(-1)?.close??null;
+        const structurePrice=payload.currentEquity??candles.at(-1)?.close??null;
         const marketContext=portfolioZoneContextFromLadder(zoneLadder,structurePrice);
         const rows=Array.isArray(zoneLadder.zones)?zoneLadder.zones as any[]:[];
         const operationalIndex=activeZoneRef.current;
@@ -1251,16 +1162,11 @@ export function PortfolioKoersChart({
 
 
 
-  const latest=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
-  const accountDayRange=useMemo(()=>{
-    const today=amsterdamDayKey(Date.now());
-    const rows=timelineCandles.filter((row)=>amsterdamDayKey(Number(row.atMs)||Number(row.time)*1000)===today);
-    if(!rows.length)return {high:null as number|null,low:null as number|null};
-    return {
-      high:rows.reduce((value,row)=>Math.max(value,Number(row.high)),Number.NEGATIVE_INFINITY),
-      low:rows.reduce((value,row)=>Math.min(value,Number(row.low)),Number.POSITIVE_INFINITY),
-    };
-  },[timelineCandles]);
+  const latest=payload.currentEquity??baseCandles.at(-1)?.close??null;
+  const accountDayRange=useMemo(()=>({
+    high:Number.isFinite(Number(payload.dayHigh))?Number(payload.dayHigh):null,
+    low:Number.isFinite(Number(payload.dayLow))?Number(payload.dayLow):null,
+  }),[payload.dayHigh,payload.dayLow]);
   const highTodayText=viewMode==="active"?indexValue(activePayload.dayHigh):accountUsd(accountDayRange.high);
   const lowTodayText=viewMode==="active"?indexValue(activePayload.dayLow):accountUsd(accountDayRange.low);
   const tradeIntelligenceDayRangePosition=useMemo(()=>{

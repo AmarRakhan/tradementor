@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Build 445 keeps Command Center dedicated and release-entitlement gated instead of owner gated",async()=>{
+test("Build 571 keeps Command Center dedicated and release-entitlement gated without browser account identity state",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("const { user }=useAuthSession()"));
-  assert.equal(component.includes("const { user, betaOwner }=useAuthSession()"),false);
+  assert.equal(component.includes("useAuthSession"),false);
+  assert.equal(component.includes("betaOwner"),false);
   assert.ok(component.includes("ZoneSoldiersCommandCenterScreen"));
   assert.ok(component.includes("ZONE_SOLDIERS_OPEN_EVENT"));
   assert.ok(component.includes("const commandCenterAccess=commandCenterFeature.enabled===true"));
