@@ -92,11 +92,26 @@ def build_aster_account_truth(
         "shortCount": short_count,
         "rows": positions,
     }
+    dca_count = sum(max(0, _integer(row.get("dcaCount")) or 0) for row in positions)
+    strategy_summary = {
+        "enabled": strategy2.get("enabled") is True,
+        "monitor": strategy2.get("monitor") is True,
+        "activeLong": long_count,
+        "activeShort": short_count,
+        "longCapacity": _integer(settings.get("longSlots")),
+        "shortCapacity": _integer(settings.get("shortSlots")),
+        "dcaCount": dca_count,
+        "phase": str(strategy2.get("displayPhase", strategy2.get("phase", ""))),
+    }
     performance = {
         "dayHigh": _number(day_high),
         "dayLow": _number(day_low),
         "realizedPnlToday": _number(status.get("realizedPnlToday")),
         "tradesClosedToday": _integer(status.get("tradesClosedToday")),
+        "closedTodayReliable": status.get("closedTodayReliable") is True,
+        "todayGrowthPercentage": _number(status.get("todayGrowthPercentage")),
+        "averageDailyGrowthPercentage": _number(status.get("averageDailyGrowthPercentage")),
+        "growthReliable": status.get("growthReliable") is True,
     }
 
     return {
@@ -115,6 +130,7 @@ def build_aster_account_truth(
             "strategy2": strategy2,
             "settings": settings,
             "runtimeTruth": runtime_truth,
+            "summary": strategy_summary,
         },
         "provenance": {
             "account": {
