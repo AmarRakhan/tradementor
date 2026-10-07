@@ -14,40 +14,21 @@ export function applyAsterRealtimeMark(snapshot, event) {
   if (!symbol || mark === null || mark <= 0) return snapshot;
   const positions = Array.isArray(snapshot.positions) ? snapshot.positions : [];
   let changed = false;
+  const realtimeAt = finite(event.receivedAtMs) ?? Date.now();
   const nextPositions = positions.map((raw) => {
     if (!raw || typeof raw !== "object" || String(raw.symbol ?? "").toUpperCase() !== symbol) return raw;
-    const entry = finite(raw.entryPrice) ?? 0;
-    const quantity = positionQuantity(raw);
-    const side = String(raw.side ?? "").toUpperCase();
-    const unrealized = quantity > 0 && entry > 0
-      ? (side === "SHORT" ? (entry - mark) : (mark - entry)) * quantity
-      : finite(raw.unrealizedPnl);
     changed = true;
     return {
       ...raw,
+      // Market decoration only. Never recompute notional, PnL or equity in the browser.
       markPrice: mark,
-      ...(quantity > 0 ? { notionalUsd: quantity * mark } : {}),
-      ...(unrealized !== null ? { unrealizedPnl: unrealized } : {}),
-      realtimeMarketAt: finite(event.receivedAtMs) ?? Date.now(),
+      realtimeMarketAt: realtimeAt,
     };
   });
   if (!changed) return snapshot;
-  const totalPnl = nextPositions.reduce((sum, row) => sum + (finite(row?.unrealizedPnl) ?? 0), 0);
-  const previousPnl = finite(snapshot.unrealizedPnl);
-  const walletBalance = finite(snapshot.walletBalance);
-  const previousEquity = finite(snapshot.equity);
-  const realtimeEquity = walletBalance !== null
-    ? walletBalance + totalPnl
-    : previousEquity !== null && previousPnl !== null
-      ? previousEquity + (totalPnl - previousPnl)
-      : previousEquity;
-  const realtimeAt = finite(event.receivedAtMs) ?? Date.now();
   return {
     ...snapshot,
     positions: nextPositions,
-    unrealizedPnl: totalPnl,
-    ...(realtimeEquity !== null ? { equity: realtimeEquity } : {}),
-    realtimeEquityAt: realtimeAt,
     realtimeMarketAt: realtimeAt,
     realtimeTransportLatencyMs: finite(event.transportLatencyMs),
   };
