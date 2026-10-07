@@ -152,3 +152,138 @@ def build_native_order_shadow(
         "allDcaTargetsMatchRuntimeState": all(row["dca"]["targetParity"] for row in rows),
         "rows": rows,
     }
+
+
+def build_shadow_transition_plan(
+    *,
+    before_position: dict[str, Any] | None,
+    after_position: dict[str, Any] | None,
+    before_state: dict[str, Any] | None,
+    after_state: dict[str, Any] | None,
+    before_settings: MultiBbConfig,
+    after_settings: MultiBbConfig,
+    auto_hedge_before: bool = False,
+    auto_hedge_after: bool = False,
+    account_equity: float = 0.0,
+) -> dict[str, Any]:
+    """Describe hypothetical cancel/replace work after a confirmed state change.
+
+    The returned actions are instructions for comparison only. They never execute.
+    """
+    before_state = dict(before_state or {})
+    after_state = dict(after_state or {})
+    before_row = _normalized_position(before_position or {})
+    after_row = _normalized_position(after_position or {})
+
+    before_open = (
+        before_row["symbol"]
+        and before_row["positionSide"] in {"LONG", "SHORT"}
+        and before_row["positionAmt"] > 0
+    )
+    after_open = (
+        after_row["symbol"]
+        and after_row["positionSide"] in {"LONG", "SHORT"}
+        and after_row["positionAmt"] > 0
+    )
+
+    before_preview = (
+        position_action_preview(
+            row=before_row,
+            state=before_state,
+            settings=before_settings,
+            account_equity=account_equity,
+        )
+        if before_open else {}
+    )
+    after_preview = (
+        position_action_preview(
+            row=after_row,
+            state=after_state,
+            settings=after_settings,
+            account_equity=account_equity,
+        )
+        if after_open else {}
+    )
+
+    actions: list[dict[str, Any]] = []
+
+    def add(kind: str, reason: str, **payload: Any) -> None:
+        actions.append({"kind": kind, "reason": reason, **payload})
+
+    if before_open and not after_open:
+        if before_preview.get("tpPrice") is not None:
+            add("CANCEL_TP", "POSITION_CLOSED")
+        if before_preview.get("nextDcaPrice") is not None:
+            add("CANCEL_DCA", "POSITION_CLOSED")
+    elif after_open:
+        before_tp = _f(before_preview.get("tpPrice"))
+        after_tp = _f(after_preview.get("tpPrice"))
+        before_dca = _f(before_preview.get("nextDcaPrice"))
+        after_dca = _f(after_preview.get("nextDcaPrice"))
+
+        if auto_hedge_after:
+            if before_tp > 0 or after_tp > 0:
+                add("CANCEL_TP", "AUTO_HEDGE_CLOSE_GUARD")
+        else:
+            if after_tp > 0 and before_tp <= 0:
+                add("PLACE_TP", "TP_BECAME_ELIGIBLE", targetPrice=after_tp)
+            elif before_tp > 0 and after_tp <= 0:
+                add("CANCEL_TP", "TP_DISABLED_OR_BLOCKED")
+            elif before_tp > 0 and after_tp > 0 and abs(before_tp - after_tp) > max(1e-10, abs(after_tp) * 1e-9):
+                add(
+                    "REPLACE_TP",
+                    "WEIGHTED_ENTRY_OR_CONFIG_CHANGED",
+                    oldTargetPrice=before_tp,
+                    newTargetPrice=after_tp,
+                )
+            elif (
+                before_open
+                and abs(before_row["positionAmt"] - after_row["positionAmt"])
+                > max(1e-10, abs(after_row["positionAmt"]) * 1e-9)
+                and after_tp > 0
+            ):
+                add(
+                    "REPLACE_TP_QUANTITY",
+                    "POSITION_QUANTITY_CHANGED",
+                    targetPrice=after_tp,
+                    oldQuantity=before_row["positionAmt"],
+                    newQuantity=after_row["positionAmt"],
+                )
+
+        if after_dca > 0 and before_dca <= 0:
+            add("PLACE_DCA", "NEXT_DCA_BECAME_ELIGIBLE", targetPrice=after_dca)
+        elif before_dca > 0 and after_dca <= 0:
+            add("CANCEL_DCA", "DCA_DISABLED_OR_LIMIT_REACHED")
+        elif before_dca > 0 and after_dca > 0 and abs(before_dca - after_dca) > max(1e-10, abs(after_dca) * 1e-9):
+            reason = (
+                "DCA_FILL_REARM"
+                if int(_f(after_state.get("dcaCount"))) > int(_f(before_state.get("dcaCount")))
+                else "DCA_CONFIG_OR_ANCHOR_CHANGED"
+            )
+            add(
+                "REPLACE_DCA",
+                reason,
+                oldTargetPrice=before_dca,
+                newTargetPrice=after_dca,
+                nextDcaNumber=after_preview.get("nextDcaNumber"),
+            )
+
+        if auto_hedge_before and not auto_hedge_after and after_tp > 0:
+            add("REVALIDATE_TP_AFTER_HEDGE_RELEASE", "AUTO_HEDGE_RELEASED", targetPrice=after_tp)
+
+    return {
+        "mode": "SHADOW_ONLY",
+        "ordersSent": 0,
+        "exchangeCalls": 0,
+        "beforeOpen": bool(before_open),
+        "afterOpen": bool(after_open),
+        "actions": actions,
+        "requiresCancelReplace": bool(actions),
+        "safetyContract": {
+            "mustConfirmFillBeforeRearm": True,
+            "mustRevalidateMarginBeforeDca": True,
+            "mustRespectAutoHedgeCloseLock": True,
+            "mustReconcileAfterRestart": True,
+            "neverBlindRetryUncertainSubmission": True,
+        },
+    }
