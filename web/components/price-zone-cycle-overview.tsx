@@ -27,6 +27,11 @@ type SeatSummaryProp = {
   zoneOpenCountsReliable: boolean;
   openZonePositionKeys: string[];
   currentPrice: number | null;
+  nextLongLevels: {
+    status: string;
+    up: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+    down: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+  } | null;
   zones: Array<ZoneLevel & {
     longOpen: number;
     shortOpen: number;
@@ -380,6 +385,16 @@ export function PriceZoneCycleOverview({
       {seatSummary && seatSummary.zones.some((zone) => !validZoneRange(zone)) ? (
         <p className="aps-zco-truth-note" role="status">ⓘ Canonical prijsgrenzen ontbreken voor één of meer zones. Onbekende ranges worden niet als 0 weergegeven.</p>
       ) : null}
+      <div className="aps-zco-next-levels" aria-label="Volgende vrije LONG-zones" style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0 12px" }}>
+        {(["up", "down"] as const).map((direction) => {
+          const level = seatSummary?.nextLongLevels?.status === "AVAILABLE" ? seatSummary.nextLongLevels[direction] : null;
+          return <div key={direction} style={{ flex: "1 1 145px", minWidth: 0, padding: "8px 10px", border: "1px solid rgba(48,185,116,.35)", borderRadius: 10, background: "rgba(10,36,25,.55)" }}>
+            <small style={{ color: "#83d6aa", display: "block" }}>{direction === "up" ? "↑ VOLGENDE LONG OMHOOG" : "↓ VOLGENDE LONG OMLAAG"}</small>
+            <b style={{ display: "block", overflowWrap: "anywhere" }}>{level ? `Zone ${zoneLabel(level.zone)} · ${priceLabel(level.price)}` : seatSummary?.nextLongLevels?.status === "AVAILABLE" ? "Geen vrije LONG-zone" : "—"}</b>
+            <small style={{ opacity: .75 }}>{level ? `${level.freeLongSeats} vrije stoelen · portfolio-equity (USDT)` : "Alleen beschikbare zonecapaciteit; geen ordertoestemming"}</small>
+          </div>;
+        })}
+      </div>
       <div className="aps-zco-table-wrap" aria-busy={false}>
         <table className="aps-zco-table">
           <thead>
