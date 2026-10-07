@@ -26,8 +26,11 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Prijszone Details · laadherstel huidige cyclus",
+  title: "Aster account/chart startup hotfix",
   newItems: [
+    "Build 573 herstelt de Aster account-/chartstart wanneer bestaande opgeslagen candles alleen de oudere time-timestamp bevatten en nog geen atMs-veld.",
+    "De server gebruikt nu veilig atMs wanneer aanwezig en valt anders terug op time × 1000; ongeldige timestamps worden overgeslagen in plaats van de hele account/chartresponse te laten falen.",
+    "Hierdoor kunnen Accountwaarde, High/Low, Zone en Portfolio Koers opnieuw uit dezelfde canonieke read-only serverpipeline laden zonder browserfallback of gewijzigde tradinglogica.",
     "Build 572 voorkomt dat Zone overzicht op 'Zonegegevens worden geladen…' blijft hangen wanneer een read-only chart/eventbron traag of tijdelijk niet beschikbaar is.",
     "Zone-rijen renderen nu direct uit de reeds bevestigde seat/origin-zone truth; prijsniveaus en cyclus-events vullen daarna onafhankelijk aan.",
     "Chart- en eventreads blokkeren elkaar niet meer, hebben een harde 8-seconden timeout en wissen eerder bevestigde waarden niet bij een partiële fout.",
