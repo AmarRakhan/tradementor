@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Prijszone Details · één waarheid voor stoelen en volledige prijsranges",
+  title: "Prijszone Details · één waarheid voor stoelen en volledige prijsranges live",
   newItems: [
+    "Build 578 synchroniseert de laatste historische regressietest met het nieuwe settings-only capaciteitcontract; productiegedrag blijft exact gelijk aan Build 577.",
     "Build 577 gebruikt voor LONG/SHORT capaciteit uitsluitend de opgeslagen Strategy-2 instellingen; een ingestelde 0 blijft dus exact 0 en kan niet meer door een oude seatModel-cache in 1 veranderen.",
     "Build 577 vult alle zichtbare prijsranges vanuit dezelfde canonieke portfolio-zone ladder die ook voor de chart wordt gebruikt, zodat tussenliggende zones niet meer als — verschijnen wanneer de backend slechts een deel van de zonecentra terugstuurt.",
     "Build 576 repareert de laatste release-gate regex zodat toekomstige buildnummers numeriek worden gevalideerd zonder dubbel-geëscape patroon; geen productie- of tradingcode gewijzigd.",
