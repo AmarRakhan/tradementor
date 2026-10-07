@@ -18,6 +18,16 @@ type SeatTruth = {
   openKeys: Set<string>;
 };
 
+type SeatSummaryProp = {
+  activeZone: number | null;
+  perZoneLong: number;
+  perZoneShort: number;
+  strategyOpenTotal: number;
+  zoneOpenCounts: OpenCounts;
+  zoneOpenCountsReliable: boolean;
+  openZonePositionKeys: string[];
+};
+
 type ZoneLevel = { index: number; center: number; lower: number | null; upper: number | null };
 type ZoneEntry = {
   symbol: string;
@@ -96,69 +106,6 @@ const clockLabel = (value: number | null) => {
   if (key === today) return `Vandaag ${time}`;
   return new Intl.DateTimeFormat("nl-NL", { timeZone: "Europe/Amsterdam", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
 };
-
-function strategy2From(payload: unknown): Dict {
-  const root = rec(payload);
-  if (Object.keys(rec(root.strategy2)).length) return rec(root.strategy2);
-  const data = rec(root.data);
-  if (Object.keys(rec(data.strategy2)).length) return rec(data.strategy2);
-  return rec(rec(root.snapshot).strategy2);
-}
-
-function seatTruthFrom(payload: unknown): SeatTruth {
-  const strategy2 = strategy2From(payload);
-  const runtime = rec(strategy2.runtimeTruth);
-  const report = Object.keys(rec(strategy2.priceZoneSeats)).length ? rec(strategy2.priceZoneSeats) : rec(strategy2.zoneSoldiers);
-  const model = rec(report.seatModel);
-  const current = rec(report.currentZone);
-  const settings = rec(strategy2.settings);
-  const perZoneLong = Math.max(0, Math.round(
-    num(model.perZoneLong) ?? num(settings.zoneBaseLongSoldiers) ?? 0,
-  ));
-  const perZoneShort = Math.max(0, Math.round(
-    num(model.perZoneShort) ?? num(settings.zoneBaseShortSoldiers) ?? 0,
-  ));
-  const activeZone = int(runtime.activeZone) ?? int(model.activeZone) ?? int(report.activeZone);
-  const strategyOpenTotal = Math.max(0, Math.round(
-    num(model.strategyOpenTotal) ?? num(rec(report.strategyOwnedOpen).total) ?? 0,
-  ));
-  const countsRaw = rec(report.zoneOpenCounts);
-  const zoneOpenCounts: OpenCounts = {};
-  for (const [key, raw] of Object.entries(countsRaw)) {
-    const zone = int(key);
-    if (zone === null) continue;
-    const row = rec(raw);
-    const long = Math.max(0, Math.round(num(row.long) ?? 0));
-    const short = Math.max(0, Math.round(num(row.short) ?? 0));
-    zoneOpenCounts[String(zone)] = { long, short, total: Math.max(0, Math.round(num(row.total) ?? long + short)) };
-  }
-  let reliable = report.zoneOpenCountsReliable === true;
-  const total = Object.values(zoneOpenCounts).reduce((sum, row) => sum + row.total, 0);
-  reliable = reliable && total === strategyOpenTotal;
-
-  const openKeys = new Set<string>();
-  const managed = rec(strategy2.multiBbPositions);
-  for (const [key, raw] of Object.entries(managed)) {
-    const row = rec(raw);
-    const role = String(row.soldierRole || "").toUpperCase();
-    const origin = int(row.originZone);
-    const normalized = key.toUpperCase();
-    const side = normalized.endsWith("|LONG") ? "LONG" : normalized.endsWith("|SHORT") ? "SHORT" : "";
-    if (origin === null || !side || (role !== "ZONE_BASE" && role !== "EXPOSURE_BALANCER")) continue;
-    openKeys.add(normalized);
-  }
-  if (openKeys.size !== strategyOpenTotal) openKeys.clear();
-
-  // Canonical active-zone occupancy remains the same source used by the existing
-  // Pricezone-strategie block. Only fill a missing active bucket when that source
-  // explicitly reports its own current-zone counts.
-  if (activeZone !== null && reliable && !zoneOpenCounts[String(activeZone)]) {
-    const long = Math.max(0, Math.round(num(current.openLong) ?? 0));
-    const short = Math.max(0, Math.round(num(current.openShort) ?? 0));
-    zoneOpenCounts[String(activeZone)] = { long, short, total: long + short };
-  }
-  return { activeZone, perZoneLong, perZoneShort, strategyOpenTotal, zoneOpenCounts, zoneOpenCountsReliable: reliable, openKeys };
-}
 
 function chartTruthFrom(chartPayload: unknown, eventPayload: unknown): ChartTruth {
   const chart = rec(chartPayload);
@@ -310,22 +257,35 @@ function visibleZoneIndexes(seats: SeatTruth, chart: ChartTruth, cycle: CycleTru
   return rows;
 }
 
-export function PriceZoneCycleOverview({ liveActiveZone }: { liveActiveZone: number | null }) {
-  const [seatTruth, setSeatTruth] = useState<SeatTruth | null>(null);
+export function PriceZoneCycleOverview({
+  seatSummary,
+  liveActiveZone,
+}: {
+  seatSummary: SeatSummaryProp | null;
+  liveActiveZone: number | null;
+}) {
   const [chartTruth, setChartTruth] = useState<ChartTruth | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const seatTruth = useMemo<SeatTruth | null>(() => seatSummary ? {
+    activeZone: seatSummary.activeZone,
+    perZoneLong: seatSummary.perZoneLong,
+    perZoneShort: seatSummary.perZoneShort,
+    strategyOpenTotal: seatSummary.strategyOpenTotal,
+    zoneOpenCounts: seatSummary.zoneOpenCounts,
+    zoneOpenCountsReliable: seatSummary.zoneOpenCountsReliable,
+    openKeys: new Set(seatSummary.openZonePositionKeys),
+  } : null, [seatSummary]);
 
   useEffect(() => {
     let alive = true;
     const refresh = async () => {
       try {
-        const [account, chart, events] = await Promise.all([
-          authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }),
+        const [chart, events] = await Promise.all([
           authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600", { cache: "no-store" }),
           authenticatedRequest("/api/exchanges/aster/portfolio-chart/events?timeframe=15m", { cache: "no-store" }),
         ]);
         if (!alive) return;
-        setSeatTruth(seatTruthFrom(account));
         setChartTruth(chartTruthFrom(chart, events));
       } catch {
         if (!alive) return;
