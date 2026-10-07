@@ -75,6 +75,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Historische source-string regressieguards zijn uitgelijnd op de goedgekeurde Build 559 presentatie: zwarte grid, compactere startzoom, verborgen history-overlay en ruimere confirmed-event selectie.",
     "Build 560 regressieguards zijn uitgelijnd op de live-zone focus zonder de aparte Active Trades startdichtheid te wijzigen.",
     "Build 563 stale source-string tests zijn uitgelijnd op de aparte Accountwaarde-startcap; Active Trades behoudt zijn eigen dichtheidscontract.",
+    "De canonical release-gate is in dezelfde commit gesynchroniseerd zodat Build 563 daadwerkelijk kan worden gepubliceerd.",
     "De canonical deploy-gate is in dezelfde releasecommit uitgelijnd zodat de fix daadwerkelijk gepubliceerd kan worden.",
     "De stale chart regression assertions zijn aangepast aan de nieuwe browser-side fallback zodat deployment niet meer door oude broncodeverwachtingen wordt geblokkeerd.",
     "Als de backend tijdelijk zones=[] levert, berekent de webapp display-only dezelfde bevestigde swing/SR/ATR-zonebasis uit de ontvangen 15m-candles en tekent daarmee direct de volgende-zone lijnen.",
