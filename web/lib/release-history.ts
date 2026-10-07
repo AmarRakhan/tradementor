@@ -26,8 +26,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Prijszone Details · compact zoneoverzicht productie-release",
+  title: "Prijszone Details · één waarheid voor stoelen en volledige prijsranges",
   newItems: [
+    "Build 577 gebruikt voor LONG/SHORT capaciteit uitsluitend de opgeslagen Strategy-2 instellingen; een ingestelde 0 blijft dus exact 0 en kan niet meer door een oude seatModel-cache in 1 veranderen.",
+    "Build 577 vult alle zichtbare prijsranges vanuit dezelfde canonieke portfolio-zone ladder die ook voor de chart wordt gebruikt, zodat tussenliggende zones niet meer als — verschijnen wanneer de backend slechts een deel van de zonecentra terugstuurt.",
     "Build 576 repareert de laatste release-gate regex zodat toekomstige buildnummers numeriek worden gevalideerd zonder dubbel-geëscape patroon; geen productie- of tradingcode gewijzigd.",
     "Build 575 synchroniseert de release-tests met de huidige build en de nieuwe goedgekeurde Prijszone-referentie, zodat de canonieke productie-pipeline niet meer wordt geblokkeerd door verouderde build- of mockup-asserties.",
     "De release-gates controleren voortaan het actuele buildcontract zonder een oud buildnummer hard vast te zetten.",
@@ -79,6 +81,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
+    "De frontend forceerde perZoneLong/perZoneShort met Math.max(1), waardoor een expliciet ingestelde 0 onterecht als 1 werd weergegeven.",
+    "De Zone-overzicht tabel gebruikte alleen rechtstreeks aanwezige chart-zones voor prijsranges; daardoor kregen geldige tussenliggende zones een — ondanks een bekende canonieke zoneafstand.",
     "De eerste Build 574 productie-run werd door twee verouderde regressietests gestopt: één test verwachtte nog build 573 en één test verwachtte nog de oude Zone-overzicht referentie.",
     "Het bestaande Zone overzicht gebruikte zeven kolommen, een mobiele min-width van 650px en overflow-x:auto, waardoor de gebruiker horizontaal moest scrollen om alle zonegegevens te zien.",
     "De aparte Status-kolom nam horizontale ruimte in terwijl de actieve zone al via de goud/oranje rijhighlight herkenbaar was.",
@@ -104,12 +108,16 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een koude start had geen browser-side laatst-bevestigde zonebasis om tijdelijk op terug te vallen.",
   ],
   causes: [
+    "De capaciteitspresentatie combineerde opgeslagen settings met een cached seatModel fallback en voegde daar bovendien een minimum van 1 aan toe.",
+    "De prijsrangeweergave bouwde geen volledige ladder over de reeds bewezen zonecentra heen.",
     "De release-tests waren op historische buildnummers en de vorige mockup-ID vastgepind, waardoor een correcte nieuwe UI-release als regressie werd behandeld.",
     "De Build 570-presentatie was ontworpen rond interne horizontale tabelscroll met een sticky Zone-kolom in plaats van een vaste mobiele vijfkolomsverdeling.",
     "De presentatie was hersteld, maar de zonebron kon tijdens een history gap of cold start leeg zijn.",
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "Per-zone capaciteit leest nu alleen settings.zoneBaseLongSoldiers/zoneBaseShortSoldiers (met dezelfde settings-key aliases) en accepteert 0 als geldige waarde.",
+    "Prijsranges gebruiken derivePortfolioZoneLadder over exact dezelfde chart-zonebron en de volledige zichtbare zone-indexrange; er is geen tweede API-route of onafhankelijke prijsberekening toegevoegd.",
     "De stale release-asserties zijn bijgewerkt zonder productiecode, tradinglogica of runtime-state te wijzigen.",
     "De tabel is omgezet naar table-layout: fixed met kolombreedtes 15/28/20/20/17 procent, min-width:0 en overflow-x:hidden.",
     "Prijsniveau is vervangen door de bestaande zone lower/upper-range, Vrij/Profits/Status zijn uit de rijpresentatie gehaald en Totaal bezet toont open totaal versus zonecapaciteit.",
