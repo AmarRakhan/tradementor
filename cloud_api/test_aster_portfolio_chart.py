@@ -526,3 +526,10 @@ def test_portfolio_event_endpoint_merges_durable_order_attribution_evidence():
     assert "_portfolio_chart_order_attribution_rows" in endpoint
     assert "[*audit_rows, *attribution_rows]" in endpoint
     assert "AsterV3Client(" not in endpoint
+
+
+def test_active_trades_fresh_read_writes_through_shared_account_snapshot():
+    source = Path(__file__).with_name("main.py").read_text()
+    route = source.split('@app.get("/v1/me/aster/portfolio-chart/active-trades")', 1)[1].split('@app.get("/v1/me/aster/portfolio-chart")', 1)[0]
+    assert 'live_authorized=False' in route
+    assert 'automation_ref.set({"accountSnapshot": snapshot}, merge=True)' in route
