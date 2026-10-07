@@ -6574,6 +6574,7 @@ def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | Non
         )
         rows.append({
             "event": event,
+            "originalAction": action,
             "timestampMs": stamp,
             "timestamp": item.get("recordedAt"),
             "symbol": symbol,
@@ -6584,6 +6585,7 @@ def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | Non
             "auditId": f"attribution:{order_id or client_order_id}",
             "activityType": "DCA" if action == "ADD_DCA" else "TP" if event == "FULL_TP" else "ENTRY",
             "marginUsd": safe_float(item.get("marginUsd", item.get("executedMarginUsd"))) or None,
+            "marginSource": str(item.get("marginSource", "") or "UNAVAILABLE"),
             "source": "order-attribution",
         })
     return rows
@@ -6659,7 +6661,9 @@ def aster_portfolio_chart_audit(
         current_markers=portfolio_chart_strategy_audit_markers([*audit_rows,*attribution_rows],timeframe)
         markers[timeframe]=current_markers
 
-    today_start=datetime(now_utc.year,now_utc.month,now_utc.day,tzinfo=timezone.utc)
+    amsterdam_now=now_utc.astimezone(ZoneInfo("Europe/Amsterdam"))
+    today_start_local=datetime(amsterdam_now.year,amsterdam_now.month,amsterdam_now.day,tzinfo=ZoneInfo("Europe/Amsterdam"))
+    today_start=today_start_local.astimezone(timezone.utc)
     income=client.income_history(income_type="REALIZED_PNL",start_time=int(today_start.timestamp()*1000),limit=1000)
     realized_today=[
         {
@@ -6712,6 +6716,9 @@ def aster_portfolio_chart_audit(
             "recentAttributionRows":len(attribution_rows),
         },
         "chart":{
+            "samplingCadenceSeconds":60,
+            "samplingSource":"server Strategy-2 minute runtime + read-only chart refresh fallback",
+            "syntheticCandles":0,
             "integrity":integrity,
             "entryMarkers15m":entry_markers_15,
             "tpMarkers15m":tp_markers_15,
