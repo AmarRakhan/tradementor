@@ -215,7 +215,7 @@ def test_live_portfolio_event_endpoint_is_read_only_and_does_not_poll_aster():
     assert "AsterV3Client(" not in block
     assert "portfolio_chart_strategy_audit_markers" in block
     assert '"ordersSent": 0' in block
-    assert "confirmed Strategy-2 audit events; no exchange polling" in block
+    assert "confirmed Strategy-2 audit + durable order attribution events; no exchange polling" in block
 
 
 def test_build432_cashflow_markers_aggregate_same_direction_but_never_net_opposite_flows():
