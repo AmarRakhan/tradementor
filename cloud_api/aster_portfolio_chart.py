@@ -140,9 +140,12 @@ def daily_equity_range(
     for raw in candles or []:
         if not isinstance(raw, dict):
             continue
-        at_ms = int(_number(raw.get("atMs"))) or int(_number(raw.get("time"))) * 1000
+        at_ms = int(_number(raw.get("atMs")))
+        if at_ms <= 0:
+            time_value = _number(raw.get("time"))
+            at_ms = int(time_value * 1000) if time_value > 0 else 0
         high, low = _number(raw.get("high")), _number(raw.get("low"))
-        if not (start <= at_ms < end) or high <= 0 or low <= 0 or high < low:
+        if at_ms <= 0 or not (start <= at_ms < end) or high <= 0 or low <= 0 or high < low:
             continue
         highs.append(high)
         lows.append(low)
