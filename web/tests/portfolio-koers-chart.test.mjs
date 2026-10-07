@@ -364,7 +364,8 @@ test("Build 422 preserves event-to-candle identity while scrolling and adds no f
   const syncEnd=component.indexOf("syncOverlaysRef.current=",syncStart);
   const syncBlock=component.slice(syncStart,syncEnd);
   assert.ok(syncBlock.includes("candleIndexByTime"));
-  assert.ok(syncBlock.includes("timeToCoordinate(row.time"));
+  assert.ok(syncBlock.includes("markerTime:row.time"));
+  assert.ok(syncBlock.includes("timeToCoordinate(renderTime"));
   assert.equal(syncBlock.includes("authenticatedRequest("),false);
   assert.ok(component.includes("subscribeVisibleLogicalRangeChange(rememberViewport)"));
   assert.ok(component.includes("savedViewportRef.current[viewportKey]"));
@@ -513,10 +514,11 @@ test("Build 555 keeps next-zone chart context available without backend zones",a
 });
 
 
-test("Build 559 matches approved Portfolio Koers startup/event reference",async()=>{
+test("Build 564 binds the chart to the canonical good reference and rejects the broken reference",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
-  assert.ok(component.includes("file_0000000065e08246a10dfd2cc721cc77"));
+  assert.ok(component.includes("file_0000000047d081f4b2c4348a14e0db2f"));
+  assert.ok(component.includes("file_00000000d22c81f4aa440e735e9a23ed"));
   assert.equal(component.includes('className="portfolio-koers-gap-warning"'),false);
   assert.ok(component.includes('data-level={level.label}'));
   assert.equal(component.includes('<span>{level.label}</span>'),false);
@@ -531,20 +533,19 @@ test("Build 559 matches approved Portfolio Koers startup/event reference",async(
 });
 
 
-test("Build 562 focuses startup on the live zone while keeping Bollinger visible from confirmed candles",async()=>{
+test("Build 564 supersedes the later zone-crop experiment and keeps Build 518 viewport with Bollinger",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("portfolioKoersFocusBars(candles,rawFocusVisibleBars"));
-  assert.ok(component.includes("portfolioZoneContextFromLadder(advisorZoneLadderRef.current,latestPrice)"));
+  assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
+  assert.equal(component.includes("ACCOUNT_STARTUP_VISIBLE_BARS"),false);
+  assert.equal(component.includes("portfolioKoersFocusBars(candles"),false);
   assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
-  assert.ok(component.includes("No candles are fabricated"));
 });
 
 
-test("Build 561 imports the live-zone focus helper used by Portfolio Koers startup",async()=>{
+test("Build 564 removes the obsolete zone-focus helper from startup rendering",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("portfolioKoersFocusBars"));
   const importLine=component.split("\n").find((line)=>line.includes('from "@/lib/portfolio-koers-chart.mjs"'))||"";
-  assert.ok(importLine.includes("portfolioKoersFocusBars"));
+  assert.equal(importLine.includes("portfolioKoersFocusBars"),false);
 });
 
 

@@ -68,6 +68,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Bollinger gebruikt opnieuw uitsluitend de echte bevestigde/waargenomen OHLC-candles uit de chartreeks; er worden geen ontbrekende candles verzonnen.",
     "De aparte 12-candle Accountwaarde-cap is verwijderd; de Build 518 TIMEFRAME_VIEW en standaard visible-range logica zijn hersteld.",
     "Een confirmed LONG/SHORT/TP-event mag nu aan de dichtstbijzijnde echte candle binnen maximaal één timeframe-bucket worden geankerd; originele eventtijd blijft behouden voor details en er worden geen candles verzonnen.",
+    "De chartcode bevat de goede referentie file_0000000047d081f4b2c4348a14e0db2f als canoniek visueel contract en markeert file_00000000d22c81f4aa440e735e9a23ed expliciet als afgekeurde situatie.",
+    "Stale regressieguards uit Build 559–563 zijn vervangen door Build 564-contracten zodat de bewezen Build 518 viewport niet opnieuw door oude assertions wordt geblokkeerd.",
     "Chartcanvas, stage en initial-state gebruiken nu #000000; grid en assen zijn neutraal en subtiel gehouden.",
     "De cold-start viewport is per timeframe compacter gemaakt met bredere candles; handmatig zoomen/pannen blijft daarna behouden.",
     "Laatste bevestigde 15m-zones worden display-only gecachet en bij een koude start direct teruggelezen.",
