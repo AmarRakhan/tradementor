@@ -661,7 +661,7 @@ export function PortfolioKoersChart({
     void loadRecentEvents();
     const timer=window.setInterval(()=>{
       if(document.visibilityState==="visible")void loadRecentEvents();
-    },15_000);
+    },5_000);
     const visible=()=>{if(document.visibilityState==="visible")void loadRecentEvents()};
     document.addEventListener("visibilitychange",visible);
     return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
@@ -728,7 +728,7 @@ export function PortfolioKoersChart({
   useEffect(()=>{
     if(viewMode!=="active"||!activeTradesAvailable)return;
     void loadActiveTrades();
-    const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void loadActiveTrades()},30_000);
+    const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void loadActiveTrades()},5_000);
     const visible=()=>{if(document.visibilityState==="visible")void loadActiveTrades()};
     document.addEventListener("visibilitychange",visible);
     return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
