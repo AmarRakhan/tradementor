@@ -26,8 +26,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Prijszone Details · canonical prijsranges + volgende vrije LONG-zones",
+  title: "Prijszone Details · één zoneprijsbron + compacte LONG-afstanden",
   newItems: [
+    "Build 582 toont compacte omhoog/omlaag-afstanden in USDT op basis van server-berekende volgende LONG-zonedrempels.",
+    "Prijszone Details en Portfolio Koers gebruiken één gedeelde read-only servergeometrie voor zoneprijsranges, los van trading- en orderbeslissingen.",
     "Build 581 toont onbeschikbare zoneprijsgrenzen niet meer als nulwaarden en biedt diagnostische informatie bij ontbrekende canonical ranges.",
     "ZoneState geeft read-only de eerstvolgende hogere en lagere zonegrens met vrije LONG-capaciteit door; dit is geen ordertoestemming.",
     "Build 580 introduceert strategy2.runtimeTruth.zoneState als server-authoritative contract voor account-, Strategy-2- en prijszone-state.",
