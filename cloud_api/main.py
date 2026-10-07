@@ -101,6 +101,7 @@ from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
 from aster_native_order_shadow import build_native_order_shadow
+from aster_native_order_deprecation import deprecation_plan as aster_native_order_deprecation_plan
 from aster_zone_soldiers import confirmed_zone_from_display_zones, prepare_zone_runtime
 from aster_runtime_truth import build_multi_bb_runtime_truth
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_gate, portfolio_cycle_snapshot, reset_cycle_to_equity
@@ -6648,6 +6649,7 @@ def aster_native_order_shadow(
         "snapshotStale": captured_ms <= 0 or now_ms - captured_ms > 120_000,
         "source": "STORED_CANONICAL_ASTER_SNAPSHOT",
         "readOnly": True,
+        "deprecationPlan": aster_native_order_deprecation_plan(),
     }
 
 
