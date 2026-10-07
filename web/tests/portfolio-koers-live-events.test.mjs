@@ -93,7 +93,7 @@ test("Build 516 distinguishes reconciled ADD events from true DCA and preserves 
     readFile(new URL("../lib/portfolio-koers-chart.mjs",import.meta.url),"utf8"),
   ]);
   assert.ok(component.includes('["DCA","ADD"].includes(String(trade.activityType||"").toUpperCase())'));
-  assert.ok(component.includes("entryPriceText(trade.entryPrice)"));
+  assert.ok(component.includes('title="Gebruikte margin"'));
   for(const token of ["dcaNumber","dcaDistancePercent","anchorPrice","triggerPrice","fillQuantity","orderId","clientOrderId","exchangeConfirmed"]){
     assert.ok(lib.includes(token),token);
   }
