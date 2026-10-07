@@ -538,7 +538,7 @@ test("Build 564 supersedes the later zone-crop experiment and keeps Build 518 vi
   assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
   assert.equal(component.includes("ACCOUNT_STARTUP_VISIBLE_BARS"),false);
   assert.equal(component.includes("portfolioKoersFocusBars(candles"),false);
-  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
+  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(bbInput)'));
 });
 
 
@@ -559,7 +559,7 @@ test("Build 564 restores the proven Build 518 viewport and confirmed-event ancho
   assert.ok(component.includes("time:renderTime"));
   assert.ok(component.includes('{tp:3,long:2,short:2,cashflow:1,other:1}'));
   assert.ok(component.includes("safetyCap:9"));
-  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
+  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(bbInput)'));
 });
 
 
