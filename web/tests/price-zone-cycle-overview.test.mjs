@@ -38,3 +38,12 @@ test("approved mobile visual contract keeps internal table scroll and sticky Zon
   assert.match(css, /\.aps-zco-table th:first-child,.aps-zco-table td:first-child\{[^}]*position:sticky;left:0/);
   assert.match(css, /\.aps-zco-table tr\.is-active td\{[^}]*#e7b836/);
 });
+
+
+test("Build 571 cannot remain indefinitely on the zone loading state", () => {
+  assert.match(overview, /Promise\.allSettled/);
+  assert.match(overview, /window\.setTimeout\(\(\) => controller\.abort\(\), 8000\)/);
+  assert.match(overview, /if \(!seatTruth\) return null/);
+  assert.doesNotMatch(overview, /setSeatTruth\(/);
+  assert.match(overview, /Geen betrouwbare zonegegevens beschikbaar/);
+});
