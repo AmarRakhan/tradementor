@@ -140,7 +140,7 @@ def _canonical_long_next_levels(zones: list[dict[str, Any]], current_price: Any,
         if item is None:
             return None
         threshold, row = item
-        return {"zone": row["index"], "price": threshold, "freeLongSeats": max(0, int(row["longMax"]) - int(row["longOpen"])), "unit": "PORTFOLIO_EQUITY_USDT", "entryPermission": "NOT_EVALUATED"}
+        return {"zone": row["index"], "price": threshold, "distance": abs(threshold - price), "freeLongSeats": max(0, int(row["longMax"]) - int(row["longOpen"])), "unit": "PORTFOLIO_EQUITY_USDT", "entryPermission": "NOT_EVALUATED"}
     return {
         "status": "AVAILABLE",
         "up": result(min(higher, key=lambda v: v[0]) if higher else None),
