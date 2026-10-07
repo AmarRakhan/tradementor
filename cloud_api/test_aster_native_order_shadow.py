@@ -219,3 +219,35 @@ def test_shadow_transition_never_claims_live_execution():
     assert "exchangeCalls" in source
     assert "client." not in source
     assert "execute_" not in source
+
+
+def test_deprecation_registry_requires_explicit_removal_gates_for_every_legacy_path():
+    from aster_native_order_deprecation import DEPRECATION_ITEMS, deprecation_plan
+
+    plan = deprecation_plan()
+    assert plan["policy"] == "REPLACEMENT_IS_NOT_COMPLETE_UNTIL_LEGACY_PATH_IS_REMOVED"
+    assert plan["activeLegacyCount"] == len(DEPRECATION_ITEMS)
+    ids = {item["id"] for item in DEPRECATION_ITEMS}
+    assert {
+        "ACTIVE_TRADES_POLLING",
+        "SOFTWARE_TP_TRIGGER",
+        "SOFTWARE_DCA_TRIGGER",
+        "MULTI_COMPONENT_ASTER_STATUS_POLLING",
+        "PER_INSTANCE_BACKGROUND_WORKERS",
+        "UNBOUNDED_RELEASE_RETENTION",
+    }.issubset(ids)
+    for item in DEPRECATION_ITEMS:
+        assert item["status"] == "ACTIVE_LEGACY"
+        assert item["legacyPath"]
+        assert item["replacement"]
+        assert item["removeWhen"]
+
+
+def test_shadow_endpoint_exposes_cleanup_plan_without_mutating_runtime():
+    source = Path(__file__).with_name("main.py").read_text()
+    route = source.split('@app.get("/v1/me/aster/native-order-shadow")', 1)[1].split(
+        '@app.get("/v1/me/aster/portfolio-chart/events")', 1
+    )[0]
+    assert "aster_native_order_deprecation_plan()" in route
+    assert "deprecationPlan" in route
+    assert ".set(" not in route
