@@ -26,7 +26,7 @@ test("zone overview reuses the canonical Aster seat snapshot and only polls char
 test("zone overview preserves data-truth semantics and origin-zone ownership", () => {
   assert.match(overview, /zoneOpenCountsReliable/);
   assert.match(overview, /originZone/);
-  assert.match(overview, /openKeys\.size !== strategyOpenTotal/);
+  assert.match(overview, /seats\.openKeys\.size === seats\.strategyOpenTotal/);
   assert.match(overview, /Onbekende waarden blijven daarom bewust op —/);
   assert.match(overview, /event\.activityType === "PARTIAL_TP"/);
 });
