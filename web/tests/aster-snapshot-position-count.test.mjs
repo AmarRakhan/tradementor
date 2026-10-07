@@ -1,23 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { countOpenAsterPositions, mergeCompleteAsterSnapshot, preserveConfirmedAsterValues } from "../lib/aster-snapshot-cache.mjs";
+import { normalizeAsterAccountTruth } from "../lib/aster-account-truth.ts";
 
-const history = { historyAvailable: true, closedTrades: [], realizedEvents: [] };
-const row = (symbol, side, amount) => ({ symbol, positionSide: side, positionAmt: String(amount) });
+function payload(positions) {
+  const longCount=positions.filter((row)=>row.side==="LONG").length;
+  const shortCount=positions.filter((row)=>row.side==="SHORT").length;
+  return {accountTruth:{
+    schemaVersion:1,contract:"ASTER_ACCOUNT_TRUTH_V1",source:"ASTER_SERVER_CANONICAL_STATUS",
+    capturedAtMs:Date.now(),stale:false,configured:true,readOnly:true,ordersSent:0,
+    account:{equity:300,availableBalance:200},
+    positions:{count:positions.length,longCount,shortCount,rows:positions},
+    performance:{closedTodayReliable:false,growthReliable:false},
+    strategy:{settings:{},runtimeTruth:{},summary:{enabled:true,monitor:false,activeLong:longCount,activeShort:shortCount,longCapacity:2,shortCapacity:1,dcaCount:0,phase:"RUNNING"}},
+    provenance:{},
+  }};
+}
 
-test("concrete Aster positions array is authoritative for active position count", () => {
-  const account = { configured: true, strategy2: {}, activePositions: 21, positionCountIncluded: 21,
-    positions: [row("ZECUSDT", "SHORT", 1), row("ETHUSDT", "LONG", 2), row("BTCUSDT", "LONG", 0)] };
-  const merged = mergeCompleteAsterSnapshot(account, history);
-  assert.equal(countOpenAsterPositions(merged), 2);
-  assert.equal(merged.activePositions, 2);
-  assert.equal(merged.positionCountIncluded, 2);
+test("canonical server positions contract owns active position count",()=>{
+  const truth=normalizeAsterAccountTruth(payload([
+    {symbol:"ZECUSDT",side:"SHORT",quantity:1},
+    {symbol:"ETHUSDT",side:"LONG",quantity:2},
+  ]));
+  assert.equal(truth.positions.count,2);
+  assert.equal(truth.positions.longCount,1);
+  assert.equal(truth.positions.shortCount,1);
 });
 
-test("newer positions array cannot inherit a stale cached activePositions scalar", () => {
-  const previous = { configured: true, strategy2: {}, ...history, activePositions: 21, positions: [row("OLDUSDT", "LONG", 1)] };
-  const incoming = { configured: true, strategy2: {}, ...history, activePositions: undefined,
-    positions: [row("ZECUSDT", "SHORT", 1), row("ETHUSDT", "LONG", 1)] };
-  const merged = preserveConfirmedAsterValues(previous, incoming);
-  assert.equal(merged.activePositions, 2);
+test("frontend position count has no legacy cache merge or scalar canonicalization",()=>{
+  const truth=normalizeAsterAccountTruth(payload([{symbol:"ETHUSDT",side:"LONG",quantity:2}]));
+  assert.equal(truth.positions.count,1);
+  assert.equal(truth.positions.rows.length,1);
 });
