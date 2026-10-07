@@ -71,7 +71,7 @@ test("Build 479 is the advertised webapp build while Build 447 Graph 3.1 regress
 
 test("Build 551 restores the reference R1-R4 and S1-S4 display cap",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,4)"));
+  assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,18)"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(zoneLadder,structurePrice)"));
   assert.ok(component.includes("const resistanceLevels=Array.from({length:4}"));
   assert.ok(component.includes("const supportLevels=Array.from({length:4}"));

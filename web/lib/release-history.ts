@@ -68,6 +68,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De visuele zone-ladder wordt voor de chart uitgebreid tot achttien niveaus rond de actuele prijs en maximaal 48 unieke grenzen worden als echte prijs-lijnen gerenderd zonder aslabels.",
     "De read-only eventendpoint voegt orderAttributions van de laatste 24 uur samen met audit-events en blijft volledig vrij van exchange polling of ordermutaties.",
     "De bestaande read-only endpoint-regressie is uitgelijnd op de uitgebreidere bewezen eventbron zonder het no-exchange-polling contract te versoepelen.",
+    "Oude Build 551/565 source-string guards zijn bijgewerkt naar de Build 567 ladder- en releasecontracten zodat de nieuwe permanente lijnen niet door historische testverwachtingen worden geblokkeerd.",
     "De horizontale support/resistance-lijnen blijven zichtbaar, maar de losse linker R4–R1/S1–S4-pilllabels worden niet meer gerenderd.",
     "De history-gap waarschuwing blijft interne data-quality informatie maar wordt niet meer als obstructieve chartoverlay gerenderd.",
     "LONG/SHORT/TP badges zijn qua hoogte, radius, border, schaduw en typografie gelijkgetrokken; kleurcodering blijft groen/rood/goud.",

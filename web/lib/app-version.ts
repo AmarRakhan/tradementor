@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 567: persistent S/R ladder + durable order-attribution event labels; regression contract synchronized.
+// Build 567: persistent S/R ladder + durable order-attribution event labels; all web regression contracts synchronized.
 export const WEBAPP_BUILD_NUMBER = "567";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
