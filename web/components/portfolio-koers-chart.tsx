@@ -9,7 +9,7 @@ import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersMarkers, normalizePortfolioKoersPayload, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
 import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
-import { buildStrategyStatusCommandCenter, mergeSoldierActivityHistory, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
+import { buildStrategyStatusCommandCenter, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
@@ -218,7 +218,6 @@ const percent2=(value:number|null|undefined,signed=true)=>{
   return `${prefix}${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(number))}%`;
 };
 
-const amsterdamDayKey=(value:number)=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Amsterdam",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(value));
 const numberOrNull=(value:unknown)=>Number.isFinite(Number(value))?Number(value):null;
 function normalizeActiveTradesPayload(value:unknown):ActiveTradesPayload{
   const root=record(value);
