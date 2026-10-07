@@ -263,11 +263,12 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   const exchangeFlatConfirmed = hasRuntimeTruth
     ? runtimeActiveLong === 0 && runtimeActiveShort === 0 && runtimeAccountPositionCount === 0
     : reportActiveLong === 0 && reportActiveShort === 0;
-  // Saved user settings are authoritative for configured seat capacity. A
-  // cached seatModel may lag after a configuration change and must not replace
-  // the user's current formation.
-  const perZoneLong = Math.max(1, Math.round(firstNumber([settings, seatModel], ["zoneBaseLongSoldiers", "perZoneLong"]) ?? 3));
-  const perZoneShort = Math.max(1, Math.round(firstNumber([settings, seatModel], ["zoneBaseShortSoldiers", "perZoneShort"]) ?? 3));
+  // Saved Strategy-2 settings are the single source of truth for configured
+  // per-zone capacity. Zero is a valid configured value and must remain zero.
+  // Do not fall back to cached seatModel capacity: it can lag after a save and
+  // would create a second truth source in the UI.
+  const perZoneLong = Math.max(0, Math.round(firstNumber([settings], ["zoneBaseLongSoldiers", "perZoneLong"]) ?? 0));
+  const perZoneShort = Math.max(0, Math.round(firstNumber([settings], ["zoneBaseShortSoldiers", "perZoneShort"]) ?? 0));
   const activeZoneNumber = hasRuntimeTruth
     ? optionalNumber(runtimeTruth.activeZone)
     : firstNumber([seatModel, seatReport], ["activeZone"]);

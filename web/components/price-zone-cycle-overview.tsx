@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { derivePortfolioZoneLadder } from "@/lib/portfolio-zone-advisor.mjs";
 
 const REFERENCE = "file_00000000773c8210ad977be9527738e6";
 
@@ -348,7 +349,19 @@ export function PriceZoneCycleOverview({
 
   const activeZone = seatTruth?.activeZone ?? liveActiveZone ?? chartTruth?.currentZone ?? null;
   const centerByZone = new Map((chartTruth?.zones ?? []).map((zone) => [zone.index, zone.center]));
-  const levelByZone = new Map((chartTruth?.zones ?? []).map((zone) => [zone.index, zone]));
+  const visibleIndexes = derived?.indexes ?? [];
+  const minVisibleZone = visibleIndexes.length ? Math.min(...visibleIndexes) : -3;
+  const maxVisibleZone = visibleIndexes.length ? Math.max(...visibleIndexes) : 3;
+  const canonicalZoneLadder = derivePortfolioZoneLadder(chartTruth?.zones ?? [], {
+    minIndex: minVisibleZone,
+    maxIndex: maxVisibleZone,
+  });
+  const levelByZone = new Map((canonicalZoneLadder.zones ?? []).map((zone) => [Number(zone.index), {
+    index: Number(zone.index),
+    center: Number(zone.center),
+    lower: Number.isFinite(Number(zone.lower)) ? Number(zone.lower) : null,
+    upper: Number.isFinite(Number(zone.upper)) ? Number(zone.upper) : null,
+  } as ZoneLevel]));
   const cycle = derived?.cycle ?? null;
   const startZone = cycle?.start?.originZone ?? null;
   const lastZone = cycle?.lastProfit?.originZone ?? null;
