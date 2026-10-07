@@ -6408,6 +6408,27 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             if display:
                 row.update({key: display.get(key) for key in ("center", "lower", "upper")})
                 row["priceSource"] = "CANONICAL_PORTFOLIO_DISPLAY_LADDER"
+        # The execution ladder may be temporarily missing although the chart
+        # presentation ladder is available. Include those display-only zones
+        # with zero owned positions, preserving existing ownership rows.
+        existing_ids = {int(row["index"]) for row in canonical_zone_state["zones"]}
+        seat_capacity = canonical_zone_state["capacity"]
+        for display in presentation_ladder:
+            index = int(display["index"])
+            if index in existing_ids:
+                continue
+            long_max = int(seat_capacity["perZoneLong"])
+            short_max = int(seat_capacity["perZoneShort"])
+            canonical_zone_state["zones"].append({
+                "index": index, "center": display["center"],
+                "lower": display["lower"], "upper": display["upper"],
+                "priceSource": "CANONICAL_PORTFOLIO_DISPLAY_LADDER",
+                "longOpen": 0, "shortOpen": 0, "totalOpen": 0,
+                "longMax": long_max, "shortMax": short_max,
+                "totalMax": long_max + short_max,
+                "active": canonical_zone_state["activeZone"] == index,
+            })
+        canonical_zone_state["zones"].sort(key=lambda row: int(row["index"]), reverse=True)
         canonical_zone_state["nextLongLevels"] = _canonical_long_next_levels(
             canonical_zone_state["zones"], equity_display,
             reliable=bool(canonical_zone_state["reconciliation"]["accountMatches"] and canonical_zone_state["reconciliation"]["strategyMatches"]),
