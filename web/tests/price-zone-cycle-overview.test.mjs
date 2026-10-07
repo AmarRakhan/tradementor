@@ -6,9 +6,9 @@ const overview = fs.readFileSync(new URL("../components/price-zone-cycle-overvie
 const snapshot = fs.readFileSync(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8");
 const css = fs.readFileSync(new URL("../app/portfolio-snapshot.css", import.meta.url), "utf8");
 
-test("Build 570 mounts the approved current-cycle zone overview directly below Pricezone-strategie", () => {
+test("zone overview mounts directly below Prijszone-strategie", () => {
   assert.match(snapshot, /<PriceZoneStrategySummary[\s\S]*<PriceZoneCycleOverview/);
-  assert.match(overview, /file_00000000941881f48d08a2c072cf8ad7/);
+  assert.match(overview, /file_00000000773c8210ad977be9527738e6/);
   assert.match(overview, /Zone overzicht/);
   assert.match(overview, /huidige cyclus/);
 });
