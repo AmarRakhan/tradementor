@@ -1,0 +1,452 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { authenticatedRequest } from "@/lib/cloud-client";
+
+const REFERENCE = "file_00000000941881f48d08a2c072cf8ad7";
+
+type Dict = Record<string, unknown>;
+type OpenCounts = Record<string, { long: number; short: number; total: number }>;
+
+type SeatTruth = {
+  activeZone: number | null;
+  perZoneLong: number;
+  perZoneShort: number;
+  strategyOpenTotal: number;
+  zoneOpenCounts: OpenCounts;
+  zoneOpenCountsReliable: boolean;
+  openKeys: Set<string>;
+};
+
+type ZoneLevel = { index: number; center: number; lower: number | null; upper: number | null };
+type ZoneEntry = {
+  symbol: string;
+  side: "LONG" | "SHORT" | "";
+  atMs: number;
+  activityType: string;
+  originZone: number | null;
+  soldierRole: string;
+};
+type ZoneTrade = {
+  symbol: string;
+  side: "LONG" | "SHORT" | "";
+  atMs: number;
+  activityType: string;
+  originZone: number | null;
+  soldierRole: string;
+  realizedPnlUsd: number | null;
+};
+type Marker = { atMs: number; entries: ZoneEntry[]; trades: ZoneTrade[] };
+type ChartTruth = {
+  currentEquity: number | null;
+  currentZone: number | null;
+  zones: ZoneLevel[];
+  markers: Marker[];
+};
+
+type CycleEvent = {
+  atMs: number;
+  kind: "entry" | "close";
+  key: string;
+  originZone: number;
+  pnl: number | null;
+  activityType: string;
+};
+
+type CycleTruth = {
+  reliable: boolean;
+  start: CycleEvent | null;
+  visited: Set<number>;
+  profits: Map<number, { count: number; pnl: number; pnlReliable: boolean; lastAtMs: number }>;
+  lastProfit: CycleEvent | null;
+  totalProfits: number | null;
+  totalPnl: number | null;
+};
+
+const rec = (value: unknown): Dict => value && typeof value === "object" && !Array.isArray(value) ? value as Dict : {};
+const num = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+const int = (value: unknown): number | null => {
+  const parsed = num(value);
+  return parsed !== null && Number.isInteger(parsed) ? parsed : null;
+};
+const stamp = (value: unknown): number => {
+  const numeric = num(value);
+  if (numeric !== null) return numeric > 0 && numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+  if (typeof value !== "string" || !value.trim()) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+const zoneLabel = (value: number) => value > 0 ? `+${value}` : String(value);
+const priceLabel = (value: number | null) => {
+  if (value === null || !Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  const digits = abs >= 10 ? 2 : abs >= 1 ? 3 : 5;
+  return new Intl.NumberFormat("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+};
+const clockLabel = (value: number | null) => {
+  if (!value) return "—";
+  const date = new Date(value);
+  const key = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const time = new Intl.DateTimeFormat("nl-NL", { timeZone: "Europe/Amsterdam", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+  if (key === today) return `Vandaag ${time}`;
+  return new Intl.DateTimeFormat("nl-NL", { timeZone: "Europe/Amsterdam", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+};
+
+function strategy2From(payload: unknown): Dict {
+  const root = rec(payload);
+  if (Object.keys(rec(root.strategy2)).length) return rec(root.strategy2);
+  const data = rec(root.data);
+  if (Object.keys(rec(data.strategy2)).length) return rec(data.strategy2);
+  return rec(rec(root.snapshot).strategy2);
+}
+
+function seatTruthFrom(payload: unknown): SeatTruth {
+  const strategy2 = strategy2From(payload);
+  const runtime = rec(strategy2.runtimeTruth);
+  const report = Object.keys(rec(strategy2.priceZoneSeats)).length ? rec(strategy2.priceZoneSeats) : rec(strategy2.zoneSoldiers);
+  const model = rec(report.seatModel);
+  const current = rec(report.currentZone);
+  const settings = rec(strategy2.settings);
+  const perZoneLong = Math.max(0, Math.round(
+    num(model.perZoneLong) ?? num(settings.zoneBaseLongSoldiers) ?? 0,
+  ));
+  const perZoneShort = Math.max(0, Math.round(
+    num(model.perZoneShort) ?? num(settings.zoneBaseShortSoldiers) ?? 0,
+  ));
+  const activeZone = int(runtime.activeZone) ?? int(model.activeZone) ?? int(report.activeZone);
+  const strategyOpenTotal = Math.max(0, Math.round(
+    num(model.strategyOpenTotal) ?? num(rec(report.strategyOwnedOpen).total) ?? 0,
+  ));
+  const countsRaw = rec(report.zoneOpenCounts);
+  const zoneOpenCounts: OpenCounts = {};
+  for (const [key, raw] of Object.entries(countsRaw)) {
+    const zone = int(key);
+    if (zone === null) continue;
+    const row = rec(raw);
+    const long = Math.max(0, Math.round(num(row.long) ?? 0));
+    const short = Math.max(0, Math.round(num(row.short) ?? 0));
+    zoneOpenCounts[String(zone)] = { long, short, total: Math.max(0, Math.round(num(row.total) ?? long + short)) };
+  }
+  let reliable = report.zoneOpenCountsReliable === true;
+  const total = Object.values(zoneOpenCounts).reduce((sum, row) => sum + row.total, 0);
+  reliable = reliable && total === strategyOpenTotal;
+
+  const openKeys = new Set<string>();
+  const managed = rec(strategy2.multiBbPositions);
+  for (const [key, raw] of Object.entries(managed)) {
+    const row = rec(raw);
+    const role = String(row.soldierRole || "").toUpperCase();
+    const origin = int(row.originZone);
+    const normalized = key.toUpperCase();
+    const side = normalized.endsWith("|LONG") ? "LONG" : normalized.endsWith("|SHORT") ? "SHORT" : "";
+    if (origin === null || !side || (role !== "ZONE_BASE" && role !== "EXPOSURE_BALANCER")) continue;
+    openKeys.add(normalized);
+  }
+  if (openKeys.size !== strategyOpenTotal) openKeys.clear();
+
+  // Canonical active-zone occupancy remains the same source used by the existing
+  // Pricezone-strategie block. Only fill a missing active bucket when that source
+  // explicitly reports its own current-zone counts.
+  if (activeZone !== null && reliable && !zoneOpenCounts[String(activeZone)]) {
+    const long = Math.max(0, Math.round(num(current.openLong) ?? 0));
+    const short = Math.max(0, Math.round(num(current.openShort) ?? 0));
+    zoneOpenCounts[String(activeZone)] = { long, short, total: long + short };
+  }
+  return { activeZone, perZoneLong, perZoneShort, strategyOpenTotal, zoneOpenCounts, zoneOpenCountsReliable: reliable, openKeys };
+}
+
+function chartTruthFrom(chartPayload: unknown, eventPayload: unknown): ChartTruth {
+  const chart = rec(chartPayload);
+  const events = rec(eventPayload);
+  const zones: ZoneLevel[] = [];
+  for (const raw of Array.isArray(chart.zones) ? chart.zones : []) {
+    const row = rec(raw);
+    const index = int(row.index);
+    const center = num(row.center);
+    if (index === null || center === null || center <= 0) continue;
+    zones.push({ index, center, lower: num(row.lower), upper: num(row.upper) });
+  }
+  zones.sort((a, b) => a.index - b.index);
+
+  const markers: Marker[] = [];
+  for (const raw of Array.isArray(events.markers) ? events.markers : []) {
+    const marker = rec(raw);
+    const markerAt = stamp(marker.atMs);
+    const entries: ZoneEntry[] = [];
+    const trades: ZoneTrade[] = [];
+    for (const item of Array.isArray(marker.entries) ? marker.entries : []) {
+      const row = rec(item);
+      const sideRaw = String(row.side || "").toUpperCase();
+      entries.push({
+        symbol: String(row.symbol || "").toUpperCase(),
+        side: sideRaw === "LONG" || sideRaw === "SHORT" ? sideRaw : "",
+        atMs: stamp(row.atMs) || markerAt,
+        activityType: String(row.activityType || "").toUpperCase(),
+        originZone: int(row.originZone),
+        soldierRole: String(row.soldierRole || "").toUpperCase(),
+      });
+    }
+    for (const item of Array.isArray(marker.trades) ? marker.trades : []) {
+      const row = rec(item);
+      const sideRaw = String(row.side || "").toUpperCase();
+      trades.push({
+        symbol: String(row.symbol || "").toUpperCase(),
+        side: sideRaw === "LONG" || sideRaw === "SHORT" ? sideRaw : "",
+        atMs: stamp(row.atMs) || markerAt,
+        activityType: String(row.activityType || "").toUpperCase(),
+        originZone: int(row.originZone),
+        soldierRole: String(row.soldierRole || "").toUpperCase(),
+        realizedPnlUsd: num(row.realizedPnlUsd),
+      });
+    }
+    markers.push({ atMs: markerAt, entries, trades });
+  }
+  markers.sort((a, b) => a.atMs - b.atMs);
+  return {
+    currentEquity: num(chart.currentEquity),
+    currentZone: int(chart.currentZone),
+    zones,
+    markers,
+  };
+}
+
+function deriveCycle(seats: SeatTruth, chart: ChartTruth): CycleTruth {
+  const events: CycleEvent[] = [];
+  for (const marker of chart.markers) {
+    for (const entry of marker.entries) {
+      if (!entry.symbol || !entry.side || entry.originZone === null) continue;
+      if (entry.soldierRole && entry.soldierRole !== "ZONE_BASE" && entry.soldierRole !== "EXPOSURE_BALANCER") continue;
+      if (entry.activityType === "DCA" || entry.activityType === "ADD" || entry.activityType === "MANUAL_DCA_DETECTED") continue;
+      events.push({
+        atMs: entry.atMs,
+        kind: "entry",
+        key: `${entry.symbol}|${entry.side}`,
+        originZone: entry.originZone,
+        pnl: null,
+        activityType: entry.activityType,
+      });
+    }
+    for (const trade of marker.trades) {
+      if (!trade.symbol || !trade.side || trade.originZone === null) continue;
+      if (trade.soldierRole && trade.soldierRole !== "ZONE_BASE" && trade.soldierRole !== "EXPOSURE_BALANCER") continue;
+      if (trade.activityType === "PARTIAL_TP") continue;
+      events.push({
+        atMs: trade.atMs,
+        kind: "close",
+        key: `${trade.symbol}|${trade.side}`,
+        originZone: trade.originZone,
+        pnl: trade.realizedPnlUsd,
+        activityType: trade.activityType,
+      });
+    }
+  }
+  events.sort((a, b) => a.atMs - b.atMs);
+
+  let start: CycleEvent | null = null;
+  if (seats.strategyOpenTotal > 0 && seats.openKeys.size === seats.strategyOpenTotal) {
+    const active = new Set(seats.openKeys);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index];
+      if (event.kind === "close") active.add(event.key);
+      else {
+        active.delete(event.key);
+        if (active.size === 0) {
+          start = event;
+          break;
+        }
+      }
+    }
+  }
+
+  const reliable = start !== null;
+  const visited = new Set<number>();
+  for (const key of Object.keys(seats.zoneOpenCounts)) {
+    const zone = int(key);
+    if (zone !== null && (seats.zoneOpenCounts[key]?.total ?? 0) > 0) visited.add(zone);
+  }
+  const profits = new Map<number, { count: number; pnl: number; pnlReliable: boolean; lastAtMs: number }>();
+  const cycleEvents = reliable ? events.filter((event) => event.atMs >= start!.atMs) : [];
+  for (const event of cycleEvents) {
+    visited.add(event.originZone);
+    if (event.kind !== "close") continue;
+    const bucket = profits.get(event.originZone) ?? { count: 0, pnl: 0, pnlReliable: true, lastAtMs: 0 };
+    bucket.count += 1;
+    // MULTI_BB_TP is confirmed profitable by execution semantics, but older
+    // audit rows may not carry exact realized PnL. Never turn unknown money into 0.
+    if (event.pnl === null || !Number.isFinite(event.pnl) || event.pnl <= 0) bucket.pnlReliable = false;
+    else bucket.pnl += event.pnl;
+    bucket.lastAtMs = Math.max(bucket.lastAtMs, event.atMs);
+    profits.set(event.originZone, bucket);
+  }
+  const closeEvents = cycleEvents.filter((event) => event.kind === "close");
+  const lastProfit = closeEvents.length ? closeEvents[closeEvents.length - 1] : null;
+  const totalProfits = reliable ? [...profits.values()].reduce((sum, row) => sum + row.count, 0) : null;
+  const pnlReliable = reliable && [...profits.values()].every((row) => row.pnlReliable);
+  const totalPnl = pnlReliable ? [...profits.values()].reduce((sum, row) => sum + row.pnl, 0) : null;
+  return { reliable, start, visited, profits, lastProfit, totalProfits, totalPnl };
+}
+
+function visibleZoneIndexes(seats: SeatTruth, chart: ChartTruth, cycle: CycleTruth): number[] {
+  const active = seats.activeZone ?? chart.currentZone;
+  const known = new Set<number>();
+  for (const zone of chart.zones) known.add(zone.index);
+  for (const raw of Object.keys(seats.zoneOpenCounts)) {
+    const zone = int(raw);
+    if (zone !== null) known.add(zone);
+  }
+  for (const zone of cycle.visited) known.add(zone);
+  if (active !== null) {
+    for (let zone = active - 5; zone <= active + 5; zone += 1) known.add(zone);
+  }
+  let rows = [...known].sort((a, b) => b - a);
+  if (rows.length > 25 && active !== null) {
+    rows = rows.sort((a, b) => Math.abs(a - active) - Math.abs(b - active)).slice(0, 25).sort((a, b) => b - a);
+  } else if (rows.length > 25) rows = rows.slice(0, 25);
+  return rows;
+}
+
+export function PriceZoneCycleOverview({ liveActiveZone }: { liveActiveZone: number | null }) {
+  const [seatTruth, setSeatTruth] = useState<SeatTruth | null>(null);
+  const [chartTruth, setChartTruth] = useState<ChartTruth | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const [account, chart, events] = await Promise.all([
+          authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }),
+          authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600", { cache: "no-store" }),
+          authenticatedRequest("/api/exchanges/aster/portfolio-chart/events?timeframe=15m", { cache: "no-store" }),
+        ]);
+        if (!alive) return;
+        setSeatTruth(seatTruthFrom(account));
+        setChartTruth(chartTruthFrom(chart, events));
+      } catch {
+        if (!alive) return;
+        setSeatTruth(null);
+        setChartTruth(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 5000);
+    const visible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, []);
+
+  const derived = useMemo(() => {
+    if (!seatTruth || !chartTruth) return null;
+    const cycle = deriveCycle(seatTruth, chartTruth);
+    return { cycle, indexes: visibleZoneIndexes(seatTruth, chartTruth, cycle) };
+  }, [seatTruth, chartTruth]);
+
+  const activeZone = seatTruth?.activeZone ?? liveActiveZone ?? chartTruth?.currentZone ?? null;
+  const centerByZone = new Map((chartTruth?.zones ?? []).map((zone) => [zone.index, zone.center]));
+  const cycle = derived?.cycle ?? null;
+  const startZone = cycle?.start?.originZone ?? null;
+  const lastZone = cycle?.lastProfit?.originZone ?? null;
+
+  return (
+    <section className="aps-zone-cycle-overview" data-reference={REFERENCE} aria-label="Zone overzicht huidige cyclus">
+      <header className="aps-zco-head">
+        <h3>Zone overzicht <small>(huidige cyclus)</small></h3>
+        <div className="aps-zco-live">
+          <span><small>Huidige prijs</small><b>{chartTruth?.currentEquity === null || chartTruth?.currentEquity === undefined ? "—" : `$ ${priceLabel(chartTruth.currentEquity)}`}</b></span>
+          <span><small>Actieve zone</small><b className="zone">{activeZone === null ? "—" : zoneLabel(activeZone)}</b></span>
+        </div>
+      </header>
+
+      <div className="aps-zco-table-wrap" aria-busy={loading}>
+        <table className="aps-zco-table">
+          <thead>
+            <tr>
+              <th>Zone</th>
+              <th>Prijsniveau<small>(USDT)</small></th>
+              <th className="long">LONG<small>Bezet / Max</small></th>
+              <th className="short">SHORT<small>Bezet / Max</small></th>
+              <th>Vrij</th>
+              <th>Profits<small>deze cyclus</small></th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(derived?.indexes ?? []).map((zone) => {
+              const open = seatTruth?.zoneOpenCountsReliable ? (seatTruth.zoneOpenCounts[String(zone)] ?? { long: 0, short: 0, total: 0 }) : null;
+              const capacity = seatTruth ? seatTruth.perZoneLong + seatTruth.perZoneShort : null;
+              const free = open && capacity !== null ? Math.max(0, capacity - open.long - open.short) : null;
+              const full = Boolean(open && capacity !== null && capacity > 0 && open.long >= (seatTruth?.perZoneLong ?? 0) && open.short >= (seatTruth?.perZoneShort ?? 0));
+              const isActive = activeZone === zone;
+              const hasOpen = Boolean(open && open.total > 0);
+              const visited = Boolean(cycle?.visited.has(zone));
+              const profitCount = cycle?.reliable ? (cycle.profits.get(zone)?.count ?? 0) : null;
+              const status = isActive
+                ? "Actief"
+                : full
+                  ? "Volledig"
+                  : hasOpen
+                    ? "Open posities"
+                    : visited
+                      ? activeZone !== null && zone > activeZone ? "Boven huidige" : activeZone !== null && zone < activeZone ? "Onder huidige" : "Bezocht"
+                      : "Toekomst";
+              return (
+                <tr key={zone} className={[isActive ? "is-active" : "", full ? "is-full" : "", hasOpen ? "has-open" : "", visited ? "is-visited" : ""].filter(Boolean).join(" ")}>
+                  <td className="zone-cell">{isActive ? <i aria-hidden="true">›</i> : null}<b>{zoneLabel(zone)}</b>{startZone === zone ? <em title="Eerste entry deze cyclus">◎</em> : null}</td>
+                  <td>{priceLabel(centerByZone.get(zone) ?? null)}</td>
+                  <td className="long">{open && seatTruth ? `${open.long} / ${seatTruth.perZoneLong}` : "— / —"}</td>
+                  <td className="short">{open && seatTruth ? `${open.short} / ${seatTruth.perZoneShort}` : "— / —"}</td>
+                  <td>{free ?? "—"}</td>
+                  <td>{profitCount ?? "—"}</td>
+                  <td className="status">{status}</td>
+                </tr>
+              );
+            })}
+            {!derived?.indexes.length ? <tr><td colSpan={7} className="empty">Zonegegevens worden geladen…</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="aps-zco-cards">
+        <article>
+          <span className="icon" aria-hidden="true">◷</span>
+          <div><small>Eerste entry deze cyclus</small><b>{cycle?.start ? `Zone ${zoneLabel(cycle.start.originZone)} @ ${priceLabel(centerByZone.get(cycle.start.originZone) ?? null)}` : "—"}</b><em>{clockLabel(cycle?.start?.atMs ?? null)}</em></div>
+        </article>
+        <article>
+          <span className="icon" aria-hidden="true">🏆</span>
+          <div><small>Laatste profit</small><b>{cycle?.lastProfit ? `Zone ${zoneLabel(cycle.lastProfit.originZone)} @ ${priceLabel(centerByZone.get(cycle.lastProfit.originZone) ?? null)}` : cycle?.reliable ? "Nog geen profit deze cyclus" : "—"}</b><em>{clockLabel(cycle?.lastProfit?.atMs ?? null)}</em></div>
+        </article>
+        <article>
+          <span className="icon" aria-hidden="true">🏆</span>
+          <div><small>Totaal profits deze cyclus</small><b className="profit-count">{cycle?.totalProfits ?? "—"}</b><em className="money">{cycle?.totalPnl === null || cycle?.totalPnl === undefined ? "—" : `+ US$ ${priceLabel(cycle.totalPnl)}`}</em></div>
+        </article>
+      </div>
+
+      <div className="aps-zco-legend" aria-label="Legenda">
+        <span><i className="gold"/>Actieve zone</span>
+        <span><i className="green"/>Zone met open posities</span>
+        <span><i className="red"/>Volledig bezet</span>
+        <span><i className="grey"/>Toekomstige zone</span>
+        <span><b>◎</b>Eerste entry</span>
+        <span><b>🏆</b>Profit in zone</span>
+        <span><b>›</b>Huidige prijs</span>
+      </div>
+
+      {cycle && !cycle.reliable && (seatTruth?.strategyOpenTotal ?? 0) > 0 ? (
+        <p className="aps-zco-truth-note">ⓘ De cyclusstart kan met de beschikbare bevestigde eventhistorie nog niet volledig worden bewezen. Onbekende waarden blijven daarom bewust op —.</p>
+      ) : null}
+    </section>
+  );
+}
