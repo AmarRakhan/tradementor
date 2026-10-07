@@ -33,7 +33,9 @@ export function deriveAsterAccountDisplay({ data, serverConfirmed, error, update
   const configured = data?.configured === true;
   const fresh = updatedAt !== null && now - updatedAt < 120_000;
   const reliable = Boolean(data) && configured && serverConfirmed && !error && fresh;
-  const displayable = Boolean(data) && configured;
+  // Build 571 SSOT: stale/unconfirmed/error snapshots are not financial truth.
+  // Fail visible instead of rendering a browser-retained or partial value.
+  const displayable = reliable;
   const equityNumber = displayable ? number(data?.equity) : null;
   const availableNumber = displayable ? number(data?.availableBalance) : null;
   const maintenanceMarginPercent = displayable ? number(data?.maintenanceMarginPct) : null;
