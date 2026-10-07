@@ -136,6 +136,7 @@ type PriceZoneSeatSummary = ActiveZoneSeatSummary & {
   dynamicHedgeSafetyStatus: string;
   queueHaltedUncertain: boolean;
   queueUncertainReason: string;
+  openZonePositionKeys: string[];
 };
 
 type SnapshotDetailView = "portfolio" | "price-zone" | "scanner" | "performance";
@@ -353,6 +354,29 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     }
   }
 
+  const candidateOpenZonePositionKeys = exchangeFlatConfirmed ? [] : Object.entries(record(strategy2.multiBbPositions)).flatMap(([tradeKey, rawManaged]) => {
+    const managed = record(rawManaged);
+    const role = String(managed.soldierRole || "").toUpperCase();
+    const originZone = optionalNumber(managed.originZone);
+    const normalizedKey = tradeKey.toUpperCase();
+    const side = String(
+      managed.side
+      || managed.positionSide
+      || (normalizedKey.endsWith("|LONG") ? "LONG" : normalizedKey.endsWith("|SHORT") ? "SHORT" : ""),
+    ).toUpperCase();
+    if (
+      (role !== "ZONE_BASE" && role !== "EXPOSURE_BALANCER")
+      || originZone === null
+      || !Number.isInteger(originZone)
+      || (side !== "LONG" && side !== "SHORT")
+    ) return [];
+    return [normalizedKey];
+  });
+  const expectedZoneOwnedOpen = strategyOpenLong + strategyOpenShort;
+  const openZonePositionKeys = candidateOpenZonePositionKeys.length === expectedZoneOwnedOpen
+    ? candidateOpenZonePositionKeys
+    : [];
+
   return {
     enabled: hasRuntimeTruth
       ? runtimeTruth.strategyMode === "ZONE_WARRIORS" && runtimeTruth.enabled === true
@@ -387,6 +411,7 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     dynamicHedgeSafetyStatus: firstString([dynamicHedge], ["safetyStatus"]),
     queueHaltedUncertain: hasRuntimeTruth ? runtimeTruth.queueHalted === true : queue.haltedUncertain === true,
     queueUncertainReason: firstString([queue], ["uncertainReason"]),
+    openZonePositionKeys,
   };
 }
 
@@ -932,7 +957,7 @@ function PriceZoneDetailsPage({ summary, liveActiveZone, onBack }: {
       <div><h2>Prijszone details</h2><p>Gedetailleerde live weergave van de prijszone-strategie</p></div>
     </div>
     <PriceZoneStrategySummary summary={summary} liveActiveZone={liveActiveZone} />
-    <PriceZoneCycleOverview liveActiveZone={liveActiveZone} />
+    <PriceZoneCycleOverview seatSummary={summary} liveActiveZone={liveActiveZone} />
   </section>;
 }
 
