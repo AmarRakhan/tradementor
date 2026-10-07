@@ -29,7 +29,7 @@ type SeatSummaryProp = {
   currentPrice: number | null;
   nextLongLevels: {
     status: string;
-    up: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+    up: { zone: number; price: number; distance: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
     down: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
   } | null;
   zones: Array<ZoneLevel & {
@@ -381,10 +381,7 @@ export function PriceZoneCycleOverview({
         <span style={{ padding: "0 5px", color: "#77dfab", fontSize: 12, lineHeight: 1.25 }}>Volgende<br />LONG</span>
         {(["up", "down"] as const).map((direction) => {
           const level = seatSummary?.nextLongLevels?.status === "AVAILABLE" ? seatSummary.nextLongLevels[direction] : null;
-          const current = seatSummary?.currentPrice;
-          const distance = level && current !== null && current !== undefined && Number.isFinite(current)
-            ? (direction === "up" ? level.price - current : current - level.price)
-            : null;
+          const distance = level?.distance ?? null;
           const validDistance = distance !== null && Number.isFinite(distance) && distance > 0;
           const color = direction === "up" ? "#6af1ad" : "#ff829e";
           return <span key={direction} style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px", color }} title={level ? `Zone ${zoneLabel(level.zone)} · ${level.freeLongSeats} vrije LONG-stoelen; alleen zonecapaciteit, geen ordertoestemming` : "Geen betrouwbare volgende LONG-zone"}>
