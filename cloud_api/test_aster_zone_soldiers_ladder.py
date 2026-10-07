@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aster_zone_soldiers import confirmed_zone_from_display_zones
+from aster_zone_soldiers import canonical_display_zone_ladder, confirmed_zone_from_display_zones
 
 
 ROOT = Path(__file__).resolve().parent
@@ -47,5 +47,19 @@ def test_first_legacy_migration_tick_is_explicitly_held_before_new_zone_entries(
 
 def test_server_zone_context_uses_the_same_extrapolated_signed_ladder():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert "confirmed_zone_from_display_zones(zones, equity)" in source
+    assert "canonical_display_zone_ladder(" in source
+    assert "confirmed_zone_from_display_zones(" in source
     assert 'portfolio_chart_latest_contiguous_candles(candles, "15m")' in source
+
+
+def test_canonical_ladder_exposes_ranges_for_owned_outer_zones():
+    zones = [
+        {"index": 0, "center": 312.0, "atr": 0.6},
+        {"index": 1, "center": 314.0, "atr": 0.6},
+    ]
+    ladder = canonical_display_zone_ladder(zones, 315.0, min_index=-11, max_index=6)
+    indexes = {row["index"] for row in ladder}
+    assert -11 in indexes and 6 in indexes
+    assert all(row["center"] > 0 for row in ladder)
+    assert all(row["lower"] is not None for row in ladder[1:])
+    assert all(row["upper"] is not None for row in ladder[:-1])

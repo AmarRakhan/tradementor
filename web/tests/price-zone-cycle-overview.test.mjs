@@ -13,12 +13,13 @@ test("zone overview mounts directly below Prijszone-strategie", () => {
   assert.match(overview, /huidige cyclus/);
 });
 
-test("zone overview reuses the canonical Aster seat snapshot and only polls chart/event read feeds itself", () => {
-  assert.match(snapshot, /authenticatedRequest\("\/api\/exchanges\/aster"/);
+test("zone overview consumes canonical zoneState and only polls the read-only cycle event feed", () => {
+  assert.match(snapshot, /const zoneState = record\(runtimeTruth\.zoneState\)/);
+  assert.match(snapshot, /zoneState\.source !== "SERVER_RUNTIME"/);
   assert.match(snapshot, /openZonePositionKeys/);
-  assert.doesNotMatch(overview, /authenticatedRequest\("\/api\/exchanges\/aster"\s*,/);
-  assert.match(overview, /portfolio-chart\?timeframe=15m&limit=320/);
+  assert.doesNotMatch(overview, /portfolio-chart\?timeframe=15m/);
   assert.match(overview, /portfolio-chart\/events\?timeframe=15m/);
+  assert.doesNotMatch(overview, /derivePortfolioZoneLadder/);
   assert.doesNotMatch(overview, /method:\s*["']POST["']/);
   assert.doesNotMatch(overview, /strategy2\/(start|stop|settings|tick)/);
 });
@@ -48,19 +49,26 @@ test("Build 574 keeps the zone overview to five columns without horizontal scrol
 });
 
 
-test("Build 572 cannot remain indefinitely on the zone loading state", () => {
-  assert.match(overview, /Promise\.allSettled/);
+test("cycle-event refresh cannot block canonical zone-table rendering", () => {
   assert.match(overview, /window\.setTimeout\(\(\) => controller\.abort\(\), 8000\)/);
-  assert.match(overview, /if \(!seatTruth\) return null/);
+  assert.match(overview, /aria-busy=\{false\}/);
+  assert.doesNotMatch(overview, /Promise\.allSettled/);
   assert.doesNotMatch(overview, /setSeatTruth\(/);
-  assert.match(overview, /Geen betrouwbare zonegegevens beschikbaar/);
 });
 
 
-test("Build 577 keeps configured zero SHORT capacity and fills visible zone ranges from the canonical ladder", () => {
-  assert.match(snapshot, /Math\.max\(0, Math\.round\(firstNumber\(\[settings\], \["zoneBaseShortSoldiers", "perZoneShort"\]\) \?\? 0\)\)/);
-  assert.doesNotMatch(snapshot, /firstNumber\(\[settings, seatModel\], \["zoneBaseShortSoldiers", "perZoneShort"\]\)/);
-  assert.match(overview, /derivePortfolioZoneLadder/);
-  assert.match(overview, /minIndex: minVisibleZone/);
-  assert.match(overview, /maxIndex: maxVisibleZone/);
+test("Build 580 forbids frontend zone-count/capacity reconstruction", () => {
+  const start = snapshot.indexOf("async function loadPriceZoneSeatSummary");
+  const end = snapshot.indexOf("function scannerSideStatus", start);
+  const loader = snapshot.slice(start, end);
+  assert.match(loader, /record\(runtimeTruth\.zoneState\)/);
+  assert.match(loader, /capacity\.perZoneShort/);
+  assert.match(loader, /zoneState\.zones/);
+  assert.doesNotMatch(loader, /seatModel/);
+  assert.doesNotMatch(loader, /priceZoneSeats/);
+  assert.doesNotMatch(loader, /zoneSoldiers/);
+  assert.doesNotMatch(loader, /multiBbPositions/);
+  assert.match(overview, /seatSummary\?\.zones/);
+  assert.match(overview, /seatSummary\.reconciliation\.otherOpenTotal/);
+  assert.match(overview, /otherOpenPositions\.map/);
 });

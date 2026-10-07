@@ -278,14 +278,9 @@ def _median(values: list[float]) -> float | None:
     return rows[middle] if len(rows) % 2 else (rows[middle - 1] + rows[middle]) / 2.0
 
 
-def confirmed_zone_from_display_zones(zones: list[dict[str, Any]] | None, price: float,
-                                      *, min_index: int = -3, max_index: int = 3) -> int | None:
-    """Mirror the web Portfolio Koers ladder, including dynamic outer zones.
-
-    Build 455 makes the server and visible Portfolio Koers use the same
-    anchor/step interpretation. The display may move beyond the historical
-    -3..+3 window, so the runtime must extend around the current equity too.
-    """
+def canonical_display_zone_ladder(zones: list[dict[str, Any]] | None, price: float,
+                                  *, min_index: int = -3, max_index: int = 3) -> list[dict[str, Any]]:
+    """Return the one canonical extended Portfolio Koers / Zone Warriors ladder."""
     value = _number(price)
     observed = []
     for raw in zones or []:
@@ -296,10 +291,10 @@ def confirmed_zone_from_display_zones(zones: list[dict[str, Any]] | None, price:
         atr = _number(raw.get("atr"))
         if index == 10_000 or center <= 0:
             continue
-        observed.append({"index": index, "center": center, "atr": atr})
+        observed.append({"index": index, "center": center, "atr": atr, "source": str(raw.get("source") or "")})
     observed.sort(key=lambda row: row["index"])
     if value <= 0 or not observed:
-        return None
+        return []
 
     step_candidates: list[float] = []
     for previous, current in zip(observed, observed[1:]):
@@ -312,12 +307,12 @@ def confirmed_zone_from_display_zones(zones: list[dict[str, Any]] | None, price:
     center_median = _median([row["center"] for row in observed]) or observed[0]["center"]
     step = observed_step or max(center_median * .02, atr_step or 0.0)
     if step <= 0:
-        return None
+        return []
 
     anchor = _median([row["center"] - row["index"] * step for row in observed
                       if row["center"] - row["index"] * step > 0])
     if anchor is None or anchor <= 0:
-        return None
+        return []
 
     estimated_index = int(math.floor(((value - anchor) / step) + .5))
     observed_indexes = [int(row["index"]) for row in observed]
@@ -326,26 +321,48 @@ def confirmed_zone_from_display_zones(zones: list[dict[str, Any]] | None, price:
     if dynamic_max - dynamic_min > 24:
         dynamic_min = estimated_index - 4
         dynamic_max = estimated_index + 4
-    by_index = {row["index"]: row["center"] for row in observed}
-    centers = []
+    by_index = {row["index"]: row for row in observed}
+    centers: list[tuple[int, float, str]] = []
     for zone_index in range(dynamic_min, dynamic_max + 1):
-        center = by_index.get(zone_index, anchor + zone_index * step)
+        current = by_index.get(zone_index)
+        center = current["center"] if current else anchor + zone_index * step
+        source = str(current.get("source") or "confirmed") if current else "canonical-extrapolated"
         if center > 0:
-            centers.append((zone_index, center))
+            centers.append((zone_index, center, source))
     if not centers:
-        return None
+        return []
     if any(centers[index][1] <= centers[index - 1][1] for index in range(1, len(centers))):
-        centers = [(zone_index, anchor + zone_index * step) for zone_index, _ in centers]
+        centers = [(zone_index, anchor + zone_index * step, "canonical-extrapolated") for zone_index, _, _ in centers]
 
-    for index, (zone_index, center) in enumerate(centers):
+    output = []
+    for index, (zone_index, center, source) in enumerate(centers):
         previous = centers[index - 1][1] if index > 0 else float("-inf")
         following = centers[index + 1][1] if index + 1 < len(centers) else float("inf")
-        lower = (previous + center) / 2.0 if math.isfinite(previous) else float("-inf")
-        upper = (center + following) / 2.0 if math.isfinite(following) else float("inf")
-        if lower <= value < upper:
-            return zone_index
-    return min(centers, key=lambda item: abs(item[1] - value))[0]
+        lower = (previous + center) / 2.0 if math.isfinite(previous) else center - step / 2.0
+        upper = (center + following) / 2.0 if math.isfinite(following) else center + step / 2.0
+        output.append({
+            "index": zone_index,
+            "center": center,
+            "lower": lower,
+            "upper": upper,
+            "source": source,
+        })
+    return output
 
+
+def confirmed_zone_from_display_zones(zones: list[dict[str, Any]] | None, price: float,
+                                      *, min_index: int = -3, max_index: int = 3) -> int | None:
+    """Resolve active zone from the canonical extended display ladder."""
+    value = _number(price)
+    ladder = canonical_display_zone_ladder(zones, value, min_index=min_index, max_index=max_index)
+    if value <= 0 or not ladder:
+        return None
+    for row in ladder:
+        lower = row.get("lower")
+        upper = row.get("upper")
+        if (lower is None or float(lower) <= value) and (upper is None or value < float(upper)):
+            return int(row["index"])
+    return min(ladder, key=lambda row: abs(_number(row.get("center")) - value))["index"]
 
 def _position_map(positions: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}

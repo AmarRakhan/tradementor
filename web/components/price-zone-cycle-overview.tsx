@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
-import { derivePortfolioZoneLadder } from "@/lib/portfolio-zone-advisor.mjs";
 
 const REFERENCE = "file_00000000773c8210ad977be9527738e6";
 
@@ -27,6 +26,28 @@ type SeatSummaryProp = {
   zoneOpenCounts: OpenCounts;
   zoneOpenCountsReliable: boolean;
   openZonePositionKeys: string[];
+  currentPrice: number | null;
+  zones: Array<ZoneLevel & {
+    longOpen: number;
+    shortOpen: number;
+    totalOpen: number;
+    longMax: number;
+    shortMax: number;
+    totalMax: number;
+    active: boolean;
+  }>;
+  otherOpenPositions: Array<{ positionKey: string; symbol: string; side: string; ownerType: string; role: string; reason: string }>;
+  unassignedStrategyPositions: Array<{ positionKey: string; symbol: string; side: string; role: string; originZone: number | null; reason: string }>;
+  reconciliation: {
+    accountMatches: boolean;
+    strategyMatches: boolean;
+    zonesMatchStrategy: boolean;
+    accountTotal: number;
+    strategyTotal: number;
+    zoneAssignedTotal: number;
+    unassignedStrategyTotal: number;
+    otherOpenTotal: number;
+  };
 };
 
 type ZoneLevel = { index: number; center: number; lower: number | null; upper: number | null };
@@ -114,18 +135,14 @@ const clockLabel = (value: number | null) => {
   return new Intl.DateTimeFormat("nl-NL", { timeZone: "Europe/Amsterdam", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
 };
 
-function chartTruthFrom(chartPayload: unknown, eventPayload: unknown): ChartTruth {
-  const chart = rec(chartPayload);
+function chartTruthFrom(eventPayload: unknown, seatSummary: SeatSummaryProp | null): ChartTruth {
   const events = rec(eventPayload);
-  const zones: ZoneLevel[] = [];
-  for (const raw of Array.isArray(chart.zones) ? chart.zones : []) {
-    const row = rec(raw);
-    const index = int(row.index);
-    const center = num(row.center);
-    if (index === null || center === null || center <= 0) continue;
-    zones.push({ index, center, lower: num(row.lower), upper: num(row.upper) });
-  }
-  zones.sort((a, b) => a.index - b.index);
+  const zones: ZoneLevel[] = (seatSummary?.zones ?? []).map((row) => ({
+    index: row.index,
+    center: row.center ?? 0,
+    lower: row.lower,
+    upper: row.upper,
+  })).filter((row) => row.center > 0);
 
   const markers: Marker[] = [];
   for (const raw of Array.isArray(events.markers) ? events.markers : []) {
@@ -162,8 +179,8 @@ function chartTruthFrom(chartPayload: unknown, eventPayload: unknown): ChartTrut
   }
   markers.sort((a, b) => a.atMs - b.atMs);
   return {
-    currentEquity: num(chart.currentEquity),
-    currentZone: int(chart.currentZone),
+    currentEquity: seatSummary?.currentPrice ?? null,
+    currentZone: seatSummary?.activeZone ?? null,
     zones,
     markers,
   };
@@ -294,33 +311,14 @@ export function PriceZoneCycleOverview({
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 8000);
       try {
-        const [chartResult, eventsResult] = await Promise.allSettled([
-          authenticatedRequest("/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=320", { cache: "no-store", signal: controller.signal }),
-          authenticatedRequest("/api/exchanges/aster/portfolio-chart/events?timeframe=15m", { cache: "no-store", signal: controller.signal }),
-        ]);
+        const events = await authenticatedRequest("/api/exchanges/aster/portfolio-chart/events?timeframe=15m", { cache: "no-store", signal: controller.signal });
         if (!alive) return;
-        const chart = chartResult.status === "fulfilled" ? chartResult.value : {};
-        const events = eventsResult.status === "fulfilled" ? eventsResult.value : {};
-        if (chartResult.status === "fulfilled" || eventsResult.status === "fulfilled") {
-          setChartTruth((current) => {
-            const next = chartTruthFrom(chart, events);
-            return {
-              currentEquity: next.currentEquity ?? current?.currentEquity ?? null,
-              currentZone: next.currentZone ?? current?.currentZone ?? null,
-              zones: next.zones.length ? next.zones : current?.zones ?? [],
-              markers: next.markers.length ? next.markers : current?.markers ?? [],
-            };
-          });
-          setLoadWarning(
-            chartResult.status === "rejected"
-              ? "Prijsniveaus worden tijdelijk niet bijgewerkt."
-              : eventsResult.status === "rejected"
-                ? "Cyclus-events worden tijdelijk niet bijgewerkt."
-                : "",
-          );
-        } else {
-          setLoadWarning("Zonehistorie kon tijdelijk niet worden bijgewerkt.");
-        }
+        setChartTruth(chartTruthFrom(events, seatSummary));
+        setLoadWarning("");
+      } catch {
+        if (!alive) return;
+        setChartTruth((current) => chartTruthFrom({ markers: current?.markers ?? [] }, seatSummary));
+        setLoadWarning("Cyclus-events worden tijdelijk niet bijgewerkt.");
       } finally {
         window.clearTimeout(timeout);
         refreshBusy = false;
@@ -338,7 +336,7 @@ export function PriceZoneCycleOverview({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, []);
+  }, [seatSummary]);
 
   const derived = useMemo(() => {
     if (!seatTruth) return null;
@@ -347,20 +345,13 @@ export function PriceZoneCycleOverview({
     return { cycle, indexes: visibleZoneIndexes(seatTruth, safeChart, cycle) };
   }, [seatTruth, chartTruth]);
 
-  const activeZone = seatTruth?.activeZone ?? liveActiveZone ?? chartTruth?.currentZone ?? null;
-  const centerByZone = new Map((chartTruth?.zones ?? []).map((zone) => [zone.index, zone.center]));
-  const visibleIndexes = derived?.indexes ?? [];
-  const minVisibleZone = visibleIndexes.length ? Math.min(...visibleIndexes) : -3;
-  const maxVisibleZone = visibleIndexes.length ? Math.max(...visibleIndexes) : 3;
-  const canonicalZoneLadder = derivePortfolioZoneLadder(chartTruth?.zones ?? [], {
-    minIndex: minVisibleZone,
-    maxIndex: maxVisibleZone,
-  });
-  const levelByZone = new Map((canonicalZoneLadder.zones ?? []).map((zone) => [Number(zone.index), {
-    index: Number(zone.index),
-    center: Number(zone.center),
-    lower: Number.isFinite(Number(zone.lower)) ? Number(zone.lower) : null,
-    upper: Number.isFinite(Number(zone.upper)) ? Number(zone.upper) : null,
+  const activeZone = seatTruth?.activeZone ?? liveActiveZone ?? null;
+  const centerByZone = new Map((seatSummary?.zones ?? []).map((zone) => [zone.index, zone.center]));
+  const levelByZone = new Map((seatSummary?.zones ?? []).map((zone) => [zone.index, {
+    index: zone.index,
+    center: zone.center ?? 0,
+    lower: zone.lower,
+    upper: zone.upper,
   } as ZoneLevel]));
   const cycle = derived?.cycle ?? null;
   const startZone = cycle?.start?.originZone ?? null;
@@ -379,11 +370,11 @@ export function PriceZoneCycleOverview({
         </div>
       </header>
       <div className="aps-zco-live">
-        <span><small>Huidige prijs</small><b>{chartTruth?.currentEquity === null || chartTruth?.currentEquity === undefined ? "—" : `$ ${priceLabel(chartTruth.currentEquity)}`}</b></span>
+        <span><small>Huidige prijs</small><b>{seatSummary?.currentPrice === null || seatSummary?.currentPrice === undefined ? "—" : `$ ${priceLabel(seatSummary.currentPrice)}`}</b></span>
         <span><small>Actieve zone</small><b className="zone">{activeZone === null ? "—" : zoneLabel(activeZone)}</b></span>
       </div>
 
-      <div className="aps-zco-table-wrap" aria-busy={loading}>
+      <div className="aps-zco-table-wrap" aria-busy={false}>
         <table className="aps-zco-table">
           <thead>
             <tr>
@@ -416,6 +407,15 @@ export function PriceZoneCycleOverview({
           </tbody>
         </table>
       </div>
+
+      {seatSummary && (seatSummary.reconciliation.otherOpenTotal > 0 || seatSummary.reconciliation.unassignedStrategyTotal > 0) ? (
+        <p className="aps-zco-truth-note">
+          ⓘ Account {seatSummary.reconciliation.accountTotal} = Strategy 2 {seatSummary.reconciliation.strategyTotal}
+          {seatSummary.reconciliation.otherOpenTotal > 0 ? ` + overig ${seatSummary.reconciliation.otherOpenTotal}` : ""}
+          {seatSummary.otherOpenPositions.length ? ` · ${seatSummary.otherOpenPositions.map((row) => `${row.symbol} ${row.side}`).join(", ")}` : ""}
+          {seatSummary.unassignedStrategyPositions.length ? ` · niet aan zone toegewezen: ${seatSummary.unassignedStrategyPositions.map((row) => `${row.symbol} ${row.side}`).join(", ")}` : ""}
+        </p>
+      ) : null}
 
       <div className="aps-zco-cards">
         <article>
