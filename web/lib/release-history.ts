@@ -32,6 +32,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Build 568 toont normale entryregels zonder dubbele ENTRY-badge en gebruikt het marginbedrag in dollars als primaire detailwaarde.",
     "Build 568 verlengt de bevestigde eventhistorie naar 36 uur en verhoogt de audit-readlimiet, zodat meer bestaande entries en TP-events terugkomen.",
     "Build 568 bewaart marginUsd op duurzame orderAttributions zodat nieuwe bevestigde entries hun margin direct in de chartdetails kunnen tonen.",
+    "Build 568 synchroniseert app-version en release-history in dezelfde canonieke deploydelta zodat de V46 releasegate de build kan promoveren.",
     "Build 567 tekent support/resistance als chart-native price lines over een ruim uitgebreide zone-ladder, zodat de lijnen bij horizontaal/verticaal pannen en zoomen niet meer als lokale overlay verdwijnen.",
     "Build 567 gebruikt naast audit-events ook durable orderAttributions als tweede confirmed bron voor LONG/SHORT/TP-labels.",
     "Portfolio Koers volgt de goedgekeurde visuele referentie file_0000000065e08246a10dfd2cc721cc77.",
