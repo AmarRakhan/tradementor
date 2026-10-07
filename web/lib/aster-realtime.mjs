@@ -3,10 +3,6 @@ function finite(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function positionQuantity(row) {
-  return Math.abs(finite(row?.quantity ?? row?.positionAmt ?? row?.signedQuantity) ?? 0);
-}
-
 export function applyAsterRealtimeMark(snapshot, event) {
   if (!snapshot || typeof snapshot !== "object" || !event || typeof event !== "object") return snapshot;
   const symbol = String(event.symbol ?? "").toUpperCase().trim();
