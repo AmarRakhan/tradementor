@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "policy": {
+    "rule": "A replacement is not complete until the superseded runtime path is removed after parity, canary and rollback gates pass.",
+    "defaultAction": "KEEP_UNTIL_PROVEN",
+    "productionMutationAllowed": false
+  },
+  "items": [
+    {
+      "id": "ASTER_UI_DUPLICATE_STATUS_POLLING",
+      "status": "PLANNED_REPLACEMENT",
+      "currentPaths": [
+        "web/components/aster-portfolio-snapshot-enhancer.tsx",
+        "web/components/aster-profit-pot-snapshot-bridge.tsx",
+        "web/components/aster-profit-lock-ladder-bridge.tsx"
+      ],
+      "currentBehavior": "Multiple mounted UI components independently request /api/exchanges/aster on short intervals.",
+      "replacement": "One shared realtime Aster state store with a single reconciliation reader and event-driven subscribers.",
+      "liveTradingImpact": "LOW",
+      "removalGates": [
+        "shared store is production-proven",
+        "position/equity/zone/hedge values match server truth",
+        "reconnect and visibility-resume tests pass",
+        "request-rate reduction is measured",
+        "rollback revision is retained"
+      ],
+      "removeAfter": "Shared-state canary passes for all active users",
+      "keepAsFallbackUntil": "At least one stable production observation window"
+    },
+    {
+      "id": "ACTIVE_TRADES_DUPLICATE_ACCOUNT_REFRESH",
+      "status": "PARTIAL_FIX_PREPARED",
+      "currentPaths": [
+        "cloud_api/main.py",
+        "web/components/portfolio-koers-chart.tsx"
+      ],
+      "currentBehavior": "Active Trades can refresh account/position truth separately from the canonical account snapshot.",
+      "replacement": "Canonical snapshot write-through plus realtime price updates; no UX polling slowdown.",
+      "liveTradingImpact": "LOW",
+      "removalGates": [
+        "snapshot write-through regression tests pass",
+        "no stale position count regression",
+        "no increase in Aster REST errors",
+        "realtime chart remains equally fresh"
+      ],
+      "removeAfter": "Duplicate refresh path is no longer needed",
+      "keepAsFallbackUntil": "Canonical snapshot freshness is proven under reconnect/restart"
+    },
+    {
+      "id": "SOFTWARE_TRIGGERED_PER_TRADE_TP",
+      "status": "SHADOW_VALIDATION",
+      "currentPaths": [
+        "cloud_api/aster_multi_bb_core.py"
+      ],
+      "currentBehavior": "Runtime watches mark price and submits the TP close only after the target is crossed.",
+      "replacement": "Exchange-native reduce-only TP with managed cancel/replace lifecycle.",
+      "liveTradingImpact": "HIGH",
+      "removalGates": [
+        "shadow target parity is exact",
+        "Auto Hedge close lock is preserved",
+        "quantity changes replace TP safely",
+        "DCA fill recomputes weighted-entry TP",
+        "manual position changes reconcile safely",
+        "single-account canary has zero semantic drift",
+        "rollback path is tested"
+      ],
+      "removeAfter": "Native TP is proven for all supported lifecycle states",
+      "keepAsFallbackUntil": "Native TP has a stable production observation window"
+    },
+    {
+      "id": "SOFTWARE_TRIGGERED_NEXT_DCA",
+      "status": "SHADOW_VALIDATION",
+      "currentPaths": [
+        "cloud_api/aster_multi_bb_core.py"
+      ],
+      "currentBehavior": "Runtime watches mark price and submits ADD_DCA only after the next DCA trigger is crossed.",
+      "replacement": "Exactly one exchange-native next-DCA limit order, rearmed only after confirmed fill and renewed safety validation.",
+      "liveTradingImpact": "HIGH",
+      "removalGates": [
+        "shadow DCA target parity is exact",
+        "margin and leverage tier preflight is preserved",
+        "only one next DCA can exist per managed leg",
+        "confirmed fill is required before rearm",
+        "config change cancel/replace is proven",
+        "manual add/restart reconciliation is proven",
+        "single-account canary has zero semantic drift",
+        "rollback path is tested"
+      ],
+      "removeAfter": "Native next-DCA lifecycle is proven for all supported states",
+      "keepAsFallbackUntil": "Native DCA has a stable production observation window"
+    },
+    {
+      "id": "DUPLICATE_BACKGROUND_SCHEDULER_OWNERSHIP",
+      "status": "INVESTIGATION_REQUIRED",
+      "currentPaths": [
+        "cloud_api/main.py"
+      ],
+      "currentBehavior": "Each API instance can start a periodic scheduler thread while a Cloud Scheduler trigger path also exists; a distributed minute claim prevents duplicate full ticks but not duplicate wakeups/lease attempts.",
+      "replacement": "One explicitly owned scheduler/reconciliation runtime.",
+      "liveTradingImpact": "HIGH",
+      "removalGates": [
+        "current Cloud Scheduler resource and cadence are proven",
+        "periodic worker execution metrics are captured",
+        "singleton replacement survives restart",
+        "order leases and minute claim remain intact",
+        "no missed scanner/TP/DCA tick in canary",
+        "rollback path is tested"
+      ],
+      "removeAfter": "Single scheduler owner is production-proven",
+      "keepAsFallbackUntil": "Scheduler failover behavior is proven"
+    },
+    {
+      "id": "UNBOUNDED_RELEASE_ARTIFACT_RETENTION",
+      "status": "CLEANUP_DESIGN",
+      "currentPaths": [
+        ".github/workflows/deploy-cloud-production.yml"
+      ],
+      "currentBehavior": "Deployments create candidate revisions/tags and container images without a bounded retirement policy.",
+      "replacement": "Explicit retention policy preserving current, previous and a small tested rollback set.",
+      "liveTradingImpact": "LOW",
+      "removalGates": [
+        "protected production revisions are identified",
+        "rollback revisions are explicitly pinned",
+        "artifact age/size inventory is captured",
+        "cleanup dry-run list is reviewed",
+        "no currently referenced image is selected"
+      ],
+      "removeAfter": "Retention cleanup is reviewed and approved",
+      "keepAsFallbackUntil": "N/A"
+    }
+  ]
+}
