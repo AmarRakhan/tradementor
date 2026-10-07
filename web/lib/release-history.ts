@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Prijszone Details · compact zoneoverzicht live release",
+  title: "Prijszone Details · compact zoneoverzicht productie-release",
   newItems: [
+    "Build 576 repareert de laatste release-gate regex zodat toekomstige buildnummers numeriek worden gevalideerd zonder dubbel-geëscape patroon; geen productie- of tradingcode gewijzigd.",
     "Build 575 synchroniseert de release-tests met de huidige build en de nieuwe goedgekeurde Prijszone-referentie, zodat de canonieke productie-pipeline niet meer wordt geblokkeerd door verouderde build- of mockup-asserties.",
     "De release-gates controleren voortaan het actuele buildcontract zonder een oud buildnummer hard vast te zetten.",
     "Build 574 vervangt het brede Zone overzicht door één vaste vijfkolomstabel volgens referentie file_00000000773c8210ad977be9527738e6.",
