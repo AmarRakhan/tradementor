@@ -1120,12 +1120,13 @@ export function PortfolioKoersChart({
     container.addEventListener("wheel",markViewportManual,{passive:true});
     const defaultTo=candles.length-1+view.rightOffset;
     const savedViewport=savedViewportRef.current[viewportKey];
-    const sessionStartIndex=viewMode==="account"&&sessionCandles.length
-      ? Math.max(0,candles.length-sessionCandles.length)
-      : 0;
-    const accountDefaultFrom=viewMode==="account"
-      ? Math.max(sessionStartIndex,candles.length-focusVisibleBars-.5)
-      : Math.max(-.5,candles.length-focusVisibleBars-.5);
+    // Build 566: restore the actual Build 518 cold-start viewport. Build 565
+    // incorrectly clamped Accountwaarde to today's Amsterdam session, which
+    // could leave only a handful of candles visible after a morning/session
+    // restart and simultaneously filter confirmed LONG/SHORT/TP markers out of
+    // the visible range. Session scoping remains valid for Bollinger display
+    // input only; it must never crop the chart timeline itself.
+    const accountDefaultFrom=Math.max(-.5,candles.length-focusVisibleBars-.5);
     const initialRange=savedViewport
       ? (savedViewport.followLatest?{from:defaultTo-savedViewport.span,to:defaultTo}:{from:savedViewport.from,to:savedViewport.to})
       : {from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:accountDefaultFrom,to:defaultTo};
