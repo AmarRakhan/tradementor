@@ -293,7 +293,7 @@ test("Build 413 initial focus drops old distant history while preserving recent 
   assert.equal(portfolioKoersFocusBars(rows,28,144.85,143.21,145.27),20);
 });
 
-test("Build 479 keeps the reference-style longer timeline while visible data drives account autoscale",async()=>{
+test("Build 568 keeps the denser reference timeline while visible data drives account autoscale",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   for(const pair of [
     '"1m":{visibleBars:32',
@@ -549,9 +549,9 @@ test("Build 564 removes the obsolete zone-focus helper from startup rendering",a
 });
 
 
-test("Build 564 restores the proven Build 518 viewport and confirmed-event anchoring",async()=>{
+test("Build 568 keeps confirmed-event anchoring on the denser startup viewport",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes('"15m":{visibleBars:30,barSpacing:7.6,rightOffset:1.6}'));
+  assert.ok(component.includes('"15m":{visibleBars:42,barSpacing:5.4,rightOffset:1.6}'));
   assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
   assert.equal(component.includes("ACCOUNT_STARTUP_VISIBLE_BARS"),false);
   assert.ok(component.includes("delta<=markerStep"));
