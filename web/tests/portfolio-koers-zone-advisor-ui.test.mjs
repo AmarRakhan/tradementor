@@ -80,22 +80,23 @@ test("BETA semantic zone colors are no longer swapped",async()=>{
 
 
 
-test("Build 417 uses one canonical 15m informational zone source for every chart timeframe",async()=>{
+test("Build 571 uses one server-owned canonical 15m informational zone source for every chart timeframe",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600'));
-  assert.ok(component.includes("setAdvisorZones(browserDerivedZones)"));
-  assert.ok(component.includes("advisorZones.length?advisorZones:visualPayloadZones"));
+  assert.ok(component.includes("setAdvisorZones(canonical.zones)"));
+  assert.ok(component.includes("const visualPayloadZones=payload.zones"));
   assert.ok(component.includes("derivePortfolioZoneLadder(advisorZoneSource)"));
+  assert.equal(component.includes("derivePortfolioDisplayZones"),false);
 });
 
 
-test("Build 417 canonical 15m zones are informational for everyone and fail closed for trade steering",async()=>{
+test("Build 571 canonical 15m zones are informational and fail visible without server evidence",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('/portfolio-chart?timeframe=15m&limit=600'));
-  assert.ok(component.includes("setAdvisorZones(browserDerivedZones)"));
+  assert.ok(component.includes("setAdvisorZones(canonical.zones)"));
   assert.ok(component.includes("setAdvisorTimeline(portfolioKoersTimelineHealth"));
   assert.ok(component.includes("zoneEntriesSafe"));
-  assert.ok(component.includes("informatief; geen orders of slotwijzigingen"));
+  assert.ok(component.includes("Prijszones tijdelijk niet beschikbaar"));
   assert.ok(component.includes("Portfolio Koers blijft informatief"));
 });
 
@@ -237,19 +238,19 @@ test("Build 417 removes the old instruction button and global seat mutation enti
 
 
 
-test("Build 554 keeps the canonical 15m zone basis alive through cold starts",async()=>{
+test("Build 571 keeps the canonical 15m zone basis server-owned through cold starts",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('/api/exchanges/aster/portfolio-chart?timeframe=15m&limit=600'));
-  assert.ok(component.includes('tradementor.portfolioZones.v1.'));
-  assert.ok(component.includes('advisorZones.length?advisorZones:visualPayloadZones'));
+  assert.ok(component.includes('setAdvisorZones(canonical.zones)'));
   assert.ok(component.includes('derivePortfolioZoneLadder(advisorZoneSource)'));
+  assert.equal(component.includes('tradementor.portfolioZones.v1.'),false);
 });
 
 
-test("Build 555 derives visual zones in-browser when the API returns an empty zone list",async()=>{
+test("Build 571 never derives replacement financial zones in-browser",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("derivePortfolioDisplayZones(canonical.candles"));
-  assert.ok(component.includes("derivePortfolioDisplayZones(baseCandles"));
-  assert.ok(component.includes("payload.zones.length?payload.zones:localDisplayZones"));
-  assert.ok(component.includes("advisorZones.length?advisorZones:visualPayloadZones"));
+  assert.equal(component.includes("derivePortfolioDisplayZones"),false);
+  assert.equal(component.includes("localDisplayZones"),false);
+  assert.ok(component.includes("const visualPayloadZones=payload.zones"));
+  assert.ok(component.includes("Prijszones tijdelijk niet beschikbaar"));
 });
