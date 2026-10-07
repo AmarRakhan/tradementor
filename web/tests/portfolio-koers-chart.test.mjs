@@ -588,3 +588,15 @@ test("Build 567 keeps S/R lines persistent across chart pan and extends the ladd
   assert.ok(component.includes('rgba(71,225,166,.50)'));
   assert.ok(component.includes("prices.slice(-48)"));
 });
+
+
+test("Build 579 keeps canonical event markers device-independent during responsive relayout",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("markerCoordinateInViewport"));
+  assert.ok(component.includes("const visibleMarkerRows=markerRows"));
+  assert.equal(component.includes("const visibleRange=chart.timeScale().getVisibleLogicalRange();\n      const visibleMarkerRows"),false);
+  assert.ok(component.includes('window.visualViewport?.addEventListener("resize",syncAfterResize'));
+  assert.ok(component.includes('window.addEventListener("resize",syncAfterResize'));
+  assert.ok(component.includes("syncAfterResize();"));
+  assert.equal(/if\s*\([^)]*(?:iPhone|Android|Fold)/i.test(component),false);
+});
