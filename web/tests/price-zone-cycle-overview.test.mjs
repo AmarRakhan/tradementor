@@ -55,3 +55,12 @@ test("Build 572 cannot remain indefinitely on the zone loading state", () => {
   assert.doesNotMatch(overview, /setSeatTruth\(/);
   assert.match(overview, /Geen betrouwbare zonegegevens beschikbaar/);
 });
+
+
+test("Build 577 keeps configured zero SHORT capacity and fills visible zone ranges from the canonical ladder", () => {
+  assert.match(snapshot, /Math\.max\(0, Math\.round\(firstNumber\(\[settings\], \["zoneBaseShortSoldiers", "perZoneShort"\]\) \?\? 0\)\)/);
+  assert.doesNotMatch(snapshot, /firstNumber\(\[settings, seatModel\], \["zoneBaseShortSoldiers", "perZoneShort"\]\)/);
+  assert.match(overview, /derivePortfolioZoneLadder/);
+  assert.match(overview, /minIndex: minVisibleZone/);
+  assert.match(overview, /maxIndex: maxVisibleZone/);
+});
