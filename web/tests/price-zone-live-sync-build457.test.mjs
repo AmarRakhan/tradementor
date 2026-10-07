@@ -27,23 +27,23 @@ test("Build 550 keeps Portfolio Koers visual zone synced to Snapshot while runti
   assert.match(snapshot, /data-seat-zone-sync=\{seatZoneInSync \? "synced" : "waiting"\}/);
 });
 
-test("Build 469 resolves the new live zone from a complete verified per-zone breakdown and never relabels stale counts", async () => {
+test("Build 580 resolves live zone occupancy from canonical server zoneState only", async () => {
   const [snapshot, activeZoneBlock] = await Promise.all([
     readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/active-zone-seat-block.tsx", import.meta.url), "utf8"),
   ]);
 
-  assert.match(activeZoneBlock, /const breakdown =[\s\S]*displayActiveZone === null[\s\S]*summary\.zoneOpenCounts\[String\(displayActiveZone\)\] \|\| null/);
-  assert.match(activeZoneBlock, /displayActiveZone !== null && summary\.zoneOpenCountsReliable/);
-  assert.match(activeZoneBlock, /breakdown\?\.long \?\? 0/);
-  assert.match(activeZoneBlock, /breakdown\?\.short \?\? 0/);
-  assert.match(snapshot, /totals\.long === strategyOpenLong/);
-  assert.match(snapshot, /totals\.short === strategyOpenShort/);
-  assert.match(snapshot, /derivedTotals\.long === strategyOpenLong/);
-  assert.match(snapshot, /derivedTotals\.short === strategyOpenShort/);
+  const loaderStart = snapshot.indexOf("async function loadPriceZoneSeatSummary");
+  const loaderEnd = snapshot.indexOf("function scannerSideStatus", loaderStart);
+  const loader = snapshot.slice(loaderStart, loaderEnd);
+  assert.match(loader, /const zoneState = record\(runtimeTruth\.zoneState\)/);
+  assert.match(loader, /zoneState\.zones/);
+  assert.match(loader, /reconciliationRaw\.strategyMatches/);
+  assert.doesNotMatch(loader, /seatModel/);
+  assert.doesNotMatch(loader, /multiBbPositions/);
+  assert.match(activeZoneBlock, /summary\.zoneOpenCountsReliable/);
   assert.match(snapshot, /seatZoneInSync \? <b><i>\{freeLongActiveZone\}L<\/i> \/ <em>\{freeShortActiveZone\}S<\/em><\/b> : <b>— \/ —<\/b>/);
   assert.match(snapshot, /Live zone gewijzigd · stoelstatus synchroniseert\./);
-  assert.match(snapshot, /\}, \[host, liveActiveZone\]\);/);
 });
 
 test("Build 457 remains a presentation/status-sync fix and adds no trading mutation to Portfolio Koers", async () => {
@@ -54,16 +54,18 @@ test("Build 457 remains a presentation/status-sync fix and adds no trading mutat
 });
 
 
-test("Build 530 makes zero-position exchange truth override stale Zone Warriors seat ownership", async () => {
+test("Build 580 removes stale frontend flat/seat reconstruction and accepts zero configured sides", async () => {
   const snapshot = await readFile(new URL("../components/aster-portfolio-snapshot-enhancer.tsx", import.meta.url), "utf8");
-  assert.match(snapshot, /const exchangeFlatConfirmed = hasRuntimeTruth[\s\S]*runtimeActiveLong === 0 && runtimeActiveShort === 0 && runtimeAccountPositionCount === 0[\s\S]*reportActiveLong === 0 && reportActiveShort === 0/);
-  assert.match(snapshot, /firstNumber\(\[settings\], \["zoneBaseLongSoldiers", "perZoneLong"\]\)/);
-  assert.match(snapshot, /firstNumber\(\[settings\], \["zoneBaseShortSoldiers", "perZoneShort"\]\)/);
-  assert.doesNotMatch(snapshot, /firstNumber\(\[settings, seatModel\], \["zoneBase(Long|Short)Soldiers", "perZone(Long|Short)"\]\)/);
-  assert.match(snapshot, /const activeOpenLong = exchangeFlatConfirmed \? 0/);
-  assert.match(snapshot, /const strategyOpenLong = exchangeFlatConfirmed \? 0/);
-  assert.match(snapshot, /exchangeFlatConfirmed \? \{\} : record\(seatReport\.zoneOpenCounts\)/);
-  assert.match(snapshot, /if \(!exchangeFlatConfirmed && !zoneOpenCountsReliable\)/);
-  assert.match(snapshot, /openFromOldZones: exchangeFlatConfirmed \? 0/);
-  assert.match(snapshot, /strategyOpenTotal: exchangeFlatConfirmed \? 0/);
+  const loaderStart = snapshot.indexOf("async function loadPriceZoneSeatSummary");
+  const loaderEnd = snapshot.indexOf("function scannerSideStatus", loaderStart);
+  const loader = snapshot.slice(loaderStart, loaderEnd);
+  assert.match(loader, /capacity\.perZoneLong/);
+  assert.match(loader, /capacity\.perZoneShort/);
+  assert.match(loader, /Math\.max\(0, Math\.round\(optionalNumber\(capacity\.perZoneShort\) \?\? 0\)\)/);
+  assert.doesNotMatch(loader, /exchangeFlatConfirmed/);
+  assert.doesNotMatch(loader, /seatModel/);
+  assert.doesNotMatch(loader, /priceZoneSeats/);
+  assert.doesNotMatch(loader, /zoneSoldiers/);
+  assert.doesNotMatch(loader, /multiBbPositions/);
 });
+
