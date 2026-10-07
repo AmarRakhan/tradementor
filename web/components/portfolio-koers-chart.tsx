@@ -838,6 +838,8 @@ export function PortfolioKoersChart({
     // window; do not apply later arbitrary Accountwaarde caps or zone-driven
     // auto-cropping. Sparse Active Trades still reserves normal timeframe density.
     const focusVisibleBars=Math.min(candles.length,view.visibleBars);
+    const contiguousStartupCandles=viewMode==="account"?latestContiguousPortfolioCandles(candles,timeframe):candles;
+    const accountStartupVisibleBars=Math.max(1,Math.min(view.visibleBars,contiguousStartupCandles.length||candles.length));
     const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
@@ -1161,7 +1163,9 @@ export function PortfolioKoersChart({
     // restart and simultaneously filter confirmed LONG/SHORT/TP markers out of
     // the visible range. Session scoping remains valid for Bollinger display
     // input only; it must never crop the chart timeline itself.
-    const accountDefaultFrom=Math.max(-.5,candles.length-focusVisibleBars-.5);
+    // Build 569: cold-start only on the latest uninterrupted real candle run.
+    // This removes misleading huge blank spans without inventing any OHLC bucket.
+    const accountDefaultFrom=Math.max(-.5,candles.length-accountStartupVisibleBars-.5);
     const initialRange=savedViewport
       ? (savedViewport.followLatest?{from:defaultTo-savedViewport.span,to:defaultTo}:{from:savedViewport.from,to:savedViewport.to})
       : {from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:accountDefaultFrom,to:defaultTo};
@@ -1500,14 +1504,14 @@ export function PortfolioKoersChart({
           <div className="portfolio-koers-tp-trades">
             {(selectedTpCluster.trades||[]).map((trade,index)=><div className="portfolio-koers-tp-trade" key={`${trade.symbol}-${index}`}>
               <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}{selectedTpCluster.tone!=="tp"&&["DCA","ADD"].includes(String(trade.activityType||"").toUpperCase())?<em>{String(trade.activityType).toUpperCase()}</em>:null}</span></strong>
-              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b title="Gebruikte margin">{trade.marginUsd?accountUsd(trade.marginUsd):"—"}</b>}
+              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b title="Gebruikte margin">{trade.marginUsd?accountUsd(trade.marginUsd):"Margin niet beschikbaar"}</b>}
               <span>{selectedTpCluster.tone==="tp"?durationLabel(trade.durationMinutes):entryClock(trade.openedAtMs)}</span>
             </div>)}
             {tpDetailLoading?<div className="portfolio-koers-tp-empty loading">{selectedTpCluster.tone==="tp"?"Bevestigde fills laden…":"Bevestigde entries laden…"}</div>:null}
             {!tpDetailLoading&&tpDetailError?<div className="portfolio-koers-tp-empty error">{tpDetailError}</div>:null}
             {!tpDetailLoading&&!tpDetailError&&!(selectedTpCluster.trades||[]).length?<div className="portfolio-koers-tp-empty">{selectedTpCluster.tone==="tp"?"Geen bevestigde filldetails beschikbaar.":"Geen bevestigde entrydetails beschikbaar."}</div>:null}
           </div>
-          <footer>⌁&nbsp;&nbsp; Dubbeltik om te sluiten</footer>
+          <footer>{selectedTpCluster.tone==="tp"?"Bevestigde close-events":"Historisch execution-cluster · niet huidige open posities"} · Dubbeltik om te sluiten</footer>
         </section>
       </div>:null}
       {viewMode==="active"&&activeLoading&&!activeCandles.length?<div className="portfolio-koers-state"><i/>Actieve Trades laden…</div>:null}

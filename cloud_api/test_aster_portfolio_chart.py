@@ -8,6 +8,8 @@ from aster_portfolio_chart import (
     active_trades_snapshot,
     aggregate_trade_activity,
     bucket_start_ms,
+    candle_integrity_report,
+    classify_confirmed_close,
     derive_equity_zones,
     external_cashflow_markers,
     latest_contiguous_candles,
@@ -74,10 +76,11 @@ def test_trade_markers_are_bucketed_and_tp_is_aggregated():
     tp = next(row for row in rows if row["kind"] == "tp")
     assert tp["count"] == 2
     assert tp["realizedPnlUsd"] == 2.0
-    assert tp["trades"] == [
-        {"symbol": "BTC", "realizedPnlUsd": 1.25, "durationMinutes": 0},
-        {"symbol": "ETH", "realizedPnlUsd": 0.75, "durationMinutes": 0},
+    assert [(row["symbol"], row["realizedPnlUsd"], row["durationMinutes"]) for row in tp["trades"]] == [
+        ("BTC", 1.25, 0),
+        ("ETH", 0.75, 0),
     ]
+    assert all(row["closeClassification"] == "OTHER_CONFIRMED_CLOSE" for row in tp["trades"])
     assert "TP" in tp["label"]
 
 
@@ -179,7 +182,7 @@ def test_recent_strategy_audit_events_become_immediate_chart_markers():
     rows = [
         {"event": "MULTI_BB_ENTRY", "timestampMs": 61_000, "symbol": "BTCUSDT", "side": "SHORT", "originZone": -2, "soldierRole": "ZONE_BASE", "plannedInputNotionalUsd": 12.5, "orderId": "41", "exchangeConfirmed": True},
         {"event": "MULTI_BB_DCA", "timestampMs": 65_000, "symbol": "ETHUSDT", "side": "SHORT", "fillPrice": 2500.0, "dcaNumber": 1, "dcaDistancePercent": 10.0, "anchorPrice": 2250.0, "triggerPrice": 2475.0, "fillQuantity": 0.01, "orderId": "42", "exchangeConfirmed": True},
-        {"event": "MULTI_BB_TP", "timestampMs": 70_000, "side": "LONG"},
+        {"event": "MULTI_BB_TP", "timestampMs": 70_000, "symbol": "BTCUSDT", "side": "LONG", "orderId": "43", "exchangeConfirmed": True},
         {"event": "MULTI_BB_DCA_BLOCKED", "timestampMs": 71_000, "side": "LONG"},
     ]
     markers = strategy_audit_trade_markers(rows, "1m")
@@ -210,7 +213,7 @@ def test_recent_strategy_audit_events_become_immediate_chart_markers():
 def test_live_portfolio_event_endpoint_is_read_only_and_does_not_poll_aster():
     source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
     start = source.index('@app.get("/v1/me/aster/portfolio-chart/events")')
-    end = source.index('@app.get("/v1/me/aster/portfolio-chart/active-trades")', start + 1)
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart/audit")', start + 1)
     block = source[start:end]
     assert "AsterV3Client(" not in block
     assert "portfolio_chart_strategy_audit_markers" in block
@@ -521,7 +524,7 @@ def test_portfolio_event_endpoint_merges_durable_order_attribution_evidence():
     assert '"FULL_TP"' in helper
     assert '"exchangeConfirmed": True' in helper
     endpoint_start = source.index('@app.get("/v1/me/aster/portfolio-chart/events")')
-    endpoint_end = source.index('@app.get("/v1/me/aster/portfolio-chart/active-trades")', endpoint_start)
+    endpoint_end = source.index('@app.get("/v1/me/aster/portfolio-chart/audit")', endpoint_start)
     endpoint = source[endpoint_start:endpoint_end]
     assert "_portfolio_chart_order_attribution_rows" in endpoint
     assert "[*audit_rows, *attribution_rows]" in endpoint
@@ -541,3 +544,65 @@ def test_build568_strategy_audit_marker_preserves_entry_margin_dollars():
     }]
     markers = strategy_audit_trade_markers(rows, "1m")
     assert markers[0]["entries"][0]["marginUsd"] == 0.4
+
+
+def test_build569_candle_integrity_reports_real_gaps_without_synthetic_fill():
+    rows = [
+        candle(0 + 900_000, 100, 101, 99, 100),
+        candle(0 + 1_800_000, 100, 102, 99, 101),
+        candle(0 + 4_500_000, 103, 104, 102, 103),
+    ]
+    report = candle_integrity_report(rows, "15m")
+    assert report["actualBuckets"] == 3
+    assert report["expectedBuckets"] == 5
+    assert report["missingBuckets"] == 2
+    assert report["largestGapBuckets"] == 2
+    assert report["syntheticCandles"] == 0
+    assert len(report["gaps"]) == 1
+
+
+def test_build569_close_classification_only_moneybags_real_profit_closes():
+    assert classify_confirmed_close({"event":"TAKE_PROFIT_CLOSE","realizedPnlUsd":1.0}) == "TAKE_PROFIT"
+    assert classify_confirmed_close({"event":"FULL_TP","realizedPnlUsd":1.0}) == "TAKE_PROFIT"
+    assert classify_confirmed_close({"event":"MANUAL_CLOSE","realizedPnlUsd":1.0}) == "MANUAL_PROFIT_CLOSE"
+    assert classify_confirmed_close({"event":"MANUAL_CLOSE","realizedPnlUsd":-1.0}) == "LOSS_CLOSE"
+    assert classify_confirmed_close({"event":"HEDGE_CLOSE","realizedPnlUsd":1.0}) == "HEDGE_CLOSE"
+
+
+def test_build569_same_confirmed_close_from_audit_and_attribution_counts_once():
+    rows = [
+        {"event":"FULL_TP","timestampMs":61_000,"symbol":"BTCUSDT","side":"LONG","orderId":"close-1","exchangeConfirmed":True,"realizedPnlUsd":1.5},
+        {"event":"TAKE_PROFIT_CLOSE","timestampMs":62_000,"symbol":"BTCUSDT","side":"LONG","orderId":"close-1","exchangeConfirmed":True,"realizedPnlUsd":1.5},
+    ]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert len(markers) == 1
+    assert markers[0]["kind"] == "tp"
+    assert markers[0]["count"] == 1
+    assert len(markers[0]["trades"]) == 1
+
+
+def test_build569_unconfirmed_tp_audit_row_fails_closed():
+    rows = [{"event":"MULTI_BB_TP","timestampMs":61_000,"symbol":"BTCUSDT","side":"LONG"}]
+    assert strategy_audit_trade_markers(rows, "1m") == []
+
+
+def test_build569_audit_endpoint_is_read_only_and_exposes_reconciliation():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index('@app.get("/v1/me/aster/portfolio-chart/audit")')
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart/active-trades")', start + 1)
+    block = source[start:end]
+    assert 'live_authorized=False' in block
+    assert '"ordersSent":0' in block
+    assert '"exchangeOpenEqualsSnapshot"' in block
+    assert '"entryMarkerCountEqualsDetails"' in block
+    assert '"tpMarkerCountEqualsDetails"' in block
+    assert "place_order" not in block
+
+
+def test_build569_historical_attribution_never_uses_current_settings_for_margin():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index("def _portfolio_chart_order_attribution_rows")
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart/events")', start)
+    block = source[start:end]
+    assert "configured_margin" not in block
+    assert 'item.get("marginUsd", item.get("executedMarginUsd"))' in block

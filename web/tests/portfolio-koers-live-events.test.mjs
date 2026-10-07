@@ -151,7 +151,7 @@ test("Build 568 shows entry margin dollars without duplicate ENTRY labels and in
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('"15m":{visibleBars:42,barSpacing:5.4,rightOffset:1.6}'));
   assert.ok(component.includes('title="Gebruikte margin"'));
-  assert.ok(component.includes('trade.marginUsd?accountUsd(trade.marginUsd):"—"'));
+  assert.ok(component.includes('trade.marginUsd?accountUsd(trade.marginUsd):"Margin niet beschikbaar"'));
   assert.equal(component.includes('trade.activityType==="DCA"?"DCA":trade.activityType==="ADD"?"ADD":"ENTRY"'),false);
   assert.ok(component.includes('["DCA","ADD"].includes(String(trade.activityType||"").toUpperCase())'));
 });
@@ -165,4 +165,31 @@ test("Build 568 preserves marginUsd in exact marker entry details",()=>{
     }],
   });
   assert.equal(normalized.markers[0].entries[0].marginUsd,0.4);
+});
+
+
+test("Build 569 shows explicit unavailable margin instead of an unexplained dash",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('Margin niet beschikbaar'));
+  assert.ok(component.includes('Historisch execution-cluster · niet huidige open posities'));
+});
+
+test("Build 569 merged entry marker count equals unique confirmed detail rows",()=>{
+  const rows=mergePortfolioKoersMarkers(
+    [{time:60,atMs:60_000,kind:"entry",side:"LONG",count:9,source:"aster-confirmed-fills",entries:[
+      {symbol:"BTCUSDT",side:"LONG",atMs:61_000,activityType:"ENTRY",orderId:"order-1",exchangeConfirmed:true,marginUsd:.4},
+    ]}],
+    [{time:60,atMs:60_000,kind:"entry",side:"LONG",count:9,source:"strategy2-confirmed-audit",entries:[
+      {symbol:"BTCUSDT",side:"LONG",atMs:62_000,activityType:"ENTRY",orderId:"order-1",exchangeConfirmed:true,marginUsd:.4},
+      {symbol:"ETHUSDT",side:"LONG",atMs:63_000,activityType:"ENTRY",orderId:"order-2",exchangeConfirmed:true,marginUsd:.4},
+    ]}],
+  );
+  assert.equal(rows[0].entries.length,2);
+  assert.equal(rows[0].count,2);
+});
+
+test("Build 569 cold start focuses the latest contiguous real candle run",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("contiguousStartupCandles=viewMode===\"account\"?latestContiguousPortfolioCandles(candles,timeframe):candles"));
+  assert.ok(component.includes("candles.length-accountStartupVisibleBars-.5"));
 });
