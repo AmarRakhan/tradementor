@@ -66,8 +66,17 @@ def build_aster_account_truth(
     age_ms = max(0, now_value - captured_ms) if captured_ms is not None else None
     stale = captured_ms is None or age_ms is None or age_ms > 120_000
 
-    long_count = sum(1 for row in positions if str(row.get("side", "")).upper() == "LONG")
-    short_count = sum(1 for row in positions if str(row.get("side", "")).upper() == "SHORT")
+    zone_state = _record(runtime_truth.get("zoneState"))
+    zone_account = _record(zone_state.get("account"))
+    calculated_long_count = sum(1 for row in positions if str(row.get("side", "")).upper() == "LONG")
+    calculated_short_count = sum(1 for row in positions if str(row.get("side", "")).upper() == "SHORT")
+    long_count = _integer(zone_account.get("longOpen"))
+    short_count = _integer(zone_account.get("shortOpen"))
+    total_count = _integer(zone_account.get("totalOpen"))
+    if long_count is None or short_count is None or total_count is None:
+        long_count = calculated_long_count
+        short_count = calculated_short_count
+        total_count = len(positions)
 
     account = {
         "equity": _number(status.get("equity")),
@@ -87,7 +96,7 @@ def build_aster_account_truth(
         "grossExposure": _number(status.get("grossExposure")),
     }
     position_truth = {
-        "count": len(positions),
+        "count": total_count,
         "longCount": long_count,
         "shortCount": short_count,
         "rows": positions,
