@@ -508,3 +508,21 @@ def test_current_unified_engine_audit_names_render_as_confirmed_chart_markers():
 def test_unified_engine_entry_without_audit_identity_still_fails_closed():
     rows = [{"event": "OPEN_LEG", "timestampMs": 61_000, "symbol": "BTCUSDT", "side": "LONG"}]
     assert strategy_audit_trade_markers(rows, "1m") == []
+
+
+def test_portfolio_event_endpoint_merges_durable_order_attribution_evidence():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index('def _portfolio_chart_order_attribution_rows')
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart/events")', start)
+    helper = source[start:end]
+    assert '"orderAttributions"' in helper
+    assert '"OPEN_LEG"' in helper
+    assert '"ADD_DCA"' in helper
+    assert '"FULL_TP"' in helper
+    assert '"exchangeConfirmed": True' in helper
+    endpoint_start = source.index('@app.get("/v1/me/aster/portfolio-chart/events")')
+    endpoint_end = source.index('@app.get("/v1/me/aster/portfolio-chart/active-trades")', endpoint_start)
+    endpoint = source[endpoint_start:endpoint_end]
+    assert "_portfolio_chart_order_attribution_rows" in endpoint
+    assert "[*audit_rows, *attribution_rows]" in endpoint
+    assert "AsterV3Client(" not in endpoint

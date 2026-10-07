@@ -26,8 +26,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Portfolio Koers · echte Build 518 startviewport hersteld",
+  title: "Portfolio Koers · persistent S/R + duurzame live labels",
   newItems: [
+    "Build 567 tekent support/resistance als chart-native price lines over een ruim uitgebreide zone-ladder, zodat de lijnen bij horizontaal/verticaal pannen en zoomen niet meer als lokale overlay verdwijnen.",
+    "Build 567 gebruikt naast audit-events ook durable orderAttributions als tweede confirmed bron voor LONG/SHORT/TP-labels.",
     "Portfolio Koers volgt de goedgekeurde visuele referentie file_0000000065e08246a10dfd2cc721cc77.",
     "Portfolio Koers start met een echte zwarte chartachtergrond in plaats van de blauwzwarte tint.",
     "LONG-, SHORT- en TP-events gebruiken opnieuw één uniforme interactieve badgefamilie op de chart.",
@@ -44,6 +46,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
+    "De bestaande S/R-weergave was een viewport-geclipte DOM-overlay van slechts vier niveaus boven en onder de actieve zone; bij scrollen of verticale schaalverschuiving verdwenen de lijnen uit beeld.",
+    "De eventfeed kon nog leeg blijven wanneer audit-rows ontbraken terwijl er wel duurzame exchange-orderattributies bestonden.",
     "De linker R4–R1/S1–S4-pilllabels en de history-gap overlay bedekten de gewenste chartpresentatie.",
     "LONG/SHORT-events waren visueel lichter uitgevoerd dan TP en de zichtbare eventselectie was te beperkt voor de goedgekeurde referentie.",
     "Een oude verre candle en Bollinger-berekening over een historiegat konden de y-schaal zo ver opentrekken dat recente candles als een dunne streep verschenen.",
@@ -61,6 +65,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "De visuele zone-ladder wordt voor de chart uitgebreid tot achttien niveaus rond de actuele prijs en maximaal 48 unieke grenzen worden als echte prijs-lijnen gerenderd zonder aslabels.",
+    "De read-only eventendpoint voegt orderAttributions van de laatste 24 uur samen met audit-events en blijft volledig vrij van exchange polling of ordermutaties.",
     "De horizontale support/resistance-lijnen blijven zichtbaar, maar de losse linker R4–R1/S1–S4-pilllabels worden niet meer gerenderd.",
     "De history-gap waarschuwing blijft interne data-quality informatie maar wordt niet meer als obstructieve chartoverlay gerenderd.",
     "LONG/SHORT/TP badges zijn qua hoogte, radius, border, schaduw en typografie gelijkgetrokken; kleurcodering blijft groen/rood/goud.",
@@ -100,7 +106,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   technicalDetails: [
     "Frontend: web/components/portfolio-koers-chart.tsx.",
     "Regression: web/tests/portfolio-koers-chart.test.mjs + web/tests/portfolio-koers-zone-advisor-ui.test.mjs.",
-    "Release-identiteit: Webapp V46 build 566.",
+    "Release-identiteit: Webapp V46 build 567.",
   ],
   confidence: "confirmed",
 }

@@ -791,7 +791,7 @@ export function PortfolioKoersChart({
   const freshChartZoneLadder=useMemo(()=>{
     if(!advisorZoneSource.length)return null;
     const base=derivePortfolioZoneLadder(advisorZoneSource);
-    const expanded=extendPortfolioZoneLadderToPrice(base,currentZonePrice,4);
+    const expanded=extendPortfolioZoneLadderToPrice(base,currentZonePrice,18);
     return expanded?.zones?.length?expanded:null;
   },[advisorZoneSource,currentZonePrice]);
   if(freshChartZoneLadder?.zones?.length)lastConfirmedZoneLadderRef.current=freshChartZoneLadder;
@@ -867,6 +867,37 @@ export function PortfolioKoersChart({
     if(viewMode!=="performance"){
       const currentPrice=Number(candles.at(-1)?.close);
       if(Number.isFinite(currentPrice)&&currentPrice>0)series.createPriceLine({price:currentPrice,color:"#e4b84a",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:""});
+    }
+
+    // Build 567: support/resistance is a permanent chart primitive, not a
+    // viewport-clipped DOM decoration. Draw the complete extended zone ladder
+    // as chart-native price lines so panning/zooming never makes the ladder
+    // disappear. Labels stay hidden; only the horizontal structure is shown.
+    if(viewMode==="account"&&chartZoneLadder?.zones?.length){
+      const current=Number(candles.at(-1)?.close);
+      const seen=new Set<string>();
+      const prices:number[]=[];
+      for(const zone of chartZoneLadder.zones as any[]){
+        for(const raw of [zone?.lower,zone?.upper]){
+          const price=Number(raw);
+          if(!Number.isFinite(price)||price<=0)continue;
+          const key=price.toFixed(8);
+          if(seen.has(key))continue;
+          seen.add(key);prices.push(price);
+        }
+      }
+      prices.sort((a,b)=>a-b);
+      for(const price of prices.slice(-48)){
+        const resistance=Number.isFinite(current)&&price>current;
+        series.createPriceLine({
+          price,
+          color:resistance?"rgba(255,86,106,.58)":"rgba(71,225,166,.50)",
+          lineWidth:1,
+          lineStyle:2,
+          axisLabelVisible:false,
+          title:"",
+        });
+      }
     }
 
     // Build 562: Bollinger is a display indicator over the confirmed candle

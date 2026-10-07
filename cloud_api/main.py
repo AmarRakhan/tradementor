@@ -6537,6 +6537,57 @@ def _portfolio_chart_recent_strategy_audit_rows(uid: str, *, now_utc: datetime |
     return rows
 
 
+
+def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | None = None) -> list[dict[str, Any]]:
+    """Project durable confirmed order attributions into the read-only chart feed.
+
+    These rows are written only after an exchange execution returns a stable
+    order/client-order identity. They are a second evidence path for chart labels
+    and do not submit, cancel, resize or otherwise mutate any order.
+    """
+    current = now_utc or datetime.now(timezone.utc)
+    cutoff_ms = int((current - timedelta(hours=24)).timestamp() * 1000)
+    raw = aster_strategy2_reference(uid).get().to_dict() or {}
+    rows: list[dict[str, Any]] = []
+    allowed = {
+        "INITIAL_OPEN_LEG", "OPEN_LEG", "ADD_DCA", "AUTO_RESTART",
+        "PENDING_REOPEN", "PENDING_REOPEN_CONFIRMED",
+        "FULL_TP", "PARTIAL_TP", "TAKE_PROFIT_CLOSE",
+    }
+    for item in raw.get("orderAttributions", []) if isinstance(raw.get("orderAttributions"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action", "")).upper().strip()
+        symbol = str(item.get("symbol", "")).upper().strip()
+        side = str(item.get("side", "")).upper().strip()
+        if action not in allowed or not symbol or side not in {"LONG", "SHORT"}:
+            continue
+        stamp = _portfolio_chart_timestamp_ms(item.get("recordedAt"))
+        if stamp <= 0 or stamp < cutoff_ms:
+            continue
+        order_id = str(item.get("orderId", "") or "").strip()
+        client_order_id = str(item.get("clientOrderId", "") or "").strip()
+        if not order_id and not client_order_id:
+            continue
+        event = "FULL_TP" if action in {"FULL_TP", "PARTIAL_TP", "TAKE_PROFIT_CLOSE"} else (
+            "ADD_DCA" if action == "ADD_DCA" else "OPEN_LEG"
+        )
+        rows.append({
+            "event": event,
+            "timestampMs": stamp,
+            "timestamp": item.get("recordedAt"),
+            "symbol": symbol,
+            "side": side,
+            "orderId": order_id,
+            "clientOrderId": client_order_id,
+            "exchangeConfirmed": True,
+            "auditId": f"attribution:{order_id or client_order_id}",
+            "activityType": "DCA" if action == "ADD_DCA" else "TP" if event == "FULL_TP" else "ENTRY",
+            "source": "order-attribution",
+        })
+    return rows
+
+
 @app.get("/v1/me/aster/portfolio-chart/events")
 def aster_portfolio_chart_events(
     timeframe: str = Query(default="1m", pattern=r"^(1m|5m|15m|1u|4u|24u)$"),
@@ -6550,15 +6601,16 @@ def aster_portfolio_chart_events(
     """
     uid = str(user["uid"])
     now_utc = datetime.now(timezone.utc)
-    rows = _portfolio_chart_recent_strategy_audit_rows(uid, now_utc=now_utc)
-    markers = portfolio_chart_strategy_audit_markers(rows, timeframe)
+    audit_rows = _portfolio_chart_recent_strategy_audit_rows(uid, now_utc=now_utc)
+    attribution_rows = _portfolio_chart_order_attribution_rows(uid, now_utc=now_utc)
+    markers = portfolio_chart_strategy_audit_markers([*audit_rows, *attribution_rows], timeframe)
     return {
         "timeframe": timeframe,
         "markers": markers,
         "snapshotAtMs": int(now_utc.timestamp() * 1000),
         "readOnly": True,
         "ordersSent": 0,
-        "source": "confirmed Strategy-2 audit events; no exchange polling",
+        "source": "confirmed Strategy-2 audit + durable order attribution events; no exchange polling",
     }
 
 

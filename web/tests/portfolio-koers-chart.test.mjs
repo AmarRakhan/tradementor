@@ -585,3 +585,15 @@ test("Build 566 keeps Amsterdam-session Bollinger input without cropping the Bui
   assert.ok(component.includes("markerTime:row.time"));
   assert.ok(component.includes("file_0000000047d081f4b2c4348a14e0db2f"));
 });
+
+
+test("Build 567 keeps S/R lines persistent across chart pan and extends the ladder",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,18)"));
+  assert.ok(component.includes("support/resistance is a permanent chart primitive"));
+  assert.ok(component.includes("series.createPriceLine({"));
+  assert.ok(component.includes('axisLabelVisible:false'));
+  assert.ok(component.includes('rgba(255,86,106,.58)'));
+  assert.ok(component.includes('rgba(71,225,166,.50)'));
+  assert.ok(component.includes("prices.slice(-48)"));
+});
