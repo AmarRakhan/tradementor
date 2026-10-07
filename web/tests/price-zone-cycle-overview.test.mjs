@@ -17,7 +17,7 @@ test("zone overview reuses the canonical Aster seat snapshot and only polls char
   assert.match(snapshot, /authenticatedRequest\("\/api\/exchanges\/aster"/);
   assert.match(snapshot, /openZonePositionKeys/);
   assert.doesNotMatch(overview, /authenticatedRequest\("\/api\/exchanges\/aster"\s*,/);
-  assert.match(overview, /portfolio-chart\?timeframe=15m&limit=600/);
+  assert.match(overview, /portfolio-chart\?timeframe=15m&limit=320/);
   assert.match(overview, /portfolio-chart\/events\?timeframe=15m/);
   assert.doesNotMatch(overview, /method:\s*["']POST["']/);
   assert.doesNotMatch(overview, /strategy2\/(start|stop|settings|tick)/);
