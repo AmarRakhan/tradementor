@@ -81,6 +81,6 @@ test("Build 581 shows only canonical positive price ranges and server-owned LONG
   assert.doesNotMatch(overview, /zone\.upper \?\? zone\.center/);
   assert.match(snapshot, /record\(zoneState\.nextLongLevels\)/);
   assert.match(overview, /seatSummary\.nextLongLevels\[direction\]/);
-  assert.match(overview, /Geen vrije LONG-zone/);
+  assert.match(overview, /Volgende vrije LONG-capaciteit/);
   assert.doesNotMatch(overview, /setInterval\(.*nextLongLevels/);
 });
