@@ -72,3 +72,15 @@ test("Build 580 forbids frontend zone-count/capacity reconstruction", () => {
   assert.match(overview, /seatSummary\.reconciliation\.otherOpenTotal/);
   assert.match(overview, /otherOpenPositions\.map/);
 });
+
+test("Build 581 shows only canonical positive price ranges and server-owned LONG targets", () => {
+  assert.match(overview, /const validZoneRange/);
+  assert.match(overview, /zone\.lower > 0 && zone\.upper > zone\.lower/);
+  assert.match(overview, /Canonical prijsgrenzen ontbreken/);
+  assert.doesNotMatch(overview, /zone\.lower \?\? zone\.center/);
+  assert.doesNotMatch(overview, /zone\.upper \?\? zone\.center/);
+  assert.match(snapshot, /record\(zoneState\.nextLongLevels\)/);
+  assert.match(overview, /seatSummary\.nextLongLevels\[direction\]/);
+  assert.match(overview, /Geen vrije LONG-zone/);
+  assert.doesNotMatch(overview, /setInterval\(.*nextLongLevels/);
+});

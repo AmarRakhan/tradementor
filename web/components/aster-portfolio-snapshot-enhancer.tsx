@@ -139,6 +139,11 @@ type PriceZoneSeatSummary = ActiveZoneSeatSummary & {
   queueUncertainReason: string;
   openZonePositionKeys: string[];
   currentPrice: number | null;
+  nextLongLevels: {
+    status: string;
+    up: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+    down: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+  } | null;
   zones: Array<{
     index: number;
     center: number | null;
@@ -362,6 +367,17 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
     queueUncertainReason: "",
     openZonePositionKeys,
     currentPrice: optionalNumber(zoneState.currentPrice),
+    nextLongLevels: (() => {
+      const data = record(zoneState.nextLongLevels);
+      const decode = (value: unknown) => {
+        const row = record(value);
+        const price = optionalNumber(row.price);
+        const zone = optionalNumber(row.zone);
+        if (price === null || price <= 0 || zone === null || !Number.isInteger(zone)) return null;
+        return { zone, price, freeLongSeats: Math.max(0, optionalNumber(row.freeLongSeats) ?? 0), unit: String(row.unit || ""), entryPermission: String(row.entryPermission || "") };
+      };
+      return { status: String(data.status || "UNAVAILABLE"), up: decode(data.up), down: decode(data.down) };
+    })(),
     zones,
     otherOpenPositions,
     unassignedStrategyPositions,

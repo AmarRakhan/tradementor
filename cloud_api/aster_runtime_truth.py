@@ -114,6 +114,40 @@ def _capacity(settings: dict[str, Any], key: str, nested_key: str) -> int:
     return max(0, _i(raw, 0))
 
 
+
+def _canonical_long_next_levels(zones: list[dict[str, Any]], current_price: Any, *, reliable: bool) -> dict[str, Any]:
+    """Read-only price thresholds from the already canonical ladder; never infer new zone prices."""
+    try:
+        price = float(current_price)
+    except (TypeError, ValueError):
+        price = float("nan")
+    if not reliable or not (price > 0 and price < float("inf")):
+        return {"status": "UNAVAILABLE", "up": None, "down": None, "reason": "CANONICAL_PRICE_OR_OWNERSHIP_UNAVAILABLE"}
+    valid = []
+    for row in zones:
+        try:
+            lower, upper = float(row.get("lower")), float(row.get("upper"))
+        except (TypeError, ValueError):
+            continue
+        if not (0 < lower < upper < float("inf")):
+            continue
+        if int(row.get("longMax", 0)) <= int(row.get("longOpen", 0)):
+            continue
+        valid.append((row, lower, upper))
+    higher = [(lower, row) for row, lower, upper in valid if lower > price]
+    lower = [(upper, row) for row, lo, upper in valid if upper < price]
+    def result(item: tuple[float, dict[str, Any]] | None) -> dict[str, Any] | None:
+        if item is None:
+            return None
+        threshold, row = item
+        return {"zone": row["index"], "price": threshold, "freeLongSeats": max(0, int(row["longMax"]) - int(row["longOpen"])), "unit": "PORTFOLIO_EQUITY_USDT", "entryPermission": "NOT_EVALUATED"}
+    return {
+        "status": "AVAILABLE",
+        "up": result(min(higher, key=lambda v: v[0]) if higher else None),
+        "down": result(max(lower, key=lambda v: v[0]) if lower else None),
+        "reason": "",
+    }
+
 def build_canonical_zone_state(
     *,
     settings: dict[str, Any],
@@ -288,6 +322,7 @@ def build_canonical_zone_state(
         },
         "activeZone": active_zone,
         "zones": zone_rows,
+        "nextLongLevels": _canonical_long_next_levels(zone_rows, runtime_sync.get("currentEquity"), reliable=bool(ladder_rows) and account_total == strategy_total + other_total and strategy_total == assigned_total + unassigned_total),
         "strategyPositions": strategy_positions,
         "unassignedStrategyPositions": unassigned,
         "otherOpenPositions": other,

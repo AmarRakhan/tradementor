@@ -26,8 +26,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Aster Single Source of Truth · canonical zoneState",
+  title: "Prijszone Details · canonical prijsranges + volgende vrije LONG-zones",
   newItems: [
+    "Build 581 toont onbeschikbare zoneprijsgrenzen niet meer als nulwaarden en biedt diagnostische informatie bij ontbrekende canonical ranges.",
+    "ZoneState geeft read-only de eerstvolgende hogere en lagere zonegrens met vrije LONG-capaciteit door; dit is geen ordertoestemming.",
     "Build 580 introduceert strategy2.runtimeTruth.zoneState als server-authoritative contract voor account-, Strategy-2- en prijszone-state.",
     "Portfolio Snapshot en Prijszone Details lezen positie- en zonetellingen nu uit dezelfde canonieke server-snapshot; frontend reconstrueert zoneOpenCounts niet meer uit multiBbPositions, seatModel, priceZoneSeats of zoneSoldiers.",
     "Een expliciete SHORT-capaciteit 0 blijft server-side en frontend exact 0/0; de read-only runtime-sync respecteert niet langer een minimum van 1.",
