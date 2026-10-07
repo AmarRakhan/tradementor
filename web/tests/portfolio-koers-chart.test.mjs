@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, aggregatePortfolioEquityHistory, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersCandles, mergePortfolioKoersMarkers, mergeRealtimeEquitySample, normalizePortfolioKoersPayload, parsePortfolioEquityText, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "../lib/portfolio-koers-chart.mjs";
+import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersMarkers, normalizePortfolioKoersPayload, portfolioCashflowShift, portfolioKoersFocusBars, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "../lib/portfolio-koers-chart.mjs";
 
 test("Portfolio Koers exposes only the approved timeframes and defaults to 15m",()=>{
   assert.deepEqual([...PORTFOLIO_KOERS_TIMEFRAMES],["1m","5m","15m","1u","4u","24u"]);
@@ -63,20 +63,17 @@ test("Bollinger Bands are exactly period 20 multiplier 2",()=>{
   assert.ok(bb.lower[0].value<bb.middle[0].value);
 });
 
-test("Existing confirmed browser Aster equity history can fill the visual chart without inventing values",()=>{
-  const rows=[{at:1_800_000,aster:100,total:100},{at:1_860_000,aster:102,total:102},{at:1_980_000,aster:99,total:99}];
-  const candles=aggregatePortfolioEquityHistory(rows,"5m",320);
-  assert.equal(candles.length,1);
-  assert.deepEqual({open:candles[0].open,high:candles[0].high,low:candles[0].low,close:candles[0].close},{open:100,high:102,low:99,close:99});
-  const merged=mergePortfolioKoersCandles(candles,[{time:0,open:1,high:1,low:1,close:1},{time:candles[0].time,open:101,high:103,low:98,close:102}],320);
-  assert.equal(merged.length,1);
-  assert.equal(merged[0].close,102);
+test("Portfolio Koers preserves server-owned day high and low",()=>{
+  const payload=normalizePortfolioKoersPayload({dayHigh:330.25,dayLow:315.1,candles:[{time:60,open:320,high:321,low:319,close:320.5}]});
+  assert.equal(payload.dayHigh,330.25);
+  assert.equal(payload.dayLow,315.1);
 });
 
-test("Realtime portfolio samples use only the observed equity value for a new candle",()=>{
-  const next=mergeRealtimeEquitySample([{time:60,open:100,high:100,low:99,close:99,atMs:60_000}],105,301_000,"5m");
-  assert.equal(next.length,2);
-  assert.deepEqual({open:next[1].open,high:next[1].high,low:next[1].low,close:next[1].close},{open:105,high:105,low:105,close:105});
+test("Portfolio Koers does not synthesize account candles from browser values",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.equal(component.includes("mergeRealtimeEquitySample"),false);
+  assert.equal(component.includes("tradementor.portfolioEquity"),false);
+  assert.equal(component.includes("window.localStorage"),false);
 });
 
 test("Portfolio Koers detects a missing 15m run and blocks zone advice until the recent run is long enough",()=>{
@@ -101,17 +98,11 @@ test("Portfolio Koers detects a missing 15m run and blocks zone advice until the
   assert.equal(safe.safeForAdvisor,true);
 });
 
-test("Locale portfolio equity text is parsed without changing its value",()=>{
-  assert.equal(parsePortfolioEquityText("US$ 1.234,56"),1234.56);
-  assert.equal(parsePortfolioEquityText("$276.42"),276.42);
-  assert.equal(parsePortfolioEquityText("—"),null);
-});
-
-test("Portfolio Koers keeps the visible Portfolio Snapshot equity authoritative over the chart backend",async()=>{
+test("Portfolio Koers uses server currentEquity instead of rendered Snapshot text",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.equal(component.includes("if(normalized.currentEquity) setLiveEquity(normalized.currentEquity)"),false);
-  assert.ok(component.includes("liveEquityTextRef.current=liveEquityText"));
-  assert.ok(component.includes("mergeRealtimeEquitySample(baseCandles,observedEquity"));
+  assert.ok(component.includes("payload.currentEquity??baseCandles.at(-1)?.close??null"));
+  assert.equal(component.includes("liveEquityTextRef"),false);
+  assert.ok(component.includes("liveEquityText remains a compatibility prop only"));
 });
 
 test("Cashflows remain visually distinct from trading performance markers",()=>{
@@ -504,13 +495,12 @@ test("Build 552 keeps confirmed chart zones across cold starts and history gaps"
 });
 
 
-test("Build 555 keeps next-zone chart context available without backend zones",async()=>{
-  const library=await readFile(new URL("../lib/portfolio-koers-chart.mjs",import.meta.url),"utf8");
+test("Build 571 fails visible when canonical server zones are unavailable",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.match(library,/export function derivePortfolioDisplayZones/);
-  assert.match(library,/browser-confirmed-swings\+sr-cluster\+atr/);
-  assert.match(component,/const browserDerivedZones=canonical\.zones\.length/);
-  assert.match(component,/const visualPayloadZones=payload\.zones\.length\?payload\.zones:localDisplayZones/);
+  assert.match(component,/setAdvisorZones\(canonical\.zones\)/);
+  assert.match(component,/Prijszones tijdelijk niet beschikbaar/);
+  assert.match(component,/const visualPayloadZones=payload\.zones/);
+  assert.equal(component.includes("derivePortfolioDisplayZones"),false);
 });
 
 
