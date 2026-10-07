@@ -2095,8 +2095,23 @@ def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict
         # Current exchange equity then selects the active zone immediately.
         zones = derive_equity_zones(established, cycle_start) if history_ready else []
         equity = multi_bb_exchange_equity(account)
-        display_zones = canonical_display_zone_ladder(zones, equity) if equity > 0 and zones else []
-        active = confirmed_zone_from_display_zones(zones, equity) if equity > 0 and zones else None
+        managed_state = raw.get("multiBbPositions") if isinstance(raw.get("multiBbPositions"), dict) else {}
+        managed_zone_indexes = []
+        for managed_row in managed_state.values():
+            if not isinstance(managed_row, dict):
+                continue
+            try:
+                managed_zone_indexes.append(int(managed_row.get("originZone")))
+            except (TypeError, ValueError):
+                continue
+        display_min = min(managed_zone_indexes) if managed_zone_indexes else -3
+        display_max = max(managed_zone_indexes) if managed_zone_indexes else 3
+        display_zones = canonical_display_zone_ladder(
+            zones, equity, min_index=display_min, max_index=display_max
+        ) if equity > 0 and zones else []
+        active = confirmed_zone_from_display_zones(
+            zones, equity, min_index=display_min, max_index=display_max
+        ) if equity > 0 and zones else None
         zone_ready = bool(active is not None)
         return {
             "safeForEntries": zone_ready,
