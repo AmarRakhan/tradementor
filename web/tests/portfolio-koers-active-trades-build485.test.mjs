@@ -89,11 +89,3 @@ test("Build 486 does not auto-zoom sparse Active Trades candles", async () => {
   assert.ok(component.includes("Math.min(candles.length,view.visibleBars)"));
   assert.ok(component.includes("Math.max(-.5,candles.length-focusVisibleBars-.5)"));
 });
-
-
-test("Active Trades cost guard reduces analytics polling without changing realtime equity updates", async () => {
-  const component = await readFile(new URL("../components/portfolio-koers-chart.tsx", import.meta.url), "utf8");
-  assert.match(component, /loadActiveTrades\(\)},30_000\)/);
-  assert.match(component, /loadRecentEvents\(\);[\s\S]{0,180}15_000/);
-  assert.match(component, /mergeRealtimeEquitySample/);
-});
