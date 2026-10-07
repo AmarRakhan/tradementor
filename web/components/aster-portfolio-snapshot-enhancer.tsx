@@ -166,23 +166,6 @@ type ScannerStatusSnapshot = {
   short: ScannerSideStatus;
 };
 
-function directText(element: Element | null, selector: string) {
-  return element?.querySelector<HTMLElement>(selector)?.textContent?.trim() || "—";
-}
-
-function metric(label: string) {
-  const rows = Array.from(document.querySelectorAll<HTMLElement>(".metric-strip .metric"));
-  const row = rows.find((item) => item.querySelector("span")?.textContent?.trim().toUpperCase() === label);
-  return row ? directText(row, "strong") : "—";
-}
-
-function slotCount(side: "long" | "short") {
-  const row = document.querySelector<HTMLElement>(`.slot-overview .slot-row.${side}`);
-  const countText = row?.querySelector<HTMLElement>("b")?.textContent || "";
-  const match = countText.match(/(\d+)\s*\/\s*(\d+)/);
-  return { active: match?.[1] || "", capacity: match?.[2] || "" };
-}
-
 function percentageTone(value: string): Tone {
   if (value === "—") return "neutral";
   const parsed = Number(value.replace("%", "").replace("+", "").replace(",", ".").trim());
