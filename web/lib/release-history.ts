@@ -26,8 +26,14 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Portfolio Koers · device-onafhankelijke LONG/SHORT/TP markers",
+  title: "Aster Single Source of Truth · canonical zoneState",
   newItems: [
+    "Build 580 introduceert strategy2.runtimeTruth.zoneState als server-authoritative contract voor account-, Strategy-2- en prijszone-state.",
+    "Portfolio Snapshot en Prijszone Details lezen positie- en zonetellingen nu uit dezelfde canonieke server-snapshot; frontend reconstrueert zoneOpenCounts niet meer uit multiBbPositions, seatModel, priceZoneSeats of zoneSoldiers.",
+    "Een expliciete SHORT-capaciteit 0 blijft server-side en frontend exact 0/0; de read-only runtime-sync respecteert niet langer een minimum van 1.",
+    "Zoneprijsranges worden door één server-side canonical display ladder opgebouwd en samen met zoneState geleverd; Prijszone Details bouwt geen eigen zone-ladder meer.",
+    "Niet-zone accountposities en Strategy-2-posities zonder geldige originZone verdwijnen niet meer stil: zoneState publiceert ze expliciet als otherOpenPositions of unassignedStrategyPositions.",
+    "Reconciliation bewijst account = Strategy-2 + overig en Strategy-2 = zone-assigned + unassigned; bij verschil toont het Zone overzicht de expliciete classificatie.",
     "Build 579 maakt markerzichtbaarheid afhankelijk van de werkelijk gerenderde chartcoördinaten in plaats van een tweede, tijdelijk verouderde logical-range snapshot.",
     "LONG-, SHORT- en TP-markers gebruiken dezelfde canonieke eventstream op telefoon, Fold, tablet en bij resize/orientation change; er zijn geen device-specifieke codepaden toegevoegd.",
     "ResizeObserver, window resize en visualViewport resize plannen dezelfde overlay-resync in de eerstvolgende animation frame, zonder candles, high/low, zones of tradinglogica te wijzigen.",
@@ -85,6 +91,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
+    "Portfolio Snapshot kon 31 accountposities tonen terwijl Zone overzicht 30 zoneposities toonde zonder uit te leggen welke positie buiten Zone Warriors viel.",
+    "De browser had meerdere afleidingspaden voor dezelfde seat/zone waarheid, waaronder seatModel, zoneOpenCounts en multiBbPositions-reconstructie.",
     "De markerlaag gebruikte naast timeToCoordinate nog een aparte getVisibleLogicalRange-filter. Tijdens responsive relayout kon die logical-range snapshot kort achterlopen op de reeds gewijzigde chartgeometrie en alle geldige markers uitfilteren.",
     "De frontend forceerde perZoneLong/perZoneShort met Math.max(1), waardoor een expliciet ingestelde 0 onterecht als 1 werd weergegeven.",
     "De Zone-overzicht tabel gebruikte alleen rechtstreeks aanwezige chart-zones voor prijsranges; daardoor kregen geldige tussenliggende zones een — ondanks een bekende canonieke zoneafstand.",
@@ -113,6 +121,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een koude start had geen browser-side laatst-bevestigde zonebasis om tijdelijk op terug te vallen.",
   ],
   causes: [
+    "Accountposities en zone-eigendom hadden verschillende consumer-specifieke aggregaties in plaats van één server-authoritative classificatiecontract.",
     "Markerzichtbaarheid had twee onafhankelijke viewportgates: logical candle-index filtering en daarna chartcoördinaten. Die dubbele waarheid maakte de overlay gevoelig voor resize-timing.",
     "De capaciteitspresentatie combineerde opgeslagen settings met een cached seatModel fallback en voegde daar bovendien een minimum van 1 aan toe.",
     "De prijsrangeweergave bouwde geen volledige ladder over de reeds bewezen zonecentra heen.",
@@ -122,6 +131,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "Nieuwe pure build_canonical_zone_state canonicalizer classificeert dezelfde exchange-positions snapshot tegen dezelfde persisted Strategy-2 ownership.",
+    "Saved Strategy-2 settings zijn de enige eigenaar van per-zone capaciteit; legacy seatModel blijft alleen compatibiliteitsdata en is geen browser truth source.",
+    "Prijszone Details gebruikt uitsluitend runtimeTruth.zoneState voor capaciteit, bezetting, active zone, totals en prijsranges; alleen cycle-eventhistorie blijft een afzonderlijke read-only eventfeed.",
     "Build 579 verwijdert de logical-range markerfilter en gebruikt één coordinate-based viewportgate met een kleine randtolerantie, gevolgd door de bestaande gedeelde markerlayout.",
     "Na responsive geometry changes wordt markerprojectie opnieuw uitgevoerd in requestAnimationFrame; dezelfde code geldt voor elk apparaat.",
     "Per-zone capaciteit leest nu alleen settings.zoneBaseLongSoldiers/zoneBaseShortSoldiers (met dezelfde settings-key aliases) en accepteert 0 als geldige waarde.",
@@ -165,6 +177,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Tradinglogica, AsterBot entries, DCA, TP, hedge en prijszone-stoelen zijn niet gewijzigd.",
   ],
   now: [
+    "Één servercontract maakt zichtbaar of een accountpositie Zone Warrior, Strategy-2-unassigned of andere accountpositie is.",
+    "De UI kan daardoor een verschil zoals 31 account = 30 Strategy-2 + 1 overig expliciet tonen in plaats van twee ogenschijnlijk conflicterende totalen.",
     "De markerketen is nu: canonical events → normalisatie/merge → echte candle-ankering → timeToCoordinate/priceToCoordinate → één viewportgate → één markerlayout/renderer.",
     "Regressiontests dekken 320, 390, 520 en 768 px viewports, randmarkers, ongeldige coördinaten en het ontbreken van device-specifieke markerbranches.",
     "Op mobiele breedtes zijn alle vijf zonekolommen tegelijk zichtbaar en blijft alleen verticaal paginascrollen nodig voor langere zonelijsten.",
