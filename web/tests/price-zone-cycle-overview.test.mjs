@@ -84,3 +84,11 @@ test("Build 581 shows only canonical positive price ranges and server-owned LONG
   assert.match(overview, /Volgende vrije LONG-capaciteit/);
   assert.doesNotMatch(overview, /setInterval\(.*nextLongLevels/);
 });
+
+test("Build 582 renders server-owned remaining LONG distances in compact header", () => {
+  assert.match(overview, /aps-zco-compact-summary/);
+  assert.match(overview, /level\?\.distance/);
+  assert.match(overview, /↑ Omhoog/);
+  assert.match(overview, /↓ Omlaag/);
+  assert.doesNotMatch(overview, /aps-zco-next-levels/);
+});
