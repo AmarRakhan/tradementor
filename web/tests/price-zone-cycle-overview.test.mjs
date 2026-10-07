@@ -13,8 +13,10 @@ test("Build 570 mounts the approved current-cycle zone overview directly below P
   assert.match(overview, /huidige cyclus/);
 });
 
-test("zone overview is read-only and consumes canonical Aster, Portfolio Koers and confirmed-event feeds", () => {
-  assert.match(overview, /authenticatedRequest\("\/api\/exchanges\/aster"/);
+test("zone overview reuses the canonical Aster seat snapshot and only polls chart/event read feeds itself", () => {
+  assert.match(snapshot, /authenticatedRequest\("\/api\/exchanges\/aster"/);
+  assert.match(snapshot, /openZonePositionKeys/);
+  assert.doesNotMatch(overview, /authenticatedRequest\("\/api\/exchanges\/aster"\s*,/);
   assert.match(overview, /portfolio-chart\?timeframe=15m&limit=600/);
   assert.match(overview, /portfolio-chart\/events\?timeframe=15m/);
   assert.doesNotMatch(overview, /method:\s*["']POST["']/);
