@@ -6,6 +6,7 @@ import { authenticatedRequest } from "@/lib/cloud-client";
 import { AsterHedgeManager } from "./aster-hedge-manager";
 import { PortfolioKoersChart } from "./portfolio-koers-chart";
 import { TradeIntelligenceAdvisorCenter } from "./trade-intelligence-advisor-center";
+import { PriceZoneCycleOverview } from "./price-zone-cycle-overview";
 import { ActiveZoneSeatBlock, resolveActiveZoneSeatState, type ActiveZoneSeatSummary } from "./active-zone-seat-block";
 import { PortfolioPerformanceDetail, type PerformanceInitialTab } from "./portfolio-performance-detail";
 import { formatLiquidationRisk, liquidationNeedleDegrees, liquidationRiskRemaining, liquidationRiskTone, normalizeLiquidationRisk } from "@/lib/liquidation-gauge.mjs";
@@ -931,6 +932,7 @@ function PriceZoneDetailsPage({ summary, liveActiveZone, onBack }: {
       <div><h2>Prijszone details</h2><p>Gedetailleerde live weergave van de prijszone-strategie</p></div>
     </div>
     <PriceZoneStrategySummary summary={summary} liveActiveZone={liveActiveZone} />
+    <PriceZoneCycleOverview liveActiveZone={liveActiveZone} />
   </section>;
 }
 
