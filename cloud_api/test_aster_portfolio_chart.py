@@ -213,7 +213,7 @@ def test_recent_strategy_audit_events_become_immediate_chart_markers():
 def test_live_portfolio_event_endpoint_is_read_only_and_does_not_poll_aster():
     source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
     start = source.index('@app.get("/v1/me/aster/portfolio-chart/events")')
-    end = source.index('@app.get("/v1/me/aster/portfolio-chart/active-trades")', start + 1)
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart/audit")', start + 1)
     block = source[start:end]
     assert "AsterV3Client(" not in block
     assert "portfolio_chart_strategy_audit_markers" in block
@@ -589,7 +589,7 @@ def test_build569_unconfirmed_tp_audit_row_fails_closed():
 def test_build569_audit_endpoint_is_read_only_and_exposes_reconciliation():
     source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
     start = source.index('@app.get("/v1/me/aster/portfolio-chart/audit")')
-    end = source.index('@app.get("/v1/me/aster/portfolio-chart/audit")', start)
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart/active-trades")', start + 1)
     block = source[start:end]
     assert 'live_authorized=False' in block
     assert '"ordersSent":0' in block
