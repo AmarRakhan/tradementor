@@ -25,8 +25,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-10-06",
-  title: "Portfolio Koers · Build 518 referentie + live unified labels",
+  releasedAt: "2026-10-07",
+  title: "Portfolio Koers · echte Build 518 startviewport hersteld",
   newItems: [
     "Portfolio Koers volgt de goedgekeurde visuele referentie file_0000000065e08246a10dfd2cc721cc77.",
     "Portfolio Koers start met een echte zwarte chartachtergrond in plaats van de blauwzwarte tint.",
@@ -35,7 +35,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Build 561 herstelt de ontbrekende frontend-import van portfolioKoersFocusBars die na de splashscreen een blank scherm kon veroorzaken.",
     "Build 562 herstelt de Bollinger Bands in Accountwaarde; een kort recent historiegat mag de indicator niet volledig laten verdwijnen.",
     "Build 564 gebruikt de bewezen Build 518 chartgeometrie als bron: 15m opent weer met de historische 30-bar viewport en 7,6 bar-spacing in plaats van een arbitraire 12-candle cap.",
-    "Build 565 begrenst Accountwaarde bij openen tot de actuele Amsterdamse handelsdag wanneer die beschikbaar is; de bewezen 30-bar dichtheid blijft gelden zonder oude-dag Bollingerwaarden in de morgenschaal.",
+    "Build 565 bleek Accountwaarde bij openen ten onrechte tot de actuele Amsterdamse handelsdag te begrenzen; Build 566 verwijdert die crop en herstelt de echte Build 518 startviewport.",
     "Build 565 herkent ook de huidige unified-engine auditnamen INITIAL_OPEN_LEG, OPEN_LEG, ADD_DCA, PENDING_REOPEN_CONFIRMED en FULL_TP voor LONG/SHORT/TP-labels.",
     "Bollinger wordt alleen over de nieuwste aaneengesloten candle-run berekend en overspant geen historiegat.",
     "De standaard mobiele viewport toont minder candles tegelijk met ruimere bar-spacing, zodat candles bij openen voller en beter leesbaar zijn.",
@@ -75,7 +75,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Voor Accountwaarde gebruikt Bollinger vanaf 20 beschikbare candles de huidige Amsterdam-dagsessie als display-input, zodat oude dagwaarden de huidige y-as niet meer tientallen dollars opentrekken.",
     "De chartcode bevat de goede referentie file_0000000047d081f4b2c4348a14e0db2f als canoniek visueel contract en markeert file_00000000d22c81f4aa440e735e9a23ed expliciet als afgekeurde situatie.",
     "Stale regressieguards uit Build 559–563 zijn vervangen door Build 564-contracten zodat de bewezen Build 518 viewport niet opnieuw door oude assertions wordt geblokkeerd.",
-    "Build 565 regressieguards zijn uitgelijnd op session-based Bollinger-input en de Accountwaarde-only session viewport zonder Active Trades te wijzigen.",
+    "Build 566 houdt Amsterdam-session filtering uitsluitend voor Bollinger-input; de chartviewport zelf blijft de vaste Build 518 tijdlijn gebruiken zodat bevestigde LONG/SHORT/TP-events niet buiten beeld worden gecropt.",
     "Chartcanvas, stage en initial-state gebruiken nu #000000; grid en assen zijn neutraal en subtiel gehouden.",
     "De cold-start viewport is per timeframe compacter gemaakt met bredere candles; handmatig zoomen/pannen blijft daarna behouden.",
     "Laatste bevestigde 15m-zones worden display-only gecachet en bij een koude start direct teruggelezen.",
@@ -100,7 +100,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   technicalDetails: [
     "Frontend: web/components/portfolio-koers-chart.tsx.",
     "Regression: web/tests/portfolio-koers-chart.test.mjs + web/tests/portfolio-koers-zone-advisor-ui.test.mjs.",
-    "Release-identiteit: Webapp V46 build 565.",
+    "Release-identiteit: Webapp V46 build 566.",
   ],
   confidence: "confirmed",
 }
