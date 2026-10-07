@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aster_runtime_truth import build_multi_bb_runtime_truth
+from aster_runtime_truth import build_canonical_zone_state, build_multi_bb_runtime_truth
 
 
 def test_zone_warriors_runtime_truth_is_server_authoritative_and_capacity_consistent():
@@ -108,3 +108,60 @@ def test_strategy2_public_exposes_runtime_truth_without_replacing_legacy_fields(
     assert '"runtimeTruth":runtime_truth' in source
     assert '"multiBb":report' in source
     assert '"priceZoneSeats":zone_report' in source
+
+
+
+def test_canonical_zone_state_reconciles_31_account_positions_as_30_zone_plus_one_other():
+    positions = [
+        *[{"symbol": f"L{i}USDT", "side": "LONG"} for i in range(30)],
+        {"symbol": "MANUALUSDT", "side": "LONG"},
+    ]
+    managed = {
+        f"L{i}USDT|LONG": {
+            "soldierRole": "ZONE_BASE",
+            "originZone": i % 3,
+        }
+        for i in range(30)
+    }
+    result = build_canonical_zone_state(
+        settings={
+            "priceZoneSeats": {"longSeatsPerZone": 2, "shortSeatsPerZone": 0},
+            "maximumPositions": 60,
+        },
+        positions=positions,
+        managed_positions=managed,
+        zone_report={
+            "activeZone": 1,
+            "runtimeSync": {
+                "activeZone": 1,
+                "currentEquity": 315.08,
+                "zones": [
+                    {"index": 0, "center": 312.9, "lower": 312.0, "upper": 313.8},
+                    {"index": 1, "center": 314.7, "lower": 313.8, "upper": 315.6},
+                    {"index": 2, "center": 316.5, "lower": 315.6, "upper": 317.4},
+                ],
+            },
+        },
+        snapshot_at_ms=123,
+    )
+    assert result["account"] == {"totalOpen": 31, "longOpen": 31, "shortOpen": 0}
+    assert result["strategyOwned"] == {"totalOpen": 30, "longOpen": 30, "shortOpen": 0}
+    assert result["nonStrategyOwned"] == {"totalOpen": 1, "longOpen": 1, "shortOpen": 0}
+    assert result["capacity"]["perZoneShort"] == 0
+    assert result["otherOpenPositions"][0]["positionKey"] == "MANUALUSDT|LONG"
+    assert result["reconciliation"]["accountMatches"] is True
+    assert result["reconciliation"]["strategyMatches"] is True
+
+
+def test_canonical_zone_state_keeps_strategy_position_without_origin_explicitly_unassigned():
+    result = build_canonical_zone_state(
+        settings={"priceZoneSeats": {"longSeatsPerZone": 2, "shortSeatsPerZone": 0}},
+        positions=[{"symbol": "ABCUSDT", "side": "LONG"}],
+        managed_positions={"ABCUSDT|LONG": {"soldierRole": "ZONE_BASE", "originZone": None}},
+        zone_report={},
+    )
+    assert result["strategyOwned"]["totalOpen"] == 1
+    assert result["reconciliation"]["zoneAssignedTotal"] == 0
+    assert result["reconciliation"]["unassignedStrategyTotal"] == 1
+    assert result["unassignedStrategyPositions"][0]["reason"] == "MISSING_ORIGIN_ZONE"
+    assert result["reconciliation"]["strategyMatches"] is True
