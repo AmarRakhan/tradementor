@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { authenticatedRequest } from "@/lib/cloud-client";
+import { authenticatedRequest, subscribeSharedAsterSnapshot } from "@/lib/cloud-client";
 import { derivePortfolioCycleCard, type PortfolioCycleCardState } from "@/lib/portfolio-cycle-card";
 
 const PROFIT_POT_REFERENCE = "file_00000000a6388210976eaf5f7d7386e0";
@@ -106,25 +106,13 @@ export function AsterProfitPotSnapshotBridge() {
 
   useEffect(() => {
     if (!host) return;
-    let alive = true;
-    const refreshCycle = async () => {
+    return subscribeSharedAsterSnapshot((payload) => {
       try {
-        const payload = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" });
-        const next = derivePortfolioCycleCard(payload);
-        if (alive) setCycleState(next);
+        setCycleState(derivePortfolioCycleCard(payload));
       } catch {
-        if (alive) setCycleState({ active: false, statusLabel: "Niet ingesteld", progressPercent: null, remainingUsd: null, remainingPercent: null });
+        setCycleState({ active: false, statusLabel: "Niet ingesteld", progressPercent: null, remainingUsd: null, remainingPercent: null });
       }
-    };
-    void refreshCycle();
-    const timer = window.setInterval(refreshCycle, 10000);
-    const onVisible = () => { if (document.visibilityState === "visible") void refreshCycle(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+    });
   }, [host]);
 
   useEffect(() => {
