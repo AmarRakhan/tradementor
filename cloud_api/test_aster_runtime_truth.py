@@ -165,3 +165,28 @@ def test_canonical_zone_state_keeps_strategy_position_without_origin_explicitly_
     assert result["reconciliation"]["unassignedStrategyTotal"] == 1
     assert result["unassignedStrategyPositions"][0]["reason"] == "MISSING_ORIGIN_ZONE"
     assert result["reconciliation"]["strategyMatches"] is True
+
+
+def test_next_long_levels_follow_canonical_price_and_skip_full_zones():
+    from aster_runtime_truth import _canonical_long_next_levels
+    zones = [
+        {"index": -2, "lower": 70, "upper": 80, "longOpen": 0, "longMax": 2},
+        {"index": -1, "lower": 80, "upper": 90, "longOpen": 1, "longMax": 2},
+        {"index": 0, "lower": 90, "upper": 100, "longOpen": 2, "longMax": 2},
+        {"index": 1, "lower": 100, "upper": 110, "longOpen": 2, "longMax": 2},
+        {"index": 2, "lower": 110, "upper": 120, "longOpen": 0, "longMax": 2},
+    ]
+    result = _canonical_long_next_levels(zones, 95, reliable=True)
+    assert result["up"]["zone"] == 2
+    assert result["up"]["price"] == 110
+    assert result["down"]["zone"] == -1
+    assert result["down"]["price"] == 90
+    assert result["up"]["entryPermission"] == "NOT_EVALUATED"
+
+
+def test_next_long_levels_never_invent_missing_canonical_price():
+    from aster_runtime_truth import _canonical_long_next_levels
+    row = {"index": 1, "lower": 100, "upper": 110, "longOpen": 0, "longMax": 2}
+    assert _canonical_long_next_levels([row], None, reliable=True)["status"] == "UNAVAILABLE"
+    assert _canonical_long_next_levels([row], 95, reliable=False)["up"] is None
+    assert _canonical_long_next_levels([], 95, reliable=True)["up"] is None
