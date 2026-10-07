@@ -145,3 +145,24 @@ test("Build 519 derives live audit marker count from unique execution-proven ent
   assert.equal(normalized.markers.length,1);
   assert.equal(normalized.markers[0].count,2);
 });
+
+
+test("Build 568 shows entry margin dollars without duplicate ENTRY labels and increases 15m candle density",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.ok(component.includes('"15m":{visibleBars:42,barSpacing:5.4,rightOffset:1.6}'));
+  assert.ok(component.includes('title="Gebruikte margin"'));
+  assert.ok(component.includes('trade.marginUsd?accountUsd(trade.marginUsd):"—"'));
+  assert.equal(component.includes('trade.activityType==="DCA"?"DCA":trade.activityType==="ADD"?"ADD":"ENTRY"'),false);
+  assert.ok(component.includes('["DCA","ADD"].includes(String(trade.activityType||"").toUpperCase())'));
+});
+
+test("Build 568 preserves marginUsd in exact marker entry details",()=>{
+  const normalized=normalizePortfolioKoersPayload({
+    timeframe:"15m",
+    markers:[{
+      time:900,atMs:900000,kind:"entry",side:"LONG",count:1,source:"strategy2-confirmed-audit",
+      entries:[{symbol:"BTCUSDT",side:"LONG",atMs:901000,activityType:"ENTRY",marginUsd:0.4,orderId:"o-568",exchangeConfirmed:true}],
+    }],
+  });
+  assert.equal(normalized.markers[0].entries[0].marginUsd,0.4);
+});
