@@ -490,7 +490,7 @@ test("Build 571 keeps confirmed chart zones server-owned across cold starts and 
   assert.ok(component.includes('const visualPayloadZones=payload.zones'));
   assert.equal(component.includes('tradementor.portfolioZones.v1.'),false);
   assert.equal(component.includes('advisorTimeline?.safeForAdvisor===true&&advisorZones.length?advisorZones:payload.zones'),false);
-  assert.ok(component.includes('manualViewportRef.current[viewportKey]!==true'));
+  assert.ok(component.includes('const markViewportManual=()=>{manualViewportRef.current[viewportKey]=true}'));
   assert.ok(component.includes('PORTFOLIO_KOERS_DEFAULT_TIMEFRAME'));
   assert.ok(component.includes('const [viewMode,setViewMode]=useState<PortfolioViewMode>("account")'));
 });
