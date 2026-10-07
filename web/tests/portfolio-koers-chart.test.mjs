@@ -298,7 +298,7 @@ test("Build 568 keeps the denser reference timeline while visible data drives ac
   for(const pair of [
     '"1m":{visibleBars:32',
     '"5m":{visibleBars:31',
-    '"15m":{visibleBars:30',
+    '"15m":{visibleBars:42',
     '"1u":{visibleBars:28',
     '"4u":{visibleBars:26',
     '"24u":{visibleBars:24',
