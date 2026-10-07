@@ -417,6 +417,63 @@ def _event_timestamp_ms(row: dict[str, Any]) -> int:
     return int(_number(row.get("timestampMs"))) or int(_number(row.get("time")))
 
 
+
+def candle_integrity_report(candles: list[dict[str, Any]] | None, timeframe: str) -> dict[str, Any]:
+    """Describe real persisted candle continuity without fabricating missing buckets."""
+    interval = TIMEFRAME_MS.get(str(timeframe))
+    rows = [dict(row) for row in candles or [] if isinstance(row, dict)]
+    rows.sort(key=lambda row: int(_number(row.get("atMs"))) or int(_number(row.get("time"))) * 1000)
+    if not interval or not rows:
+        return {
+            "timeframe": str(timeframe), "actualBuckets": len(rows), "expectedBuckets": len(rows),
+            "missingBuckets": 0, "largestGapBuckets": 0, "largestGapMs": 0,
+            "gaps": [], "multiSamplePercent": 0.0, "syntheticCandles": 0,
+        }
+    stamps=[int(_number(row.get("atMs"))) or int(_number(row.get("time"))) * 1000 for row in rows]
+    gaps=[]
+    largest=0
+    for previous,current in zip(stamps,stamps[1:]):
+        delta=current-previous
+        if delta>interval:
+            missing=max(0, delta//interval-1)
+            if missing:
+                largest=max(largest,missing)
+                gaps.append({
+                    "afterMs":previous,"beforeMs":current,"missingBuckets":missing,
+                    "gapMs":delta-interval,
+                })
+    expected=max(len(rows), ((stamps[-1]-stamps[0])//interval)+1)
+    missing=max(0,int(expected)-len(rows))
+    multi=sum(1 for row in rows if int(_number(row.get("samples", row.get("sampleCount"))))>1)
+    return {
+        "timeframe":str(timeframe),
+        "actualBuckets":len(rows),
+        "expectedBuckets":int(expected),
+        "missingBuckets":missing,
+        "largestGapBuckets":largest,
+        "largestGapMs":largest*interval,
+        "gaps":gaps,
+        "multiSamplePercent":round((multi/len(rows))*100.0,2) if rows else 0.0,
+        "syntheticCandles":0,
+    }
+
+
+def classify_confirmed_close(raw: dict[str, Any] | None) -> str:
+    """Classify one confirmed close for chart presentation without changing trading."""
+    row=raw if isinstance(raw,dict) else {}
+    event=str(row.get("event", row.get("action", row.get("activityType", "")))).upper().strip()
+    pnl=_number(row.get("realizedPnlUsd", row.get("realizedPnl", row.get("pnl"))))
+    if "HEDGE" in event or "RECOVERY" in event:
+        return "HEDGE_CLOSE"
+    if event in {"FULL_TP","MULTI_BB_TP","TAKE_PROFIT_CLOSE","PARTIAL_TP","PORTFOLIO_TP"} or "TAKE_PROFIT" in event:
+        return "TAKE_PROFIT"
+    if "MANUAL" in event and pnl>0:
+        return "MANUAL_PROFIT_CLOSE"
+    if pnl<0:
+        return "LOSS_CLOSE"
+    return "OTHER_CONFIRMED_CLOSE"
+
+
 def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) -> list[dict[str, Any]]:
     """Aggregate confirmed Aster entries/exits into compact portfolio markers."""
     if timeframe not in TIMEFRAME_MS:
@@ -524,8 +581,13 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
                 group.setdefault("trades", [])
                 group["trades"].append({
                     "symbol": _base_symbol(raw.get("symbol")),
+                    "side": side,
+                    "atMs": stamp,
                     "realizedPnlUsd": realized,
                     "durationMinutes": _duration_minutes(raw, stamp),
+                    "orderId": str(raw.get("orderId", raw.get("id", "")) or ""),
+                    "clientOrderId": str(raw.get("clientOrderId", "") or ""),
+                    "closeClassification": classify_confirmed_close(raw),
                 })
             if kind == "entry":
                 group.setdefault("entries", [])
@@ -603,13 +665,17 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         "ADD_DCA": ("entry", None, "DCA"),
         "PENDING_REOPEN_CONFIRMED": ("entry", None, "ENTRY"),
         "FULL_TP": ("tp", "ALL", "TP"),
+        "PARTIAL_TP": ("tp", "ALL", "TP"),
+        "TAKE_PROFIT_CLOSE": ("tp", "ALL", "TP"),
+        "PORTFOLIO_TP": ("tp", "ALL", "TP"),
     }
     trusted_confirmed_events = {
         "INITIAL_OPEN_LEG", "OPEN_LEG", "ADD_DCA",
-        "PENDING_REOPEN_CONFIRMED", "FULL_TP",
+        "PENDING_REOPEN_CONFIRMED", "FULL_TP", "PARTIAL_TP",
+        "TAKE_PROFIT_CLOSE", "PORTFOLIO_TP",
     }
     groups: dict[tuple[int, str, str], dict[str, Any]] = {}
-    seen_entry_execution_ids: set[str] = set()
+    seen_execution_ids: set[str] = set()
     for raw in rows or []:
         if not isinstance(raw, dict):
             continue
@@ -624,31 +690,31 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
             continue
         if kind == "entry" and side not in {"LONG", "SHORT"}:
             continue
-        if kind == "entry":
-            # The fast feed must represent executions, not observations. Legacy
-            # rows require explicit exchange proof. Current unified-engine audit
-            # names are themselves post-confirmation records; their Firestore
-            # document id provides stable identity for already-persisted rows.
-            trusted_confirmed = event in trusted_confirmed_events and bool(str(raw.get("auditId", "")).strip())
-            if raw.get("exchangeConfirmed") is not True and not trusted_confirmed:
-                continue
-            execution_id = ""
-            for field in ("orderId", "clientOrderId", "exchangeTradeId", "tradeId", "fillId", "auditId"):
-                value = str(raw.get(field, "") or "").strip()
-                if value:
-                    execution_id = f"{field}:{value}"
-                    break
-            if not execution_id:
-                continue
-            identity = "|".join((
-                str(raw.get("symbol", "")).upper().strip(),
-                side,
-                activity_type,
-                execution_id,
-            ))
-            if identity in seen_entry_execution_ids:
-                continue
-            seen_entry_execution_ids.add(identity)
+        # Chart markers are execution evidence, never intent/observation rows.
+        # Use one stable exchange/durable identity for both entries and closes so
+        # audit + attribution + fill-history cannot inflate a cluster.
+        trusted_confirmed = event in trusted_confirmed_events and bool(str(raw.get("auditId", "")).strip())
+        if raw.get("exchangeConfirmed") is not True and not trusted_confirmed:
+            continue
+        execution_id = ""
+        for field in ("tradeId", "fillId", "exchangeTradeId", "orderId", "clientOrderId", "auditId"):
+            value = str(raw.get(field, "") or "").strip()
+            if value:
+                execution_id = f"{field}:{value}"
+                break
+        if not execution_id:
+            continue
+        identity = "|".join((
+            str(raw.get("symbol", "")).upper().strip(),
+            side if kind == "entry" else "CLOSE",
+            activity_type,
+            execution_id,
+        ))
+        if identity in seen_execution_ids:
+            continue
+        seen_execution_ids.add(identity)
+        if kind == "tp" and classify_confirmed_close(raw) not in {"TAKE_PROFIT","MANUAL_PROFIT_CLOSE"}:
+            continue
         group_side = side if kind == "entry" else "ALL"
         bucket = bucket_start_ms(stamp, timeframe)
         key = (bucket, kind, group_side)
@@ -667,7 +733,19 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         if activity_type not in group["activityTypes"]:
             group["activityTypes"].append(activity_type)
         if kind == "tp":
-            group["realizedPnlUsd"] += _number(raw.get("realizedPnlUsd", raw.get("realizedPnl", raw.get("pnl"))))
+            realized=_number(raw.get("realizedPnlUsd", raw.get("realizedPnl", raw.get("pnl"))))
+            group["realizedPnlUsd"] += realized
+            group.setdefault("trades", [])
+            group["trades"].append({
+                "symbol": str(raw.get("symbol", "")).upper().strip(),
+                "side": str(raw.get("side", "")).upper().strip(),
+                "atMs": stamp,
+                "realizedPnlUsd": realized,
+                "durationMinutes": None,
+                "orderId": str(raw.get("orderId", "") or ""),
+                "clientOrderId": str(raw.get("clientOrderId", "") or ""),
+                "closeClassification": classify_confirmed_close(raw),
+            })
         if kind == "entry":
             entry_price = _number(raw.get("entryPrice", raw.get("fillPrice", raw.get("price"))))
             notional_usd = _number(raw.get("executedNotionalUsd", raw.get("filledNotional", raw.get("notionalUsd", raw.get("plannedInputNotionalUsd", raw.get("configuredBaseNotional", raw.get("configuredNotionalUsd")))))))
