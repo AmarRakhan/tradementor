@@ -30,7 +30,7 @@ type SeatSummaryProp = {
   nextLongLevels: {
     status: string;
     up: { zone: number; price: number; distance: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
-    down: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+    down: { zone: number; price: number; distance: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
   } | null;
   zones: Array<ZoneLevel & {
     longOpen: number;
