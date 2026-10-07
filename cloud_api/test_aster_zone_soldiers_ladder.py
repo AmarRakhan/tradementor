@@ -47,7 +47,8 @@ def test_first_legacy_migration_tick_is_explicitly_held_before_new_zone_entries(
 
 def test_server_zone_context_uses_the_same_extrapolated_signed_ladder():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
-    assert "canonical_display_zone_ladder(" in source\n    assert "confirmed_zone_from_display_zones(" in source
+    assert "canonical_display_zone_ladder(" in source
+    assert "confirmed_zone_from_display_zones(" in source
     assert 'portfolio_chart_latest_contiguous_candles(candles, "15m")' in source
 
 
