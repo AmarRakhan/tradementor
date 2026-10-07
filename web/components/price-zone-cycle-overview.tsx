@@ -377,7 +377,7 @@ export function PriceZoneCycleOverview({
           <span>Alle zones <b aria-hidden="true">⌄</b></span>
         </div>
       </header>
-      <div className="aps-zco-compact-summary" aria-label="Volgende vrije LONG-capaciteit en actuele zone" style={{ display: "grid", gridTemplateColumns: "minmax(52px,.7fr) repeat(2,minmax(76px,1fr)) minmax(82px,1fr) minmax(62px,.7fr)", gap: 0, alignItems: "center", margin: "10px 0 12px", padding: "8px 4px", border: "1px solid rgba(55,160,99,.28)", borderRadius: 12, background: "rgba(2,24,12,.5)" }}>
+      <div className="aps-zco-compact-summary" aria-label="Volgende vrije LONG-capaciteit en actuele zone" style={{ display: "grid", gridTemplateColumns: "minmax(0,.8fr) repeat(2,minmax(0,1fr)) minmax(0,1.15fr) minmax(0,.85fr)", gap: 0, alignItems: "center", margin: "10px 0 12px", padding: "8px 4px", border: "1px solid rgba(55,160,99,.28)", borderRadius: 12, background: "rgba(2,24,12,.5)" }}>
         <span style={{ padding: "0 5px", color: "#77dfab", fontSize: 12, lineHeight: 1.25 }}>Volgende<br />LONG</span>
         {(["up", "down"] as const).map((direction) => {
           const level = seatSummary?.nextLongLevels?.status === "AVAILABLE" ? seatSummary.nextLongLevels[direction] : null;
@@ -386,10 +386,10 @@ export function PriceZoneCycleOverview({
           const color = direction === "up" ? "#6af1ad" : "#ff829e";
           return <span key={direction} style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px", color }} title={level ? `Zone ${zoneLabel(level.zone)} · ${level.freeLongSeats} vrije LONG-stoelen; alleen zonecapaciteit, geen ordertoestemming` : "Geen betrouwbare volgende LONG-zone"}>
             <small style={{ display: "block", fontSize: 10, lineHeight: 1.3 }}>{direction === "up" ? "↑ Omhoog" : "↓ Omlaag"}</small>
-            <b style={{ display: "block", fontSize: 13, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{validDistance ? `$ ${priceLabel(distance)}` : "—"}</b>
+            <b style={{ display: "block", fontSize: 12, whiteSpace: "nowrap", letterSpacing: "-.25px", fontVariantNumeric: "tabular-nums" }}>{validDistance ? `$ ${priceLabel(distance)}` : "—"}</b>
           </span>;
         })}
-        <span style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px" }}><small style={{ display: "block", fontSize: 10, whiteSpace: "nowrap" }}>Huidige prijs</small><b style={{ fontSize: 12, whiteSpace: "nowrap" }}>{seatSummary?.currentPrice === null || seatSummary?.currentPrice === undefined ? "—" : `$ ${priceLabel(seatSummary.currentPrice)}`}</b></span>
+        <span style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px" }}><small style={{ display: "block", fontSize: 10, whiteSpace: "nowrap" }}>Huidige prijs</small><b style={{ fontSize: 11, whiteSpace: "nowrap" }}>{seatSummary?.currentPrice === null || seatSummary?.currentPrice === undefined ? "—" : `$ ${priceLabel(seatSummary.currentPrice)}`}</b></span>
         <span style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px", textAlign: "center" }}><small style={{ display: "block", fontSize: 10 }}>Actieve zone</small><b style={{ display: "block", color: "#f6c965", fontSize: 12 }}>{activeZone === null ? "—" : zoneLabel(activeZone)}</b></span>
       </div>
 
