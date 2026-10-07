@@ -6335,6 +6335,42 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "liveEnabled": bool(control.get("liveEnabled", False)),
         "ordersEnabled": os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true",
     }
+
+    # Build 571: presentation metrics come from persisted server state only.
+    # Never recompute these values from browser DOM/localStorage.
+    amsterdam_today = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Amsterdam")).date()
+    today_closed = []
+    for row in closed_trades:
+        try:
+            closed_at = datetime.fromisoformat(str(row.get("closedAt", "")).replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Amsterdam"))
+        except (TypeError, ValueError):
+            continue
+        if closed_at.date() == amsterdam_today:
+            today_closed.append(row)
+    closed_today_reliable = not (
+        len(closed_trades) >= 100
+        and today_closed
+        and len(today_closed) == len(closed_trades)
+    )
+    if closed_today_reliable:
+        public_response["tradesClosedToday"] = len(today_closed)
+        public_response["realizedPnlToday"] = sum(safe_float(row.get("realizedPnlUsd")) for row in today_closed)
+    public_response["closedTodayReliable"] = closed_today_reliable
+
+    growth_doc = portfolio_growth_reference(uid).get().to_dict() or {}
+    growth_state = growth_doc.get("dailyGrowth") if isinstance(growth_doc.get("dailyGrowth"), dict) else {}
+    growth_today = str(growth_state.get("lastObservedDate", "")) == amsterdam_today.isoformat()
+    growth_reliable = bool(growth_today and growth_state.get("lastObservedReliable") is True)
+    public_response["growthReliable"] = growth_reliable
+    if growth_reliable:
+        today_growth = safe_float(growth_state.get("lastObservedReturnPercentage"))
+        completed_count = int(safe_float(growth_state.get("completedReturnCount")))
+        completed_sum = safe_float(growth_state.get("completedReturnSum"))
+        public_response["todayGrowthPercentage"] = today_growth
+        public_response["averageDailyGrowthPercentage"] = average_daily_return(
+            completed_sum, completed_count, today_growth
+        )
+
     daily_range = _aster_account_daily_range(
         user,
         datetime.now(timezone.utc),
