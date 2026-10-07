@@ -34,12 +34,12 @@ test("Firebase identity stays pinned and its bearer token is preserved", async (
   assert.match(proxy, /Authorization: authorization/);
 });
 
-test("browser persistence is UID scoped and rejects a mismatched cached owner", async () => {
-  const [cache, page] = await Promise.all([read("lib/aster-snapshot-cache.mjs"), read("app/page.tsx")]);
-  assert.match(cache, /encodeURIComponent\(String\(uid/);
-  assert.match(cache, /saved\?\.uid !== uid/);
-  assert.match(cache, /exchange !== "aster"/);
-  assert.match(page, /tradementor\.portfolioEquity\.v2\.\$\{encodeURIComponent\(user\?\.uid \|\| ""\)\}/);
+test("Build 571 forbids browser persistence of account business truth across UIDs", async () => {
+  const [hook, page, auth] = await Promise.all([read("lib/use-exchange-data.ts"), read("app/page.tsx"), read("components/auth-provider.tsx")]);
+  assert.doesNotMatch(hook, /window\.localStorage|loadAsterSnapshot|saveAsterSnapshot/);
+  assert.doesNotMatch(page, /tradementor\.portfolioEquity/);
+  assert.match(hook, /setState\(\{ uid, snapshots: \{ hyperliquid: emptySnapshot\(\), aster: emptySnapshot\(\) \} \}\)/);
+  assert.match(auth, /One-way cleanup of retired browser business-truth caches/);
 });
 
 test("the generic proxy fails closed before any upstream request without Firebase proof", async () => {
