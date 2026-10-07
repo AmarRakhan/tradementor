@@ -26,8 +26,12 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Prijszone Details · Zone overzicht huidige cyclus",
+  title: "Prijszone Details · laadherstel huidige cyclus",
   newItems: [
+    "Build 572 voorkomt dat Zone overzicht op 'Zonegegevens worden geladen…' blijft hangen wanneer een read-only chart/eventbron traag of tijdelijk niet beschikbaar is.",
+    "Zone-rijen renderen nu direct uit de reeds bevestigde seat/origin-zone truth; prijsniveaus en cyclus-events vullen daarna onafhankelijk aan.",
+    "Chart- en eventreads blokkeren elkaar niet meer, hebben een harde 8-seconden timeout en wissen eerder bevestigde waarden niet bij een partiële fout.",
+    "De foutpad-verwijzing naar een verwijderde state-setter is verwijderd; bij tijdelijke bronproblemen toont de UI een expliciete waarschuwing in plaats van oneindig laden.",
     "Build 570 voegt onder Prijszone-strategie het nieuwe Zone overzicht (huidige cyclus) toe volgens referentie file_00000000941881f48d08a2c072cf8ad7.",
     "Per zone worden prijsniveau, LONG/SHORT bezetting, vrije stoelen, bevestigde profit-events en status in één operationele tabel samengebracht.",
     "De actieve zone krijgt een gouden highlight; origin-zone ownership blijft leidend en de tabel blijft op mobiel intern horizontaal scrollbaar met een sticky Zone-kolom.",
