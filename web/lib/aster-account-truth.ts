@@ -109,7 +109,7 @@ export function normalizeAsterAccountTruth(payload: unknown): AsterAccountTruth 
       count:nonNegativeInt(positions.count),
       longCount:nonNegativeInt(positions.longCount),
       shortCount:nonNegativeInt(positions.shortCount),
-      rows:Array.isArray(positions.rows)?positions.rows.filter((row)=>row&&typeof row==="object") as Record<string,unknown>[]):[],
+      rows:Array.isArray(positions.rows)?(positions.rows.filter((row)=>row&&typeof row==="object") as Record<string,unknown>[]):[],
     },
     performance:{
       dayHigh:nullableNumber(performance.dayHigh),
