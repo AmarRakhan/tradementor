@@ -5,6 +5,7 @@ import {
   eventPriority,
   layoutPortfolioKoersMarkers,
   layoutPortfolioKoersZoneRegions,
+  markerCoordinateInViewport,
   markerRectInsideBollinger,
   markerRectsOverlap,
   selectPortfolioKoersReferenceCandidates,
@@ -101,6 +102,26 @@ test("the corruption safety cap is high and not a normal density limit",()=>{
 test("entry markers remain prioritized above TP and cashflow for local placement only",()=>{
   assert.ok(eventPriority({kind:"entry"})>eventPriority({kind:"tp"}));
   assert.ok(eventPriority({kind:"tp"})>eventPriority({kind:"cashflow"}));
+});
+
+test("marker viewport gate is coordinate-based across phone, Fold and tablet widths",()=>{
+  for(const width of [320,390,520,768]){
+    const plotRight=width-48-3;
+    assert.equal(markerCoordinateInViewport(24,width),true);
+    assert.equal(markerCoordinateInViewport(plotRight/2,width),true);
+    assert.equal(markerCoordinateInViewport(plotRight,width),true);
+    assert.equal(markerCoordinateInViewport(-12,width),true);
+    assert.equal(markerCoordinateInViewport(plotRight+12,width),true);
+    assert.equal(markerCoordinateInViewport(-40,width),false);
+    assert.equal(markerCoordinateInViewport(plotRight+40,width),false);
+  }
+});
+
+test("marker viewport gate rejects invalid coordinates without device-specific logic",()=>{
+  assert.equal(markerCoordinateInViewport(null,390),false);
+  assert.equal(markerCoordinateInViewport(undefined,390),false);
+  assert.equal(markerCoordinateInViewport(Number.NaN,390),false);
+  assert.equal(markerCoordinateInViewport(Number.POSITIVE_INFINITY,390),false);
 });
 
 test("price axis reservation defaults to the narrower mobile contract",()=>{
