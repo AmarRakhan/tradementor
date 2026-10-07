@@ -1,0 +1,37 @@
+name: Diagnose Build 573 Account Chart
+on:
+  push:
+    branches: [amar-crypto-bot-2026-cloud]
+    paths: [.github/workflows/diagnose-build573-account-chart.yml]
+permissions:
+  contents: read
+  id-token: write
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DIAGNOSTIC_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DIAGNOSTIC_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read account/chart production errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND severity>=ERROR' --project "$GCP_PROJECT_ID" --freshness=3h --limit=200 --order=desc --format=json > errors.json
+          python - <<'PY'
+          import json
+          rows=json.load(open("errors.json",encoding="utf-8"))
+          for r in rows:
+              req=r.get("httpRequest") or {}
+              url=str(req.get("requestUrl") or "")
+              text=str(r.get("textPayload") or r.get("jsonPayload") or "")
+              if "/v1/me/aster/status" in url or "/v1/me/aster/portfolio-chart" in url or "daily_equity_range" in text or "_aster_account_daily_range" in text:
+                  print(json.dumps({"ts":r.get("timestamp"),"status":req.get("status"),"url":url,"text":text[:5000]},ensure_ascii=False))
+          PY
