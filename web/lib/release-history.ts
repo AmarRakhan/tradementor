@@ -26,8 +26,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Prijszone Details · compact zoneoverzicht zonder horizontaal scrollen",
+  title: "Prijszone Details · compact zoneoverzicht live release",
   newItems: [
+    "Build 575 synchroniseert de release-tests met de huidige build en de nieuwe goedgekeurde Prijszone-referentie, zodat de canonieke productie-pipeline niet meer wordt geblokkeerd door verouderde build- of mockup-asserties.",
+    "De release-gates controleren voortaan het actuele buildcontract zonder een oud buildnummer hard vast te zetten.",
     "Build 574 vervangt het brede Zone overzicht door één vaste vijfkolomstabel volgens referentie file_00000000773c8210ad977be9527738e6.",
     "Zone, Prijsrange, LONG open/max, SHORT open/max en Totaal bezet staan nu tegelijk binnen de mobiele viewport zonder horizontale swipe of scrollbar.",
     "De Status-kolom is alleen uit de presentatie verwijderd; actieve zone-state blijft zichtbaar via de bestaande goud/oranje highlight en onderliggende runtime-state blijft ongewijzigd.",
@@ -76,6 +78,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
+    "De eerste Build 574 productie-run werd door twee verouderde regressietests gestopt: één test verwachtte nog build 573 en één test verwachtte nog de oude Zone-overzicht referentie.",
     "Het bestaande Zone overzicht gebruikte zeven kolommen, een mobiele min-width van 650px en overflow-x:auto, waardoor de gebruiker horizontaal moest scrollen om alle zonegegevens te zien.",
     "De aparte Status-kolom nam horizontale ruimte in terwijl de actieve zone al via de goud/oranje rijhighlight herkenbaar was.",
     "Build 568 kon bij het openen meerdere losse historische candle-segmenten tegelijk tonen, waardoor echte ingestie-gaten als grote lege stukken midden in de standaardviewport verschenen.",
@@ -100,11 +103,13 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een koude start had geen browser-side laatst-bevestigde zonebasis om tijdelijk op terug te vallen.",
   ],
   causes: [
+    "De release-tests waren op historische buildnummers en de vorige mockup-ID vastgepind, waardoor een correcte nieuwe UI-release als regressie werd behandeld.",
     "De Build 570-presentatie was ontworpen rond interne horizontale tabelscroll met een sticky Zone-kolom in plaats van een vaste mobiele vijfkolomsverdeling.",
     "De presentatie was hersteld, maar de zonebron kon tijdens een history gap of cold start leeg zijn.",
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "De stale release-asserties zijn bijgewerkt zonder productiecode, tradinglogica of runtime-state te wijzigen.",
     "De tabel is omgezet naar table-layout: fixed met kolombreedtes 15/28/20/20/17 procent, min-width:0 en overflow-x:hidden.",
     "Prijsniveau is vervangen door de bestaande zone lower/upper-range, Vrij/Profits/Status zijn uit de rijpresentatie gehaald en Totaal bezet toont open totaal versus zonecapaciteit.",
     "De Status-data en overige runtime-afleidingen blijven intern bestaan; alleen de zichtbare kolom is verwijderd.",
