@@ -29,8 +29,8 @@ type SeatSummaryProp = {
   currentPrice: number | null;
   nextLongLevels: {
     status: string;
-    up: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
-    down: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+    up: { zone: number; price: number; distance: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+    down: { zone: number; price: number; distance: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
   } | null;
   zones: Array<ZoneLevel & {
     longOpen: number;
@@ -377,24 +377,25 @@ export function PriceZoneCycleOverview({
           <span>Alle zones <b aria-hidden="true">⌄</b></span>
         </div>
       </header>
-      <div className="aps-zco-live">
-        <span><small>Huidige prijs</small><b>{seatSummary?.currentPrice === null || seatSummary?.currentPrice === undefined ? "—" : `$ ${priceLabel(seatSummary.currentPrice)}`}</b></span>
-        <span><small>Actieve zone</small><b className="zone">{activeZone === null ? "—" : zoneLabel(activeZone)}</b></span>
+      <div className="aps-zco-compact-summary" aria-label="Volgende vrije LONG-capaciteit en actuele zone" style={{ display: "grid", gridTemplateColumns: "minmax(0,.8fr) repeat(2,minmax(0,1fr)) minmax(0,1.15fr) minmax(0,.85fr)", gap: 0, alignItems: "center", margin: "10px 0 12px", padding: "8px 4px", border: "1px solid rgba(55,160,99,.28)", borderRadius: 12, background: "rgba(2,24,12,.5)" }}>
+        <span style={{ padding: "0 5px", color: "#77dfab", fontSize: 12, lineHeight: 1.25 }}>Volgende<br />LONG</span>
+        {(["up", "down"] as const).map((direction) => {
+          const level = seatSummary?.nextLongLevels?.status === "AVAILABLE" ? seatSummary.nextLongLevels[direction] : null;
+          const distance = level?.distance ?? null;
+          const validDistance = distance !== null && Number.isFinite(distance) && distance > 0;
+          const color = direction === "up" ? "#6af1ad" : "#ff829e";
+          return <span key={direction} style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px", color }} title={level ? `Zone ${zoneLabel(level.zone)} · ${level.freeLongSeats} vrije LONG-stoelen; alleen zonecapaciteit, geen ordertoestemming` : "Geen betrouwbare volgende LONG-zone"}>
+            <small style={{ display: "block", fontSize: 10, lineHeight: 1.3 }}>{direction === "up" ? "↑ Omhoog" : "↓ Omlaag"}</small>
+            <b style={{ display: "block", fontSize: 12, whiteSpace: "nowrap", letterSpacing: "-.25px", fontVariantNumeric: "tabular-nums" }}>{validDistance ? `$ ${priceLabel(distance)}` : "—"}</b>
+          </span>;
+        })}
+        <span style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px" }}><small style={{ display: "block", fontSize: 10, whiteSpace: "nowrap" }}>Huidige prijs</small><b style={{ fontSize: 11, whiteSpace: "nowrap" }}>{seatSummary?.currentPrice === null || seatSummary?.currentPrice === undefined ? "—" : `$ ${priceLabel(seatSummary.currentPrice)}`}</b></span>
+        <span style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px", textAlign: "center" }}><small style={{ display: "block", fontSize: 10 }}>Actieve zone</small><b style={{ display: "block", color: "#f6c965", fontSize: 12 }}>{activeZone === null ? "—" : zoneLabel(activeZone)}</b></span>
       </div>
 
       {seatSummary && seatSummary.zones.some((zone) => !validZoneRange(zone)) ? (
-        <p className="aps-zco-truth-note" role="status">ⓘ Canonical prijsgrenzen ontbreken voor één of meer zones. Onbekende ranges worden niet als 0 weergegeven.</p>
+        <p className="aps-zco-truth-note" role="status">ⓘ Canonical prijsgrenzen ontbreken voor één of meer zones. De ontbrekende data moet in de server-ladder worden hersteld.</p>
       ) : null}
-      <div className="aps-zco-next-levels" aria-label="Volgende vrije LONG-zones" style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0 12px" }}>
-        {(["up", "down"] as const).map((direction) => {
-          const level = seatSummary?.nextLongLevels?.status === "AVAILABLE" ? seatSummary.nextLongLevels[direction] : null;
-          return <div key={direction} style={{ flex: "1 1 145px", minWidth: 0, padding: "8px 10px", border: "1px solid rgba(48,185,116,.35)", borderRadius: 10, background: "rgba(10,36,25,.55)" }}>
-            <small style={{ color: "#83d6aa", display: "block" }}>{direction === "up" ? "↑ VOLGENDE LONG OMHOOG" : "↓ VOLGENDE LONG OMLAAG"}</small>
-            <b style={{ display: "block", overflowWrap: "anywhere" }}>{level ? `Zone ${zoneLabel(level.zone)} · ${priceLabel(level.price)}` : seatSummary?.nextLongLevels?.status === "AVAILABLE" ? "Geen vrije LONG-zone" : "—"}</b>
-            <small style={{ opacity: .75 }}>{level ? `${level.freeLongSeats} vrije stoelen · portfolio-equity (USDT)` : "Alleen beschikbare zonecapaciteit; geen ordertoestemming"}</small>
-          </div>;
-        })}
-      </div>
       <div className="aps-zco-table-wrap" aria-busy={false}>
         <table className="aps-zco-table">
           <thead>

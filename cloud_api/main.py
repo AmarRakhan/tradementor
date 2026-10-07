@@ -102,7 +102,7 @@ from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
 from aster_zone_soldiers import canonical_display_zone_ladder, confirmed_zone_from_display_zones, prepare_zone_runtime
-from aster_runtime_truth import build_canonical_zone_state, build_multi_bb_runtime_truth
+from aster_runtime_truth import _canonical_long_next_levels, build_canonical_zone_state, build_multi_bb_runtime_truth
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_gate, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -2065,6 +2065,24 @@ def _run_focus_shadow_scheduler_step(uid:str,ref:Any,raw:dict[str,Any],settings:
         failure={"readOnly":True,"ordersSent":0,"wouldSendCount":0,"reason":f"Focus Shadow scheduler fail-closed: {exc}"}
         ref.set({"focusShadowReport":failure,"focusShadowAt":now,"focusShadowOrdersSent":0},merge=True)
         return failure
+
+
+def _canonical_display_portfolio_zone_ladder(uid: str, cycle_start: float, equity: float, *, min_index: int = -3, max_index: int = 3) -> list[dict[str, Any]]:
+    """One read-only Portfolio Koers geometry source for chart and zone-state presentation.
+
+    Deliberately separate from the Zone Warriors execution ladder: changing
+    rendering must never change entry permissions or order decisions.
+    """
+    history = _read_portfolio_chart_candles({"uid": uid}, "15m", 600)
+    source = portfolio_chart_latest_zone_ladder_candles(
+        history, "15m", cycle_start_equity=cycle_start, min_bars=7
+    )
+    observed = derive_equity_zones(source, cycle_start)
+    if not observed and len(history) >= 7:
+        observed = derive_equity_zones(history, cycle_start)
+    return canonical_display_zone_ladder(
+        observed, equity, min_index=min_index, max_index=max_index
+    ) if observed and equity > 0 else []
 
 
 def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict[str, Any], now: datetime) -> dict[str, Any]:
@@ -6368,6 +6386,55 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         zone_report=zone_report,
         snapshot_at_ms=_portfolio_chart_timestamp_ms(snapshot.get("capturedAt")),
     )
+    # Build 582: read-only display geometry comes from the same Portfolio Koers
+    # ladder for both endpoints. This never modifies the persisted execution
+    # ladder, runtime activeZone, settings, or trading decisions.
+    cycle_doc = strategy2_public.get("multiBbCycle") if isinstance(strategy2_public.get("multiBbCycle"), dict) else {}
+    cycle_start_display = safe_float(cycle_doc.get("cycleStartEquity"))
+    equity_display = safe_float(snapshot.get("equity"))
+    existing_indexes = [int(row["index"]) for row in canonical_zone_state["zones"]]
+    try:
+        presentation_ladder = _canonical_display_portfolio_zone_ladder(
+            uid, cycle_start_display, equity_display,
+            min_index=min(existing_indexes, default=-3),
+            max_index=max(existing_indexes, default=3),
+        )
+    except (google_exceptions.GoogleAPICallError, ValueError, TypeError):
+        presentation_ladder = []
+    if presentation_ladder:
+        display_by_index = {int(row["index"]): row for row in presentation_ladder}
+        for row in canonical_zone_state["zones"]:
+            display = display_by_index.get(int(row["index"]))
+            if display:
+                row.update({key: display.get(key) for key in ("center", "lower", "upper")})
+                row["priceSource"] = "CANONICAL_PORTFOLIO_DISPLAY_LADDER"
+        # The execution ladder may be temporarily missing although the chart
+        # presentation ladder is available. Include those display-only zones
+        # with zero owned positions, preserving existing ownership rows.
+        existing_ids = {int(row["index"]) for row in canonical_zone_state["zones"]}
+        seat_capacity = canonical_zone_state["capacity"]
+        for display in presentation_ladder:
+            index = int(display["index"])
+            if index in existing_ids:
+                continue
+            long_max = int(seat_capacity["perZoneLong"])
+            short_max = int(seat_capacity["perZoneShort"])
+            canonical_zone_state["zones"].append({
+                "index": index, "center": display["center"],
+                "lower": display["lower"], "upper": display["upper"],
+                "priceSource": "CANONICAL_PORTFOLIO_DISPLAY_LADDER",
+                "longOpen": 0, "shortOpen": 0, "totalOpen": 0,
+                "longMax": long_max, "shortMax": short_max,
+                "totalMax": long_max + short_max,
+                "active": canonical_zone_state["activeZone"] == index,
+            })
+        canonical_zone_state["zones"].sort(key=lambda row: int(row["index"]), reverse=True)
+        canonical_zone_state["nextLongLevels"] = _canonical_long_next_levels(
+            canonical_zone_state["zones"], equity_display,
+            reliable=bool(canonical_zone_state["reconciliation"]["accountMatches"] and canonical_zone_state["reconciliation"]["strategyMatches"]),
+        )
+        canonical_zone_state["currentPrice"] = equity_display if equity_display > 0 else None
+        canonical_zone_state["displayLadderSource"] = "CANONICAL_PORTFOLIO_DISPLAY_LADDER"
     strategy2_public["runtimeTruth"] = {**runtime_truth, "zoneState": canonical_zone_state}
     public_response["strategy2"] = strategy2_public
 
@@ -7026,6 +7093,16 @@ def aster_portfolio_chart(
     if not zones and len(zone_history) >= 7:
         zone_candles = zone_history
         zones = derive_equity_zones(zone_candles, cycle_start)
+
+    # Chart and zone-state return one identical server-owned display geometry.
+    # Retain the original observed swings separately for historical backtesting.
+    observed_zones = zones
+    try:
+        display_ladder = _canonical_display_portfolio_zone_ladder(uid, cycle_start, equity)
+    except (google_exceptions.GoogleAPICallError, ValueError, TypeError):
+        display_ladder = []
+    if display_ladder:
+        zones = display_ladder
 
     latest_close = safe_float(candles[-1].get("close")) if candles else equity
     current_zone = active_portfolio_zone(zones, latest_close)

@@ -179,8 +179,10 @@ def test_next_long_levels_follow_canonical_price_and_skip_full_zones():
     result = _canonical_long_next_levels(zones, 95, reliable=True)
     assert result["up"]["zone"] == 2
     assert result["up"]["price"] == 110
+    assert result["up"]["distance"] == 15
     assert result["down"]["zone"] == -1
     assert result["down"]["price"] == 90
+    assert result["down"]["distance"] == 5
     assert result["up"]["entryPermission"] == "NOT_EVALUATED"
 
 

@@ -141,8 +141,8 @@ type PriceZoneSeatSummary = ActiveZoneSeatSummary & {
   currentPrice: number | null;
   nextLongLevels: {
     status: string;
-    up: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
-    down: { zone: number; price: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+    up: { zone: number; price: number; distance: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
+    down: { zone: number; price: number; distance: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
   } | null;
   zones: Array<{
     index: number;
@@ -374,7 +374,9 @@ async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
         const price = optionalNumber(row.price);
         const zone = optionalNumber(row.zone);
         if (price === null || price <= 0 || zone === null || !Number.isInteger(zone)) return null;
-        return { zone, price, freeLongSeats: Math.max(0, optionalNumber(row.freeLongSeats) ?? 0), unit: String(row.unit || ""), entryPermission: String(row.entryPermission || "") };
+        const distance = optionalNumber(row.distance);
+        if (distance === null || distance <= 0) return null;
+        return { zone, price, distance, freeLongSeats: Math.max(0, optionalNumber(row.freeLongSeats) ?? 0), unit: String(row.unit || ""), entryPermission: String(row.entryPermission || "") };
       };
       return { status: String(data.status || "UNAVAILABLE"), up: decode(data.up), down: decode(data.down) };
     })(),
