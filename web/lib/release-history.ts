@@ -26,8 +26,12 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Portfolio Koers · persistent S/R + duurzame live labels",
+  title: "Portfolio Koers · dichtere chart + complete eventdetails",
   newItems: [
+    "Build 568 opent 15m met 42 zichtbare candles en compactere spacing, zodat meer koersbeweging direct in beeld staat.",
+    "Build 568 toont normale entryregels zonder dubbele ENTRY-badge en gebruikt het marginbedrag in dollars als primaire detailwaarde.",
+    "Build 568 verlengt de bevestigde eventhistorie naar 36 uur en verhoogt de audit-readlimiet, zodat meer bestaande entries en TP-events terugkomen.",
+    "Build 568 bewaart marginUsd op duurzame orderAttributions zodat nieuwe bevestigde entries hun margin direct in de chartdetails kunnen tonen.",
     "Build 567 tekent support/resistance als chart-native price lines over een ruim uitgebreide zone-ladder, zodat de lijnen bij horizontaal/verticaal pannen en zoomen niet meer als lokale overlay verdwijnen.",
     "Build 567 gebruikt naast audit-events ook durable orderAttributions als tweede confirmed bron voor LONG/SHORT/TP-labels.",
     "Portfolio Koers volgt de goedgekeurde visuele referentie file_0000000065e08246a10dfd2cc721cc77.",
@@ -46,6 +50,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
+    "De 15m-startweergave was nog te grof: te weinig candles en te weinig zichtbare koersbeweging in hetzelfde scherm.",
+    "Entrydetails toonden ENTRY dubbel en gaven koers/notional terwijl de gebruiker juist de gebruikte margin in dollars wilde zien.",
+    "De snelle auditfeed keek slechts 12 uur terug, waardoor oudere maar nog relevante entries en TP-events niet zichtbaar waren.",
     "De bestaande S/R-weergave was een viewport-geclipte DOM-overlay van slechts vier niveaus boven en onder de actieve zone; bij scrollen of verticale schaalverschuiving verdwenen de lijnen uit beeld.",
     "De eventfeed kon nog leeg blijven wanneer audit-rows ontbraken terwijl er wel duurzame exchange-orderattributies bestonden.",
     "De linker R4–R1/S1–S4-pilllabels en de history-gap overlay bedekten de gewenste chartpresentatie.",
