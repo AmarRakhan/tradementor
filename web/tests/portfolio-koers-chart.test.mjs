@@ -338,25 +338,26 @@ test("Build 446 keeps calm price-axis typography without a colored last-value ba
 });
 
 
-test("Build 474 applies reference density only after filtering to the actual visible logical range",async()=>{
+test("Build 579 applies reference density only after the canonical coordinate viewport gate",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  const rangeIndex=component.indexOf("const visibleRange=chart.timeScale().getVisibleLogicalRange()");
+  const coordinateIndex=component.indexOf("markerCoordinateInViewport(Number(x),width");
   const densityIndex=component.indexOf("selectPortfolioKoersReferenceCandidates(candidates");
-  assert.ok(rangeIndex>0);
-  assert.ok(component.includes("candleIndex>=Math.floor(visibleRange.from)-1"));
-  assert.ok(component.includes("candleIndex<=Math.ceil(visibleRange.to)+1"));
-  assert.ok(densityIndex>rangeIndex);
+  assert.ok(coordinateIndex>0);
+  assert.ok(densityIndex>coordinateIndex);
+  assert.equal(component.includes("candleIndex>=Math.floor(visibleRange.from)-1"),false);
+  assert.equal(component.includes("candleIndex<=Math.ceil(visibleRange.to)+1"),false);
   assert.ok(component.includes("{tp:3,long:2,short:2,cashflow:1,other:1}"));
 });
 
-test("Build 422 preserves event-to-candle identity while scrolling and adds no fetch on viewport change",async()=>{
+test("Build 579 preserves event-to-candle identity while scrolling and adds no fetch on viewport change",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   const syncStart=component.indexOf("const syncOverlays=()=>");
   const syncEnd=component.indexOf("syncOverlaysRef.current=",syncStart);
   const syncBlock=component.slice(syncStart,syncEnd);
-  assert.ok(syncBlock.includes("candleIndexByTime"));
+  assert.ok(syncBlock.includes("candleByTime"));
   assert.ok(syncBlock.includes("markerTime:row.time"));
   assert.ok(syncBlock.includes("timeToCoordinate(renderTime"));
+  assert.ok(syncBlock.includes("markerCoordinateInViewport"));
   assert.equal(syncBlock.includes("authenticatedRequest("),false);
   assert.ok(component.includes("subscribeVisibleLogicalRangeChange(rememberViewport)"));
   assert.ok(component.includes("savedViewportRef.current[viewportKey]"));
