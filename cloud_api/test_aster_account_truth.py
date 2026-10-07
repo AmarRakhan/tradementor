@@ -82,6 +82,15 @@ def test_daily_equity_range_is_server_deterministic_and_day_scoped():
     assert daily_equity_range(rows, day_start_ms=500, day_end_ms=5_000) == {"high": 110, "low": 95}
 
 
+def test_daily_equity_range_accepts_time_only_and_skips_invalid_timestamps():
+    rows = [
+        {"time": 2, "high": 108, "low": 97},
+        {"time": None, "high": 999, "low": 1},
+        {"atMs": 3_000, "high": 111, "low": 96},
+    ]
+    assert daily_equity_range(rows, day_start_ms=500, day_end_ms=5_000) == {"high": 111, "low": 96}
+
+
 def test_status_and_portfolio_chart_share_one_daily_range_helper():
     source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
     assert "def _aster_account_daily_range(" in source
