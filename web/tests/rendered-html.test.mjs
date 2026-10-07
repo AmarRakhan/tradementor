@@ -275,13 +275,12 @@ test("trusted mobile Aster layout uses compact proportions without hiding values
 });
 
 test("Positions reuses the trusted overview and adds an exchange-aware professional chart", async () => {
-  const [page, chart, marketRoute, eventRoute, styles, equityHistory] = await Promise.all([
+  const [page, chart, marketRoute, eventRoute, styles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/trading-chart.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/market-data/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchanges/aster/trade-events/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/premium-next.css", import.meta.url), "utf8"),
-    readFile(new URL("../lib/portfolio-equity-history.ts", import.meta.url), "utf8"),
   ]);
   assert.match(page, /id: "aster"[\s\S]*id: "positions"[\s\S]*id: "risk"/);
   assert.match(page, /<SafeTradingChart selection=\{selection\}/);
@@ -293,8 +292,8 @@ test("Positions reuses the trusted overview and adds an exchange-aware professio
   assert.match(page, /selectedPositionId/);
   assert.match(chart, /CandlestickSeries/);
   assert.match(chart, /createSeriesMarkers/);
-  assert.match(chart, /tradementor\.test\.portfolioEquity\.v1/);
-  assert.match(chart, /PERSOONLIJKE EQUITY/);
+  assert.doesNotMatch(chart, /tradementor\.test\.portfolioEquity|portfolio-equity-history|sanitizePortfolioEquityRows/);
+  assert.match(chart, /Gecombineerde portfoliohistorie is tijdelijk niet beschikbaar zonder centrale serverbron/);
   assert.doesNotMatch(chart, /entrySeries\.setData/);
   assert.match(chart, /createPriceLine\(\{ price:Number\(breakEvenPrice\)[\s\S]*title:"WINST VANAF"/);
   assert.match(chart, /VOLGENDE \$\{selection\.side\.toUpperCase\(\)\} DCA/);
@@ -321,10 +320,8 @@ test("Positions reuses the trusted overview and adds an exchange-aware professio
   assert.doesNotMatch(styles, /\.chart-canvas\s*\{[^}]*touch-action:\s*none/i);
   assert.match(chart, /handleScroll:\{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true\}/);
   assert.match(chart, /handleScale:\{mouseWheel:true,pinch:true,axisPressedMouseMove:true\}/);
-  assert.match(chart, /sanitizePortfolioEquityRows/);
-  assert.match(page, /isCompletePortfolioSnapshot/);
-  assert.match(equityHistory, /MAX_UNCONFIRMED_CHANGE_FACTOR\s*=\s*20/);
-  assert.match(equityHistory, /expected.*hyperliquid.*aster/s);
+  assert.doesNotMatch(page, /isCompletePortfolioSnapshot|tradementor\.portfolioEquity/);
+  assert.doesNotMatch(chart, /window\.localStorage\.getItem\(PORTFOLIO_HISTORY_KEY/);
 });
 
 test("admin portal is server-authorized and recovery never contains trading actions", async () => {
