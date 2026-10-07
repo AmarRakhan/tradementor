@@ -60,6 +60,13 @@ def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any
         row for row in rows
         if (str(row.get("orderId", "")), str(row.get("clientOrderId", ""))) != identity
     ]
+    normalized_action = str(action).upper()
+    configured_margin = (
+        _f(getattr(settings, "dca_margin_usd", 0.0))
+        if normalized_action == "ADD_DCA"
+        else _f(getattr(settings, "entry_margin_usd", 0.0))
+    )
+    result_margin = _f(result.get("marginUsd", result.get("executedMarginUsd", result.get("initialMarginUsd"))))
     rows.append({
         "orderId": order_id,
         "clientOrderId": client_order_id,
@@ -69,7 +76,8 @@ def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any
         "configVersion": int(getattr(settings, "version", 1) or 1),
         "symbol": str(symbol).upper(),
         "side": str(side).upper(),
-        "action": str(action).upper(),
+        "action": normalized_action,
+        "marginUsd": result_margin if result_margin > 0 else configured_margin or None,
         "recordedAt": datetime.now(timezone.utc),
     })
     ref.set({"orderAttributions": rows[-2000:]}, merge=True)
