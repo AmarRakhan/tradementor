@@ -6519,13 +6519,13 @@ def _portfolio_chart_recent_strategy_audit_rows(uid: str, *, now_utc: datetime |
     expect when they scroll the Portfolio Koers chart back through the day.
     """
     current = now_utc or datetime.now(timezone.utc)
-    cutoff = current - timedelta(hours=12)
+    cutoff = current - timedelta(hours=36)
     reference = aster_strategy2_reference(uid).collection("audit")
     rows: list[dict[str, Any]] = []
     try:
         query = reference.where("timestamp", ">=", cutoff).order_by(
             "timestamp", direction=firestore.Query.DESCENDING
-        ).limit(600)
+        ).limit(1200)
         for document in query.stream():
             row = document.to_dict() or {}
             stamp = _portfolio_chart_timestamp_ms(row.get("timestampMs", row.get("timestamp")))
@@ -6546,9 +6546,22 @@ def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | Non
     and do not submit, cancel, resize or otherwise mutate any order.
     """
     current = now_utc or datetime.now(timezone.utc)
-    cutoff_ms = int((current - timedelta(hours=24)).timestamp() * 1000)
+    cutoff_ms = int((current - timedelta(hours=36)).timestamp() * 1000)
     raw = aster_strategy2_reference(uid).get().to_dict() or {}
+    settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
     rows: list[dict[str, Any]] = []
+
+    def configured_margin(side: str, action: str) -> float:
+        keys = (
+            (f"{side.lower()}DcaMarginUsd", "dcaMarginUsd", f"{side.lower()}DcaAmount")
+            if action == "ADD_DCA"
+            else (f"entryMargin{side.title()}Usd", f"{side.lower()}EntryMarginUsd", "entryMarginUsd", "baseMarginUsd")
+        )
+        for key in keys:
+            value = safe_float(settings.get(key))
+            if value > 0:
+                return value
+        return 0.0
     allowed = {
         "INITIAL_OPEN_LEG", "OPEN_LEG", "ADD_DCA", "AUTO_RESTART",
         "PENDING_REOPEN", "PENDING_REOPEN_CONFIRMED",
@@ -6583,6 +6596,7 @@ def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | Non
             "exchangeConfirmed": True,
             "auditId": f"attribution:{order_id or client_order_id}",
             "activityType": "DCA" if action == "ADD_DCA" else "TP" if event == "FULL_TP" else "ENTRY",
+            "marginUsd": safe_float(item.get("marginUsd", item.get("executedMarginUsd"))) or configured_margin(side, action),
             "source": "order-attribution",
         })
     return rows
