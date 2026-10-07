@@ -1,4 +1,4 @@
-name: Diagnose Build 573 Account Chart
+name: Diagnose Build 574 Account Chart
 on:
   push:
     branches: [amar-crypto-bot-2026-cloud]
