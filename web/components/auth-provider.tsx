@@ -21,7 +21,7 @@ import {
   type User,
 } from "firebase/auth";
 import { firebaseAuth, firebaseAuthReady } from "@/lib/firebase";
-import { clearAsterSnapshot, withBoundedRetry } from "@/lib/aster-snapshot-cache.mjs";
+import { withBoundedRetry } from "@/lib/bounded-retry.mjs";
 
 type AuthContextValue = {
   user: User | null;
@@ -198,8 +198,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       const uid = firebaseAuth.currentUser?.uid;
       if (uid) {
-        clearAsterSnapshot(window.localStorage, uid);
+        // One-way cleanup of retired browser business-truth caches.
+        window.localStorage.removeItem(`tradementor.asterSnapshot.v2:${encodeURIComponent(uid)}:aster`);
         window.localStorage.removeItem(`tradementor.portfolioEquity.v2.${encodeURIComponent(uid)}`);
+        window.localStorage.removeItem(`tradementor.portfolioZones.v1.${encodeURIComponent(uid)}`);
+        window.localStorage.removeItem(`tradementor.zoneSoldierActivity.v1.${encodeURIComponent(uid)}`);
       }
       window.localStorage.removeItem("tradementor.admin.credential.v2");
       window.localStorage.setItem("tradementor.activeDestination", "wallet");
