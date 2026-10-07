@@ -338,8 +338,8 @@ def canonical_display_zone_ladder(zones: list[dict[str, Any]] | None, price: flo
     for index, (zone_index, center, source) in enumerate(centers):
         previous = centers[index - 1][1] if index > 0 else float("-inf")
         following = centers[index + 1][1] if index + 1 < len(centers) else float("inf")
-        lower = (previous + center) / 2.0 if math.isfinite(previous) else None
-        upper = (center + following) / 2.0 if math.isfinite(following) else None
+        lower = (previous + center) / 2.0 if math.isfinite(previous) else center - step / 2.0
+        upper = (center + following) / 2.0 if math.isfinite(following) else center + step / 2.0
         output.append({
             "index": zone_index,
             "center": center,
