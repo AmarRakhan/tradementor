@@ -574,13 +574,13 @@ test("Build 564 keeps current black/no-pill/no-gap presentation on the Build 518
 });
 
 
-test("Build 566 keeps Amsterdam-session Bollinger input without cropping the Build 518 startup viewport",async()=>{
+test("Build 569 keeps Amsterdam-session Bollinger input while cold-starting on contiguous real candles",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("function currentAmsterdamSession"));
   assert.ok(component.includes("sessionCandles.length>=20?sessionCandles:candles"));
   assert.equal(component.includes("const sessionStartIndex=viewMode===\"account\"&&sessionCandles.length"),false);
   assert.equal(component.includes("Math.max(sessionStartIndex,candles.length-focusVisibleBars-.5)"),false);
-  assert.ok(component.includes("const accountDefaultFrom=Math.max(-.5,candles.length-focusVisibleBars-.5)"));
+  assert.ok(component.includes("const accountDefaultFrom=Math.max(-.5,candles.length-accountStartupVisibleBars-.5)"));
   assert.ok(component.includes("delta<=markerStep"));
   assert.ok(component.includes("markerTime:row.time"));
   assert.ok(component.includes("file_0000000047d081f4b2c4348a14e0db2f"));
