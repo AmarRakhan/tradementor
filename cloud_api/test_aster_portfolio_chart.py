@@ -76,10 +76,11 @@ def test_trade_markers_are_bucketed_and_tp_is_aggregated():
     tp = next(row for row in rows if row["kind"] == "tp")
     assert tp["count"] == 2
     assert tp["realizedPnlUsd"] == 2.0
-    assert tp["trades"] == [
-        {"symbol": "BTC", "realizedPnlUsd": 1.25, "durationMinutes": 0},
-        {"symbol": "ETH", "realizedPnlUsd": 0.75, "durationMinutes": 0},
+    assert [(row["symbol"], row["realizedPnlUsd"], row["durationMinutes"]) for row in tp["trades"]] == [
+        ("BTC", 1.25, 0),
+        ("ETH", 0.75, 0),
     ]
+    assert all(row["closeClassification"] == "OTHER_CONFIRMED_CLOSE" for row in tp["trades"])
     assert "TP" in tp["label"]
 
 
@@ -523,7 +524,7 @@ def test_portfolio_event_endpoint_merges_durable_order_attribution_evidence():
     assert '"FULL_TP"' in helper
     assert '"exchangeConfirmed": True' in helper
     endpoint_start = source.index('@app.get("/v1/me/aster/portfolio-chart/events")')
-    endpoint_end = source.index('@app.get("/v1/me/aster/portfolio-chart/active-trades")', endpoint_start)
+    endpoint_end = source.index('@app.get("/v1/me/aster/portfolio-chart/audit")', endpoint_start)
     endpoint = source[endpoint_start:endpoint_end]
     assert "_portfolio_chart_order_attribution_rows" in endpoint
     assert "[*audit_rows, *attribution_rows]" in endpoint
@@ -588,7 +589,7 @@ def test_build569_unconfirmed_tp_audit_row_fails_closed():
 def test_build569_audit_endpoint_is_read_only_and_exposes_reconciliation():
     source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
     start = source.index('@app.get("/v1/me/aster/portfolio-chart/audit")')
-    end = source.index('@app.get("/v1/me/aster/portfolio-chart/active-trades")', start)
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart/audit")', start)
     block = source[start:end]
     assert 'live_authorized=False' in block
     assert '"ordersSent":0' in block
