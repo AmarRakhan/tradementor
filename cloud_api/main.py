@@ -72,7 +72,8 @@ from aster_gateway import (
 )
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, full_leg_closes_from_sweep_ledgers, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
-from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
+from aster_account_truth import build_aster_account_truth
+from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, daily_equity_range as portfolio_chart_daily_equity_range, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -6325,7 +6326,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "maximumLeverage": int(safe_float(snapshot.get("maximumLeverage"))),
         "liveReady": hedge_mode, "snapshotAt": snapshot.get("capturedAt"),
     }
-    return {
+    public_response = {
         **status,
         **aster_strategy2_public(uid),
         "apiWalletAddress": secret.signer_address,
@@ -6334,6 +6335,18 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "liveEnabled": bool(control.get("liveEnabled", False)),
         "ordersEnabled": os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true",
     }
+    daily_range = _aster_account_daily_range(
+        user,
+        datetime.now(timezone.utc),
+        current_equity=confirmed_snapshot_number("equity"),
+        current_captured_at=snapshot.get("capturedAt"),
+    )
+    public_response["accountTruth"] = build_aster_account_truth(
+        public_response,
+        day_high=daily_range.get("high"),
+        day_low=daily_range.get("low"),
+    )
+    return public_response
 
 
 
@@ -6483,6 +6496,35 @@ def _read_active_trades_chart_candles(
             rows.append(candle)
     rows.sort(key=lambda row: int(row["atMs"]))
     return rows
+
+
+def _aster_account_daily_range(
+    user: dict[str, Any],
+    now_utc: datetime,
+    *,
+    current_equity: float | None = None,
+    current_captured_at: Any = None,
+) -> dict[str, float | None]:
+    """Canonical Amsterdam-day account range shared by every browser surface."""
+    amsterdam_tz = ZoneInfo("Europe/Amsterdam")
+    local_now = now_utc.astimezone(amsterdam_tz)
+    day_start_local = datetime(local_now.year, local_now.month, local_now.day, tzinfo=amsterdam_tz)
+    day_end_local = day_start_local + timedelta(days=1)
+    day_start_ms = int(day_start_local.astimezone(timezone.utc).timestamp() * 1000)
+    day_end_ms = int(day_end_local.astimezone(timezone.utc).timestamp() * 1000)
+    result = portfolio_chart_daily_equity_range(
+        _read_portfolio_chart_candles(user, "5m", 400),
+        day_start_ms=day_start_ms,
+        day_end_ms=day_end_ms,
+    )
+    captured_ms = _portfolio_chart_timestamp_ms(current_captured_at)
+    equity = safe_float(current_equity)
+    if equity > 0 and day_start_ms <= captured_ms < day_end_ms:
+        high = result.get("high")
+        low = result.get("low")
+        result["high"] = max(float(high), equity) if high is not None else equity
+        result["low"] = min(float(low), equity) if low is not None else equity
+    return result
 
 
 def _portfolio_chart_cashflows(user: dict[str, Any], client: AsterV3Client | None = None) -> list[dict[str, Any]]:
@@ -6903,6 +6945,12 @@ def aster_portfolio_chart(
     # The chart zone ladder is a 15m visual contract, independent of the selected\n    # display timeframe and independent of trading/price-zone-seat settings.\n    # Build 509 used this stable 15m basis. Reusing the requested timeframe here\n    # made cold starts (and 1m/5m gaps) return zones=[] and therefore Zone —.\n    zone_timeframe = "15m"\n    zone_history = candles if timeframe == zone_timeframe else _read_portfolio_chart_candles(user, zone_timeframe, 600)\n    zone_candles = portfolio_chart_latest_zone_ladder_candles(\n        zone_history, zone_timeframe, cycle_start_equity=cycle_start, min_bars=7\n    )\n    zones = derive_equity_zones(zone_candles, cycle_start)\n    # Cold-start fallback: a missing 15m bucket must not erase an established\n    # informational ladder. If no contiguous segment can form S/R yet, derive\n    # from the complete persisted 15m history rather than showing no zones.\n    if not zones and len(zone_history) >= 7:\n        zone_candles = zone_history\n        zones = derive_equity_zones(zone_candles, cycle_start)
     latest_close = safe_float(candles[-1].get("close")) if candles else equity
     current_zone = active_portfolio_zone(zones, latest_close)
+    daily_range = _aster_account_daily_range(
+        user,
+        now_utc,
+        current_equity=equity if equity > 0 else None,
+        current_captured_at=snapshot.get("capturedAt"),
+    )
 
     return {
         "timeframe": timeframe,
@@ -6915,6 +6963,8 @@ def aster_portfolio_chart(
         "currentZone": current_zone,
         "cycleStartEquity": cycle_start if cycle_start > 0 else None,
         "currentEquity": equity if equity > 0 else None,
+        "dayHigh": daily_range.get("high"),
+        "dayLow": daily_range.get("low"),
         "snapshotAtMs": captured_ms if captured_ms > 0 else None,
         "live": snapshot_fresh,
         "persistent": True,
