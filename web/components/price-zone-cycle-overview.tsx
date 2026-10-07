@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 
-const REFERENCE = "file_00000000941881f48d08a2c072cf8ad7";
+const REFERENCE = "file_00000000773c8210ad977be9527738e6";
 
 type Dict = Record<string, unknown>;
 type OpenCounts = Record<string, { long: number; short: number; total: number }>;
@@ -96,6 +96,12 @@ const priceLabel = (value: number | null) => {
   const abs = Math.abs(value);
   const digits = abs >= 10 ? 2 : abs >= 1 ? 3 : 5;
   return new Intl.NumberFormat("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+};
+const priceRangeLabel = (zone: ZoneLevel | undefined) => {
+  if (!zone) return "—";
+  const lower = zone.lower ?? zone.center;
+  const upper = zone.upper ?? zone.center;
+  return `${priceLabel(lower)} - ${priceLabel(upper)}`;
 };
 const clockLabel = (value: number | null) => {
   if (!value) return "—";
@@ -342,6 +348,7 @@ export function PriceZoneCycleOverview({
 
   const activeZone = seatTruth?.activeZone ?? liveActiveZone ?? chartTruth?.currentZone ?? null;
   const centerByZone = new Map((chartTruth?.zones ?? []).map((zone) => [zone.index, zone.center]));
+  const levelByZone = new Map((chartTruth?.zones ?? []).map((zone) => [zone.index, zone]));
   const cycle = derived?.cycle ?? null;
   const startZone = cycle?.start?.originZone ?? null;
   const lastZone = cycle?.lastProfit?.originZone ?? null;
@@ -349,58 +356,50 @@ export function PriceZoneCycleOverview({
   return (
     <section className="aps-zone-cycle-overview" data-reference={REFERENCE} aria-label="Zone overzicht huidige cyclus">
       <header className="aps-zco-head">
-        <h3>Zone overzicht <small>(huidige cyclus)</small></h3>
-        <div className="aps-zco-live">
-          <span><small>Huidige prijs</small><b>{chartTruth?.currentEquity === null || chartTruth?.currentEquity === undefined ? "—" : `$ ${priceLabel(chartTruth.currentEquity)}`}</b></span>
-          <span><small>Actieve zone</small><b className="zone">{activeZone === null ? "—" : zoneLabel(activeZone)}</b></span>
+        <div>
+          <h3>Zone overzicht <small>(huidige cyclus)</small></h3>
+          <p>Realtime status van alle prijszones.</p>
+        </div>
+        <div className="aps-zco-view" aria-label="Weergave alle zones">
+          <small>Weergave</small>
+          <span>Alle zones <b aria-hidden="true">⌄</b></span>
         </div>
       </header>
+      <div className="aps-zco-live">
+        <span><small>Huidige prijs</small><b>{chartTruth?.currentEquity === null || chartTruth?.currentEquity === undefined ? "—" : `$ ${priceLabel(chartTruth.currentEquity)}`}</b></span>
+        <span><small>Actieve zone</small><b className="zone">{activeZone === null ? "—" : zoneLabel(activeZone)}</b></span>
+      </div>
 
       <div className="aps-zco-table-wrap" aria-busy={loading}>
         <table className="aps-zco-table">
           <thead>
             <tr>
               <th>Zone</th>
-              <th>Prijsniveau<small>(USDT)</small></th>
-              <th className="long">LONG<small>Bezet / Max</small></th>
-              <th className="short">SHORT<small>Bezet / Max</small></th>
-              <th>Vrij</th>
-              <th>Profits<small>deze cyclus</small></th>
-              <th>Status</th>
+              <th>Prijsrange<small>(USDT)</small></th>
+              <th className="long">LONG<small>open / max</small></th>
+              <th className="short">SHORT<small>open / max</small></th>
+              <th>Totaal<small>bezet</small></th>
             </tr>
           </thead>
           <tbody>
             {(derived?.indexes ?? []).map((zone) => {
               const open = seatTruth?.zoneOpenCountsReliable ? (seatTruth.zoneOpenCounts[String(zone)] ?? { long: 0, short: 0, total: 0 }) : null;
               const capacity = seatTruth ? seatTruth.perZoneLong + seatTruth.perZoneShort : null;
-              const free = open && capacity !== null ? Math.max(0, capacity - open.long - open.short) : null;
               const full = Boolean(open && capacity !== null && capacity > 0 && open.long >= (seatTruth?.perZoneLong ?? 0) && open.short >= (seatTruth?.perZoneShort ?? 0));
               const isActive = activeZone === zone;
               const hasOpen = Boolean(open && open.total > 0);
               const visited = Boolean(cycle?.visited.has(zone));
-              const profitCount = cycle?.reliable ? (cycle.profits.get(zone)?.count ?? 0) : null;
-              const status = isActive
-                ? "Actief"
-                : full
-                  ? "Volledig"
-                  : hasOpen
-                    ? "Open posities"
-                    : visited
-                      ? activeZone !== null && zone > activeZone ? "Boven huidige" : activeZone !== null && zone < activeZone ? "Onder huidige" : "Bezocht"
-                      : "Toekomst";
               return (
                 <tr key={zone} className={[isActive ? "is-active" : "", full ? "is-full" : "", hasOpen ? "has-open" : "", visited ? "is-visited" : ""].filter(Boolean).join(" ")}>
                   <td className="zone-cell">{isActive ? <i aria-hidden="true">›</i> : null}<b>{zoneLabel(zone)}</b>{startZone === zone ? <em title="Eerste entry deze cyclus">◎</em> : null}</td>
-                  <td>{priceLabel(centerByZone.get(zone) ?? null)}</td>
+                  <td>{priceRangeLabel(levelByZone.get(zone))}</td>
                   <td className="long">{open && seatTruth ? `${open.long} / ${seatTruth.perZoneLong}` : "— / —"}</td>
                   <td className="short">{open && seatTruth ? `${open.short} / ${seatTruth.perZoneShort}` : "— / —"}</td>
-                  <td>{free ?? "—"}</td>
-                  <td>{profitCount ?? "—"}</td>
-                  <td className="status">{status}</td>
+                  <td>{open && capacity !== null ? `${open.total} / ${capacity}` : "— / —"}</td>
                 </tr>
               );
             })}
-            {!derived?.indexes.length ? <tr><td colSpan={7} className="empty">{loading ? "Zonegegevens worden geladen…" : "Geen betrouwbare zonegegevens beschikbaar."}</td></tr> : null}
+            {!derived?.indexes.length ? <tr><td colSpan={5} className="empty">{loading ? "Zonegegevens worden geladen…" : "Geen betrouwbare zonegegevens beschikbaar."}</td></tr> : null}
           </tbody>
         </table>
       </div>

@@ -31,11 +31,19 @@ test("zone overview preserves data-truth semantics and origin-zone ownership", (
   assert.match(overview, /trade\.activityType === "PARTIAL_TP"/);
 });
 
-test("approved mobile visual contract keeps internal table scroll and sticky Zone column", () => {
-  assert.match(css, /Build 570 · Prijszone Details — huidige cyclus/);
-  assert.match(css, /file_00000000941881f48d08a2c072cf8ad7/);
-  assert.match(css, /\.aps-zco-table-wrap\{[^}]*overflow-x:auto/);
-  assert.match(css, /\.aps-zco-table th:first-child,.aps-zco-table td:first-child\{[^}]*position:sticky;left:0/);
+test("Build 574 keeps the zone overview to five columns without horizontal scrolling", () => {
+  assert.match(overview, /file_00000000773c8210ad977be9527738e6/);
+  assert.match(overview, /Prijsrange/);
+  assert.match(overview, /Totaal<small>bezet<\/small>/);
+  assert.doesNotMatch(overview, /<th>Status<\/th>/);
+  assert.doesNotMatch(overview, /<th>Vrij<\/th>/);
+  assert.doesNotMatch(overview, /<th>Profits/);
+  assert.match(overview, /colSpan=\{5\}/);
+  assert.match(css, /Build 574 · Prijszone Details — compact vijfkoloms zoneoverzicht/);
+  assert.match(css, /file_00000000773c8210ad977be9527738e6/);
+  assert.match(css, /\.aps-zco-table-wrap\{[^}]*overflow-x:hidden/);
+  assert.match(css, /\.aps-zco-table\{[^}]*min-width:0;table-layout:fixed/);
+  assert.doesNotMatch(css, /\.aps-zco-table-wrap\{[^}]*overflow-x:auto/);
   assert.match(css, /\.aps-zco-table tr\.is-active td\{[^}]*#e7b836/);
 });
 

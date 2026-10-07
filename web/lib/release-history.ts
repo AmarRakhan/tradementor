@@ -26,8 +26,13 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Aster account/chart startup hotfix",
+  title: "Prijszone Details · compact zoneoverzicht zonder horizontaal scrollen",
   newItems: [
+    "Build 574 vervangt het brede Zone overzicht door één vaste vijfkolomstabel volgens referentie file_00000000773c8210ad977be9527738e6.",
+    "Zone, Prijsrange, LONG open/max, SHORT open/max en Totaal bezet staan nu tegelijk binnen de mobiele viewport zonder horizontale swipe of scrollbar.",
+    "De Status-kolom is alleen uit de presentatie verwijderd; actieve zone-state blijft zichtbaar via de bestaande goud/oranje highlight en onderliggende runtime-state blijft ongewijzigd.",
+    "De tabel gebruikt dezelfde seat/origin-zone truth en bestaande chart-zonegrenzen; er is geen tweede API-route, browser business-state of nieuwe zoneberekening toegevoegd.",
+    "Bestaande cyclusinformatie onder de tabel blijft behouden zodat geen bevestigde informatie verloren gaat.",
     "Build 573 releasegate opnieuw gesynchroniseerd na het verwijderen van de verouderde 572-regressieassertie.",
     "Build 573 herstelt de Aster account-/chartstart wanneer bestaande opgeslagen candles alleen de oudere time-timestamp bevatten en nog geen atMs-veld.",
     "De server gebruikt nu veilig atMs wanneer aanwezig en valt anders terug op time × 1000; ongeldige timestamps worden overgeslagen in plaats van de hele account/chartresponse te laten falen.",
@@ -71,6 +76,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
+    "Het bestaande Zone overzicht gebruikte zeven kolommen, een mobiele min-width van 650px en overflow-x:auto, waardoor de gebruiker horizontaal moest scrollen om alle zonegegevens te zien.",
+    "De aparte Status-kolom nam horizontale ruimte in terwijl de actieve zone al via de goud/oranje rijhighlight herkenbaar was.",
     "Build 568 kon bij het openen meerdere losse historische candle-segmenten tegelijk tonen, waardoor echte ingestie-gaten als grote lege stukken midden in de standaardviewport verschenen.",
     "Historische orderAttributions zonder opgeslagen margin vielen terug op huidige instellingen; dat kon na een configuratiewijziging een onjuiste historische margin suggereren.",
     "TP-auditrows en orderAttributions konden dezelfde close dubbel representeren omdat close-events nog niet op stabiele execution identity werden gededupliceerd.",
@@ -93,10 +100,14 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een koude start had geen browser-side laatst-bevestigde zonebasis om tijdelijk op terug te vallen.",
   ],
   causes: [
+    "De Build 570-presentatie was ontworpen rond interne horizontale tabelscroll met een sticky Zone-kolom in plaats van een vaste mobiele vijfkolomsverdeling.",
     "De presentatie was hersteld, maar de zonebron kon tijdens een history gap of cold start leeg zijn.",
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "De tabel is omgezet naar table-layout: fixed met kolombreedtes 15/28/20/20/17 procent, min-width:0 en overflow-x:hidden.",
+    "Prijsniveau is vervangen door de bestaande zone lower/upper-range, Vrij/Profits/Status zijn uit de rijpresentatie gehaald en Totaal bezet toont open totaal versus zonecapaciteit.",
+    "De Status-data en overige runtime-afleidingen blijven intern bestaan; alleen de zichtbare kolom is verwijderd.",
     "De visuele zone-ladder wordt voor de chart uitgebreid tot achttien niveaus rond de actuele prijs en maximaal 48 unieke grenzen worden als echte prijs-lijnen gerenderd zonder aslabels.",
     "De read-only eventendpoint voegt orderAttributions van de laatste 24 uur samen met audit-events en blijft volledig vrij van exchange polling of ordermutaties.",
     "De bestaande read-only endpoint-regressie is uitgelijnd op de uitgebreidere bewezen eventbron zonder het no-exchange-polling contract te versoepelen.",
@@ -132,6 +143,8 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Tradinglogica, AsterBot entries, DCA, TP, hedge en prijszone-stoelen zijn niet gewijzigd.",
   ],
   now: [
+    "Op mobiele breedtes zijn alle vijf zonekolommen tegelijk zichtbaar en blijft alleen verticaal paginascrollen nodig voor langere zonelijsten.",
+    "De actieve zone blijft onmiddellijk herkenbaar via de volledige goud/oranje rijhighlight zonder apart ACTIEF-label.",
     "Bij openen staat Accountwaarde direct op een zwarte, vollere mobiele chartweergave die dichter bij de goedgekeurde handmatige zoom ligt.",
     "Portfolio Koers hoort na openen meteen de volgende zone boven en onder de actuele accountwaarde te tekenen in plaats van terug te vallen naar 'Zone —'.",
     "De support/resistance-lijnen en actieve-zoneband blijven een chartfunctie, onafhankelijk van of prijszone-stoelen aanstaan; de losse R/S-pilllabels links zijn verwijderd.",
