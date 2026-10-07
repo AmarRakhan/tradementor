@@ -26,8 +26,14 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-07",
-  title: "Portfolio Koers · dichtere chart + complete eventdetails",
+  title: "Portfolio Koers · data-truth + candle continuity + TP-audit",
   newItems: [
+    "Build 569 voegt een read-only Portfolio Koers audit toe die exchange-posities, snapshot, durable state, candle-integriteit en chartmarkers reconcilieert zonder orders te sturen.",
+    "Build 569 opent Accountwaarde op de nieuwste aaneengesloten reeks echte candles, zodat historische datagaten niet meer als enorme lege startvlakken domineren; ontbrekende OHLC wordt nooit verzonnen.",
+    "Build 569 gebruikt alleen margin die op execution/resultaat of duurzame orderAttribution is vastgelegd; ontbrekende historische margin wordt expliciet als niet beschikbaar getoond.",
+    "Build 569 dedupliceert entry- en close-events op stabiele execution identity en maakt marker count gelijk aan het aantal bevestigde detailregels.",
+    "Build 569 classificeert bevestigde closes expliciet en laat alleen echte TP/profit-closes als money-bag toe.",
+
     "Build 568 opent 15m met 42 zichtbare candles en compactere spacing, zodat meer koersbeweging direct in beeld staat.",
     "Build 568 toont normale entryregels zonder dubbele ENTRY-badge en gebruikt het marginbedrag in dollars als primaire detailwaarde.",
     "Build 568 verlengt de bevestigde eventhistorie naar 36 uur en verhoogt de audit-readlimiet, zodat meer bestaande entries en TP-events terugkomen.",
@@ -51,6 +57,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "De goedgekeurde starttoestand blijft Accountwaarde op 15m; handmatig verschoven of ingezoomde viewports worden niet meer bij elke nieuwe candle teruggetrokken.",
   ],
   problems: [
+    "Build 568 kon bij het openen meerdere losse historische candle-segmenten tegelijk tonen, waardoor echte ingestie-gaten als grote lege stukken midden in de standaardviewport verschenen.",
+    "Historische orderAttributions zonder opgeslagen margin vielen terug op huidige instellingen; dat kon na een configuratiewijziging een onjuiste historische margin suggereren.",
+    "TP-auditrows en orderAttributions konden dezelfde close dubbel representeren omdat close-events nog niet op stabiele execution identity werden gededupliceerd.",
+
     "De 15m-startweergave was nog te grof: te weinig candles en te weinig zichtbare koersbeweging in hetzelfde scherm.",
     "Entrydetails toonden ENTRY dubbel en gaven koers/notional terwijl de gebruiker juist de gebruikte margin in dollars wilde zien.",
     "De snelle auditfeed keek slechts 12 uur terug, waardoor oudere maar nog relevante entries en TP-events niet zichtbaar waren.",
