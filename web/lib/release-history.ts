@@ -28,6 +28,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   releasedAt: "2026-10-07",
   title: "Aster account/chart startup hotfix",
   newItems: [
+    "Build 573 releasegate opnieuw gesynchroniseerd na het verwijderen van de verouderde 572-regressieassertie.",
     "Build 573 herstelt de Aster account-/chartstart wanneer bestaande opgeslagen candles alleen de oudere time-timestamp bevatten en nog geen atMs-veld.",
     "De server gebruikt nu veilig atMs wanneer aanwezig en valt anders terug op time × 1000; ongeldige timestamps worden overgeslagen in plaats van de hele account/chartresponse te laten falen.",
     "Hierdoor kunnen Accountwaarde, High/Low, Zone en Portfolio Koers opnieuw uit dezelfde canonieke read-only serverpipeline laden zonder browserfallback of gewijzigde tradinglogica.",
