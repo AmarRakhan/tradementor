@@ -101,8 +101,8 @@ from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
-from aster_zone_soldiers import confirmed_zone_from_display_zones, prepare_zone_runtime
-from aster_runtime_truth import build_multi_bb_runtime_truth
+from aster_zone_soldiers import canonical_display_zone_ladder, confirmed_zone_from_display_zones, prepare_zone_runtime
+from aster_runtime_truth import build_canonical_zone_state, build_multi_bb_runtime_truth
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_gate, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -2095,12 +2095,14 @@ def _strategy2_zone_runtime_context(uid: str, raw: dict[str, Any], account: dict
         # Current exchange equity then selects the active zone immediately.
         zones = derive_equity_zones(established, cycle_start) if history_ready else []
         equity = multi_bb_exchange_equity(account)
+        display_zones = canonical_display_zone_ladder(zones, equity) if equity > 0 and zones else []
         active = confirmed_zone_from_display_zones(zones, equity) if equity > 0 and zones else None
         zone_ready = bool(active is not None)
         return {
             "safeForEntries": zone_ready,
             "activeZone": active,
             "currentEquity": equity if equity > 0 else None,
+            "zones": display_zones,
             "contiguousBars": len(contiguous),
             "ladderBars": len(established),
             "requiredContiguousBars": 7,
@@ -2175,8 +2177,8 @@ def _sync_price_zone_seat_runtime(
         positions=positions,
         confirmed_zone=zone_context.get("activeZone"),
         zone_safe=bool(zone_context.get("safeForEntries", False)),
-        base_long=max(1, int(getattr(settings, "zone_base_long_soldiers", 3))),
-        base_short=max(1, int(getattr(settings, "zone_base_short_soldiers", 3))),
+        base_long=max(0, int(getattr(settings, "zone_base_long_soldiers", 3))),
+        base_short=max(0, int(getattr(settings, "zone_base_short_soldiers", 3))),
         balancer_enabled=bool(getattr(settings, "zone_exposure_balancer_enabled", True)),
         trigger_percent=float(getattr(settings, "exposure_refill_trigger_percent", 20.0)),
         release_percent=float(getattr(settings, "exposure_refill_release_percent", 8.0)),
@@ -2190,6 +2192,8 @@ def _sync_price_zone_seat_runtime(
         "source": "LIVE_PORTFOLIO_EQUITY",
         "activeZone": zone_context.get("activeZone"),
         "currentEquity": zone_context.get("currentEquity"),
+        "zones": list(zone_context.get("zones") or []),
+        "zoneLadderSource": zone_context.get("zoneLadderSource"),
         "reason": zone_context.get("reason"),
         "syncedAtMs": int(now.timestamp() * 1000),
     }
@@ -6335,6 +6339,22 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "liveEnabled": bool(control.get("liveEnabled", False)),
         "ordersEnabled": os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true",
     }
+
+    # Build 580: one canonical account/Strategy-2/zone state is assembled
+    # server-side from the same exchange snapshot and persisted Strategy-2
+    # ownership. Browser consumers may render it, but may not reconstruct it.
+    strategy2_public = public_response.get("strategy2") if isinstance(public_response.get("strategy2"), dict) else {}
+    runtime_truth = strategy2_public.get("runtimeTruth") if isinstance(strategy2_public.get("runtimeTruth"), dict) else {}
+    zone_report = strategy2_public.get("priceZoneSeats") if isinstance(strategy2_public.get("priceZoneSeats"), dict) else {}
+    canonical_zone_state = build_canonical_zone_state(
+        settings=strategy2_public.get("settings") if isinstance(strategy2_public.get("settings"), dict) else {},
+        positions=positions,
+        managed_positions=strategy2_public.get("multiBbPositions") if isinstance(strategy2_public.get("multiBbPositions"), dict) else {},
+        zone_report=zone_report,
+        snapshot_at_ms=_portfolio_chart_timestamp_ms(snapshot.get("capturedAt")),
+    )
+    strategy2_public["runtimeTruth"] = {**runtime_truth, "zoneState": canonical_zone_state}
+    public_response["strategy2"] = strategy2_public
 
     # Build 571: presentation metrics come from persisted server state only.
     # Never recompute these values from browser DOM/localStorage.
