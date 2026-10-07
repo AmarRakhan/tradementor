@@ -40,7 +40,9 @@ def _i(value: Any, default: int = 0) -> int:
 
 
 def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any,
-                              symbol: str, side: str, action: str, cycle_id: str) -> None:
+                              symbol: str, side: str, action: str, cycle_id: str,
+                              margin_usd: float | None = None,
+                              margin_source: str = "") -> None:
     """Persist confirmed Multi-BB order identity for notification/history consumers."""
     order_id = str(result.get("orderId", result.get("orderID", ""))).strip()
     client_order_id = str(result.get("clientOrderId", result.get("clientOrderID", ""))).strip()
@@ -61,12 +63,9 @@ def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any
         if (str(row.get("orderId", "")), str(row.get("clientOrderId", ""))) != identity
     ]
     normalized_action = str(action).upper()
-    configured_margin = (
-        _f(getattr(settings, "dca_margin_usd", 0.0))
-        if normalized_action == "ADD_DCA"
-        else _f(getattr(settings, "entry_margin_usd", 0.0))
-    )
     result_margin = _f(result.get("marginUsd", result.get("executedMarginUsd", result.get("initialMarginUsd"))))
+    explicit_margin = _f(margin_usd)
+    durable_margin = result_margin if result_margin > 0 else explicit_margin if explicit_margin > 0 else 0.0
     rows.append({
         "orderId": order_id,
         "clientOrderId": client_order_id,
@@ -77,7 +76,12 @@ def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any
         "symbol": str(symbol).upper(),
         "side": str(side).upper(),
         "action": normalized_action,
-        "marginUsd": result_margin if result_margin > 0 else configured_margin or None,
+        "marginUsd": durable_margin or None,
+        "marginSource": (
+            "EXECUTION_RESULT" if result_margin > 0
+            else str(margin_source or "EXECUTION_CONTEXT") if durable_margin > 0
+            else "UNAVAILABLE"
+        ),
         "recordedAt": datetime.now(timezone.utc),
     })
     ref.set({"orderAttributions": rows[-2000:]}, merge=True)
@@ -1067,6 +1071,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     _record_order_attribution(
                         ref, sf, settings=settings, symbol=symbol, side="SHORT",
                         action="OPEN_LEG", cycle_id=str(st0.get("cycleId") or ""),
+                        margin_usd=(sp*sq/max(1,current_lev)) if sp>0 and sq>0 else None,
+                        margin_source="CONFIRMED_FILL_NOTIONAL_DIV_EXECUTION_LEVERAGE",
                     )
                     state[short_key] = {"cycleId": st0.get("cycleId"), "dcaCount": 0, "lastBotFillPrice": sp, "lastKnownQty": sq, "lastKnownEntry": sp, "leverage": current_lev, "cycleStartedAtMs": st0.get("cycleStartedAtMs", timestamp_ms), "updatedAtMs": timestamp_ms, "botManaged": True, "asymmetricHedge": True, "pairedLongKey": key, "initialShortMultiplier": settings.short_start_multiplier}
                     linked = dict(state[key]); linked.update({"pairedShortPending": False, "pairedShortOpened": True, "pairedShortOrderConfirmedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms}); state[key] = linked
@@ -1294,6 +1300,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             _record_order_attribution(
                 ref, fill, settings=settings, symbol=symbol, side=side,
                 action="ADD_DCA", cycle_id=str(st0.get("cycleId") or ""),
+                margin_usd=(fill_price*fill_qty/max(1,int(tier["leverage"]))) if fill_price>0 and fill_qty>0 else None,
+                margin_source="CONFIRMED_FILL_NOTIONAL_DIV_EXECUTION_LEVERAGE",
             )
             new_qty=qty+fill_qty; new_entry=((entry*qty)+(fill_price*fill_qty))/new_qty if new_qty>0 else entry; next_count=dca_count+1
             next_allowed=settings.max_dca>0 and (settings.unlimited_dca or next_count<settings.max_dca)
@@ -2078,6 +2086,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             _record_order_attribution(
                 ref, fill, settings=settings, symbol=symbol, side=side,
                 action="OPEN_LEG", cycle_id=cycle_id,
+                margin_usd=_f(entry_sizing.get("plannedInputMarginUsd")),
+                margin_source="PLANNED_INPUT_MARGIN_AT_EXECUTION",
             )
             zone_claim = claim_soldier(zone_state or {}, side, trade_key=key, symbol=symbol,
                 entry_price=fill_price, entry_portfolio_equity=_f(account.get("totalMarginBalance", account.get("equity"))),
@@ -2141,6 +2151,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     _record_order_attribution(
                         ref, sf, settings=settings, symbol=symbol, side="SHORT",
                         action="OPEN_LEG", cycle_id=cycle_id,
+                        margin_usd=(short_price*short_qty/max(1,short_plan.leverage)) if short_price>0 and short_qty>0 else None,
+                        margin_source="CONFIRMED_FILL_NOTIONAL_DIV_EXECUTION_LEVERAGE",
                     )
                     state[short_key] = {"cycleId": cycle_id, "dcaCount": 0, "lastBotFillPrice": short_price, "lastKnownQty": short_qty, "lastKnownEntry": short_price, "leverage": short_plan.leverage,
                         "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True, "asymmetricHedge": True, "pairedLongKey": key, "initialShortMultiplier": settings.short_start_multiplier}
