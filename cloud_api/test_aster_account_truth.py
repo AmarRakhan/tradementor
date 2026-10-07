@@ -106,3 +106,14 @@ def test_status_and_portfolio_chart_share_one_daily_range_helper():
     assert '"dayHigh": daily_range.get("high")' in chart_block
     assert '"dayLow": daily_range.get("low")' in chart_block
     assert "place_order" not in status_block
+
+
+def test_portfolio_chart_defines_zones_immediately_before_current_zone_runtime_use():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    chart_start = source.index('@app.get("/v1/me/aster/portfolio-chart")')
+    chart_end = source.index('@app.get("/v1/me/aster/trade-events")', chart_start)
+    chart_block = source[chart_start:chart_end]
+    use = chart_block.index("current_zone = active_portfolio_zone(zones, latest_close)")
+    guard = chart_block.rfind("zones = derive_equity_zones(zone_candles, cycle_start)", 0, use)
+    assert guard >= 0
+    assert "Build 574" in chart_block[guard - 900:use]
