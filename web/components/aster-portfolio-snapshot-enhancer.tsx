@@ -138,6 +138,32 @@ type PriceZoneSeatSummary = ActiveZoneSeatSummary & {
   queueHaltedUncertain: boolean;
   queueUncertainReason: string;
   openZonePositionKeys: string[];
+  currentPrice: number | null;
+  zones: Array<{
+    index: number;
+    center: number | null;
+    lower: number | null;
+    upper: number | null;
+    longOpen: number;
+    shortOpen: number;
+    totalOpen: number;
+    longMax: number;
+    shortMax: number;
+    totalMax: number;
+    active: boolean;
+  }>;
+  otherOpenPositions: Array<{ positionKey: string; symbol: string; side: string; ownerType: string; role: string; reason: string }>;
+  unassignedStrategyPositions: Array<{ positionKey: string; symbol: string; side: string; role: string; originZone: number | null; reason: string }>;
+  reconciliation: {
+    accountMatches: boolean;
+    strategyMatches: boolean;
+    zonesMatchStrategy: boolean;
+    accountTotal: number;
+    strategyTotal: number;
+    zoneAssignedTotal: number;
+    unassignedStrategyTotal: number;
+    otherOpenTotal: number;
+  };
 };
 
 type SnapshotDetailView = "portfolio" | "price-zone" | "scanner" | "performance";
@@ -236,167 +262,119 @@ async function loadLiquidationDiagnostics(): Promise<LiquidationDiagnostics> {
 async function loadPriceZoneSeatSummary(): Promise<PriceZoneSeatSummary> {
   const payload = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" });
   const root = record(payload);
-  const strategy2 = Object.keys(record(root.strategy2)).length
-    ? record(root.strategy2)
-    : Object.keys(record(record(root.data).strategy2)).length
-      ? record(record(root.data).strategy2)
-      : record(record(root.snapshot).strategy2);
-  const settings = record(strategy2.settings);
+  const strategy2 = record(root.strategy2);
   const runtimeTruth = record(strategy2.runtimeTruth);
-  const hasRuntimeTruth = runtimeTruth.source === "SERVER_RUNTIME";
-  const entryDiagnostics = record(strategy2.entryDiagnostics);
-  const dynamicHedge = record(entryDiagnostics.dynamicHedge);
-  const queue = record(entryDiagnostics.queue);
-  const seatReport = Object.keys(record(strategy2.priceZoneSeats)).length
-    ? record(strategy2.priceZoneSeats)
-    : record(strategy2.zoneSoldiers);
-  const seatModel = record(seatReport.seatModel);
-  const currentZone = record(seatReport.currentZone);
-  const oldZones = record(seatReport.oldZonesOpen);
-  const strategyOwned = record(seatReport.strategyOwnedOpen);
-  const report = record(strategy2.multiBbReport);
-  const reportActiveLong = optionalNumber(report.activeLong);
-  const reportActiveShort = optionalNumber(report.activeShort);
-  const runtimeActiveLong = optionalNumber(runtimeTruth.activeLong);
-  const runtimeActiveShort = optionalNumber(runtimeTruth.activeShort);
-  const runtimeAccountPositionCount = optionalNumber(runtimeTruth.accountPositionCount);
-  const exchangeFlatConfirmed = hasRuntimeTruth
-    ? runtimeActiveLong === 0 && runtimeActiveShort === 0 && runtimeAccountPositionCount === 0
-    : reportActiveLong === 0 && reportActiveShort === 0;
-  // Saved Strategy-2 settings are the single source of truth for configured
-  // per-zone capacity. Zero is a valid configured value and must remain zero.
-  // Do not fall back to cached seatModel capacity: it can lag after a save and
-  // would create a second truth source in the UI.
-  const perZoneLong = Math.max(0, Math.round(firstNumber([settings], ["zoneBaseLongSoldiers", "perZoneLong"]) ?? 0));
-  const perZoneShort = Math.max(0, Math.round(firstNumber([settings], ["zoneBaseShortSoldiers", "perZoneShort"]) ?? 0));
-  const activeZoneNumber = hasRuntimeTruth
-    ? optionalNumber(runtimeTruth.activeZone)
-    : firstNumber([seatModel, seatReport], ["activeZone"]);
-  const activeOpenLong = exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedLongActiveZone", "openLong"]) ?? 0));
-  const activeOpenShort = exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, currentZone], ["occupiedShortActiveZone", "openShort"]) ?? 0));
-  const strategyOpenLong = exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenLong", "long"]) ?? 0));
-  const strategyOpenShort = exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenShort", "short"]) ?? 0));
-  const maxTotal = Math.max(1, Math.round(
-    (hasRuntimeTruth ? optionalNumber(runtimeTruth.maximumPositions) : null)
-      ?? firstNumber([settings], ["maximumPositions"])
-      ?? (perZoneLong + perZoneShort),
-  ));
-
-  let zoneOpenCounts: Record<string, { long: number; short: number; total: number }> = {};
-  for (const [rawZone, rawCounts] of Object.entries(exchangeFlatConfirmed ? {} : record(seatReport.zoneOpenCounts))) {
-    const zone = Number(rawZone);
-    if (!Number.isInteger(zone)) continue;
-    const counts = record(rawCounts);
-    const long = Math.max(0, Math.round(optionalNumber(counts.long) ?? 0));
-    const short = Math.max(0, Math.round(optionalNumber(counts.short) ?? 0));
-    const total = Math.max(0, Math.round(optionalNumber(counts.total) ?? (long + short)));
-    zoneOpenCounts[String(zone)] = { long, short, total };
-  }
-  const zoneTotals = () => Object.values(zoneOpenCounts).reduce(
-    (sum, row) => ({ long: sum.long + row.long, short: sum.short + row.short, total: sum.total + row.total }),
-    { long: 0, short: 0, total: 0 },
-  );
-  let zoneOpenCountsReliable = seatReport.zoneOpenCountsReliable === true;
-  let totals = zoneTotals();
-  zoneOpenCountsReliable = zoneOpenCountsReliable
-    && totals.long === strategyOpenLong
-    && totals.short === strategyOpenShort
-    && totals.total === strategyOpenLong + strategyOpenShort;
-
-  // Backward-compatible bridge while backend/web releases overlap: derive the
-  // same per-zone breakdown from managed Strategy-2 ownership only when its
-  // totals exactly match the exchange-confirmed seat report. This never guesses.
-  if (!exchangeFlatConfirmed && !zoneOpenCountsReliable) {
-    const derived: Record<string, { long: number; short: number; total: number }> = {};
-    for (const [tradeKey, rawManaged] of Object.entries(record(strategy2.multiBbPositions))) {
-      const managed = record(rawManaged);
-      const role = String(managed.soldierRole || "").toUpperCase();
-      if (role !== "ZONE_BASE" && role !== "EXPOSURE_BALANCER") continue;
-      const originZone = optionalNumber(managed.originZone);
-      if (originZone === null || !Number.isInteger(originZone)) continue;
-      const keySide = tradeKey.toUpperCase();
-      const side = String(managed.side || managed.positionSide || (keySide.endsWith("|LONG") ? "LONG" : keySide.endsWith("|SHORT") ? "SHORT" : "")).toUpperCase();
-      if (side !== "LONG" && side !== "SHORT") continue;
-      const zoneKey = String(Math.round(originZone));
-      const bucket = derived[zoneKey] || { long: 0, short: 0, total: 0 };
-      if (side === "LONG") bucket.long += 1;
-      else bucket.short += 1;
-      bucket.total += 1;
-      derived[zoneKey] = bucket;
-    }
-    const derivedTotals = Object.values(derived).reduce(
-      (sum, row) => ({ long: sum.long + row.long, short: sum.short + row.short, total: sum.total + row.total }),
-      { long: 0, short: 0, total: 0 },
-    );
-    if (
-      derivedTotals.long === strategyOpenLong
-      && derivedTotals.short === strategyOpenShort
-      && derivedTotals.total === strategyOpenLong + strategyOpenShort
-    ) {
-      zoneOpenCounts = derived;
-      totals = derivedTotals;
-      zoneOpenCountsReliable = true;
-    }
+  const zoneState = record(runtimeTruth.zoneState);
+  if (runtimeTruth.source !== "SERVER_RUNTIME" || zoneState.source !== "SERVER_RUNTIME") {
+    throw new Error("Canonical Aster zoneState ontbreekt.");
   }
 
-  const candidateOpenZonePositionKeys = exchangeFlatConfirmed ? [] : Object.entries(record(strategy2.multiBbPositions)).flatMap(([tradeKey, rawManaged]) => {
-    const managed = record(rawManaged);
-    const role = String(managed.soldierRole || "").toUpperCase();
-    const originZone = optionalNumber(managed.originZone);
-    const normalizedKey = tradeKey.toUpperCase();
-    const side = String(
-      managed.side
-      || managed.positionSide
-      || (normalizedKey.endsWith("|LONG") ? "LONG" : normalizedKey.endsWith("|SHORT") ? "SHORT" : ""),
-    ).toUpperCase();
-    if (
-      (role !== "ZONE_BASE" && role !== "EXPOSURE_BALANCER")
-      || originZone === null
-      || !Number.isInteger(originZone)
-      || (side !== "LONG" && side !== "SHORT")
-    ) return [];
-    return [normalizedKey];
+  const capacity = record(zoneState.capacity);
+  const strategyOwned = record(zoneState.strategyOwned);
+  const reconciliationRaw = record(zoneState.reconciliation);
+  const zones = (Array.isArray(zoneState.zones) ? zoneState.zones : []).flatMap((rawZone) => {
+    const row = record(rawZone);
+    const index = optionalNumber(row.index);
+    if (index === null || !Number.isInteger(index)) return [];
+    return [{
+      index: Math.round(index),
+      center: optionalNumber(row.center),
+      lower: optionalNumber(row.lower),
+      upper: optionalNumber(row.upper),
+      longOpen: Math.max(0, Math.round(optionalNumber(row.longOpen) ?? 0)),
+      shortOpen: Math.max(0, Math.round(optionalNumber(row.shortOpen) ?? 0)),
+      totalOpen: Math.max(0, Math.round(optionalNumber(row.totalOpen) ?? 0)),
+      longMax: Math.max(0, Math.round(optionalNumber(row.longMax) ?? 0)),
+      shortMax: Math.max(0, Math.round(optionalNumber(row.shortMax) ?? 0)),
+      totalMax: Math.max(0, Math.round(optionalNumber(row.totalMax) ?? 0)),
+      active: row.active === true,
+    }];
   });
-  const expectedZoneOwnedOpen = strategyOpenLong + strategyOpenShort;
-  const openZonePositionKeys = candidateOpenZonePositionKeys.length === expectedZoneOwnedOpen
-    ? candidateOpenZonePositionKeys
-    : [];
+
+  const perZoneLong = Math.max(0, Math.round(optionalNumber(capacity.perZoneLong) ?? 0));
+  const perZoneShort = Math.max(0, Math.round(optionalNumber(capacity.perZoneShort) ?? 0));
+  const maxTotal = Math.max(0, Math.round(optionalNumber(capacity.maxTotal) ?? 0));
+  const activeZoneNumber = optionalNumber(zoneState.activeZone);
+  const activeZone = activeZoneNumber === null ? null : Math.round(activeZoneNumber);
+  const activeRow = activeZone === null ? null : zones.find((row) => row.index === activeZone) ?? null;
+  const strategyOpenLong = Math.max(0, Math.round(optionalNumber(strategyOwned.longOpen) ?? 0));
+  const strategyOpenShort = Math.max(0, Math.round(optionalNumber(strategyOwned.shortOpen) ?? 0));
+  const strategyOpenTotal = Math.max(0, Math.round(optionalNumber(strategyOwned.totalOpen) ?? 0));
+  const zoneOpenCounts = Object.fromEntries(zones.map((row) => [
+    String(row.index),
+    { long: row.longOpen, short: row.shortOpen, total: row.totalOpen },
+  ]));
+  const strategyPositions = (Array.isArray(zoneState.strategyPositions) ? zoneState.strategyPositions : []).map((rawPosition) => record(rawPosition));
+  const openZonePositionKeys = strategyPositions.flatMap((row) => {
+    const key = String(row.positionKey || "").toUpperCase();
+    return key ? [key] : [];
+  });
+  const otherOpenPositions = (Array.isArray(zoneState.otherOpenPositions) ? zoneState.otherOpenPositions : []).map((rawPosition) => {
+    const row = record(rawPosition);
+    return {
+      positionKey: String(row.positionKey || ""),
+      symbol: String(row.symbol || ""),
+      side: String(row.side || ""),
+      ownerType: String(row.ownerType || ""),
+      role: String(row.role || ""),
+      reason: String(row.reason || ""),
+    };
+  });
+  const unassignedStrategyPositions = (Array.isArray(zoneState.unassignedStrategyPositions) ? zoneState.unassignedStrategyPositions : []).map((rawPosition) => {
+    const row = record(rawPosition);
+    return {
+      positionKey: String(row.positionKey || ""),
+      symbol: String(row.symbol || ""),
+      side: String(row.side || ""),
+      role: String(row.role || ""),
+      originZone: optionalNumber(row.originZone),
+      reason: String(row.reason || ""),
+    };
+  });
 
   return {
-    enabled: hasRuntimeTruth
-      ? runtimeTruth.strategyMode === "ZONE_WARRIORS" && runtimeTruth.enabled === true
-      : seatReport.enabled === true && settings.zoneSoldiersEnabled === true,
-    runtimeTruthCanonical: hasRuntimeTruth,
-    activeZone: activeZoneNumber === null ? null : Math.round(activeZoneNumber),
+    enabled: runtimeTruth.strategyMode === "ZONE_WARRIORS" && runtimeTruth.enabled === true,
+    runtimeTruthCanonical: true,
+    activeZone,
     perZoneLong,
     perZoneShort,
-    freeLongActiveZone: Math.max(0, Math.round(firstNumber([seatModel], ["freeLongActiveZone"]) ?? (perZoneLong - activeOpenLong))),
-    freeShortActiveZone: Math.max(0, Math.round(firstNumber([seatModel], ["freeShortActiveZone"]) ?? (perZoneShort - activeOpenShort))),
-    occupiedLongActiveZone: activeOpenLong,
-    occupiedShortActiveZone: activeOpenShort,
-    openFromOldZones: exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, oldZones], ["openFromOldZones", "total"]) ?? 0)),
+    freeLongActiveZone: Math.max(0, perZoneLong - (activeRow?.longOpen ?? 0)),
+    freeShortActiveZone: Math.max(0, perZoneShort - (activeRow?.shortOpen ?? 0)),
+    occupiedLongActiveZone: activeRow?.longOpen ?? 0,
+    occupiedShortActiveZone: activeRow?.shortOpen ?? 0,
+    openFromOldZones: Math.max(0, strategyOpenTotal - (activeRow?.totalOpen ?? 0)),
     maxTotal,
     strategyOpenLong,
     strategyOpenShort,
-    strategyOpenTotal: exchangeFlatConfirmed ? 0 : Math.max(0, Math.round(firstNumber([seatModel, strategyOwned], ["strategyOpenTotal", "total"]) ?? (strategyOpenLong + strategyOpenShort))),
+    strategyOpenTotal,
     zoneOpenCounts,
-    zoneOpenCountsReliable,
-    entryStatus: hasRuntimeTruth
-      ? firstString([runtimeTruth], ["entryStatus"])
-      : firstString([entryDiagnostics], ["entryStatus"]),
-    entryReason: hasRuntimeTruth
-      ? firstString([runtimeTruth], ["entryReason"])
-      : firstString([entryDiagnostics], ["entryReason", "lastReason"]),
-    entrySkipReasons: record(entryDiagnostics.entrySkipReasons) as Record<string, number>,
-    zoneMigrationHold: entryDiagnostics.zoneMigrationHold === true,
-    dynamicHedgeEnabled: dynamicHedge.enabled === true,
-    dynamicHedgeBlocking: hasRuntimeTruth ? runtimeTruth.dynamicHedgeBlocking === true : dynamicHedge.blocking === true,
-    dynamicHedgeOwnershipState: firstString([dynamicHedge], ["ownershipState"]),
-    dynamicHedgeReason: firstString([dynamicHedge], ["reason"]),
-    dynamicHedgeSafetyStatus: firstString([dynamicHedge], ["safetyStatus"]),
-    queueHaltedUncertain: hasRuntimeTruth ? runtimeTruth.queueHalted === true : queue.haltedUncertain === true,
-    queueUncertainReason: firstString([queue], ["uncertainReason"]),
+    zoneOpenCountsReliable: reconciliationRaw.strategyMatches === true && reconciliationRaw.zonesMatchStrategy === true,
+    entryStatus: String(runtimeTruth.entryStatus || ""),
+    entryReason: String(runtimeTruth.entryReason || ""),
+    entrySkipReasons: {},
+    zoneMigrationHold: false,
+    dynamicHedgeEnabled: false,
+    dynamicHedgeBlocking: runtimeTruth.dynamicHedgeBlocking === true,
+    dynamicHedgeOwnershipState: "",
+    dynamicHedgeReason: "",
+    dynamicHedgeSafetyStatus: "",
+    queueHaltedUncertain: runtimeTruth.queueHalted === true,
+    queueUncertainReason: "",
     openZonePositionKeys,
+    currentPrice: optionalNumber(zoneState.currentPrice),
+    zones,
+    otherOpenPositions,
+    unassignedStrategyPositions,
+    reconciliation: {
+      accountMatches: reconciliationRaw.accountMatches === true,
+      strategyMatches: reconciliationRaw.strategyMatches === true,
+      zonesMatchStrategy: reconciliationRaw.zonesMatchStrategy === true,
+      accountTotal: Math.max(0, Math.round(optionalNumber(reconciliationRaw.accountTotal) ?? 0)),
+      strategyTotal: Math.max(0, Math.round(optionalNumber(reconciliationRaw.strategyTotal) ?? 0)),
+      zoneAssignedTotal: Math.max(0, Math.round(optionalNumber(reconciliationRaw.zoneAssignedTotal) ?? 0)),
+      unassignedStrategyTotal: Math.max(0, Math.round(optionalNumber(reconciliationRaw.unassignedStrategyTotal) ?? 0)),
+      otherOpenTotal: Math.max(0, Math.round(optionalNumber(reconciliationRaw.otherOpenTotal) ?? 0)),
+    },
   };
 }
 
