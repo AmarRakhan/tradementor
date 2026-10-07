@@ -10,13 +10,15 @@ test("Portfolio Koers exposes only the approved timeframes and defaults to 15m",
 
 test("Portfolio Koers never fabricates invalid or missing candles",()=>{
   assert.deepEqual(normalizePortfolioKoersPayload({candles:[]}).candles,[]);
-  const payload=normalizePortfolioKoersPayload({candles:[
+  const payload=normalizePortfolioKoersPayload({dayHigh:348.06,dayLow:315.43,candles:[
     {time:60,open:100,high:102,low:99,close:101},
     {time:120,open:0,high:2,low:1,close:2},
     {time:180,open:100,high:99,low:98,close:100},
   ]});
   assert.equal(payload.candles.length,1);
   assert.equal(payload.candles[0].close,101);
+  assert.equal(payload.dayHigh,348.06);
+  assert.equal(payload.dayLow,315.43);
 });
 
 test("TP detail rows survive payload normalization and confirmed-fill marker merging",()=>{
@@ -596,4 +598,10 @@ test("Build 567 keeps S/R lines persistent across chart pan and extends the ladd
   assert.ok(component.includes('rgba(255,86,106,.58)'));
   assert.ok(component.includes('rgba(71,225,166,.50)'));
   assert.ok(component.includes("prices.slice(-48)"));
+});
+
+test("build 570 account high/low prefers server truth over browser-only history",async()=>{
+  const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
+  assert.equal(component.includes("const serverHigh=Number(payload.dayHigh),serverLow=Number(payload.dayLow);"),true);
+  assert.equal(component.includes("browser history differs per device/account"),true);
 });

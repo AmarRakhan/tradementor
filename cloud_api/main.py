@@ -72,7 +72,7 @@ from aster_gateway import (
 )
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, full_leg_closes_from_sweep_ledgers, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
-from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
+from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, daily_equity_range as portfolio_chart_daily_equity_range, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -6867,6 +6867,22 @@ def aster_portfolio_chart(
         _persist_portfolio_chart_sample(user, equity=equity, source_at_ms=captured_ms)
 
     candles = _read_portfolio_chart_candles(user, timeframe, limit)
+
+    # Daily high/low is account truth and must not depend on browser localStorage
+    # or on whichever chart timeframe happens to be selected. Use persisted 5m
+    # account-equity candles because 400 buckets cover even a 25-hour DST day.
+    amsterdam_tz = ZoneInfo("Europe/Amsterdam")
+    amsterdam_now = now_utc.astimezone(amsterdam_tz)
+    day_start_local = datetime(amsterdam_now.year, amsterdam_now.month, amsterdam_now.day, tzinfo=amsterdam_tz)
+    day_end_local = day_start_local + timedelta(days=1)
+    day_start_ms = int(day_start_local.astimezone(timezone.utc).timestamp() * 1000)
+    day_end_ms = int(day_end_local.astimezone(timezone.utc).timestamp() * 1000)
+    daily_range = portfolio_chart_daily_equity_range(
+        _read_portfolio_chart_candles(user, "5m", 400),
+        day_start_ms=day_start_ms,
+        day_end_ms=day_end_ms,
+    )
+
     strategy_state = aster_strategy2_reference(uid).get().to_dict() or {}
     cycle = strategy_state.get("multiBbCycle") if isinstance(strategy_state.get("multiBbCycle"), dict) else {}
     cycle_start = safe_float(cycle.get("cycleStartEquity"))
@@ -6915,6 +6931,8 @@ def aster_portfolio_chart(
         "currentZone": current_zone,
         "cycleStartEquity": cycle_start if cycle_start > 0 else None,
         "currentEquity": equity if equity > 0 else None,
+        "dayHigh": daily_range.get("high"),
+        "dayLow": daily_range.get("low"),
         "snapshotAtMs": captured_ms if captured_ms > 0 else None,
         "live": snapshot_fresh,
         "persistent": True,

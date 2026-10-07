@@ -10,6 +10,7 @@ from aster_portfolio_chart import (
     bucket_start_ms,
     candle_integrity_report,
     classify_confirmed_close,
+    daily_equity_range,
     derive_equity_zones,
     external_cashflow_markers,
     latest_contiguous_candles,
@@ -26,6 +27,18 @@ from aster_portfolio_chart import (
 
 def candle(at_ms, open_, high, low, close):
     return {"atMs": at_ms, "time": at_ms // 1000, "open": open_, "high": high, "low": low, "close": close}
+
+
+def test_build570_daily_equity_range_is_server_deterministic_for_one_account_day():
+    rows = [
+        candle(1_000, 100, 105, 99, 102),
+        candle(2_000, 102, 110, 101, 108),
+        candle(3_000, 108, 109, 95, 96),
+        candle(9_000, 96, 999, 1, 500),
+    ]
+    result = daily_equity_range(rows, day_start_ms=500, day_end_ms=5_000)
+    assert result == {"high": 110, "low": 95}
+    assert daily_equity_range(rows, day_start_ms=20_000, day_end_ms=30_000) == {"high": None, "low": None}
 
 
 def test_equity_sample_builds_real_ohlc_without_inventing_values():
@@ -597,6 +610,18 @@ def test_build569_audit_endpoint_is_read_only_and_exposes_reconciliation():
     assert '"entryMarkerCountEqualsDetails"' in block
     assert '"tpMarkerCountEqualsDetails"' in block
     assert "place_order" not in block
+
+
+def test_build570_portfolio_chart_exposes_authoritative_server_daily_range():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index('@app.get("/v1/me/aster/portfolio-chart")')
+    end = source.index('@app.get("/v1/me/aster/trade-events")', start + 1)
+    block = source[start:end]
+    assert 'portfolio_chart_daily_equity_range(' in block
+    assert '_read_portfolio_chart_candles(user, "5m", 400)' in block
+    assert '"dayHigh": daily_range.get("high")' in block
+    assert '"dayLow": daily_range.get("low")' in block
+    assert 'ZoneInfo("Europe/Amsterdam")' in block
 
 
 def test_build569_historical_attribution_never_uses_current_settings_for_margin():

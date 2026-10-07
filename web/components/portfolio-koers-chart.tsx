@@ -18,7 +18,7 @@ type Zone={index:number;label:string;center:number;lower:number;upper:number;tou
 type EntryDetail={symbol:string;side:string;atMs:number;entryPrice:number|null;notionalUsd:number|null;marginUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
 type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null;marginUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
 type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];entries?:EntryDetail[];source?:string};
-type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
+type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;dayHigh:number|null;dayLow:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
 type StructureLevelLayout={label:string;price:number;top:number;side:"resistance"|"support"};
@@ -1253,6 +1253,13 @@ export function PortfolioKoersChart({
 
   const latest=liveEquity??payload.currentEquity??baseCandles.at(-1)?.close??null;
   const accountDayRange=useMemo(()=>{
+    const serverHigh=Number(payload.dayHigh),serverLow=Number(payload.dayLow);
+    if(Number.isFinite(serverHigh)&&serverHigh>0&&Number.isFinite(serverLow)&&serverLow>0&&serverHigh>=serverLow){
+      return {high:serverHigh,low:serverLow};
+    }
+    // Backward-compatible fallback while frontend/backend revisions overlap.
+    // This path must never be the long-term source of truth because local
+    // browser history differs per device/account.
     const today=amsterdamDayKey(Date.now());
     const rows=timelineCandles.filter((row)=>amsterdamDayKey(Number(row.atMs)||Number(row.time)*1000)===today);
     if(!rows.length)return {high:null as number|null,low:null as number|null};
@@ -1260,7 +1267,7 @@ export function PortfolioKoersChart({
       high:rows.reduce((value,row)=>Math.max(value,Number(row.high)),Number.NEGATIVE_INFINITY),
       low:rows.reduce((value,row)=>Math.min(value,Number(row.low)),Number.POSITIVE_INFINITY),
     };
-  },[timelineCandles]);
+  },[payload.dayHigh,payload.dayLow,timelineCandles]);
   const highTodayText=viewMode==="active"?indexValue(activePayload.dayHigh):accountUsd(accountDayRange.high);
   const lowTodayText=viewMode==="active"?indexValue(activePayload.dayLow):accountUsd(accountDayRange.low);
   const tradeIntelligenceDayRangePosition=useMemo(()=>{

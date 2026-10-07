@@ -136,6 +136,8 @@ export function normalizePortfolioKoersPayload(raw) {
     currentZone:Number.isInteger(source.currentZone) ? Number(source.currentZone) : null,
     cycleStartEquity:finite(source.cycleStartEquity) || null,
     currentEquity:finite(source.currentEquity) || null,
+    dayHigh:finite(source.dayHigh) || null,
+    dayLow:finite(source.dayLow) || null,
     snapshotAtMs:Math.floor(finite(source.snapshotAtMs)) || null,
     live:source.live===true,
     persistent:source.persistent===true,
