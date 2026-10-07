@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "210d4c955cc560bf43e9dbb881a89504e0c5f45b",
+  "sourceCommit": "64396ea5aab4d767b872344fca2bce688247b141",
   "requestedBy": "AmarRakhan",
-  "requestId": "portfolio-chart-build565-live-labels-20261007"
+  "requestId": "portfolio-chart-build567-persistent-sr-labels-20261007"
 }
