@@ -78,7 +78,7 @@ test("Build 515 makes the LONG/SHORT entry-event panel scrollable and labels rep
     readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8"),
   ]);
   assert.ok(component.includes("entry-events"));
-  assert.ok(component.includes('trade.activityType==="DCA"?"DCA":trade.activityType==="ADD"?"ADD":"ENTRY"'));
+  assert.ok(component.includes('["DCA","ADD"].includes(String(trade.activityType||"").toUpperCase())'));
   assert.ok(component.includes('row.entryPrice??row.averagePrice??row.avgPrice??row.price'));
   assert.ok(component.includes('row.executedNotionalUsd??row.notionalUsd??row.notional'));
   assert.ok(css.includes(".portfolio-koers-tp-trades{display:grid;min-height:0;overflow-y:auto"));
@@ -92,7 +92,7 @@ test("Build 516 distinguishes reconciled ADD events from true DCA and preserves 
     readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8"),
     readFile(new URL("../lib/portfolio-koers-chart.mjs",import.meta.url),"utf8"),
   ]);
-  assert.ok(component.includes('trade.activityType==="ADD"?"ADD":"ENTRY"'));
+  assert.ok(component.includes('["DCA","ADD"].includes(String(trade.activityType||"").toUpperCase())'));
   assert.ok(component.includes("entryPriceText(trade.entryPrice)"));
   for(const token of ["dcaNumber","dcaDistancePercent","anchorPrice","triggerPrice","fillQuantity","orderId","clientOrderId","exchangeConfirmed"]){
     assert.ok(lib.includes(token),token);
