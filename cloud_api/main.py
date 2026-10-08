@@ -102,7 +102,7 @@ from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
 from aster_zone_soldiers import canonical_display_zone_ladder, confirmed_zone_from_display_zones, prepare_zone_runtime
-from aster_runtime_truth import _canonical_long_next_levels, build_canonical_zone_state, build_multi_bb_runtime_truth
+from aster_runtime_truth import _canonical_long_next_levels, _canonical_next_free_position_levels, build_canonical_zone_state, build_multi_bb_runtime_truth
 from aster_multi_bb_portfolio import ACTIVE_EXIT_STATES, ensure_cycle as ensure_multi_bb_portfolio_cycle, exchange_equity as multi_bb_exchange_equity, portfolio_cycle_gate, portfolio_cycle_snapshot, reset_cycle_to_equity
 from money_grabber import NetValueEvidence, start_round as start_money_grabber_round
 from money_grabber_runtime import Position as MoneyGrabberPosition, ScanSnapshot as MoneyGrabberScanSnapshot, plan_scan as plan_money_grabber_scan, shadow_report as money_grabber_shadow_report
@@ -6430,6 +6430,13 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
             })
         canonical_zone_state["zones"].sort(key=lambda row: int(row["index"]), reverse=True)
         canonical_zone_state["nextLongLevels"] = _canonical_long_next_levels(
+            canonical_zone_state["zones"], equity_display,
+            reliable=bool(canonical_zone_state["reconciliation"]["accountMatches"] and canonical_zone_state["reconciliation"]["strategyMatches"]),
+        )
+        # The displayed zone ranges are replaced with the canonical portfolio
+        # presentation ladder above. Refresh BOTH projections against that same
+        # finalized ladder, never the stale runtime-sync geometry.
+        canonical_zone_state["nextFreePositionLevels"] = _canonical_next_free_position_levels(
             canonical_zone_state["zones"], equity_display,
             reliable=bool(canonical_zone_state["reconciliation"]["accountMatches"] and canonical_zone_state["reconciliation"]["strategyMatches"]),
         )
