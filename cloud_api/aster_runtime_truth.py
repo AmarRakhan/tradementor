@@ -356,7 +356,11 @@ def build_canonical_zone_state(
         "activeZone": active_zone,
         "zones": zone_rows,
         "nextLongLevels": _canonical_long_next_levels(zone_rows, runtime_sync.get("currentEquity"), reliable=bool(ladder_rows) and account_total == strategy_total + other_total and strategy_total == assigned_total + unassigned_total),
-        "nextFreePositionLevels": _canonical_next_free_position_levels(zone_rows, runtime_sync.get("currentEquity"), reliable=bool(ladder_rows) and account_total == strategy_total + other_total and strategy_total == assigned_total + unassigned_total),
+        # Distance display is read-only. Unassigned/non-zone positions can make
+        # global reconciliation incomplete without invalidating the canonical
+        # priced ladder and the separately counted seats in each zone.
+        # Do not suppress these display distances on unrelated account drift.
+        "nextFreePositionLevels": _canonical_next_free_position_levels(zone_rows, runtime_sync.get("currentEquity"), reliable=bool(ladder_rows) and bool(zone_rows)),
         "strategyPositions": strategy_positions,
         "unassignedStrategyPositions": unassigned,
         "otherOpenPositions": other,
