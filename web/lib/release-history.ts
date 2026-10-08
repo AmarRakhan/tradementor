@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-08",
-  title: "Prijszones · compacte vrije-positieafstanden",
+  title: "Bollinger instapfilter 2.0 · LONG/SHORT timeframes",
   newItems: [
+    "Build 587: LONG en SHORT hebben onafhankelijk instelbare Bollinger-timeframes op de bestaande filterkaart, met behoud van dezelfde marktdata- en tradingpipeline.",
     "Build 586: drie compacte kaarten tonen de huidige portfoliowaarde en de afstand tot de volgende vrije LONG- of SHORT-stoel omhoog en omlaag, vanuit één canonieke serverbron.",
     "Build 585: vijf aanvullende prijszones boven en onder bezette zones binnen de bestaande scrolllijst, met canonieke serverprijsranges.",
     "Build 584 berekent Bollinger 20,2 over de volledige canonieke accountwaarde-candleserie, ook bij terugscrollen over de kalenderdaggrens.",
@@ -140,6 +141,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "De bestaande directionele scannerinstellingen worden via één accountgebonden Strategy-2 settings-API bewaard; de oude gezamenlijke timeframe-instelling blijft compatibel.",
     "Nieuwe pure build_canonical_zone_state canonicalizer classificeert dezelfde exchange-positions snapshot tegen dezelfde persisted Strategy-2 ownership.",
     "Saved Strategy-2 settings zijn de enige eigenaar van per-zone capaciteit; legacy seatModel blijft alleen compatibiliteitsdata en is geen browser truth source.",
     "Prijszone Details gebruikt uitsluitend runtimeTruth.zoneState voor capaciteit, bezetting, active zone, totals en prijsranges; alleen cycle-eventhistorie blijft een afzonderlijke read-only eventfeed.",
