@@ -213,3 +213,14 @@ def test_next_free_position_levels_accepts_either_long_or_short_capacity():
     assert result["down"]["freeShortSeats"] == 2
     assert _canonical_next_free_position_levels(zones, 311.45, reliable=False)["status"] == "UNAVAILABLE"
     assert _canonical_next_free_position_levels([], 311.45, reliable=True)["up"] is None
+
+
+
+def test_public_aster_response_refreshes_free_position_levels_after_display_ladder():
+    source = (Path(__file__).parent / "main.py").read_text()
+    start = source.index('canonical_zone_state["nextLongLevels"] = _canonical_long_next_levels(')
+    end = source.index('canonical_zone_state["currentPrice"] = equity_display', start)
+    projection = source[start:end]
+    assert 'canonical_zone_state["nextFreePositionLevels"] = _canonical_next_free_position_levels(' in projection
+    assert 'canonical_zone_state["zones"], equity_display' in projection
+    assert 'reliable=bool(canonical_zone_state["reconciliation"]["accountMatches"]' in projection
