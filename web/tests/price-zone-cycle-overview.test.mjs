@@ -100,3 +100,11 @@ test("Build 583 shows all canonical zone rows in vertically scrollable table", (
   assert.match(overview, /position: "sticky"/);
   assert.doesNotMatch(overview, /\.slice\(0, 25\)/);
 });
+
+
+test("Build 584 limits the scroll list to occupied zones plus five on both sides", () => {
+  assert.match(overview, /\.filter\(\(\[, count\]\) => count\.total > 0\)/);
+  assert.match(overview, /Math\.min\(\.\.\.middle\) - 5/);
+  assert.match(overview, /Math\.max\(\.\.\.middle\) \+ 5/);
+  assert.match(overview, /zone >= minimum && zone <= maximum/);
+});
