@@ -282,9 +282,17 @@ function visibleZoneIndexes(seats: SeatTruth, chart: ChartTruth, cycle: CycleTru
   if (active !== null) {
     for (let zone = active - 5; zone <= active + 5; zone += 1) known.add(zone);
   }
-  // Render every server-confirmed zone, including those above and below the
-  // active zone. Do not silently truncate at 25 or invent price geometry.
-  return [...known].sort((a, b) => b - a);
+  // Display occupied zone range plus a fixed five-zone buffer on each side.
+  // Never create artificial price levels in the browser.
+  const occupied = Object.entries(seats.zoneOpenCounts)
+    .filter(([, count]) => count.total > 0)
+    .map(([key]) => int(key))
+    .filter((value): value is number => value !== null);
+  const middle = occupied.length ? occupied : active !== null ? [active] : [...known];
+  if (!middle.length) return [];
+  const minimum = Math.min(...middle) - 5;
+  const maximum = Math.max(...middle) + 5;
+  return [...known].filter((zone) => zone >= minimum && zone <= maximum).sort((a, b) => b - a);
 }
 
 export function PriceZoneCycleOverview({
