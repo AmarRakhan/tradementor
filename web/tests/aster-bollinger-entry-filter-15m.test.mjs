@@ -32,3 +32,11 @@ test("enabled state and selected timeframe persist independently with 15m defaul
   assert.match(card, /onTimeframeChange\(side, item.value\)/);
   assert.match(bridge, /window\.dispatchEvent\(new Event\("aster-strategy2-settings-changed"\)\)/);
 });
+
+
+test("Bollinger refresh cannot overwrite an in-flight persisted change", () => {
+  assert.match(bridge, /bbReadEpoch\.current \+= 1/);
+  assert.match(bridge, /readEpoch === bbReadEpoch\.current/);
+  assert.match(bridge, /!bbWriteInFlight\.current/);
+  assert.match(bridge, /bbWriteInFlight\.current = false/);
+});
