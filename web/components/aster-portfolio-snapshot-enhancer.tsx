@@ -1019,8 +1019,9 @@ function ScannerStatusPage({ snapshot, onBack }: { snapshot: ScannerStatusSnapsh
   </section>;
 }
 
-function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner, onOpenPerformance }: {
+function Snapshot({ values, snapshotLoadWarning, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner, onOpenPerformance }: {
   values: SnapshotValues;
+  snapshotLoadWarning: string;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
   profitBusy: ProfitScope | null;
@@ -1036,10 +1037,11 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
       <div className="aps-title-icon"><Icon name="positions" /></div>
       <h2>PORTFOLIO SNAPSHOT</h2>
       <div className="aps-header-actions">
-        <span className="aps-live"><i />Live</span>
+        <span className="aps-live"><i />{snapshotLoadWarning ? "Niet live" : "Live"}</span>
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
+    {snapshotLoadWarning ? <p role="status" style={{ color: "#ffca83", border: "1px solid rgba(255,190,100,.42)", borderRadius: 8, padding: "8px", fontSize: 12 }}>{snapshotLoadWarning}</p> : null}
     <SnapshotDetailButtons onOpenPriceZone={onOpenPriceZone} onOpenScanner={onOpenScanner} />
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
@@ -1426,6 +1428,7 @@ export function AsterPortfolioSnapshotEnhancer() {
           />
           <Snapshot
             values={values}
+            snapshotLoadWarning={snapshotLoadWarning}
             profitPreview={profitPreview}
             liquidationDiagnostics={liquidationDiagnostics}
             profitBusy={profitBusy}
