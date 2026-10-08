@@ -19,10 +19,16 @@ test("Bollinger timeframe UI matches approved contract and stays above Profit Lo
 });
 
 test("enabled state and selected timeframe persist independently with 15m default", () => {
-  assert.match(bridge, /useState<BollingerEntryTimeframe>\("15m"\)/);
+  assert.match(bridge, /bbLongTimeframe, setBbLongTimeframe/);
+  assert.match(bridge, /bbShortTimeframe, setBbShortTimeframe/);
   assert.match(bridge, /bollingerEntryFilter15mEnabled === true/);
   assert.match(bridge, /bollingerEntryFilterTimeframe/);
   assert.match(bridge, /toggleBollingerEntryFilter/);
   assert.match(bridge, /changeBollingerTimeframe/);
+  assert.match(bridge, /directionalBollingerEnabled: true/);
+  assert.match(bridge, /bollingerLongTimeframe: long/);
+  assert.match(bridge, /bollingerShortTimeframe: short/);
+  assert.match(card, /Bollinger \$\{side\} timeframe/);
+  assert.match(card, /onTimeframeChange\(side, item.value\)/);
   assert.match(bridge, /window\.dispatchEvent\(new Event\("aster-strategy2-settings-changed"\)\)/);
 });

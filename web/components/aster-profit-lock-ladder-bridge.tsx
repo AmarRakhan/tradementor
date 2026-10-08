@@ -76,7 +76,8 @@ export function AsterProfitLockLadderBridge() {
   const [message, setMessage] = useState("");
   const [detailOpen, setDetailOpen] = useState(false);
   const [bbEnabled, setBbEnabled] = useState(false);
-  const [bbTimeframe, setBbTimeframe] = useState<BollingerEntryTimeframe>("15m");
+  const [bbLongTimeframe, setBbLongTimeframe] = useState<BollingerEntryTimeframe>("15m");
+  const [bbShortTimeframe, setBbShortTimeframe] = useState<BollingerEntryTimeframe>("15m");
   const [bbBusy, setBbBusy] = useState(false);
   const [bbMessage, setBbMessage] = useState("");
 
@@ -88,7 +89,9 @@ export function AsterProfitLockLadderBridge() {
       setSummary(next.summary);
       if (!bbBusy) {
         setBbEnabled(next.settings.bollingerEntryFilter15mEnabled === true);
-        setBbTimeframe(normalizeBollingerTimeframe(next.settings.bollingerEntryFilterTimeframe));
+        const legacyTimeframe = next.settings.bollingerEntryFilterTimeframe;
+        setBbLongTimeframe(normalizeBollingerTimeframe(next.settings.directionalBollingerEnabled === true ? (next.settings.bollingerLongTimeframe ?? legacyTimeframe) : legacyTimeframe));
+        setBbShortTimeframe(normalizeBollingerTimeframe(next.settings.directionalBollingerEnabled === true ? (next.settings.bollingerShortTimeframe ?? legacyTimeframe) : legacyTimeframe));
       }
       if (!dirty) {
         setEnabled(next.settings.profitLockLadderEnabled === true);
@@ -162,7 +165,7 @@ export function AsterProfitLockLadderBridge() {
     try {
       const latestSnapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
       const latestSettings = extract(latestSnapshot).settings;
-      const nextSettings = { ...latestSettings, bollingerEntryFilter15mEnabled: next, bollingerEntryFilterTimeframe: bbTimeframe };
+      const nextSettings = { ...latestSettings, bollingerEntryFilter15mEnabled: next };
       const response = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", {
         method: "PUT",
         body: JSON.stringify({ settings: nextSettings }),
@@ -179,27 +182,48 @@ export function AsterProfitLockLadderBridge() {
     } finally { setBbBusy(false); }
   }
 
-  async function changeBollingerTimeframe(next: BollingerEntryTimeframe) {
-    if (bbBusy || next === bbTimeframe) return;
-    const previous = bbTimeframe;
-    setBbTimeframe(next); setBbBusy(true); setBbMessage("Timeframe opslaan…");
+  async function changeBollingerTimeframe(side: "LONG" | "SHORT", next: BollingerEntryTimeframe) {
+    if (bbBusy || next === (side === "LONG" ? bbLongTimeframe : bbShortTimeframe)) return;
+    setBbBusy(true); setBbMessage("Timeframe opslaan…");
     try {
+      // Merge with live exchange-backed settings so the other direction and
+      // unrelated trading configuration remain untouched.
       const latestSnapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
       const latestSettings = extract(latestSnapshot).settings;
-      const nextSettings = { ...latestSettings, bollingerEntryFilterTimeframe: next };
+      const legacy = normalizeBollingerTimeframe(latestSettings.bollingerEntryFilterTimeframe);
+      const wasDirectional = latestSettings.directionalBollingerEnabled === true;
+      const currentLong = normalizeBollingerTimeframe(wasDirectional ? (latestSettings.bollingerLongTimeframe ?? legacy) : legacy);
+      const currentShort = normalizeBollingerTimeframe(wasDirectional ? (latestSettings.bollingerShortTimeframe ?? legacy) : legacy);
+      const long = side === "LONG" ? next : currentLong;
+      const short = side === "SHORT" ? next : currentShort;
+      const nextSettings = {
+        ...latestSettings,
+        directionalBollingerEnabled: true,
+        bollingerLongTimeframe: long,
+        bollingerShortTimeframe: short,
+        // Legacy compatibility field is an alias for LONG, never a second
+        // independent settings source in the directional scanner branch.
+        bollingerEntryFilterTimeframe: long,
+      };
       const response = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", {
         method: "PUT",
         body: JSON.stringify({ settings: nextSettings }),
       }) as Record<string, unknown>;
       const strategy2 = response.strategy2 && typeof response.strategy2 === "object" ? response.strategy2 as Record<string, unknown> : {};
-      const saved = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : nextSettings;
-      const confirmed = normalizeBollingerTimeframe(saved.bollingerEntryFilterTimeframe);
-      setSettings(saved); setBbTimeframe(confirmed);
-      setBbMessage(`${confirmed === "1h" ? "1u" : confirmed === "4h" ? "4u" : confirmed} · actief voor volgende primaire entry-check.`);
+      const saved = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : {};
+      if (saved.directionalBollingerEnabled !== true ||
+          normalizeBollingerTimeframe(saved.bollingerLongTimeframe) !== long ||
+          normalizeBollingerTimeframe(saved.bollingerShortTimeframe) !== short) {
+        throw new Error("Backend heeft de onafhankelijke LONG/SHORT-instellingen niet bevestigd.");
+      }
+      setSettings(saved);
+      setBbLongTimeframe(long);
+      setBbShortTimeframe(short);
+      setBbMessage(`LONG ${long} · SHORT ${short} · opgeslagen.`);
       window.dispatchEvent(new Event("aster-strategy2-settings-changed"));
     } catch (error) {
-      setBbTimeframe(previous);
       setBbMessage(error instanceof Error ? error.message : "Bollinger-timeframe kon niet worden opgeslagen.");
+      await refresh();
     } finally { setBbBusy(false); }
   }
 
@@ -239,7 +263,7 @@ export function AsterProfitLockLadderBridge() {
   }
 
   const settingsUi = settingsHost ? createPortal(<div className="pll-bridge-wrap" data-reference={REFERENCE}>
-    <AsterBollingerEntryFilter15mCard enabled={bbEnabled} busy={bbBusy} timeframe={bbTimeframe} message={bbMessage} onToggle={(next) => void toggleBollingerEntryFilter(next)} onTimeframeChange={(next) => void changeBollingerTimeframe(next)} />
+    <AsterBollingerEntryFilter15mCard enabled={bbEnabled} busy={bbBusy} longTimeframe={bbLongTimeframe} shortTimeframe={bbShortTimeframe} message={bbMessage} onToggle={(next) => void toggleBollingerEntryFilter(next)} onTimeframeChange={(side, next) => void changeBollingerTimeframe(side, next)} />
     <AsterProfitLockLadderPanel enabled={enabled} levels={levels} conflictCount={conflictCount} onEnabledChange={setMode} onLevelsChange={setLadder} />
     {(dirty || enabled) ? <div className="pll-save-row"><span>{message || (dirty ? "Wijzigingen nog niet opgeslagen." : "Profit Lock Ladder actief in opgeslagen configuratie.")}</span><button type="button" disabled={busy || !dirty} onClick={save}>{busy ? "Opslaan…" : "Profit Lock opslaan"}</button></div> : null}
     <style>{`.pll-bridge-wrap{display:contents}.pll-save-row{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:-1px;padding:6px 8px;border:1px solid rgba(33,214,154,.16);border-radius:9px;background:rgba(3,17,13,.72)}.pll-save-row span{color:#8fa39a;font-size:8px;line-height:1.3}.pll-save-row button{min-height:30px;padding:0 10px;border:1px solid rgba(33,214,154,.52);border-radius:8px;background:rgba(19,115,78,.25);color:#8ff4c6;font-size:8px;font-weight:900;white-space:nowrap}.pll-save-row button:disabled{opacity:.38}@media(max-width:430px){.pll-save-row{align-items:stretch;flex-direction:column}.pll-save-row button{width:100%}}`}</style>
