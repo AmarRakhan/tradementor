@@ -7,5 +7,5 @@ test("transient account-truth errors preserve last verified snapshot with visibl
   assert.match(code, /if\(valuesRef\.current === EMPTY\)/);
   assert.match(code, /snapshotLoadWarning \? "Niet live" : "Live"/);
   assert.match(code, /snapshotLoadWarning \? <p role="status"/);
-  assert.match(code, /setSnapshotLoadWarning\(" "\)/);
+  assert.match(code, /setSnapshotLoadWarning\(""\)/);
 });
