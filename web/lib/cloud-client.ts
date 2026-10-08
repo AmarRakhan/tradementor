@@ -1,4 +1,5 @@
 import { firebaseAuth } from "./firebase";
+import { onAuthStateChanged } from "firebase/auth";
 import { demoModeEnabled } from "./demo-data";
 
 // One short-lived, account-scoped read for the existing canonical Aster endpoint.
@@ -7,6 +8,15 @@ type SharedAsterRequest = { uid: string; promise: Promise<unknown>; validUntil: 
 let sharedAsterRequest: SharedAsterRequest | null = null;
 function clearSharedAsterRequest() { sharedAsterRequest = null; }
 let observedUid: string | null = null;
+if (typeof window !== "undefined") {
+  onAuthStateChanged(firebaseAuth, (user) => {
+    const nextUid = user?.uid ?? null;
+    if (observedUid !== nextUid) {
+      clearSharedAsterRequest();
+      observedUid = nextUid;
+    }
+  });
+}
 function scopedAsterRequest(uid: string, load: () => Promise<unknown>): Promise<unknown> {
   if (observedUid !== uid) { clearSharedAsterRequest(); observedUid = uid; }
   const now = Date.now();
