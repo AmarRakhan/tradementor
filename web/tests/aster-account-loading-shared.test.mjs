@@ -11,7 +11,7 @@ test("canonical Aster request is shared only for same authenticated user", () =>
   assert.match(loader, /sharedAsterRequest\?\.uid === uid/);
   assert.match(loader, /observedUid !== uid/);
   assert.match(loader, /firebaseAuth\.currentUser\?\.uid !== uid/);
-  assert.match(loader, /validUntil: now \+ 2000/);
+  assert.match(loader, /entry\.validUntil = Date\.now\(\) \+ 2000/);
 });
 
 test("auth completes before account load and 401 token refresh remains", () => {
