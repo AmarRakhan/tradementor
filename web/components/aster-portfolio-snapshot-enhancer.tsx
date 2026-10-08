@@ -1019,8 +1019,9 @@ function ScannerStatusPage({ snapshot, onBack }: { snapshot: ScannerStatusSnapsh
   </section>;
 }
 
-function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner, onOpenPerformance }: {
+function Snapshot({ values, snapshotLoadWarning, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner, onOpenPerformance }: {
   values: SnapshotValues;
+  snapshotLoadWarning: string;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
   profitBusy: ProfitScope | null;
@@ -1036,11 +1037,12 @@ function Snapshot({ values, profitPreview, liquidationDiagnostics, profitBusy, o
       <div className="aps-title-icon"><Icon name="positions" /></div>
       <h2>PORTFOLIO SNAPSHOT</h2>
       <div className="aps-header-actions">
-        <span className="aps-live"><i />Live</span>
+        <span className="aps-live"><i />{snapshotLoadWarning ? "Niet live" : "Live"}</span>
         <button type="button" className="aps-close-all" disabled={values.closeDisabled} onClick={onCloseAll}>{values.closeBusy ? "SLUITEN…" : "ALLES SLUITEN"}</button>
       </div>
     </header>
     <SnapshotDetailButtons onOpenPriceZone={onOpenPriceZone} onOpenScanner={onOpenScanner} />
+    {snapshotLoadWarning ? <p role="status" style={{ color: "#ffca83", border: "1px solid rgba(255,190,100,.42)", borderRadius: 8, padding: "8px", fontSize: 12 }}>{snapshotLoadWarning}</p> : null}
     <div className="aps-grid">
       <MetricCard icon="wallet" label="PORTFOLIOWAARDE" value={values.equity} detail={values.todayGrowth !== "—" ? `${values.todayGrowth} vandaag` : undefined} detailTone={values.todayGrowthTone === "positive" ? "positive" : values.todayGrowthTone === "negative" ? "negative" : "muted"} />
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
@@ -1110,6 +1112,7 @@ async function loadProfitPreview(): Promise<ProfitPreview> {
 export function AsterPortfolioSnapshotEnhancer() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
+  const [snapshotLoadWarning, setSnapshotLoadWarning] = useState("");
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
@@ -1123,22 +1126,38 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [asterSubtab, setAsterSubtab] = useState<AsterSubtab>("portfolio");
   const [advisorDayRangePosition, setAdvisorDayRangePosition] = useState<"low"|"middle"|"high">("middle");
   const valuesRef = useRef<SnapshotValues>(EMPTY);
+  const lastConfirmedAtRef = useRef<number | null>(null);
+  const refreshingSnapshotRef = useRef(false);
   const detailScrollY = useRef(0);
   const syncing = useRef(false);
 
   useEffect(()=>{
     let alive=true;
     const refresh=async()=>{
+      if(refreshingSnapshotRef.current)return;
+      refreshingSnapshotRef.current=true;
       try{
         const next=await loadCanonicalSnapshotValues();
         if(!alive)return;
+        lastConfirmedAtRef.current=Date.now();
         valuesRef.current=next;
         setValues(next);
+        setSnapshotLoadWarning("");
       }catch{
         if(!alive)return;
-        const failed={...EMPTY,...readSnapshotUiState()};
-        valuesRef.current=failed;
-        setValues(failed);
+        const lastConfirmed = lastConfirmedAtRef.current;
+        const stamp = lastConfirmed
+          ? new Date(lastConfirmed).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })
+          : null;
+        setSnapshotLoadWarning(stamp
+          ? `Accountgegevens niet live. Laatst bevestigd om ${stamp}.`
+          : "Accountgegevens konden nog niet worden geladen. Controleer de verbinding.");
+        // Preserve only previously verified numbers; never pretend they are live.
+        // Stale UI values must not enable the close-all action.
+        valuesRef.current={...valuesRef.current,closeDisabled:true};
+        setValues(valuesRef.current);
+      }finally{
+        refreshingSnapshotRef.current=false;
       }
     };
     void refresh();
@@ -1419,6 +1438,7 @@ export function AsterPortfolioSnapshotEnhancer() {
           />
           <Snapshot
             values={values}
+            snapshotLoadWarning={snapshotLoadWarning}
             profitPreview={profitPreview}
             liquidationDiagnostics={liquidationDiagnostics}
             profitBusy={profitBusy}
