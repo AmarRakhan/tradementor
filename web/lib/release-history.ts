@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-08",
-  title: "Prijszones · vijf extra zones boven en onder bestaande bezetting",
+  title: "Prijszones · compacte vrije-positieafstanden",
   newItems: [
+    "Build 586: drie compacte kaarten tonen de huidige portfoliowaarde en de afstand tot de volgende vrije LONG- of SHORT-stoel omhoog en omlaag, vanuit één canonieke serverbron.",
     "Build 585: vijf aanvullende prijszones boven en onder bezette zones binnen de bestaande scrolllijst, met canonieke serverprijsranges.",
     "Build 584 berekent Bollinger 20,2 over de volledige canonieke accountwaarde-candleserie, ook bij terugscrollen over de kalenderdaggrens.",
     "Bovenband, middenlijn en onderband gebruiken dezelfde tijdas als de bestaande candles; alleen de eerste 19 historische candles vormen de normale opwarmperiode.",
