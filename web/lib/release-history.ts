@@ -28,6 +28,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   releasedAt: "2026-10-07",
   title: "Prijszone Details · verticaal scrollbaar zoneoverzicht",
   newItems: [
+    "Build 584 toont vijf toekomstige prijszones boven de hoogste bezette zone en vijf onder de laagste bezette zone; de scrollijst blijft begrensd.",
     "Build 583 geeft de prijszonetabel een eigen verticale scroll met vaste kolomkoppen en laat alle door de canonieke server geleverde zones zien, zowel boven als onder de actieve zone.",
     "Build 582 toont compacte omhoog/omlaag-afstanden in USDT op basis van server-berekende volgende LONG-zonedrempels.",
     "Prijszone Details en Portfolio Koers gebruiken één gedeelde read-only servergeometrie voor zoneprijsranges, los van trading- en orderbeslissingen.",
