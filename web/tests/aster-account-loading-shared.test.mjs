@@ -33,3 +33,8 @@ test("late response or failure from previous authenticated user is ignored", () 
   assert.match(snapshot, /const requestUid = firebaseAuth\.currentUser\?\.uid \?\? null/);
   assert.match(snapshot, /firebaseAuth\.currentUser\?\.uid !== requestUid \|\| snapshotUserRef\.current !== requestUid/);
 });
+
+test("initial incomplete snapshot is never marked live", () => {
+  assert.match(snapshot, /useState\("Accountgegevens laden…"\)/);
+  assert.match(snapshot, /setSnapshotLoadWarning\("Accountgegevens laden…"\)/);
+});
