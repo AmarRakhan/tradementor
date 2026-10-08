@@ -148,6 +148,39 @@ def _canonical_long_next_levels(zones: list[dict[str, Any]], current_price: Any,
         "reason": "",
     }
 
+def _canonical_next_free_position_levels(zones: list[dict[str, Any]], current_price: Any, *, reliable: bool) -> dict[str, Any]:
+    """Read-only nearest free LONG or SHORT zone from the same canonical ladder."""
+    try:
+        price = float(current_price)
+    except (TypeError, ValueError):
+        price = float("nan")
+    if not reliable or not (0 < price < float("inf")):
+        return {"status": "UNAVAILABLE", "up": None, "down": None, "reason": "CANONICAL_PRICE_OR_OWNERSHIP_UNAVAILABLE"}
+    valid = []
+    for row in zones:
+        try:
+            lower, upper = float(row.get("lower")), float(row.get("upper"))
+            free_long = max(0, int(row["longMax"]) - int(row["longOpen"]))
+            free_short = max(0, int(row["shortMax"]) - int(row["shortOpen"]))
+        except (TypeError, ValueError, KeyError):
+            continue
+        if 0 < lower < upper < float("inf") and (free_long > 0 or free_short > 0):
+            valid.append((row, lower, upper, free_long, free_short))
+    higher = [(lower, row, long, short) for row, lower, upper, long, short in valid if lower > price]
+    lower = [(upper, row, long, short) for row, lo, upper, long, short in valid if upper < price]
+    def result(item: tuple[float, dict[str, Any], int, int] | None) -> dict[str, Any] | None:
+        if item is None:
+            return None
+        threshold, row, long, short = item
+        return {"zone": row["index"], "price": threshold, "distance": abs(threshold - price),
+                "freeLongSeats": long, "freeShortSeats": short,
+                "unit": "PORTFOLIO_EQUITY_USDT", "entryPermission": "NOT_EVALUATED"}
+    return {"status": "AVAILABLE",
+            "up": result(min(higher, key=lambda item: item[0]) if higher else None),
+            "down": result(max(lower, key=lambda item: item[0]) if lower else None),
+            "reason": ""}
+
+
 def build_canonical_zone_state(
     *,
     settings: dict[str, Any],
@@ -323,6 +356,7 @@ def build_canonical_zone_state(
         "activeZone": active_zone,
         "zones": zone_rows,
         "nextLongLevels": _canonical_long_next_levels(zone_rows, runtime_sync.get("currentEquity"), reliable=bool(ladder_rows) and account_total == strategy_total + other_total and strategy_total == assigned_total + unassigned_total),
+        "nextFreePositionLevels": _canonical_next_free_position_levels(zone_rows, runtime_sync.get("currentEquity"), reliable=bool(ladder_rows) and account_total == strategy_total + other_total and strategy_total == assigned_total + unassigned_total),
         "strategyPositions": strategy_positions,
         "unassignedStrategyPositions": unassigned,
         "otherOpenPositions": other,
