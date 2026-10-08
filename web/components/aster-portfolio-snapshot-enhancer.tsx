@@ -1114,7 +1114,7 @@ async function loadProfitPreview(): Promise<ProfitPreview> {
 export function AsterPortfolioSnapshotEnhancer() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
-  const [snapshotLoadWarning, setSnapshotLoadWarning] = useState("");
+  const [snapshotLoadWarning, setSnapshotLoadWarning] = useState("Accountgegevens laden…");
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
@@ -1141,7 +1141,7 @@ export function AsterPortfolioSnapshotEnhancer() {
     lastConfirmedAtRef.current = null;
     valuesRef.current = EMPTY;
     setValues(EMPTY);
-    setSnapshotLoadWarning("");
+    setSnapshotLoadWarning("Accountgegevens laden…");
   }), []);
 
   useEffect(()=>{
