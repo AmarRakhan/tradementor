@@ -282,11 +282,9 @@ function visibleZoneIndexes(seats: SeatTruth, chart: ChartTruth, cycle: CycleTru
   if (active !== null) {
     for (let zone = active - 5; zone <= active + 5; zone += 1) known.add(zone);
   }
-  let rows = [...known].sort((a, b) => b - a);
-  if (rows.length > 25 && active !== null) {
-    rows = rows.sort((a, b) => Math.abs(a - active) - Math.abs(b - active)).slice(0, 25).sort((a, b) => b - a);
-  } else if (rows.length > 25) rows = rows.slice(0, 25);
-  return rows;
+  // Render every server-confirmed zone, including those above and below the
+  // active zone. Do not silently truncate at 25 or invent price geometry.
+  return [...known].sort((a, b) => b - a);
 }
 
 export function PriceZoneCycleOverview({
@@ -396,9 +394,9 @@ export function PriceZoneCycleOverview({
       {seatSummary && seatSummary.zones.some((zone) => !validZoneRange(zone)) ? (
         <p className="aps-zco-truth-note" role="status">ⓘ Canonical prijsgrenzen ontbreken voor één of meer zones. De ontbrekende data moet in de server-ladder worden hersteld.</p>
       ) : null}
-      <div className="aps-zco-table-wrap" aria-busy={false}>
+      <div className="aps-zco-table-wrap" aria-busy={false} role="region" aria-label="Prijszones omhoog en omlaag scrollen" tabIndex={0} style={{ maxHeight: "min(58vh, 640px)", overflowY: "auto", overflowX: "hidden", overscrollBehaviorY: "contain", WebkitOverflowScrolling: "touch" }}>
         <table className="aps-zco-table">
-          <thead>
+          <thead style={{ position: "sticky", top: 0, zIndex: 2, background: "#06160c" }}>
             <tr>
               <th>Zone</th>
               <th>Prijsrange<small>(USDT)</small></th>
