@@ -820,9 +820,10 @@ export function PortfolioKoersChart({
     // Build 562: Bollinger is a display indicator over the confirmed candle
     // observations. A timeline gap must not make the bands disappear entirely.
     // No candles are fabricated; the indicator uses only persisted/observed OHLC.
-    const sessionCandles=viewMode==="account"?currentAmsterdamSession(candles):[];
-    const bbInput=viewMode==="account"&&sessionCandles.length>=20?sessionCandles:candles;
-    const bb=viewMode==="account"?bollinger20x2(bbInput):{upper:[],middle:[],lower:[]};
+    // Bollinger 20,2 must use the identical canonical candle timeline as the chart.
+    // Restricting to the latest Amsterdam session restarted the 20-bar warmup
+    // each day, leaving historical candles without bands when panning backwards.
+    const bb=viewMode==="account"?bollinger20x2(candles):{upper:[],middle:[],lower:[]};
     if(viewMode==="account"){
       const upper=chart.addSeries(LineSeries,{color:"rgba(35,190,255,.82)",lineWidth:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
       const middle=chart.addSeries(LineSeries,{color:"rgba(218,231,236,.44)",lineWidth:1,lineStyle:2 as any,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});

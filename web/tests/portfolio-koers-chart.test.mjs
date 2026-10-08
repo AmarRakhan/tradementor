@@ -530,7 +530,7 @@ test("Build 564 supersedes the later zone-crop experiment and keeps Build 518 vi
   assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
   assert.equal(component.includes("ACCOUNT_STARTUP_VISIBLE_BARS"),false);
   assert.equal(component.includes("portfolioKoersFocusBars(candles"),false);
-  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(bbInput)'));
+  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
 });
 
 
@@ -551,7 +551,7 @@ test("Build 568 keeps confirmed-event anchoring on the denser startup viewport",
   assert.ok(component.includes("time:renderTime"));
   assert.ok(component.includes('{tp:3,long:2,short:2,cashflow:1,other:1}'));
   assert.ok(component.includes("safetyCap:9"));
-  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(bbInput)'));
+  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
 });
 
 
@@ -566,10 +566,11 @@ test("Build 564 keeps current black/no-pill/no-gap presentation on the Build 518
 });
 
 
-test("Build 569 keeps Amsterdam-session Bollinger input while cold-starting on contiguous real candles",async()=>{
+test("Build 584 keeps Bollinger on full canonical history while cold-starting on contiguous real candles",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("function currentAmsterdamSession"));
-  assert.ok(component.includes("sessionCandles.length>=20?sessionCandles:candles"));
+  assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
+  assert.equal(component.includes("sessionCandles.length>=20?sessionCandles:candles"),false);
   assert.equal(component.includes("const sessionStartIndex=viewMode===\"account\"&&sessionCandles.length"),false);
   assert.equal(component.includes("Math.max(sessionStartIndex,candles.length-focusVisibleBars-.5)"),false);
   assert.ok(component.includes("const accountDefaultFrom=Math.max(-.5,candles.length-accountStartupVisibleBars-.5)"));

@@ -25,9 +25,11 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-10-07",
-  title: "Prijszone Details · verticaal scrollbaar zoneoverzicht",
+  releasedAt: "2026-10-08",
+  title: "Portfolio Koers · Bollinger Bands volledige koershistorie",
   newItems: [
+    "Build 584 berekent Bollinger 20,2 over de volledige canonieke accountwaarde-candleserie, ook bij terugscrollen over de kalenderdaggrens.",
+    "Bovenband, middenlijn en onderband gebruiken dezelfde tijdas als de bestaande candles; alleen de eerste 19 historische candles vormen de normale opwarmperiode.",
     "Build 583 geeft de prijszonetabel een eigen verticale scroll met vaste kolomkoppen en laat alle door de canonieke server geleverde zones zien, zowel boven als onder de actieve zone.",
     "Build 582 toont compacte omhoog/omlaag-afstanden in USDT op basis van server-berekende volgende LONG-zonedrempels.",
     "Prijszone Details en Portfolio Koers gebruiken één gedeelde read-only servergeometrie voor zoneprijsranges, los van trading- en orderbeslissingen.",
