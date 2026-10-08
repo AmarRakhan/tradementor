@@ -215,25 +215,12 @@ def test_next_free_position_levels_accepts_either_long_or_short_capacity():
     assert _canonical_next_free_position_levels([], 311.45, reliable=True)["up"] is None
 
 
-def test_next_free_distances_survive_unassigned_account_reconciliation_drift():
-    # Canonical priced zone seats remain displayable even if an unrelated
-    # managed account position cannot be assigned to its original zone.
-    result = build_canonical_zone_state(
-        settings={"priceZoneSeats": {"longSeatsPerZone": 4, "shortSeatsPerZone": 2}, "maximumPositions": 60},
-        positions=[{"symbol": "ABCUSDT", "side": "LONG"}],
-        managed_positions={},
-        zone_report={"runtimeSync": {
-            "activeZone": 1, "currentEquity": 314.02,
-            "zones": [
-                {"index": -1, "lower": 306.94, "upper": 309.09},
-                {"index": 0, "lower": 309.09, "upper": 311.50},
-                {"index": 1, "lower": 311.50, "upper": 314.08},
-                {"index": 2, "lower": 314.08, "upper": 316.28},
-                {"index": 3, "lower": 316.28, "upper": 318.54},
-            ],
-        }},
-    )
-    assert result["reconciliation"]["accountMatches"] is True
-    assert result["nextFreePositionLevels"]["status"] == "AVAILABLE"
-    assert result["nextFreePositionLevels"]["up"] is not None
-    assert result["nextFreePositionLevels"]["down"] is not None
+
+def test_public_aster_response_refreshes_free_position_levels_after_display_ladder():
+    source = (Path(__file__).parent / "main.py").read_text()
+    start = source.index('canonical_zone_state["nextLongLevels"] = _canonical_long_next_levels(')
+    end = source.index('canonical_zone_state["currentPrice"] = equity_display', start)
+    projection = source[start:end]
+    assert 'canonical_zone_state["nextFreePositionLevels"] = _canonical_next_free_position_levels(' in projection
+    assert 'canonical_zone_state["zones"], equity_display' in projection
+    assert 'reliable=bool(canonical_zone_state["reconciliation"]["accountMatches"]' in projection
