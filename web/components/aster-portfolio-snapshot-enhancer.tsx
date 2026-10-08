@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { firebaseAuth } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
 import { normalizeAsterAccountTruth, type AsterAccountTruth } from "@/lib/aster-account-truth";
 import { AsterHedgeManager } from "./aster-hedge-manager";
 import { PortfolioKoersChart } from "./portfolio-koers-chart";
@@ -1128,8 +1130,19 @@ export function AsterPortfolioSnapshotEnhancer() {
   const valuesRef = useRef<SnapshotValues>(EMPTY);
   const lastConfirmedAtRef = useRef<number | null>(null);
   const refreshingSnapshotRef = useRef(false);
+  const snapshotUserRef = useRef<string | null>(firebaseAuth.currentUser?.uid ?? null);
   const detailScrollY = useRef(0);
   const syncing = useRef(false);
+
+  useEffect(() => onAuthStateChanged(firebaseAuth, (user) => {
+    const uid = user?.uid ?? null;
+    if (snapshotUserRef.current === uid) return;
+    snapshotUserRef.current = uid;
+    lastConfirmedAtRef.current = null;
+    valuesRef.current = EMPTY;
+    setValues(EMPTY);
+    setSnapshotLoadWarning("");
+  }), []);
 
   useEffect(()=>{
     let alive=true;
@@ -1138,7 +1151,7 @@ export function AsterPortfolioSnapshotEnhancer() {
       refreshingSnapshotRef.current=true;
       try{
         const next=await loadCanonicalSnapshotValues();
-        if(!alive)return;
+        if(!alive || firebaseAuth.currentUser?.uid !== snapshotUserRef.current)return;
         lastConfirmedAtRef.current=Date.now();
         valuesRef.current=next;
         setValues(next);
