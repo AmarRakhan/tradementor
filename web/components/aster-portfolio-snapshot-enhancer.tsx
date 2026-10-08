@@ -1149,15 +1149,16 @@ export function AsterPortfolioSnapshotEnhancer() {
     const refresh=async()=>{
       if(refreshingSnapshotRef.current)return;
       refreshingSnapshotRef.current=true;
+      const requestUid = firebaseAuth.currentUser?.uid ?? null;
       try{
         const next=await loadCanonicalSnapshotValues();
-        if(!alive || firebaseAuth.currentUser?.uid !== snapshotUserRef.current)return;
+        if(!alive || firebaseAuth.currentUser?.uid !== requestUid || snapshotUserRef.current !== requestUid)return;
         lastConfirmedAtRef.current=Date.now();
         valuesRef.current=next;
         setValues(next);
         setSnapshotLoadWarning("");
       }catch{
-        if(!alive)return;
+        if(!alive || firebaseAuth.currentUser?.uid !== requestUid || snapshotUserRef.current !== requestUid)return;
         const lastConfirmed = lastConfirmedAtRef.current;
         const stamp = lastConfirmed
           ? new Date(lastConfirmed).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })
