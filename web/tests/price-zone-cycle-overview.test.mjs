@@ -80,8 +80,8 @@ test("Build 581 shows only canonical positive price ranges and server-owned LONG
   assert.doesNotMatch(overview, /zone\.lower \?\? zone\.center/);
   assert.doesNotMatch(overview, /zone\.upper \?\? zone\.center/);
   assert.match(snapshot, /record\(zoneState\.nextLongLevels\)/);
-  assert.match(overview, /seatSummary\.nextLongLevels\[direction\]/);
-  assert.match(overview, /Volgende vrije LONG-capaciteit/);
+  assert.match(overview, /seatSummary\.nextFreePositionLevels\[direction\]/);
+  assert.match(overview, /Volgende vrije positie en huidige portfoliowaarde/);
   assert.doesNotMatch(overview, /setInterval\(.*nextLongLevels/);
 });
 
@@ -106,4 +106,14 @@ test("Build 585 caps the zone list to occupied bounds plus five display zones", 
   assert.match(overview, /Math\.min\(\.\.\.middle\) - 5/);
   assert.match(overview, /Math\.max\(\.\.\.middle\) \+ 5/);
   assert.match(overview, /zone >= minimum && zone <= maximum/);
+});
+
+test("Build 586 approved three-card summary uses server-owned LONG or SHORT availability", () => {
+  assert.match(overview, /file_00000000666481f4a67666e7f0ca3144/);
+  assert.match(overview, /nextFreePositionLevels/);
+  assert.match(snapshot, /record\(zoneState\.nextFreePositionLevels\)/);
+  assert.match(snapshot, /freeShortSeats/);
+  assert.match(overview, /tot vrije positie/);
+  assert.match(overview, /minimumFractionDigits: 2, maximumFractionDigits: 2/);
+  assert.doesNotMatch(overview, /Volgende<br \/>LONG/);
 });
