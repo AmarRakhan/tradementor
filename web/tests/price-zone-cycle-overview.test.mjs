@@ -92,3 +92,11 @@ test("Build 582 renders server-owned remaining LONG distances in compact header"
   assert.match(overview, /↓ Omlaag/);
   assert.doesNotMatch(overview, /aps-zco-next-levels/);
 });
+
+
+test("Build 583 shows all canonical zone rows in vertically scrollable table", () => {
+  assert.match(overview, /overflowY: "auto"/);
+  assert.match(overview, /maxHeight: "min\(58vh, 640px\)"/);
+  assert.match(overview, /position: "sticky"/);
+  assert.doesNotMatch(overview, /\.slice\(0, 25\)/);
+});
