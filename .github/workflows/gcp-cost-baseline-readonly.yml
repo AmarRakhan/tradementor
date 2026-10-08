@@ -1,0 +1,96 @@
+name: GCP Cost Baseline (READ ONLY)
+# Manual diagnostic only; does not deploy, change service configuration, or invoke trading APIs.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-gcp-cost-baseline-readonly
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    if: github.ref == 'refs/heads/amar-crypto-bot-2026-cloud'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 12
+    env:
+      PROJECT: tradementor-production
+      REGION: europe-west4
+    steps:
+      - name: Authenticate as observer through WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+          service_account: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Collect sanitized inventory without changing resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gcp-cost-baseline
+          {
+            echo "# Google Cloud Cost Baseline — READ ONLY"
+            echo
+            echo "- UTC: $(date -u +%FT%TZ)"
+            echo "- Project: $PROJECT"
+            echo "- Region: $REGION"
+            echo "- Repository commit: $GITHUB_SHA"
+            echo "- Mode: inventory and metadata only; no state mutation"
+            echo
+            echo "## Cloud Run services (name, scaling, CPU, memory, concurrency, traffic)"
+          } > gcp-cost-baseline/report.md
+          if gcloud run services list --project "$PROJECT" --region "$REGION" --format=json > gcp-cost-baseline/run.json 2>gcp-cost-baseline/err.tmp; then
+            python - <<'PY' >> gcp-cost-baseline/report.md
+          import json
+          d=json.load(open("gcp-cost-baseline/run.json"))
+          for x in d:
+              m=x.get("metadata",{}); spec=x.get("spec",{}); template=spec.get("template",{})
+              s=template.get("spec",{}); annotations={**(m.get("annotations") or {}),**(template.get("metadata",{}).get("annotations") or {})}
+              container=(s.get("containers") or [{}])[0]
+              limits=(container.get("resources") or {}).get("limits") or {}
+              traffic=x.get("status",{}).get("traffic") or []
+              traffic_summary=",".join(str(t.get("percent",0))+"%:"+str(t.get("revisionName","?")) for t in traffic)
+              print(f"- {m.get('name','unknown')}: min={annotations.get('autoscaling.knative.dev/minScale','?')}, max={annotations.get('autoscaling.knative.dev/maxScale','?')}, cpu={limits.get('cpu','?')}, memory={limits.get('memory','?')}, concurrency={s.get('containerConcurrency','?')}, traffic={traffic_summary}")
+          print(f"\nService count: {len(d)}")
+          PY
+          else
+            echo "- UNAVAILABLE: observer lacks Cloud Run list permission or API unavailable" >> gcp-cost-baseline/report.md
+          fi
+          echo >> gcp-cost-baseline/report.md
+          echo "## Artifact Registry repositories" >> gcp-cost-baseline/report.md
+          if gcloud artifacts repositories list --project "$PROJECT" --location=all --format=json > gcp-cost-baseline/artifacts.json 2>gcp-cost-baseline/err.tmp; then
+            python - <<'PY' >> gcp-cost-baseline/report.md
+          import json
+          for r in json.load(open("gcp-cost-baseline/artifacts.json")):
+              print(f"- {r.get('name','unknown')} format={r.get('format','?')} sizeBytes={r.get('sizeBytes','not-reported')}")
+          PY
+          else
+            echo "- UNAVAILABLE: insufficient permissions or API unavailable" >> gcp-cost-baseline/report.md
+          fi
+          echo >> gcp-cost-baseline/report.md
+          echo "## Cloud Workstations" >> gcp-cost-baseline/report.md
+          if gcloud workstations clusters list --project "$PROJECT" --region "$REGION" --format='value(name)' > gcp-cost-baseline/workstations.txt 2>gcp-cost-baseline/err.tmp; then
+            echo "- Cluster names:" >> gcp-cost-baseline/report.md
+            sed 's/^/- /' gcp-cost-baseline/workstations.txt >> gcp-cost-baseline/report.md
+          else
+            echo "- UNAVAILABLE: insufficient permissions or API unavailable" >> gcp-cost-baseline/report.md
+          fi
+          echo >> gcp-cost-baseline/report.md
+          echo "## Billing / forecast data quality" >> gcp-cost-baseline/report.md
+          echo "- Billing amount by SKU: NOT VERIFIED. Cloud Billing project metadata does not expose actual billed cost totals." >> gcp-cost-baseline/report.md
+          echo "- Official Billing Forecast: NOT VERIFIED. Requires authorized Cloud Billing Reports/export data." >> gcp-cost-baseline/report.md
+          echo "- Any monthly savings estimate must remain UNKNOWN until comparable before/after billable metrics are available." >> gcp-cost-baseline/report.md
+          echo "- Do not stop Cloud Run, delete images, change polling, or alter trading workloads based on this inventory." >> gcp-cost-baseline/report.md
+          rm -f gcp-cost-baseline/run.json gcp-cost-baseline/artifacts.json gcp-cost-baseline/workstations.txt gcp-cost-baseline/err.tmp
+          cat gcp-cost-baseline/report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcp-cost-baseline-readonly
+          path: gcp-cost-baseline/report.md
+          retention-days: 14
