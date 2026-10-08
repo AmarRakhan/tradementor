@@ -28,3 +28,8 @@ test("failed snapshot refresh preserves prior verified data but marks not live",
   assert.match(snapshot, /snapshotLoadWarning \? "Niet live" : "Live"/);
   assert.doesNotMatch(snapshot, /const failed=\{\.\.\.EMPTY,\.\.\.readSnapshotUiState\(\)\}/);
 });
+
+test("late response or failure from previous authenticated user is ignored", () => {
+  assert.match(snapshot, /const requestUid = firebaseAuth\.currentUser\?\.uid \?\? null/);
+  assert.match(snapshot, /firebaseAuth\.currentUser\?\.uid !== requestUid \|\| snapshotUserRef\.current !== requestUid/);
+});
