@@ -192,3 +192,24 @@ def test_next_long_levels_never_invent_missing_canonical_price():
     assert _canonical_long_next_levels([row], None, reliable=True)["status"] == "UNAVAILABLE"
     assert _canonical_long_next_levels([row], 95, reliable=False)["up"] is None
     assert _canonical_long_next_levels([], 95, reliable=True)["up"] is None
+
+
+def test_next_free_position_levels_accepts_either_long_or_short_capacity():
+    from aster_runtime_truth import _canonical_next_free_position_levels
+    zones = [
+        {"index": 0, "lower": 309.27, "upper": 311.60, "longOpen": 4, "longMax": 4, "shortOpen": 2, "shortMax": 2},
+        {"index": 1, "lower": 311.60, "upper": 313.85, "longOpen": 4, "longMax": 4, "shortOpen": 2, "shortMax": 2},
+        {"index": 2, "lower": 313.85, "upper": 315.87, "longOpen": 4, "longMax": 4, "shortOpen": 1, "shortMax": 2},
+        {"index": -1, "lower": 307.18, "upper": 309.27, "longOpen": 4, "longMax": 4, "shortOpen": 0, "shortMax": 2},
+    ]
+    result = _canonical_next_free_position_levels(zones, 311.45, reliable=True)
+    assert result["status"] == "AVAILABLE"
+    assert result["up"]["zone"] == 2
+    assert round(result["up"]["distance"], 2) == 2.40
+    assert result["up"]["freeLongSeats"] == 0
+    assert result["up"]["freeShortSeats"] == 1
+    assert result["down"]["zone"] == -1
+    assert round(result["down"]["distance"], 2) == 2.18
+    assert result["down"]["freeShortSeats"] == 2
+    assert _canonical_next_free_position_levels(zones, 311.45, reliable=False)["status"] == "UNAVAILABLE"
+    assert _canonical_next_free_position_levels([], 311.45, reliable=True)["up"] is None
