@@ -26,9 +26,14 @@ function scopedAsterRequest(uid: string, load: () => Promise<unknown>): Promise<
     if (firebaseAuth.currentUser?.uid !== uid) throw new Error("Account gewijzigd tijdens het laden.");
     return payload;
   });
-  const entry = { uid, promise, validUntil: now + 2000 };
+  const entry = { uid, promise, validUntil: Number.POSITIVE_INFINITY };
   sharedAsterRequest = entry;
-  void promise.catch(() => { if (sharedAsterRequest === entry) clearSharedAsterRequest(); });
+  // A pending request must remain shared even when it exceeds the 2-second
+  // freshness window. Start the window only after a successful resolution.
+  void promise.then(
+    () => { if (sharedAsterRequest === entry) entry.validUntil = Date.now() + 2000; },
+    () => { if (sharedAsterRequest === entry) clearSharedAsterRequest(); },
+  );
   return promise;
 }
 
