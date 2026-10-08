@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 584: five-zone buffer above and below occupied zone range.
 // Build 583: vertical bidirectional scrolling across all canonical zone rows.
 // Build 582: compact LONG distance display, no absolute target values.
 // Build 581: read-only canonical zone price range diagnostics and next LONG capacity thresholds.
@@ -9,7 +10,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "583";
+export const WEBAPP_BUILD_NUMBER = "584";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
