@@ -1110,6 +1110,7 @@ async function loadProfitPreview(): Promise<ProfitPreview> {
 export function AsterPortfolioSnapshotEnhancer() {
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
+  const [snapshotLoadWarning, setSnapshotLoadWarning] = useState("");
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
@@ -1134,11 +1135,17 @@ export function AsterPortfolioSnapshotEnhancer() {
         if(!alive)return;
         valuesRef.current=next;
         setValues(next);
+        setSnapshotLoadWarning("");
       }catch{
         if(!alive)return;
-        const failed={...EMPTY,...readSnapshotUiState()};
-        valuesRef.current=failed;
-        setValues(failed);
+        // A transient account-truth error must not erase the last verified
+        // snapshot. Unknown initial values remain unknown (never synthesize).
+        // A separate warning tells the user that cached numbers are NOT live.
+        setSnapshotLoadWarning("Accountgegevens tijdelijk niet bijgewerkt. Laatst bevestigde snapshot wordt getoond; controleer de actuele koers voor live waarden.");
+        if(valuesRef.current === EMPTY){
+          const failed={...EMPTY,...readSnapshotUiState()};
+          setValues(failed);
+        }
       }
     };
     void refresh();
