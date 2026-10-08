@@ -2081,7 +2081,7 @@ def _canonical_display_portfolio_zone_ladder(uid: str, cycle_start: float, equit
     if not observed and len(history) >= 7:
         observed = derive_equity_zones(history, cycle_start)
     return canonical_display_zone_ladder(
-        observed, equity, min_index=min_index, max_index=max_index
+        observed, equity, min_index=min_index, max_index=max_index, max_span=40
     ) if observed and equity > 0 else []
 
 
@@ -6396,8 +6396,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     try:
         presentation_ladder = _canonical_display_portfolio_zone_ladder(
             uid, cycle_start_display, equity_display,
-            min_index=min(existing_indexes, default=-3),
-            max_index=max(existing_indexes, default=3),
+            min_index=min((int(row["index"]) for row in canonical_zone_state["zones"] if int(row.get("totalOpen", 0)) > 0), default=min(existing_indexes, default=-3)) - 5,
+            max_index=max((int(row["index"]) for row in canonical_zone_state["zones"] if int(row.get("totalOpen", 0)) > 0), default=max(existing_indexes, default=3)) + 5,
         )
     except (google_exceptions.GoogleAPICallError, ValueError, TypeError):
         presentation_ladder = []
