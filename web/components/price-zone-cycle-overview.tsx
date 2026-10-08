@@ -27,6 +27,11 @@ type SeatSummaryProp = {
   zoneOpenCountsReliable: boolean;
   openZonePositionKeys: string[];
   currentPrice: number | null;
+  nextFreePositionLevels: {
+    status: string;
+    up: { zone: number; price: number; distance: number; freeLongSeats: number; freeShortSeats: number; unit: string; entryPermission: string } | null;
+    down: { zone: number; price: number; distance: number; freeLongSeats: number; freeShortSeats: number; unit: string; entryPermission: string } | null;
+  } | null;
   nextLongLevels: {
     status: string;
     up: { zone: number; price: number; distance: number; freeLongSeats: number; unit: string; entryPermission: string } | null;
@@ -118,6 +123,9 @@ const stamp = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 const zoneLabel = (value: number) => value > 0 ? `+${value}` : String(value);
+const compactUsd = (value: number | null, sign = "") =>
+  value === null || !Number.isFinite(value) ? "—" :
+  `${sign}${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)}`;
 const priceLabel = (value: number | null) => {
   if (value === null || !Number.isFinite(value)) return "—";
   const abs = Math.abs(value);
@@ -383,20 +391,20 @@ export function PriceZoneCycleOverview({
           <span>Alle zones <b aria-hidden="true">⌄</b></span>
         </div>
       </header>
-      <div className="aps-zco-compact-summary" aria-label="Volgende vrije LONG-capaciteit en actuele zone" style={{ display: "grid", gridTemplateColumns: "minmax(0,.8fr) repeat(2,minmax(0,1fr)) minmax(0,1.15fr) minmax(0,.85fr)", gap: 0, alignItems: "center", margin: "10px 0 12px", padding: "8px 4px", border: "1px solid rgba(55,160,99,.28)", borderRadius: 12, background: "rgba(2,24,12,.5)" }}>
-        <span style={{ padding: "0 5px", color: "#77dfab", fontSize: 12, lineHeight: 1.25 }}>Volgende<br />LONG</span>
-        {(["up", "down"] as const).map((direction) => {
-          const level = seatSummary?.nextLongLevels?.status === "AVAILABLE" ? seatSummary.nextLongLevels[direction] : null;
-          const distance = level?.distance ?? null;
-          const validDistance = distance !== null && Number.isFinite(distance) && distance > 0;
-          const color = direction === "up" ? "#6af1ad" : "#ff829e";
-          return <span key={direction} style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px", color }} title={level ? `Zone ${zoneLabel(level.zone)} · ${level.freeLongSeats} vrije LONG-stoelen; alleen zonecapaciteit, geen ordertoestemming` : "Geen betrouwbare volgende LONG-zone"}>
-            <small style={{ display: "block", fontSize: 10, lineHeight: 1.3 }}>{direction === "up" ? "↑ Omhoog" : "↓ Omlaag"}</small>
-            <b style={{ display: "block", fontSize: 12, whiteSpace: "nowrap", letterSpacing: "-.25px", fontVariantNumeric: "tabular-nums" }}>{validDistance ? `$ ${priceLabel(distance)}` : "—"}</b>
-          </span>;
+      <div className="aps-zco-compact-summary" data-reference="file_00000000666481f4a67666e7f0ca3144" aria-label="Volgende vrije positie en huidige portfoliowaarde" style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.07fr) minmax(0,1fr)", gap: 6, margin: "10px 0 12px" }}>
+        {(["up", "now", "down"] as const).map((direction) => {
+          const level = direction === "now" ? null : seatSummary?.nextFreePositionLevels?.status === "AVAILABLE" ? seatSummary.nextFreePositionLevels[direction] : null;
+          const positive = direction === "up";
+          const middle = direction === "now";
+          const color = middle ? "#f5f7f2" : positive ? "#6af1ad" : "#ff8da5";
+          const heading = middle ? "Nu" : positive ? "↑ Omhoog" : "↓ Omlaag";
+          const value = middle ? compactUsd(seatSummary?.currentPrice ?? null) : compactUsd(level?.distance ?? null, positive ? "+" : "−");
+          return <div key={direction} title={middle ? "Huidige portfoliowaarde" : level ? `Zone ${zoneLabel(level.zone)} · ${level.freeLongSeats} LONG / ${level.freeShortSeats} SHORT vrij; geen ordertoestemming` : "Geen betrouwbaar volgend vrij positieniveau"} style={{ minWidth: 0, border: `1px solid ${middle ? "rgba(61,115,77,.4)" : positive ? "rgba(55,158,97,.55)" : "rgba(188,85,112,.55)"}`, borderRadius: 10, background: middle ? "rgba(7,32,20,.8)" : positive ? "rgba(7,46,25,.7)" : "rgba(56,21,31,.65)", textAlign: "center", padding: "10px 3px 9px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5 }}>
+            <small style={{ color, fontWeight: 650, fontSize: 11, whiteSpace: "nowrap" }}>{heading}</small>
+            <b style={{ color, fontSize: "clamp(12px,3.2vw,17px)", lineHeight: 1.25, letterSpacing: "-.3px", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{value}</b>
+            <small style={{ color: middle ? "#d7ba72" : "#a2baaa", fontSize: 10, lineHeight: 1.2, whiteSpace: "nowrap" }}>{middle ? `Zone ${activeZone === null ? "—" : zoneLabel(activeZone)}` : "tot vrije positie"}</small>
+          </div>;
         })}
-        <span style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px" }}><small style={{ display: "block", fontSize: 10, whiteSpace: "nowrap" }}>Huidige prijs</small><b style={{ fontSize: 11, whiteSpace: "nowrap" }}>{seatSummary?.currentPrice === null || seatSummary?.currentPrice === undefined ? "—" : `$ ${priceLabel(seatSummary.currentPrice)}`}</b></span>
-        <span style={{ minWidth: 0, borderLeft: "1px solid rgba(70,132,87,.3)", padding: "0 5px", textAlign: "center" }}><small style={{ display: "block", fontSize: 10 }}>Actieve zone</small><b style={{ display: "block", color: "#f6c965", fontSize: 12 }}>{activeZone === null ? "—" : zoneLabel(activeZone)}</b></span>
       </div>
 
       {seatSummary && seatSummary.zones.some((zone) => !validZoneRange(zone)) ? (
