@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { AsterBollingerEntryFilter15mCard, type BollingerEntryTimeframe } from "./aster-bollinger-entry-filter-15m-card";
@@ -80,14 +80,17 @@ export function AsterProfitLockLadderBridge() {
   const [bbShortTimeframe, setBbShortTimeframe] = useState<BollingerEntryTimeframe>("15m");
   const [bbBusy, setBbBusy] = useState(false);
   const [bbMessage, setBbMessage] = useState("");
+  const bbWriteInFlight = useRef(false);
+  const bbReadEpoch = useRef(0);
 
   const refresh = useCallback(async () => {
+    const readEpoch = bbReadEpoch.current;
     try {
       const snapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
       const next = extract(snapshot);
       setSettings(next.settings);
       setSummary(next.summary);
-      if (!bbBusy) {
+      if (!bbWriteInFlight.current && readEpoch === bbReadEpoch.current) {
         setBbEnabled(next.settings.bollingerEntryFilter15mEnabled === true);
         const legacyTimeframe = next.settings.bollingerEntryFilterTimeframe;
         setBbLongTimeframe(normalizeBollingerTimeframe(next.settings.directionalBollingerEnabled === true ? (next.settings.bollingerLongTimeframe ?? legacyTimeframe) : legacyTimeframe));
@@ -100,7 +103,7 @@ export function AsterProfitLockLadderBridge() {
     } catch {
       // Existing settings remain authoritative while a refresh is temporarily unavailable.
     }
-  }, [dirty, bbBusy]);
+  }, [dirty]);
 
   useEffect(() => {
     let frame = 0;
@@ -159,7 +162,9 @@ export function AsterProfitLockLadderBridge() {
   const setLadder = (next: ProfitLockLevelDraft[]) => { setLevels(next); setDirty(true); setMessage(""); };
 
   async function toggleBollingerEntryFilter(next: boolean) {
-    if (bbBusy) return;
+    if (bbWriteInFlight.current) return;
+    bbWriteInFlight.current = true;
+    bbReadEpoch.current += 1;
     const previous = bbEnabled;
     setBbEnabled(next); setBbBusy(true); setBbMessage("Opslaan…");
     try {
@@ -179,11 +184,13 @@ export function AsterProfitLockLadderBridge() {
     } catch (error) {
       setBbEnabled(previous);
       setBbMessage(error instanceof Error ? error.message : "Bollinger instapfilter kon niet worden opgeslagen.");
-    } finally { setBbBusy(false); }
+    } finally { bbWriteInFlight.current = false; setBbBusy(false); }
   }
 
   async function changeBollingerTimeframe(side: "LONG" | "SHORT", next: BollingerEntryTimeframe) {
-    if (bbBusy || next === (side === "LONG" ? bbLongTimeframe : bbShortTimeframe)) return;
+    if (bbWriteInFlight.current || next === (side === "LONG" ? bbLongTimeframe : bbShortTimeframe)) return;
+    bbWriteInFlight.current = true;
+    bbReadEpoch.current += 1;
     setBbBusy(true); setBbMessage("Timeframe opslaan…");
     try {
       // Merge with live exchange-backed settings so the other direction and
@@ -224,7 +231,7 @@ export function AsterProfitLockLadderBridge() {
     } catch (error) {
       setBbMessage(error instanceof Error ? error.message : "Bollinger-timeframe kon niet worden opgeslagen.");
       await refresh();
-    } finally { setBbBusy(false); }
+    } finally { bbWriteInFlight.current = false; setBbBusy(false); }
   }
 
   async function save() {
