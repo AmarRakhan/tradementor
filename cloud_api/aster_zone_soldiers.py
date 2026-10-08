@@ -279,7 +279,7 @@ def _median(values: list[float]) -> float | None:
 
 
 def canonical_display_zone_ladder(zones: list[dict[str, Any]] | None, price: float,
-                                  *, min_index: int = -3, max_index: int = 3) -> list[dict[str, Any]]:
+                                  *, min_index: int = -3, max_index: int = 3, max_span: int = 24) -> list[dict[str, Any]]:
     """Return the one canonical extended Portfolio Koers / Zone Warriors ladder."""
     value = _number(price)
     observed = []
@@ -318,7 +318,7 @@ def canonical_display_zone_ladder(zones: list[dict[str, Any]] | None, price: flo
     observed_indexes = [int(row["index"]) for row in observed]
     dynamic_min = min(int(min_index), min(observed_indexes), estimated_index - 2)
     dynamic_max = max(int(max_index), max(observed_indexes), estimated_index + 2)
-    if dynamic_max - dynamic_min > 24:
+    if dynamic_max - dynamic_min > max(24, max_span):
         dynamic_min = estimated_index - 4
         dynamic_max = estimated_index + 4
     by_index = {row["index"]: row for row in observed}
