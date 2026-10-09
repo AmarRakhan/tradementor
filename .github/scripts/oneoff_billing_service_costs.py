@@ -82,7 +82,7 @@ LIMIT 100
         cells = row.get("f") or []
         if len(cells) != 4:
             continue
-        month, service, gross, credits = [str(x.get("v") or "") for x in cells]
+        month, service, gross, credits = [str(x.get("v") if x.get("v") is not None else "") for x in cells]
         service = " ".join(service.split())[:75].replace("|", "/")
         gross_value = float(gross)
         credit_value = float(credits or 0)
