@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 588: canonical account GET deduplication, auth-ready loading and non-live Snapshot safety.
 // Build 587: direction-specific LONG/SHORT Bollinger entry timeframes; no scanner pipeline changes.
 // Build 586: compact canonical next-free-position cards (LONG or SHORT), approved mockup.
 // Build 585: five extra canonical zones above/below occupied range.
@@ -13,7 +14,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "587";
+export const WEBAPP_BUILD_NUMBER = "588";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
