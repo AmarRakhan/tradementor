@@ -1391,3 +1391,17 @@ def test_zone_seats_toggle_cannot_resolve_existing_leverage_conflict():
     })
     assert safe_config.minimum_leverage == safe_config.maximum_leverage == 20
     assert safe_config.zone_soldiers_enabled is True
+
+
+def test_config_health_route_is_tenant_scoped_and_read_only():
+    from pathlib import Path
+    text = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    section = text.split('@app.get("/v1/me/aster/strategy2/config-health")', 1)[1]
+    route = section.split('@app.put("/v1/me/aster/strategy2/settings")', 1)[0]
+    assert 'Depends(authenticated_user)' in route
+    assert 'aster_strategy2_reference(str(user["uid"])).get()' in route
+    assert 'MultiBbConfig.from_mapping(normalized)' in route
+    assert '"minimumLeveragePresent": has_min' in route
+    assert '"maximumLeveragePresent": has_max' in route
+    for forbidden in ('.set(', '.update(', '.create(', 'load_aster_secret', 'AsterV3Client', 'place_order'):
+        assert forbidden not in route
