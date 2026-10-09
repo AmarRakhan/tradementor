@@ -6211,8 +6211,6 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                     "levels":[{"number":filled+1,"price":next_focus_dca}] if next_focus_dca>0 else [],"source":"focus-v2-runtime-state"}
             if symbol in strategy2_cost_failures and row["strategy2Tp"]["status"]=="Niet betrouwbaar te bepalen":
                 row["strategy2Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy2_cost_failures[symbol]}"
-        positions.append(row)
-    # Focus 2.0 cockpit is read-only presentation state derived from the same persisted runtime truth.
         if status_settings_validation_error and strategy_id == "aster-strategy-2":
             # Never expose TP/DCA calculations built from a temporary display fallback.
             # Position quantity, PnL and exchange-confirmed account truth stay unchanged.
@@ -6225,6 +6223,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 "blockReason": "Opgeslagen strategie-instellingen vereisen controle",
             }
             row.pop("focusAirbag", None)
+        positions.append(row)
+    # Focus 2.0 cockpit is read-only presentation state derived from the same persisted runtime truth.
         positions.append(row)
     # Focus 2.0 cockpit is read-only presentation state derived from the same persisted runtime truth.
     focus_v2_cockpit:dict[str,Any]={}
