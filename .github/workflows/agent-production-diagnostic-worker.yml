@@ -392,7 +392,22 @@ jobs:
               rows.sort(key=lambda x:x["accountRef"])
               print(json.dumps(rows,separators=(",",":"),sort_keys=True))
           except Exception as exc:
-              print(json.dumps({"errorType":type(exc).__name__,"status":"ENTRY_DIAGNOSTIC_UNAVAILABLE"},separators=(",",":")))
+              # Safe observability only: never expose API body, URL, account identifiers or tokens.
+              import urllib.error
+              http_status=exc.code if isinstance(exc,urllib.error.HTTPError) else None
+              reason_class=(
+                  "PERMISSION_DENIED" if http_status==403 else
+                  "UNAUTHENTICATED" if http_status==401 else
+                  "NOT_FOUND" if http_status==404 else
+                  "RATE_LIMITED" if http_status==429 else
+                  "UPSTREAM_UNAVAILABLE" if http_status in {500,502,503,504} else
+                  "OTHER_HTTP_ERROR" if isinstance(http_status,int) else
+                  "NETWORK_OR_PARSE_ERROR"
+              )
+              print(json.dumps({"errorType":type(exc).__name__,
+                                "status":"ENTRY_DIAGNOSTIC_UNAVAILABLE",
+                                "httpStatus":http_status,
+                                "reasonClass":reason_class},separators=(",",":"),sort_keys=True))
           PY
           )"
 
