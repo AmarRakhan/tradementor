@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-09",
-  title: "Accountinstellingen Veilig Laden 2.2 · canonieke prijszonecap",
+  title: "Accountstatusdiagnose 2.3 · herkenbare onvolledige accountrespons",
   newItems: [
+    "Build 590 onderscheidt ontbrekende Aster-autorisatie, ontbrekende accountkoppeling en een onvolledige backendstatus in de bestaande Portfolio Snapshot; gebruikt de huidige accountaanvraag.",
     "Build 589 gebruikt priceZoneSeats.enabled voor de expliciete globale prijszonepositielimiet, zonder legacy Zone Soldiers-interpretatie op de webinstellingenroute.",
     "Ontbrekende persoonlijke Strategy-2-instellingen worden niet langer stilzwijgend als een lege configuratie geaccepteerd in de Profit Lock/Bollinger bridge; opslaan wordt geblokkeerd totdat de serverinstellingen zijn bevestigd.",
     "Build 588 dedupliceert dezelfde canonieke Aster-account GET per geauthenticeerde gebruiker met behoud van een gedeelde in-flight aanvraag.",
@@ -146,6 +147,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "Build 590: toon een specifieke accountlaadmelding in plaats van iedere onvolledige respons als verbindingsprobleem te presenteren; geen scanner- of orderwijzigingen.",
     "Build 589: bescherm de globale prijszonecap en blokkeer instellingenwrites als de autoritatieve accountinstellingen niet laden.",
     "De bestaande directionele scannerinstellingen worden via één accountgebonden Strategy-2 settings-API bewaard; de oude gezamenlijke timeframe-instelling blijft compatibel.",
     "Nieuwe pure build_canonical_zone_state canonicalizer classificeert dezelfde exchange-positions snapshot tegen dezelfde persisted Strategy-2 ownership.",
