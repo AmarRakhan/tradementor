@@ -117,3 +117,31 @@ def test_portfolio_chart_defines_zones_immediately_before_current_zone_runtime_u
     guard = chart_block.rfind("zones = derive_equity_zones(zone_candles, cycle_start)", 0, use)
     assert guard >= 0
     assert "Build 574" in chart_block[guard - 900:use]
+
+
+def test_account_truth_keeps_confirmed_balance_when_strategy_projection_is_invalid():
+    """An invalid strategy projection must not replace account truth with zeroes."""
+    confirmed = {
+        "configured": True,
+        "equity": 321.45,
+        "walletBalance": 300.0,
+        "availableBalance": 180.0,
+        "unrealizedPnl": 21.45,
+        "snapshotAt": 1_700_000_000_000,
+        "statusSettingsValidationError": True,
+        "positions": [{
+            "symbol": "BTCUSDT", "side": "LONG", "dcaCount": 2,
+            "strategy2Tp": {"available": False, "status": "CONFIG_INVALID"},
+            "strategy2DcaLadder": {"available": False, "levels": []},
+        }],
+        "strategy2": {"settings": {"minimumLeverage": 50, "maximumLeverage": 20}},
+    }
+    result = build_aster_account_truth(
+        confirmed, day_high=None, day_low=None, now_ms=1_700_000_030_000
+    )
+    assert result["account"]["equity"] == 321.45
+    assert result["account"]["walletBalance"] == 300.0
+    assert result["account"]["availableBalance"] == 180.0
+    assert result["positions"]["count"] == 1
+    assert result["readOnly"] is True
+    assert result["ordersSent"] == 0
