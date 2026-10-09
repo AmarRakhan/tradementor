@@ -1209,3 +1209,199 @@ def test_attributed_orphan_auto_hedge_symbol_stays_protected(monkeypatch):
     )
     assert any(a.get("kind")=="ATTRIBUTED_ORPHAN_PROTECTED" for a in result["actions"])
     assert not any(a.get("kind")=="TP" and a.get("symbol")=="AAAUSDT" for a in result["actions"])
+
+
+def test_invalid_legacy_leverage_fails_closed_without_mutating_input():
+    raw = {
+        "engine": ENGINE, "maximumPositions": 30, "longSlots": 20,
+        "shortSlots": 10, "maximumLeverage": 20,
+    }
+    original = dict(raw)
+    with pytest.raises(ValueError, match="Maximum leverage"):
+        MultiBbConfig.from_mapping(raw)
+    assert raw == original
+
+
+def test_explicit_valid_leverage_override_does_not_raise():
+    raw = {
+        "engine": ENGINE, "maximumPositions": 30, "longSlots": 20,
+        "shortSlots": 10, "minimumLeverage": 10, "maximumLeverage": 20,
+    }
+    cfg = MultiBbConfig.from_mapping(raw)
+    assert cfg.minimum_leverage == 10
+    assert cfg.maximum_leverage == 20
+
+
+def test_status_isolates_invalid_projection_but_does_not_authorize_trading():
+    from pathlib import Path
+    src = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    status = src.split('def aster_status(', 1)[1].split('@app.', 1)[0]
+    assert 'except ValueError:' in status
+    assert '"statusSettingsValidationError": status_settings_validation_error' in status
+    assert 'if status_settings_validation_error and strategy_id == "aster-strategy-2":' in status
+    assert '"strategy2Tp"] = {' in status
+    assert '"strategy2DcaLadder"] = {' in status
+    assert '"available": False' in status
+
+
+def test_status_adapter_executes_invalid_config_without_mutating_stored_settings():
+    """Exercise the actual status adapter block, not merely source-string presence."""
+    from pathlib import Path
+    from aster_strategy2 import Strategy2Config
+    src = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    section = src.split('def aster_status(', 1)[1]
+    beginning = section.index("    multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)")
+    ending = section.index("    strategy2_focus_slots=", beginning)
+    adapter = section[beginning:ending]
+    raw = {
+        "engine": ENGINE, "maximumPositions": 30, "longSlots": 20,
+        "shortSlots": 10, "maximumLeverage": 20,
+    }
+    original = dict(raw)
+    scope = {
+        "strategy2_settings_raw": raw,
+        "multi_bb_status_mapping": multi_bb_status_mapping,
+        "MultiBbConfig": MultiBbConfig,
+        "Strategy2Config": Strategy2Config,
+    }
+    from textwrap import dedent
+    exec(compile(dedent(adapter), "<status-adapter>", "exec"), scope)
+    assert scope["status_settings_validation_error"] is True
+    assert raw == original
+    assert scope["strategy2_settings"] is not None
+    # Invalid execution config remains invalid: the display adapter never repairs it.
+    with pytest.raises(ValueError, match="Maximum leverage"):
+        MultiBbConfig.from_mapping(raw)
+
+
+def test_invalid_status_projection_masks_tp_dca_without_changing_exchange_values():
+    """Execute the real masking branch against an exchange-confirmed row."""
+    from pathlib import Path
+    from textwrap import dedent
+    src = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    section = src.split('def aster_status(', 1)[1]
+    first = section.index('        if status_settings_validation_error and strategy_id == "aster-strategy-2":')
+    last = section.index('        positions.append(row)', first)
+    mask = dedent(section[first:last])
+    row = {
+        "symbol": "BTCUSDT", "side": "LONG", "quantity": 0.125,
+        "entryPrice": 42000.0, "unrealizedPnl": 12.5,
+        "strategy2Tp": {"available": True, "targetPrice": 42500.0},
+        "strategy2DcaLadder": {"available": True, "levels": [{"price": 41000.0}]},
+        "focusAirbag": {"enabled": True},
+    }
+    exchange_keys = ("symbol", "side", "quantity", "entryPrice", "unrealizedPnl")
+    before = {k: row[k] for k in exchange_keys}
+    scope = {"row": row, "status_settings_validation_error": True, "strategy_id": "aster-strategy-2"}
+    exec(compile(mask, "<status-mask>", "exec"), scope)
+    assert {k: row[k] for k in exchange_keys} == before
+    assert row["strategy2Tp"]["available"] is False
+    assert row["strategy2Tp"]["status"] == "CONFIG_INVALID"
+    assert "targetPrice" not in row["strategy2Tp"]
+    assert row["strategy2DcaLadder"]["available"] is False
+    assert row["strategy2DcaLadder"]["levels"] == []
+    assert "focusAirbag" not in row
+
+
+def test_invalid_status_config_does_not_generate_focus_cockpit_from_fallback():
+    from pathlib import Path
+    source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    status = source.split('def aster_status(', 1)[1].split('@app.', 1)[0]
+    assert 'focus_v2_cockpit:dict[str,Any]={}' in status
+    assert 'if not status_settings_validation_error and v2_symbol and str(v2_state.get("cycleId", "")):' in status
+
+
+def test_http_status_projection_invalid_leverage_is_read_only_and_reports_error():
+    """Synthetic HTTP contract for real status adapter; no production dependencies."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from pathlib import Path
+    from textwrap import dedent
+    from aster_strategy2 import Strategy2Config
+
+    src = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    section = src.split("def aster_status(", 1)[1]
+    start = section.index("    multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)")
+    finish = section.index("    strategy2_focus_slots=", start)
+    adapter = compile(dedent(section[start:finish]), "<real-status-adapter>", "exec")
+    app = FastAPI()
+    stored = {
+        "engine": ENGINE, "maximumPositions": 30,
+        "longSlots": 20, "shortSlots": 10, "maximumLeverage": 20,
+    }
+    snapshot = {"equity": 321.45, "availableBalance": 180.0}
+    observed = {"writes": 0, "orders": 0, "network": 0}
+
+    @app.get("/v1/me/aster/status")
+    def local_status():
+        scope = {
+            "strategy2_settings_raw": dict(stored),
+            "multi_bb_status_mapping": multi_bb_status_mapping,
+            "MultiBbConfig": MultiBbConfig,
+            "Strategy2Config": Strategy2Config,
+        }
+        exec(adapter, scope)
+        return {
+            "configured": True,
+            "equity": snapshot["equity"],
+            "availableBalance": snapshot["availableBalance"],
+            "statusSettingsValidationError": scope["status_settings_validation_error"],
+            "strategy2Tp": {"available": False} if scope["status_settings_validation_error"] else {},
+        }
+
+    response = TestClient(app).get("/v1/me/aster/status")
+    assert response.status_code == 200
+    assert response.json() == {
+        "configured": True, "equity": 321.45, "availableBalance": 180.0,
+        "statusSettingsValidationError": True, "strategy2Tp": {"available": False},
+    }
+    assert stored["maximumLeverage"] == 20
+    assert observed == {"writes": 0, "orders": 0, "network": 0}
+
+
+def test_invalid_status_does_not_enter_tp_dca_projection_branch():
+    from pathlib import Path
+    text = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    status = text.split('def aster_status(', 1)[1].split('@app.', 1)[0]
+    assert 'if strategy_id=="aster-strategy-2" and not status_settings_validation_error:' in status
+    assert 'if status_settings_validation_error and strategy_id == "aster-strategy-2":' in status
+
+
+def test_zone_seats_toggle_cannot_resolve_existing_leverage_conflict():
+    """Reproduce reported 50x -> 20x followed by enabling price-zone seats."""
+    original = {
+        "engine": ENGINE, "maximumPositions": 30, "longSlots": 20,
+        "shortSlots": 10, "minimumLeverage": 50,
+        "maximumLeverage": 50,
+    }
+    lowered_maximum = {**original, "maximumLeverage": 20}
+    with pytest.raises(ValueError, match="Maximum leverage"):
+        MultiBbConfig.from_mapping(lowered_maximum)
+    with_seats = {
+        **lowered_maximum,
+        "priceZoneSeats": {"enabled": True, "longSeatsPerZone": 3, "shortSeatsPerZone": 3},
+    }
+    with pytest.raises(ValueError, match="Maximum leverage"):
+        MultiBbConfig.from_mapping(with_seats)
+    assert original["minimumLeverage"] == 50
+    assert original["maximumLeverage"] == 50
+    # Correctly paired lower leverage is valid with seats on, without any account reset.
+    safe_config = MultiBbConfig.from_mapping({
+        **with_seats, "minimumLeverage": 20,
+    })
+    assert safe_config.minimum_leverage == safe_config.maximum_leverage == 20
+    assert safe_config.zone_soldiers_enabled is True
+
+
+def test_config_health_route_is_tenant_scoped_and_read_only():
+    from pathlib import Path
+    text = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    section = text.split('@app.get("/v1/me/aster/strategy2/config-health")', 1)[1]
+    route = section.split('@app.put("/v1/me/aster/strategy2/settings")', 1)[0]
+    assert 'Depends(authenticated_user)' in route
+    assert 'aster_strategy2_reference(str(user["uid"])).get()' in route
+    assert 'MultiBbConfig.from_mapping(normalized)' in route
+    assert '"minimumLeveragePresent": has_min' in route
+    assert '"maximumLeveragePresent": has_max' in route
+    for forbidden in ('.set(', '.update(', '.create(', 'load_aster_secret', 'AsterV3Client', 'place_order'):
+        assert forbidden not in route
