@@ -153,6 +153,14 @@ jobs:
             test "$(git rev-parse "$SOURCE_COMMIT^")" = "1698f4e0282651d3e3d8bb95c49171743d2e5b2c"
             test "$(git diff --name-only "$SOURCE_COMMIT^" "$SOURCE_COMMIT")" = "cloud_api/main.py"
             test "$(git diff --numstat "$SOURCE_COMMIT^" "$SOURCE_COMMIT")" = "$(printf '30\t0\tcloud_api/main.py')"
+          elif [ "$SOURCE_COMMIT" = "b41543a4e3f164221e65a5114326495bc7dd5789" ]; then
+            # One-time status-read-only hotfix. Never deploy unrelated trusted-head changes.
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+            test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
+            git merge-base --is-ancestor 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT"
+            test "$(git rev-list --count 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1.."$SOURCE_COMMIT")" = "4"
+            test "$(git diff --name-only 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT")" = "$(printf 'cloud_api/main.py\ncloud_api/test_aster_multi_bb.py')"
+            test "$(git diff --numstat 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT")" = "$(printf '49\t27\tcloud_api/main.py\n38\t0\tcloud_api/test_aster_multi_bb.py')"
           else
             git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/amar-crypto-bot-2026-cloud"
           fi
@@ -226,6 +234,8 @@ jobs:
           assert health["multiUser"] is True
           previous = health.get("sourceCommit") or health.get("imageSourceCommit") or ""
           assert previous
+          if __import__("os").environ.get("SOURCE_COMMIT") == "b41543a4e3f164221e65a5114326495bc7dd5789":
+              assert previous == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1", "P0 status repair requires exact unchanged live source"
           if __import__("os").environ.get("SOURCE_COMMIT") == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1":
               assert previous == "1698f4e0282651d3e3d8bb95c49171743d2e5b2c", "P0 exact-source hotfix requires unchanged live backend"
           print(f"PREVIOUS_SOURCE_COMMIT={previous}")
