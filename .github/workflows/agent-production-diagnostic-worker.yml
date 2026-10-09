@@ -307,6 +307,40 @@ jobs:
               print("UNAVAILABLE: logging response cannot be parsed")
           PY
           )"
+          # Tracebacks are usually separate stderr entries, not request entries.
+          # Read only existing logs. Never export messages, trace IDs, URLs or UIDs.
+          STDERR_DETAIL_FILE="control-plane-report/backend-stderr.json"
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND (logName:"run.googleapis.com%2Fstderr" OR severity>=ERROR)' \
+            --project "$GCP_PROJECT_ID" --freshness=2h --limit=150 --order=desc --format=json > "$STDERR_DETAIL_FILE" 2>/dev/null
+          STDERR_READ_RC="$?"
+          STDERR_SUMMARY="$(python - "$STDERR_DETAIL_FILE" "$STDERR_READ_RC" <<'PY'
+          import collections,json,re,sys
+          filename,rc=sys.argv[1:]
+          if rc!="0":
+              print("STDERR_UNAVAILABLE: logging query failed")
+              raise SystemExit
+          try:
+              logs=json.load(open(filename,encoding="utf-8"))
+              if not isinstance(logs,list):raise ValueError("invalid logs")
+              tally=collections.Counter()
+              for entry in logs:
+                  raw=str(entry.get("textPayload") or (entry.get("jsonPayload") or {}).get("message") or "")
+                  # Strict identifier and basename extraction; never include arbitrary log lines.
+                  matches=re.findall(r'(?m)^\s*([A-Za-z][A-Za-z0-9_]{1,70}(?:Error|Exception)):',raw)
+                  files=re.findall(r'File "[^"\n]*/([A-Za-z0-9_]+\.py)", line (\d{1,6})',raw)
+                  if matches:
+                      klass=matches[-1]
+                      basename,line=files[-1] if files else ("UNKNOWN","?")
+                      tally[(klass,basename,line)]+=1
+              print("STDERR_WINDOW=2h; SAMPLE_LIMIT=150; sampled_entries="+str(len(logs)))
+              for (klass,basename,line),count in tally.most_common(10):
+                  print(f"TRACEBACK {klass} {basename}:{line}: {count}")
+              if not tally:print("NO_EXCEPTION_CLASS_IN_SAMPLED_STDERR")
+          except (OSError,ValueError,TypeError):
+              print("STDERR_UNAVAILABLE: invalid logging response")
+          PY
+          )"
+          rm -f "$STDERR_DETAIL_FILE"
           rm -f "$ERROR_DETAIL_FILE"
 
           ASTER_HTTP="$(curl -sS -o control-plane-report/aster-exchange-info.json -w '%{http_code}' --max-time 20 'https://fapi.asterdex.com/fapi/v3/exchangeInfo' 2>/dev/null)"
