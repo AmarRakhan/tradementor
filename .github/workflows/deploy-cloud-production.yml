@@ -146,7 +146,13 @@ jobs:
           test "$CLOUD_RUN_SERVICE" = "tradementor-api"
           git fetch origin amar-crypto-bot-2026-cloud --quiet
           # Requested source must belong to the trusted production history.
-          if [ "$SOURCE_COMMIT" = "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1" ]; then
+          if [ "$SOURCE_COMMIT" = "ad8ccbebb32dccc447c1a19e1781bc4c0505c75e" ]; then
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+            test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
+            test "$(git rev-parse "$SOURCE_COMMIT^")" = "9549da7cf5b727a3461cc47599903cff6c7fbabd"
+            test "$(git rev-parse "$SOURCE_COMMIT^^")" = "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1"
+            test "$(git diff --name-only 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT")" = "cloud_api/main.py"
+          elif [ "$SOURCE_COMMIT" = "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1" ]; then
             # One-time explicit P0 approval: isolated read-only route based on live source.
             test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
             test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
@@ -239,6 +245,8 @@ jobs:
           assert health["multiUser"] is True
           previous = health.get("sourceCommit") or health.get("imageSourceCommit") or ""
           assert previous
+          if __import__("os").environ.get("SOURCE_COMMIT") == "ad8ccbebb32dccc447c1a19e1781bc4c0505c75e":
+              assert previous == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1", "P0 status hotfix requires unchanged live backend"
           if __import__("os").environ.get("SOURCE_COMMIT") == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1":
               assert previous == "1698f4e0282651d3e3d8bb95c49171743d2e5b2c", "P0 exact-source hotfix requires unchanged live backend"
           if __import__("os").environ.get("SOURCE_COMMIT") == "a19d07a6557eb1a83acbad84ea3c751eabe24bee":
