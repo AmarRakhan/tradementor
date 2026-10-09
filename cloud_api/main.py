@@ -6097,31 +6097,37 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     # in a temporary copy so the legacy Base Order validator cannot turn a
     # healthy account snapshot into HTTP 500. No stored setting is changed.
     multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)
-    if multi_status_raw is not None:
-        multi_status_settings=MultiBbConfig.from_mapping(multi_status_raw)
-        # Dashboard compatibility only: Multi BB is the live engine. The old
-        # Strategy2Config shape is still consumed by legacy presentation helpers,
-        # so project the current settings without re-validating Multi BB TP limits.
-        dashboard_max_pairs=min(400,max(1,multi_status_settings.maximum_positions))
-        strategy2_settings=Strategy2Config.from_mapping({
-            "mode":multi_status_settings.mode,
-            # Legacy Strategy2Config requires Base Order >= $1. Multi BB may persist
-            # a stale shared baseNotional below $1 while the authoritative side-specific
-            # notionals remain valid (for example LONG $8 / SHORT $6). Use only a
-            # read-only compatibility value here; never mutate persisted settings.
-            "baseNotional":max(1.0,multi_status_settings.entry_notional_long_usd,multi_status_settings.entry_notional_short_usd),
-            "takeProfit":min(.20,max(.001,multi_status_settings.take_profit)),
-            "autoRestart":True,"dcaEnabled":True,
-            "longDcaDistance":multi_status_settings.dca_distance,
-            "shortDcaDistance":multi_status_settings.dca_distance,
-            "longMaxDca":min(50,max(0,multi_status_settings.max_dca)),
-            "shortMaxDca":min(50,max(0,multi_status_settings.max_dca)),
-            "maximumPairs":dashboard_max_pairs,
-            "universeTopN":max(1,multi_status_settings.universe_top_n),
-            "leverage":min(200,max(1,multi_status_settings.minimum_leverage)),
-        })
-    else:
-        strategy2_settings=Strategy2Config.from_mapping(strategy2_settings_raw)
+    status_settings_validation_error=False
+    try:
+        if multi_status_raw is not None:
+            multi_status_settings=MultiBbConfig.from_mapping(multi_status_raw)
+            # Dashboard compatibility only: Multi BB is the live engine. The old
+            # Strategy2Config shape is still consumed by legacy presentation helpers,
+            # so project the current settings without re-validating Multi BB TP limits.
+            dashboard_max_pairs=min(400,max(1,multi_status_settings.maximum_positions))
+            strategy2_settings=Strategy2Config.from_mapping({
+                "mode":multi_status_settings.mode,
+                # Legacy Strategy2Config requires Base Order >= $1. Multi BB may persist
+                # a stale shared baseNotional below $1 while the authoritative side-specific
+                # notionals remain valid (for example LONG $8 / SHORT $6). Use only a
+                # read-only compatibility value here; never mutate persisted settings.
+                "baseNotional":max(1.0,multi_status_settings.entry_notional_long_usd,multi_status_settings.entry_notional_short_usd),
+                "takeProfit":min(.20,max(.001,multi_status_settings.take_profit)),
+                "autoRestart":True,"dcaEnabled":True,
+                "longDcaDistance":multi_status_settings.dca_distance,
+                "shortDcaDistance":multi_status_settings.dca_distance,
+                "longMaxDca":min(50,max(0,multi_status_settings.max_dca)),
+                "shortMaxDca":min(50,max(0,multi_status_settings.max_dca)),
+                "maximumPairs":dashboard_max_pairs,
+                "universeTopN":max(1,multi_status_settings.universe_top_n),
+                "leverage":min(200,max(1,multi_status_settings.minimum_leverage)),
+            })
+        else:
+            strategy2_settings=Strategy2Config.from_mapping(strategy2_settings_raw)
+    except ValueError:
+        # Read-only status isolation; trading config remains unchanged and invalid configs remain rejected.
+        status_settings_validation_error=True
+        strategy2_settings=Strategy2Config.from_mapping({})
     strategy2_focus_slots=[dict(x) for x in strategy2_state.get("focusLiveSlots",[]) if isinstance(x,dict)] if isinstance(strategy2_state.get("focusLiveSlots"),list) else []
     strategy2_airbag_by_key={(str(x.get("pair","")).upper(),str(x.get("side","")).upper()):dict(x.get("airbag")) for x in strategy2_focus_slots if isinstance(x.get("airbag"),dict)}
     strategy2_focus_slot_by_key={(str(x.get("pair","")).upper(),str(x.get("side","")).upper()):x for x in strategy2_focus_slots if str(x.get("pair","")).strip()}
@@ -6175,7 +6181,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 "rehedgeEnabled": auto_hedge_pair.get("rehedgeEnabled") is True,
                 "reservedHedgeQty": safe_float(auto_hedge_pair.get("reservedHedgeQty")),
             }
-        if strategy_id=="aster-strategy-2":
+        if strategy_id=="aster-strategy-2" and not status_settings_validation_error:
             if (symbol,side) in strategy2_airbag_by_key:
                 row["focusAirbag"]={**strategy2_airbag_by_key[(symbol,side)],"enabled":bool(strategy2_settings.focus_airbag_enabled)}
             elif str(row.get("strategy2Role","")).upper().startswith("FOCUS_SLOT_AIRBAG:"):
@@ -6210,7 +6216,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     v2_state=strategy2_state.get("focusV2State") if isinstance(strategy2_state.get("focusV2State"),dict) else {}
     v2_history=strategy2_state.get("focusV2History") if isinstance(strategy2_state.get("focusV2History"),dict) else {}
     v2_symbol=str(v2_state.get("symbol","")).upper()
-    if v2_symbol and str(v2_state.get("cycleId", "")):
+    if not status_settings_validation_error and v2_symbol and str(v2_state.get("cycleId", "")):
         v2_long=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="LONG"),{})
         v2_short=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="SHORT"),{})
         current=safe_float(v2_history.get("currentPrice")) or safe_float(v2_long.get("markPrice")) or safe_float(v2_short.get("markPrice"))
@@ -6366,6 +6372,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     public_response = {
         **status,
         **aster_strategy2_public(uid),
+        "statusSettingsValidationError": status_settings_validation_error,
         "apiWalletAddress": secret.signer_address,
         "signerAddressSuffix": str(control.get("signerAddressSuffix", secret.signer_address[-6:])),
         # Credential replacement never preserves an enabled switch.
