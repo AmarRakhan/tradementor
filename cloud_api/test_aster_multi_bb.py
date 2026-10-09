@@ -1242,3 +1242,32 @@ def test_status_isolates_invalid_projection_but_does_not_authorize_trading():
     assert '"strategy2Tp"] = {' in status
     assert '"strategy2DcaLadder"] = {' in status
     assert '"available": False' in status
+
+
+def test_status_adapter_executes_invalid_config_without_mutating_stored_settings():
+    """Exercise the actual status adapter block, not merely source-string presence."""
+    from pathlib import Path
+    from aster_strategy2 import Strategy2Config
+    src = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    section = src.split('def aster_status(', 1)[1]
+    beginning = section.index("    multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)")
+    ending = section.index("    strategy2_focus_slots=", beginning)
+    adapter = section[beginning:ending]
+    raw = {
+        "engine": ENGINE, "maximumPositions": 30, "longSlots": 20,
+        "shortSlots": 10, "maximumLeverage": 20,
+    }
+    original = dict(raw)
+    scope = {
+        "strategy2_settings_raw": raw,
+        "multi_bb_status_mapping": multi_bb_status_mapping,
+        "MultiBbConfig": MultiBbConfig,
+        "Strategy2Config": Strategy2Config,
+    }
+    exec(compile(adapter, "<status-adapter>", "exec"), scope)
+    assert scope["status_settings_validation_error"] is True
+    assert raw == original
+    assert scope["strategy2_settings"] is not None
+    # Invalid execution config remains invalid: the display adapter never repairs it.
+    with pytest.raises(ValueError, match="Maximum leverage"):
+        MultiBbConfig.from_mapping(raw)
