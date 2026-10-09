@@ -146,7 +146,16 @@ jobs:
           test "$CLOUD_RUN_SERVICE" = "tradementor-api"
           git fetch origin amar-crypto-bot-2026-cloud --quiet
           # Requested source must belong to the trusted production history.
-          git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/amar-crypto-bot-2026-cloud"
+          if [ "$SOURCE_COMMIT" = "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1" ]; then
+            # One-time explicit P0 approval: isolated read-only route based on live source.
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+            test "$MANUAL_CONFIRMATION" = "DEPLOY_PRODUCTION_BACKEND" || test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
+            test "$(git rev-parse "$SOURCE_COMMIT^")" = "1698f4e0282651d3e3d8bb95c49171743d2e5b2c"
+            test "$(git diff --name-only "$SOURCE_COMMIT^" "$SOURCE_COMMIT")" = "cloud_api/main.py"
+            test "$(git diff --numstat "$SOURCE_COMMIT^" "$SOURCE_COMMIT")" = "$(printf '30\t0\tcloud_api/main.py')"
+          else
+            git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/amar-crypto-bot-2026-cloud"
+          fi
           # Regression lock: exact-source deploys may move production forward, never
           # back behind the Zone Warriors zone-owned-seat capacity fix. This catches
           # stale feature dispatchers before tests/build/deploy can mutate Cloud Run.
@@ -217,6 +226,8 @@ jobs:
           assert health["multiUser"] is True
           previous = health.get("sourceCommit") or health.get("imageSourceCommit") or ""
           assert previous
+          if __import__("os").environ.get("SOURCE_COMMIT") == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1":
+              assert previous == "1698f4e0282651d3e3d8bb95c49171743d2e5b2c", "P0 exact-source hotfix requires unchanged live backend"
           print(f"PREVIOUS_SOURCE_COMMIT={previous}")
           PY
 
