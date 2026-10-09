@@ -177,30 +177,26 @@ jobs:
           PY
           )"
 
-          # Read-only metadata probe; no BigQuery query jobs or exported billing row access.
-          BILLING_EXPORT_METADATA="UNAVAILABLE"
+          # BigQuery REST dataset listing; metadata only, no query jobs or dataset writes.
           BQ_DATASETS_FILE="control-plane-report/bq-datasets.json"
-          if command -v bq >/dev/null 2>&1; then
-            if bq --project_id="$GCP_PROJECT_ID" ls --format=json > "$BQ_DATASETS_FILE" 2>/dev/null; then
-              BILLING_EXPORT_METADATA="$(python - "$BQ_DATASETS_FILE" <<'PY'
+          BQ_HTTP="$(curl --silent --show-error --max-time 20 -o "$BQ_DATASETS_FILE" -w '%{http_code}' -H "Authorization: Bearer $ACCESS_TOKEN" "https://bigquery.googleapis.com/bigquery/v2/projects/$GCP_PROJECT_ID/datasets?maxResults=20" 2>/dev/null || true)"
+          BILLING_EXPORT_METADATA="$(python - "$BQ_DATASETS_FILE" "$BQ_HTTP" <<'PY'
           import json,sys
+          status=sys.argv[2]
           try:
-              with open(sys.argv[1],encoding="utf-8") as file: rows=json.load(file)
-              print(("DATASETS_VISIBLE" if rows else "NO_DATASETS_VISIBLE") if isinstance(rows,list) else ("DATASETS_WRAPPED" if isinstance(rows,dict) and ("datasets" in rows or "items" in rows) else "UNKNOWN_JSON_SHAPE"))
-          except json.JSONDecodeError:
-              print("INVALID_JSON")
-          except OSError:
-              print("FILE_READ_ERROR")
+              with open(sys.argv[1],encoding="utf-8") as file: data=json.load(file)
+              if status=="200":
+                  rows=data.get("datasets",[])
+                  print("HTTP_200_DATASETS_VISIBLE" if rows else "HTTP_200_NO_DATASETS_VISIBLE")
+              else:
+                  err=data.get("error") or {}
+                  allowed={"PERMISSION_DENIED","SERVICE_DISABLED","UNAUTHENTICATED","FAILED_PRECONDITION"}
+                  name=str(err.get("status") or "")
+                  print("HTTP_"+str(status)+"_"+(name if name in allowed else "OTHER"))
           except Exception:
-              print("PARSE_ERROR")
+              print("HTTP_"+str(status)+"_RESPONSE_UNREADABLE")
           PY
-              )"
-            else
-              BILLING_EXPORT_METADATA="LIST_FORBIDDEN_OR_ERROR"
-            fi
-          else
-            BILLING_EXPORT_METADATA="BQ_CLI_UNAVAILABLE"
-          fi
+          )"
 
           BILLING_CONTROL="UNVERIFIED"
           if [ "$BILLING" = "True" ]; then
