@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-09",
-  title: "Accountstatusdiagnose 2.3 · herkenbare onvolledige accountrespons",
+  title: "Snapshot Auth Ready 2.4 · accountgegevens laden na sessieherstel",
   newItems: [
+    "Build 591 wacht op het herstel van de Firebase-sessie voordat de Snapshot zijn account-ID vastlegt en gegevens uit de bestaande accountloader ontvangt.",
     "Build 590 onderscheidt ontbrekende Aster-autorisatie, ontbrekende accountkoppeling en een onvolledige backendstatus in de bestaande Portfolio Snapshot; gebruikt de huidige accountaanvraag.",
     "Build 589 gebruikt priceZoneSeats.enabled voor de expliciete globale prijszonepositielimiet, zonder legacy Zone Soldiers-interpretatie op de webinstellingenroute.",
     "Ontbrekende persoonlijke Strategy-2-instellingen worden niet langer stilzwijgend als een lege configuratie geaccepteerd in de Profit Lock/Bollinger bridge; opslaan wordt geblokkeerd totdat de serverinstellingen zijn bevestigd.",
@@ -147,6 +148,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
     "Een verouderd regressiecontract verwachtte nog de oude 320-candle zone-call en blokkeerde de eerste build-552 kandidaat.",
   ],
   fixes: [
+    "Build 591: voorkom dat de eerste geldige accountrespons na inloggen wordt weggegooid door een te vroeg vastgelegde lege UID; geen extra account- of marktdata-aanroepen.",
     "Build 590: toon een specifieke accountlaadmelding in plaats van iedere onvolledige respons als verbindingsprobleem te presenteren; geen scanner- of orderwijzigingen.",
     "Build 589: bescherm de globale prijszonecap en blokkeer instellingenwrites als de autoritatieve accountinstellingen niet laden.",
     "De bestaande directionele scannerinstellingen worden via één accountgebonden Strategy-2 settings-API bewaard; de oude gezamenlijke timeframe-instelling blijft compatibel.",
