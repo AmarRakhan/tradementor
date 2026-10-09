@@ -52,7 +52,10 @@ function normalizeBollingerTimeframe(value: unknown): BollingerEntryTimeframe {
 
 function extract(snapshot: Record<string, unknown>) {
   const strategy2 = snapshot.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 as Record<string, unknown> : {};
-  const settings = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : {};
+  if (!strategy2.settings || typeof strategy2.settings !== "object" || Array.isArray(strategy2.settings)) {
+    throw new Error("Persoonlijke botinstellingen niet geladen. Opslaan is geblokkeerd.");
+  }
+  const settings = strategy2.settings as Record<string, unknown>;
   const report = strategy2.multiBb && typeof strategy2.multiBb === "object"
     ? strategy2.multiBb as Record<string, unknown>
     : strategy2.multiBbReport && typeof strategy2.multiBbReport === "object"
@@ -68,6 +71,7 @@ export function AsterProfitLockLadderBridge() {
   const [settingsHost, setSettingsHost] = useState<HTMLElement | null>(null);
   const [snapshotHost, setSnapshotHost] = useState<HTMLElement | null>(null);
   const [settings, setSettings] = useState<Record<string, unknown>>({});
+  const [settingsVerified, setSettingsVerified] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [levels, setLevels] = useState<ProfitLockLevelDraft[]>(DEFAULT_PROFIT_LOCK_LEVELS.map((row) => ({ ...row })));
   const [summary, setSummary] = useState<ProfitLockSummary>({});
@@ -89,6 +93,8 @@ export function AsterProfitLockLadderBridge() {
       const snapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
       const next = extract(snapshot);
       setSettings(next.settings);
+      setSettingsVerified(true);
+      setBbMessage("");
       setSummary(next.summary);
       if (!bbWriteInFlight.current && readEpoch === bbReadEpoch.current) {
         setBbEnabled(next.settings.bollingerEntryFilter15mEnabled === true);
@@ -100,8 +106,9 @@ export function AsterProfitLockLadderBridge() {
         setEnabled(next.settings.profitLockLadderEnabled === true);
         setLevels(parseProfitLockLevels(next.settings.profitLockLevels));
       }
-    } catch {
-      // Existing settings remain authoritative while a refresh is temporarily unavailable.
+    } catch (error) {
+      setSettingsVerified(false);
+      setBbMessage(error instanceof Error ? error.message : "Accountinstellingen niet beschikbaar. Opslaan geblokkeerd.");
     }
   }, [dirty]);
 
@@ -162,7 +169,7 @@ export function AsterProfitLockLadderBridge() {
   const setLadder = (next: ProfitLockLevelDraft[]) => { setLevels(next); setDirty(true); setMessage(""); };
 
   async function toggleBollingerEntryFilter(next: boolean) {
-    if (bbWriteInFlight.current) return;
+    if (bbWriteInFlight.current || !settingsVerified) return;
     bbWriteInFlight.current = true;
     bbReadEpoch.current += 1;
     const previous = bbEnabled;
@@ -188,7 +195,7 @@ export function AsterProfitLockLadderBridge() {
   }
 
   async function changeBollingerTimeframe(side: "LONG" | "SHORT", next: BollingerEntryTimeframe) {
-    if (bbWriteInFlight.current || next === (side === "LONG" ? bbLongTimeframe : bbShortTimeframe)) return;
+    if (bbWriteInFlight.current || !settingsVerified || next === (side === "LONG" ? bbLongTimeframe : bbShortTimeframe)) return;
     bbWriteInFlight.current = true;
     bbReadEpoch.current += 1;
     setBbBusy(true); setBbMessage("Timeframe opslaan…");
@@ -235,6 +242,7 @@ export function AsterProfitLockLadderBridge() {
   }
 
   async function save() {
+    if (!settingsVerified) { setMessage("Persoonlijke instellingen zijn niet geladen. Opslaan geblokkeerd."); return; }
     const validation = enabled ? validateProfitLockLevels(levels) : null;
     if (validation) { setMessage(validation); return; }
     setBusy(true); setMessage("");
@@ -272,7 +280,7 @@ export function AsterProfitLockLadderBridge() {
   const settingsUi = settingsHost ? createPortal(<div className="pll-bridge-wrap" data-reference={REFERENCE}>
     <AsterBollingerEntryFilter15mCard enabled={bbEnabled} busy={bbBusy} longTimeframe={bbLongTimeframe} shortTimeframe={bbShortTimeframe} message={bbMessage} onToggle={(next) => void toggleBollingerEntryFilter(next)} onTimeframeChange={(side, next) => void changeBollingerTimeframe(side, next)} />
     <AsterProfitLockLadderPanel enabled={enabled} levels={levels} conflictCount={conflictCount} onEnabledChange={setMode} onLevelsChange={setLadder} />
-    {(dirty || enabled) ? <div className="pll-save-row"><span>{message || (dirty ? "Wijzigingen nog niet opgeslagen." : "Profit Lock Ladder actief in opgeslagen configuratie.")}</span><button type="button" disabled={busy || !dirty} onClick={save}>{busy ? "Opslaan…" : "Profit Lock opslaan"}</button></div> : null}
+    {(dirty || enabled) ? <div className="pll-save-row"><span>{message || (dirty ? "Wijzigingen nog niet opgeslagen." : "Profit Lock Ladder actief in opgeslagen configuratie.")}</span><button type="button" disabled={busy || !dirty || !settingsVerified} onClick={save}>{busy ? "Opslaan…" : "Profit Lock opslaan"}</button></div> : null}
     <style>{`.pll-bridge-wrap{display:contents}.pll-save-row{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:-1px;padding:6px 8px;border:1px solid rgba(33,214,154,.16);border-radius:9px;background:rgba(3,17,13,.72)}.pll-save-row span{color:#8fa39a;font-size:8px;line-height:1.3}.pll-save-row button{min-height:30px;padding:0 10px;border:1px solid rgba(33,214,154,.52);border-radius:8px;background:rgba(19,115,78,.25);color:#8ff4c6;font-size:8px;font-weight:900;white-space:nowrap}.pll-save-row button:disabled{opacity:.38}@media(max-width:430px){.pll-save-row{align-items:stretch;flex-direction:column}.pll-save-row button{width:100%}}`}</style>
   </div>, settingsHost) : null;
 
