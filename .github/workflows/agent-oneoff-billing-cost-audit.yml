@@ -1,0 +1,71 @@
+name: One-off Bounded Billing Cost Audit
+on:
+  workflow_dispatch:
+    inputs:
+      request_issue:
+        description: "GitHub issue for sanitized results"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: one-off-billing-cost-audit
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 6
+    env:
+      GCP_PROJECT_ID: tradementor-production
+      WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+      OBSERVER_SA: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify exact production branch and audit request
+        shell: bash
+        env:
+          REQUEST_ISSUE: ${{ inputs.request_issue }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          [[ "$REQUEST_ISSUE" =~ ^[0-9]+$ ]]
+          ISSUE_TITLE="$(gh issue view "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --json title --jq .title)"
+          test "$ISSUE_TITLE" = '[AGENT-CONTROL] billing costs one-off'
+
+      - name: Checkout trusted source
+        uses: actions/checkout@v4
+
+      - name: Authenticate observer without key files
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SA }}
+
+      - name: Install Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run single capped standard-export cost query
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOOGLE_ACCESS_TOKEN="$(gcloud auth print-access-token)" python3 .github/scripts/oneoff_billing_service_costs.py > "$RUNNER_TEMP/billing-cost-report.txt"
+
+      - name: Publish sanitized financial summary
+        if: always()
+        shell: bash
+        env:
+          REQUEST_ISSUE: ${{ inputs.request_issue }}
+        run: |
+          set -euo pipefail
+          if [ -s "$RUNNER_TEMP/billing-cost-report.txt" ]; then
+            gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/billing-cost-report.txt"
+          else
+            gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body "One-off bounded billing cost audit failed or was rejected before yielding a sanitized report. No trading changes."
+          fi
