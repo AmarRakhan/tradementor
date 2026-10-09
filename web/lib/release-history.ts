@@ -26,8 +26,11 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-08",
-  title: "Bollinger instapfilter 2.0 · LONG/SHORT timeframes",
+  title: "Account Data Loading 2.1 · gedeelde accountloader en veilige Snapshot",
   newItems: [
+    "Build 588 dedupliceert dezelfde canonieke Aster-account GET per geauthenticeerde gebruiker met behoud van een gedeelde in-flight aanvraag.",
+    "De Snapshot blijft tijdens initieel laden zichtbaar niet-live en behoudt alleen eerder binnen dezelfde sessie geverifieerde gegevens bij tijdelijke fouten.",
+    "Accountwisseling maakt de korte accountcache ongeldig en negeert vertraagde resultaten van een vorige gebruiker; scanner en tradingbeslissingen blijven ongewijzigd.",
     "Build 587: LONG en SHORT hebben onafhankelijk instelbare Bollinger-timeframes op de bestaande filterkaart, met behoud van dezelfde marktdata- en tradingpipeline.",
     "Build 586: drie compacte kaarten tonen de huidige portfoliowaarde en de afstand tot de volgende vrije LONG- of SHORT-stoel omhoog en omlaag, vanuit één canonieke serverbron.",
     "Build 585: vijf aanvullende prijszones boven en onder bezette zones binnen de bestaande scrolllijst, met canonieke serverprijsranges.",
