@@ -242,6 +242,8 @@ jobs:
           assert previous
           if __import__("os").environ.get("SOURCE_COMMIT") == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1":
               assert previous == "1698f4e0282651d3e3d8bb95c49171743d2e5b2c", "P0 exact-source hotfix requires unchanged live backend"
+          if __import__("os").environ.get("SOURCE_COMMIT") == "ad8ccbebb32dccc447c1a19e1781bc4c0505c75e":
+              assert previous == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1", "P0 status repair requires exact live diagnostic baseline"
           if __import__("os").environ.get("SOURCE_COMMIT") == "a19d07a6557eb1a83acbad84ea3c751eabe24bee":
               assert previous == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1", "P0 status fix requires the verified diagnosis revision to be live"
           print(f"PREVIOUS_SOURCE_COMMIT={previous}")
