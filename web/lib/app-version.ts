@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 591: wait for Firebase session before binding Snapshot request to account; no trading changes.
 // Build 590: distinguish incomplete account data from Aster authorization or connection errors; no trading changes.
 // Build 589: canonical price-zone cap and fail-closed personal settings loading; web-only, no order logic changes.
 // Build 588: canonical account GET deduplication, auth-ready loading and non-live Snapshot safety.
@@ -16,7 +17,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "590";
+export const WEBAPP_BUILD_NUMBER = "591";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
