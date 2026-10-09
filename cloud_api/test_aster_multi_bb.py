@@ -1309,3 +1309,51 @@ def test_invalid_status_config_does_not_generate_focus_cockpit_from_fallback():
     status = source.split('def aster_status(', 1)[1].split('@app.', 1)[0]
     assert 'focus_v2_cockpit:dict[str,Any]={}' in status
     assert 'if not status_settings_validation_error and v2_symbol and str(v2_state.get("cycleId", "")):' in status
+
+
+def test_http_status_projection_invalid_leverage_is_read_only_and_reports_error():
+    """Synthetic HTTP contract for real status adapter; no production dependencies."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from pathlib import Path
+    from textwrap import dedent
+    from aster_strategy2 import Strategy2Config
+
+    src = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    section = src.split("def aster_status(", 1)[1]
+    start = section.index("    multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)")
+    finish = section.index("    strategy2_focus_slots=", start)
+    adapter = compile(dedent(section[start:finish]), "<real-status-adapter>", "exec")
+    app = FastAPI()
+    stored = {
+        "engine": ENGINE, "maximumPositions": 30,
+        "longSlots": 20, "shortSlots": 10, "maximumLeverage": 20,
+    }
+    snapshot = {"equity": 321.45, "availableBalance": 180.0}
+    observed = {"writes": 0, "orders": 0, "network": 0}
+
+    @app.get("/v1/me/aster/status")
+    def local_status():
+        scope = {
+            "strategy2_settings_raw": dict(stored),
+            "multi_bb_status_mapping": multi_bb_status_mapping,
+            "MultiBbConfig": MultiBbConfig,
+            "Strategy2Config": Strategy2Config,
+        }
+        exec(adapter, scope)
+        return {
+            "configured": True,
+            "equity": snapshot["equity"],
+            "availableBalance": snapshot["availableBalance"],
+            "statusSettingsValidationError": scope["status_settings_validation_error"],
+            "strategy2Tp": {"available": False} if scope["status_settings_validation_error"] else {},
+        }
+
+    response = TestClient(app).get("/v1/me/aster/status")
+    assert response.status_code == 200
+    assert response.json() == {
+        "configured": True, "equity": 321.45, "availableBalance": 180.0,
+        "statusSettingsValidationError": True, "strategy2Tp": {"available": False},
+    }
+    assert stored["maximumLeverage"] == 20
+    assert observed == {"writes": 0, "orders": 0, "network": 0}
