@@ -1357,3 +1357,11 @@ def test_http_status_projection_invalid_leverage_is_read_only_and_reports_error(
     }
     assert stored["maximumLeverage"] == 20
     assert observed == {"writes": 0, "orders": 0, "network": 0}
+
+
+def test_invalid_status_does_not_enter_tp_dca_projection_branch():
+    from pathlib import Path
+    text = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    status = text.split('def aster_status(', 1)[1].split('@app.', 1)[0]
+    assert 'if strategy_id=="aster-strategy-2" and not status_settings_validation_error:' in status
+    assert 'if status_settings_validation_error and strategy_id == "aster-strategy-2":' in status
