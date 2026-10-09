@@ -31,6 +31,7 @@ env:
   ASTER_SCHEDULER_JOB: tradementor-aster-automation
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DIAGNOSTIC_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  BILLING_ACCOUNT_ID: ${{ vars.GCP_BILLING_ACCOUNT_ID }}
 
 jobs:
   diagnose:
@@ -143,6 +144,23 @@ jobs:
             if [ "$BILLING_ACCOUNT_HTTP" = "200" ]; then
               BILLING_ACCOUNT_OPEN="$(python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("True" if d.get("open") is True else "False" if d.get("open") is False else "")' "$BILLING_ACCOUNT_FILE" 2>/dev/null)"
             fi
+          fi
+
+          # Probe the billing account directly; projects.getBillingInfo can have separate IAM requirements.
+          DIRECT_BILLING_HTTP="not-configured"
+          DIRECT_BILLING_ERROR=""
+          if [ -n "$BILLING_ACCOUNT_ID" ]; then
+            DIRECT_BILLING_FILE="control-plane-report/billing-direct.json"
+            DIRECT_BILLING_HTTP="$(curl --silent --show-error --max-time 20 -o "$DIRECT_BILLING_FILE" -w '%{http_code}' -H "Authorization: Bearer $ACCESS_TOKEN" "https://cloudbilling.googleapis.com/v1/billingAccounts/$BILLING_ACCOUNT_ID" 2>/dev/null || true)"
+            DIRECT_BILLING_ERROR="$(python - "$DIRECT_BILLING_FILE" <<'PY'
+          import json,sys
+          try:
+              with open(sys.argv[1],encoding="utf-8") as f: d=json.load(f)
+              print(str((d.get("error") or {}).get("status") or ""))
+          except Exception:
+              print("")
+          PY
+          )"
           fi
 
           BILLING_CONTROL="UNVERIFIED"
@@ -348,6 +366,7 @@ jobs:
             printf -- "- Billing control: %s · %s\n" "$BILLING_CONTROL" "$BILLING_LINE"
             printf -- "- Billing project API: HTTP %s%s\n" "${BILLING_PROJECT_HTTP:-none}" "${BILLING_PROJECT_ERROR:+ · $BILLING_PROJECT_ERROR}"
             printf -- "- Billing account API: HTTP %s%s\n" "${BILLING_ACCOUNT_HTTP:-none}" "${BILLING_ACCOUNT_ERROR:+ · $BILLING_ACCOUNT_ERROR}"
+            printf -- "- Billing direct account probe: HTTP %s%s\n" "$DIRECT_BILLING_HTTP" "${DIRECT_BILLING_ERROR:+ · $DIRECT_BILLING_ERROR}"
             printf -- "- Cloud Run health: %s\n" "$([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
             printf -- "- Live revision: %s\n" "${LIVE_REVISION:-unknown}"
             printf -- "- Latest ready revision: %s\n" "${READY_REVISION:-unknown}"
@@ -375,7 +394,7 @@ jobs:
             echo "_No secrets, wallet keys, private exchange credentials, order payloads, symbols, quantities, balances, profile data, or direct account identifiers were collected. Strategy state is sanitized and account IDs are hashed._"
           } >> "$REPORT"
 
-          rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json control-plane-report/web-root.html
+          rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json control-plane-report/billing-direct.json control-plane-report/web-root.html
           echo "$STATUS" > control-plane-report/status.txt
 
       - name: Publish diagnosis back to GitHub issue
