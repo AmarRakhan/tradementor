@@ -31,7 +31,6 @@ env:
   ASTER_SCHEDULER_JOB: tradementor-aster-automation
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
   DIAGNOSTIC_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
-  BILLING_ACCOUNT_ID: ${{ vars.GCP_BILLING_ACCOUNT_ID }}
 
 jobs:
   diagnose:
@@ -146,12 +145,11 @@ jobs:
             fi
           fi
 
-          # Probe the billing account directly; projects.getBillingInfo can have separate IAM requirements.
-          DIRECT_BILLING_HTTP="not-configured"
+          # List accessible billing accounts independently; no extra config, no identifiers in report.
+          DIRECT_BILLING_HTTP="not-attempted"
           DIRECT_BILLING_ERROR=""
-          if [ -n "$BILLING_ACCOUNT_ID" ]; then
             DIRECT_BILLING_FILE="control-plane-report/billing-direct.json"
-            DIRECT_BILLING_HTTP="$(curl --silent --show-error --max-time 20 -o "$DIRECT_BILLING_FILE" -w '%{http_code}' -H "Authorization: Bearer $ACCESS_TOKEN" "https://cloudbilling.googleapis.com/v1/billingAccounts/$BILLING_ACCOUNT_ID" 2>/dev/null || true)"
+            DIRECT_BILLING_HTTP="$(curl --silent --show-error --max-time 20 -o "$DIRECT_BILLING_FILE" -w '%{http_code}' -H "Authorization: Bearer $ACCESS_TOKEN" "https://cloudbilling.googleapis.com/v1/billingAccounts?pageSize=20" 2>/dev/null || true)"
             DIRECT_BILLING_ERROR="$(python - "$DIRECT_BILLING_FILE" <<'PY'
           import json,sys
           try:
@@ -161,7 +159,6 @@ jobs:
               print("")
           PY
           )"
-          fi
 
           BILLING_CONTROL="UNVERIFIED"
           if [ "$BILLING" = "True" ]; then
