@@ -267,6 +267,27 @@ jobs:
           ERROR_COUNT="$(gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.status>=500' --project "$GCP_PROJECT_ID" --freshness=30m --limit=100 --format='value(timestamp)' 2>/dev/null | wc -l | tr -d ' ')"
           [ "${ERROR_COUNT:-0}" -ge 10 ] 2>/dev/null && STATUS="DEGRADED"
 
+          # Existing request logs only. Fixed-route classification; no URLs,
+          # query strings, user IDs, symbols, payloads, or tokens in report.
+          HTTP_ERROR_SUMMARY="$(gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.status>=500' --project "$GCP_PROJECT_ID" --freshness=30m --limit=100 --format=json 2>/dev/null | python -c '
+          import json,sys,collections,urllib.parse
+          try:
+              rows=json.load(sys.stdin)
+              counts=collections.Counter()
+              for row in rows:
+                  req=row.get("httpRequest") or {}
+                  status=req.get("status")
+                  path=urllib.parse.urlsplit(str(req.get("requestUrl") or "")).path
+                  endpoint=("automation_tick" if path=="/internal/aster-automation/tick"
+                      else "aster_status" if path=="/v1/me/aster/status"
+                      else "strategy2_settings" if path=="/v1/me/aster/strategy2/settings"
+                      else "other")
+                  counts[(endpoint,str(status) if status in (500,502,503,504) else "other_5xx")]+=1
+              print(json.dumps({"sampleLimit":100,"observed":len(rows),"counts":[{"endpoint":e,"statusClass":s,"count":n} for (e,s),n in sorted(counts.items())]},separators=(",",":")))
+          except Exception:
+              print(json.dumps({"status":"LOG_SUMMARY_UNAVAILABLE"}))
+          ')"
+
           ASTER_HTTP="$(curl -sS -o control-plane-report/aster-exchange-info.json -w '%{http_code}' --max-time 20 'https://fapi.asterdex.com/fapi/v3/exchangeInfo' 2>/dev/null)"
           ASTER_OK="no"
           if [ "$ASTER_HTTP" = "200" ]; then
@@ -433,6 +454,7 @@ jobs:
             printf -- "- Aster scheduler: %s\n" "${SCHEDULER_STATE:-unknown}"
             printf -- "- Latest Aster tick: %s\n" "${LAST_TICK:-none in last 30m}"
             printf -- "- Backend HTTP 5xx in last 30m: %s\n" "${ERROR_COUNT:-unknown}"
+            printf -- "- Backend 5xx fixed-route summary (sample max 100): %s\n" "$HTTP_ERROR_SUMMARY"
             printf -- "- Aster public market API: %s\n" "$([ "$ASTER_OK" = yes ] && echo '✅ reachable' || echo '❌ unavailable')"
             echo
             echo "### Strategy-2 entry blockers (sanitized)"
