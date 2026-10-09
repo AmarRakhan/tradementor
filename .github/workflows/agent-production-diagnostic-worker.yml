@@ -148,15 +148,15 @@ jobs:
           # List accessible billing accounts independently; no extra config, no identifiers in report.
           DIRECT_BILLING_HTTP="not-attempted"
           DIRECT_BILLING_ERROR=""
-            DIRECT_BILLING_FILE="control-plane-report/billing-direct.json"
-            DIRECT_BILLING_HTTP="$(curl --silent --show-error --max-time 20 -o "$DIRECT_BILLING_FILE" -w '%{http_code}' -H "Authorization: Bearer $ACCESS_TOKEN" "https://cloudbilling.googleapis.com/v1/billingAccounts?pageSize=20" 2>/dev/null || true)"
-            DIRECT_BILLING_ERROR="$(python - "$DIRECT_BILLING_FILE" <<'PY'
+          DIRECT_BILLING_FILE="control-plane-report/billing-direct.json"
+          DIRECT_BILLING_HTTP="$(curl --silent --show-error --max-time 20 -o "$DIRECT_BILLING_FILE" -w '%{http_code}' -H "Authorization: Bearer $ACCESS_TOKEN" "https://cloudbilling.googleapis.com/v1/billingAccounts?pageSize=20" 2>/dev/null || true)"
+          DIRECT_BILLING_ERROR="$(python - "$DIRECT_BILLING_FILE" <<'PY'
           import json,sys
           try:
-              with open(sys.argv[1],encoding="utf-8") as f: d=json.load(f)
-              print(str((d.get("error") or {}).get("status") or ""))
+            with open(sys.argv[1],encoding="utf-8") as f: d=json.load(f)
+            print(str((d.get("error") or {}).get("status") or ""))
           except Exception:
-              print("")
+            print("")
           PY
           )"
 
