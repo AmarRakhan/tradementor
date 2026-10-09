@@ -267,6 +267,48 @@ jobs:
           ERROR_COUNT="$(gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.status>=500' --project "$GCP_PROJECT_ID" --freshness=30m --limit=100 --format='value(timestamp)' 2>/dev/null | wc -l | tr -d ' ')"
           [ "${ERROR_COUNT:-0}" -ge 10 ] 2>/dev/null && STATUS="DEGRADED"
 
+          # Bounded, read-only diagnostic of already-present Cloud Run HTTP error logs.
+          # Output only request path buckets and exception class/file/line, never log payloads.
+          ERROR_DETAIL_FILE="control-plane-report/backend-errors.json"
+          gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND httpRequest.status>=500' \
+            --project "$GCP_PROJECT_ID" --freshness=2h --limit=150 --order=desc --format=json > "$ERROR_DETAIL_FILE" 2>/dev/null
+          ERROR_DETAIL_HTTP="$?"
+          ERROR_SUMMARY="$(python - "$ERROR_DETAIL_FILE" "$ERROR_DETAIL_HTTP" <<'PY'
+          import collections,json,re,sys,urllib.parse
+          path,returncode=sys.argv[1],sys.argv[2]
+          try:
+              if returncode!="0":
+                  print("UNAVAILABLE: logging read failed or insufficient permission")
+                  raise SystemExit
+              logs=json.load(open(path,encoding="utf-8"))
+              if not isinstance(logs,list): raise ValueError("invalid log shape")
+              counts=collections.Counter()
+              exceptions=collections.Counter()
+              for entry in logs:
+                  req=entry.get("httpRequest") or {}
+                  path_value=urllib.parse.urlsplit(str(req.get("requestUrl") or "")).path
+                  if path_value=="/v1/me/aster/status": label="/v1/me/aster/status"
+                  elif path_value=="/internal/aster-automation/tick": label="/internal/aster-automation/tick"
+                  elif path_value.startswith("/v1/me/aster/"): label="/v1/me/aster/*"
+                  else: label="OTHER_OR_UNKNOWN"
+                  counts[(label,str(req.get("status") or "unknown"))]+=1
+                  raw=str(entry.get("textPayload") or (entry.get("jsonPayload") or {}).get("message") or "")
+                  # Only highly constrained exception identifiers and Python file basenames.
+                  classes=re.findall(r"(?m)^([A-Za-z][A-Za-z0-9_]{1,70}(?:Error|Exception)):",raw)
+                  locations=re.findall(r'File "[^"\n]*/([A-Za-z0-9_]+\.py)", line (\d{1,6})',raw)
+                  if classes:
+                      key=(classes[-1],locations[-1][0] if locations else "unknown",locations[-1][1] if locations else "?")
+                      exceptions[key]+=1
+              print("SAMPLE_LIMIT=150; WINDOW=2h; sample_size="+str(len(logs)))
+              for (name,status),n in counts.most_common(12):print(f"ROUTE {name} HTTP_{status}: {n}")
+              for (name,file,line),n in exceptions.most_common(8):print(f"EXCEPTION {name} {file}:{line}: {n}")
+              if not exceptions: print("EXCEPTION_CLASSES_UNAVAILABLE_IN_LOG_SAMPLE")
+          except (OSError,ValueError,TypeError,json.JSONDecodeError):
+              print("UNAVAILABLE: logging response cannot be parsed")
+          PY
+          )"
+          rm -f "$ERROR_DETAIL_FILE"
+
           ASTER_HTTP="$(curl -sS -o control-plane-report/aster-exchange-info.json -w '%{http_code}' --max-time 20 'https://fapi.asterdex.com/fapi/v3/exchangeInfo' 2>/dev/null)"
           ASTER_OK="no"
           if [ "$ASTER_HTTP" = "200" ]; then
@@ -434,6 +476,9 @@ jobs:
             printf -- "- Latest Aster tick: %s\n" "${LAST_TICK:-none in last 30m}"
             printf -- "- Backend HTTP 5xx in last 30m: %s\n" "${ERROR_COUNT:-unknown}"
             printf -- "- Aster public market API: %s\n" "$([ "$ASTER_OK" = yes ] && echo '✅ reachable' || echo '❌ unavailable')"
+            echo
+            echo "### Cloud Run 5xx sample (sanitized; capped)"
+            printf "%s\\n" "$ERROR_SUMMARY"
             echo
             echo "### Strategy-2 entry blockers (sanitized)"
             printf '%s\n' "\`\`\`json"
