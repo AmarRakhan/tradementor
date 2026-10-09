@@ -1209,3 +1209,36 @@ def test_attributed_orphan_auto_hedge_symbol_stays_protected(monkeypatch):
     )
     assert any(a.get("kind")=="ATTRIBUTED_ORPHAN_PROTECTED" for a in result["actions"])
     assert not any(a.get("kind")=="TP" and a.get("symbol")=="AAAUSDT" for a in result["actions"])
+
+
+def test_invalid_legacy_leverage_fails_closed_without_mutating_input():
+    raw = {
+        "engine": ENGINE, "maximumPositions": 30, "longSlots": 20,
+        "shortSlots": 10, "maximumLeverage": 20,
+    }
+    original = dict(raw)
+    with pytest.raises(ValueError, match="Maximum leverage"):
+        MultiBbConfig.from_mapping(raw)
+    assert raw == original
+
+
+def test_explicit_valid_leverage_override_does_not_raise():
+    raw = {
+        "engine": ENGINE, "maximumPositions": 30, "longSlots": 20,
+        "shortSlots": 10, "minimumLeverage": 10, "maximumLeverage": 20,
+    }
+    cfg = MultiBbConfig.from_mapping(raw)
+    assert cfg.minimum_leverage == 10
+    assert cfg.maximum_leverage == 20
+
+
+def test_status_isolates_invalid_projection_but_does_not_authorize_trading():
+    from pathlib import Path
+    src = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    status = src.split('def aster_status(', 1)[1].split('@app.', 1)[0]
+    assert 'except ValueError:' in status
+    assert '"statusSettingsValidationError": status_settings_validation_error' in status
+    assert 'if status_settings_validation_error and strategy_id == "aster-strategy-2":' in status
+    assert '"strategy2Tp"] = {' in status
+    assert '"strategy2DcaLadder"] = {' in status
+    assert '"available": False' in status
