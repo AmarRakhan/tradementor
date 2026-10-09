@@ -105,6 +105,7 @@ if __name__ == "__main__":
             status = "UNREADABLE"
         print(f"COST_AUDIT_HTTP_{error.code}_{status}")
         sys.exit(5)
-    except Exception:
-        print("COST_AUDIT_FAILED")
+    except Exception as error:
+        # Exception class only: no tokens, response data, SQL, IDs or account values.
+        print("COST_AUDIT_FAILED_" + type(error).__name__)
         sys.exit(6)
