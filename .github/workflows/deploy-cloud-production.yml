@@ -153,6 +153,13 @@ jobs:
             test "$(git rev-parse "$SOURCE_COMMIT^")" = "1698f4e0282651d3e3d8bb95c49171743d2e5b2c"
             test "$(git diff --name-only "$SOURCE_COMMIT^" "$SOURCE_COMMIT")" = "cloud_api/main.py"
             test "$(git diff --numstat "$SOURCE_COMMIT^" "$SOURCE_COMMIT")" = "$(printf '30\t0\tcloud_api/main.py')"
+          elif [ "$SOURCE_COMMIT" = "a19d07a6557eb1a83acbad84ea3c751eabe24bee" ]; then
+            # Single-purpose read-only status 500 fix based on the exact live diagnosis.
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+            test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
+            test "$(git merge-base "$SOURCE_COMMIT" "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1")" = "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1"
+            test "$(git diff --name-only 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT")" = "$(printf 'cloud_api/main.py\ncloud_api/test_aster_multi_bb.py')"
+            test "$(git diff --numstat 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT")" = "$(printf '47\t27\tcloud_api/main.py\n196\t0\tcloud_api/test_aster_multi_bb.py')"
           else
             git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/amar-crypto-bot-2026-cloud"
           fi
@@ -228,6 +235,8 @@ jobs:
           assert previous
           if __import__("os").environ.get("SOURCE_COMMIT") == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1":
               assert previous == "1698f4e0282651d3e3d8bb95c49171743d2e5b2c", "P0 exact-source hotfix requires unchanged live backend"
+          if __import__("os").environ.get("SOURCE_COMMIT") == "a19d07a6557eb1a83acbad84ea3c751eabe24bee":
+              assert previous == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1", "P0 status fix requires the verified diagnosis revision to be live"
           print(f"PREVIOUS_SOURCE_COMMIT={previous}")
           PY
 
