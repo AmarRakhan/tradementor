@@ -221,6 +221,28 @@ jobs:
           PY
           )"
 
+          # Free BigQuery metadata: aggregate bytes/rows for only the two known Billing export tables.
+          BILLING_SIZE_STATUS="UNAVAILABLE"
+          BILLING_SIZE_STATUS="$(python - "$COST_TABLES_FILE" "$GCP_PROJECT_ID" "$ACCESS_TOKEN" <<'PY'
+          import json,sys,urllib.request
+          try:
+              data=json.load(open(sys.argv[1],encoding="utf-8"))
+              tables=[t.get("tableReference",{}).get("tableId","") for t in data.get("tables",[])]
+              prefixes=("gcp_billing_export_v1_","gcp_billing_export_resource_v1_")
+              chosen=[t for t in tables if t.startswith(prefixes)][:2]
+              out=[]
+              for table in chosen:
+                  url="https://bigquery.googleapis.com/bigquery/v2/projects/"+sys.argv[2]+"/datasets/cloud_billing_costs/tables/"+table
+                  req=urllib.request.Request(url,headers={"Authorization":"Bearer "+sys.argv[3]})
+                  with urllib.request.urlopen(req,timeout=15) as response: d=json.load(response)
+                  kind="STANDARD" if table.startswith(prefixes[0]) else "DETAILED"
+                  out.append(kind+"_ROWS_"+str(d.get("numRows","unknown"))+"_BYTES_"+str(d.get("numBytes","unknown")))
+              print(";".join(out) if out else "NO_BILLING_TABLES")
+          except Exception:
+              print("METADATA_READ_FAILED")
+          PY
+          )"
+
           BILLING_CONTROL="UNVERIFIED"
           if [ "$BILLING" = "True" ]; then
             BILLING_CONTROL="OK"
@@ -519,6 +541,7 @@ jobs:
             printf -- "- Billing direct failure class: %s\n" "$DIRECT_BILLING_REASON"
             printf -- "- BigQuery billing export discovery (metadata only): %s\n" "$BILLING_EXPORT_METADATA"
             printf -- "- Billing export tables metadata: %s\n" "$COST_TABLES_STATUS"
+            printf -- "- Billing export table sizes: %s\n" "$BILLING_SIZE_STATUS"
             printf -- "- Cloud Run health: %s\n" "$([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
             printf -- "- Live revision: %s\n" "${LIVE_REVISION:-unknown}"
             printf -- "- Latest ready revision: %s\n" "${READY_REVISION:-unknown}"
