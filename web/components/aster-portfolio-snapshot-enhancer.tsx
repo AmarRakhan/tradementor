@@ -509,6 +509,10 @@ function snapshotValuesFromTruth(truth:AsterAccountTruth):SnapshotValues {
 
 async function loadCanonicalSnapshotValues():Promise<SnapshotValues>{
   const payload=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
+  const result=payload && typeof payload==="object" ? payload as Record<string,unknown> : {};
+  if(result.authorizationPending===true)throw new Error("ASTER_AUTHORIZATION_PENDING");
+  if(result.configured===false)throw new Error("ASTER_CONNECTION_MISSING");
+  if(!result.accountTruth || !result.strategy2)throw new Error("ASTER_ACCOUNT_RESPONSE_INCOMPLETE");
   const truth=normalizeAsterAccountTruth(payload);
   if(truth.stale)throw new Error("Canonical Aster account truth is stale.");
   return snapshotValuesFromTruth(truth);
@@ -1157,7 +1161,7 @@ export function AsterPortfolioSnapshotEnhancer() {
         valuesRef.current=next;
         setValues(next);
         setSnapshotLoadWarning("");
-      }catch{
+      }catch(error){
         if(!alive || firebaseAuth.currentUser?.uid !== requestUid || snapshotUserRef.current !== requestUid)return;
         const lastConfirmed = lastConfirmedAtRef.current;
         const stamp = lastConfirmed
@@ -1165,7 +1169,13 @@ export function AsterPortfolioSnapshotEnhancer() {
           : null;
         setSnapshotLoadWarning(stamp
           ? `Accountgegevens niet live. Laatst bevestigd om ${stamp}.`
-          : "Accountgegevens konden nog niet worden geladen. Controleer de verbinding.");
+          : error instanceof Error && error.message==="ASTER_AUTHORIZATION_PENDING"
+            ? "Aster-autorisatie voor dit account is nog niet bevestigd."
+            : error instanceof Error && error.message==="ASTER_CONNECTION_MISSING"
+            ? "De Aster-accountkoppeling van dit account ontbreekt of is niet beschikbaar."
+            : error instanceof Error && error.message==="ASTER_ACCOUNT_RESPONSE_INCOMPLETE"
+            ? "De server leverde geen volledige accountgegevens. Dit is niet per se een verbindingsprobleem."
+            : "Accountgegevens konden nog niet worden geladen. Controleer de verbinding.");
         // Preserve only previously verified numbers; never pretend they are live.
         // Stale UI values must not enable the close-all action.
         valuesRef.current={...valuesRef.current,closeDisabled:true};
