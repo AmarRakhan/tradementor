@@ -280,7 +280,7 @@ jobs:
                       if len(cells)<4: continue
                       month,service,gross,credits=[str(v.get("v") or "") for v in cells[:4]]
                       clean.append(f"{month} | {service[:55]} | EUR gross {gross} | credits {credits}")
-                  print("\\n".join(clean) if clean else "NO_COST_ROWS_RETURNED")
+                  print("\n".join(clean) if clean else "NO_COST_ROWS_RETURNED")
           except urllib.error.HTTPError as exc:
               try:
                   d=json.load(exc)
