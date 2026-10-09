@@ -6182,7 +6182,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 "rehedgeEnabled": auto_hedge_pair.get("rehedgeEnabled") is True,
                 "reservedHedgeQty": safe_float(auto_hedge_pair.get("reservedHedgeQty")),
             }
-        if strategy_id=="aster-strategy-2":
+        if strategy_id=="aster-strategy-2" and not status_settings_validation_error:
             if (symbol,side) in strategy2_airbag_by_key:
                 row["focusAirbag"]={**strategy2_airbag_by_key[(symbol,side)],"enabled":bool(strategy2_settings.focus_airbag_enabled)}
             elif str(row.get("strategy2Role","")).upper().startswith("FOCUS_SLOT_AIRBAG:"):
@@ -6213,11 +6213,25 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 row["strategy2Tp"]["blockReason"]=f"Fees/funding niet volledig bewezen: {strategy2_cost_failures[symbol]}"
         positions.append(row)
     # Focus 2.0 cockpit is read-only presentation state derived from the same persisted runtime truth.
+        if status_settings_validation_error and strategy_id == "aster-strategy-2":
+            # Never expose TP/DCA calculations built from a temporary display fallback.
+            # Position quantity, PnL and exchange-confirmed account truth stay unchanged.
+            row["strategy2Tp"] = {
+                "available": False, "status": "CONFIG_INVALID",
+                "blockReason": "Opgeslagen strategie-instellingen vereisen controle",
+            }
+            row["strategy2DcaLadder"] = {
+                "available": False, "status": "CONFIG_INVALID", "levels": [],
+                "blockReason": "Opgeslagen strategie-instellingen vereisen controle",
+            }
+            row.pop("focusAirbag", None)
+        positions.append(row)
+    # Focus 2.0 cockpit is read-only presentation state derived from the same persisted runtime truth.
     focus_v2_cockpit:dict[str,Any]={}
     v2_state=strategy2_state.get("focusV2State") if isinstance(strategy2_state.get("focusV2State"),dict) else {}
     v2_history=strategy2_state.get("focusV2History") if isinstance(strategy2_state.get("focusV2History"),dict) else {}
     v2_symbol=str(v2_state.get("symbol","")).upper()
-    if v2_symbol and str(v2_state.get("cycleId", "")):
+    if not status_settings_validation_error and v2_symbol and str(v2_state.get("cycleId", "")):
         v2_long=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="LONG"),{})
         v2_short=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="SHORT"),{})
         current=safe_float(v2_history.get("currentPrice")) or safe_float(v2_long.get("markPrice")) or safe_float(v2_short.get("markPrice"))
