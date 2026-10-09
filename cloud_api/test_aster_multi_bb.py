@@ -1301,3 +1301,11 @@ def test_invalid_status_projection_masks_tp_dca_without_changing_exchange_values
     assert row["strategy2DcaLadder"]["available"] is False
     assert row["strategy2DcaLadder"]["levels"] == []
     assert "focusAirbag" not in row
+
+
+def test_invalid_status_config_does_not_generate_focus_cockpit_from_fallback():
+    from pathlib import Path
+    source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    status = source.split('def aster_status(', 1)[1].split('@app.', 1)[0]
+    assert 'focus_v2_cockpit:dict[str,Any]={}' in status
+    assert 'if not status_settings_validation_error and v2_symbol and str(v2_state.get("cycleId", "")):' in status
