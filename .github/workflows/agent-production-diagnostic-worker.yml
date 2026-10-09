@@ -513,6 +513,7 @@ jobs:
             echo
             echo "### Cloud Run 5xx sample (sanitized; capped)"
             printf "%s\\n" "$ERROR_SUMMARY"
+            printf "%s\\n" "$STDERR_SUMMARY"
             echo
             echo "### Strategy-2 entry blockers (sanitized)"
             printf '%s\n' "\`\`\`json"
