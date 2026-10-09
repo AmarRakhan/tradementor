@@ -124,7 +124,7 @@ export function useExchangeData(cloudReady: boolean, uid: string) {
 
   const refreshAll = useCallback(() => {
     if (refreshAllInFlight.current) return refreshAllInFlight.current;
-    const request = Promise.allSettled((["hyperliquid", "aster"] as ExchangeId[]).map(refresh));
+    // Only Aster is an active automatic exchange source. Hyperliquid remains\n    // available through explicit refresh("hyperliquid") for legacy/manual views.\n    const request = Promise.allSettled((["aster"] as ExchangeId[]).map(refresh));
     refreshAllInFlight.current = request;
     void request.finally(() => { if (refreshAllInFlight.current === request) refreshAllInFlight.current = null; });
     return request;
