@@ -160,6 +160,23 @@ jobs:
           PY
           )"
 
+          # Extract only allowlisted reason codes; never publish API bodies or account IDs.
+          DIRECT_BILLING_REASON="$(python - "$DIRECT_BILLING_FILE" <<'PY'
+          import json,sys
+          allowed={"SERVICE_DISABLED","ACCESS_TOKEN_SCOPE_INSUFFICIENT","IAM_PERMISSION_DENIED","CONSUMER_INVALID","API_KEY_INVALID","BILLING_DISABLED","ORG_RESTRICTION_VIOLATION","VPC_SERVICE_CONTROLS","PERMISSION_DENIED"}
+          try:
+              with open(sys.argv[1],encoding="utf-8") as file: payload=json.load(file)
+              error=payload.get("error") or {}
+              reasons=[x.get("reason","") for x in error.get("details",[]) if isinstance(x,dict)]
+              msg=str(error.get("message") or "").lower()
+              if "has not been used" in msg or "is disabled" in msg: reasons.append("SERVICE_DISABLED")
+              if "insufficient authentication scopes" in msg: reasons.append("ACCESS_TOKEN_SCOPE_INSUFFICIENT")
+              print(",".join(dict.fromkeys(r for r in reasons if r in allowed)) or "UNCLASSIFIED")
+          except Exception:
+              print("UNAVAILABLE")
+          PY
+          )"
+
           BILLING_CONTROL="UNVERIFIED"
           if [ "$BILLING" = "True" ]; then
             BILLING_CONTROL="OK"
@@ -364,6 +381,7 @@ jobs:
             printf -- "- Billing project API: HTTP %s%s\n" "${BILLING_PROJECT_HTTP:-none}" "${BILLING_PROJECT_ERROR:+ · $BILLING_PROJECT_ERROR}"
             printf -- "- Billing account API: HTTP %s%s\n" "${BILLING_ACCOUNT_HTTP:-none}" "${BILLING_ACCOUNT_ERROR:+ · $BILLING_ACCOUNT_ERROR}"
             printf -- "- Billing direct account probe: HTTP %s%s\n" "$DIRECT_BILLING_HTTP" "${DIRECT_BILLING_ERROR:+ · $DIRECT_BILLING_ERROR}"
+            printf -- "- Billing direct failure class: %s\n" "$DIRECT_BILLING_REASON"
             printf -- "- Cloud Run health: %s\n" "$([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
             printf -- "- Live revision: %s\n" "${LIVE_REVISION:-unknown}"
             printf -- "- Latest ready revision: %s\n" "${READY_REVISION:-unknown}"
