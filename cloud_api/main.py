@@ -6229,7 +6229,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     v2_state=strategy2_state.get("focusV2State") if isinstance(strategy2_state.get("focusV2State"),dict) else {}
     v2_history=strategy2_state.get("focusV2History") if isinstance(strategy2_state.get("focusV2History"),dict) else {}
     v2_symbol=str(v2_state.get("symbol","")).upper()
-    if v2_symbol and str(v2_state.get("cycleId", "")):
+    if not status_settings_validation_error and v2_symbol and str(v2_state.get("cycleId", "")):
         v2_long=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="LONG"),{})
         v2_short=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="SHORT"),{})
         current=safe_float(v2_history.get("currentPrice")) or safe_float(v2_long.get("markPrice")) or safe_float(v2_short.get("markPrice"))
