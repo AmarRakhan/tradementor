@@ -1209,3 +1209,41 @@ def test_attributed_orphan_auto_hedge_symbol_stays_protected(monkeypatch):
     )
     assert any(a.get("kind")=="ATTRIBUTED_ORPHAN_PROTECTED" for a in result["actions"])
     assert not any(a.get("kind")=="TP" and a.get("symbol")=="AAAUSDT" for a in result["actions"])
+
+
+def test_p0_invalid_leverage_status_projection_is_read_only():
+    """A legacy max 20/min default 50 must not fail a dashboard status read."""
+    from pathlib import Path
+    from textwrap import dedent
+    from aster_strategy2 import Strategy2Config
+
+    settings = {"engine": ENGINE, "maximumPositions": 30, "longSlots": 20, "shortSlots": 10, "maximumLeverage": 20}
+    with pytest.raises(ValueError, match="Maximum leverage"):
+        MultiBbConfig.from_mapping(multi_bb_status_mapping(settings))
+    source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    section = source.split("def aster_status(", 1)[1]
+    start = section.index("    multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)")
+    finish = section.index("    strategy2_focus_slots=", start)
+    adapter = compile(dedent(section[start:finish]), "<status-config-adapter>", "exec")
+    context = {
+        "strategy2_settings_raw": dict(settings),
+        "multi_bb_status_mapping": multi_bb_status_mapping,
+        "MultiBbConfig": MultiBbConfig,
+        "Strategy2Config": Strategy2Config,
+    }
+    exec(adapter, context)
+    assert context["status_settings_validation_error"] is True
+    assert settings["maximumLeverage"] == 20
+    assert "minimumLeverage" not in settings
+
+
+def test_p0_invalid_config_masks_trade_display_but_keeps_exchange_truth():
+    from pathlib import Path
+    source = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    status = source.split("def aster_status(", 1)[1].split("@app.", 1)[0]
+    assert 'if strategy_id=="aster-strategy-2" and not status_settings_validation_error:' in status
+    assert 'if status_settings_validation_error and strategy_id == "aster-strategy-2":' in status
+    assert 'if not status_settings_validation_error and v2_symbol and str(v2_state.get("cycleId", "")):' in status
+    assert 'row["strategy2Tp"] = {' in status
+    assert 'row["strategy2DcaLadder"] = {' in status
+    assert '"statusSettingsValidationError": status_settings_validation_error' in status
