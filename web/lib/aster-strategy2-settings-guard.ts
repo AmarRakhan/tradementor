@@ -28,8 +28,10 @@ export function enforceAsterStrategy2Limits(settings: Record<string, unknown>) {
   if (hasShort) next.shortSlots = shortSlots;
 
   const hasExplicitMaximum = settings.maximumPositions !== undefined || settings.maximumPairs !== undefined;
-  const priceZoneSeatsEnabled = settings.zoneSoldiersEnabled === true
-    && finiteInteger(settings.zoneSoldiersOptInVersion, 0) >= 1;
+  const priceZoneSeats = settings.priceZoneSeats;
+  const priceZoneSeatsEnabled = priceZoneSeats !== null && typeof priceZoneSeats === "object"
+    && !Array.isArray(priceZoneSeats)
+    && (priceZoneSeats as Record<string, unknown>).enabled === true;
 
   // Build 456: in price-zone-seat mode LONG/SHORT slots are legacy/traditional
   // distribution fields and must never overwrite the explicit global seat cap.
