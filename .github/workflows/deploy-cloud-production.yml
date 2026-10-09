@@ -160,6 +160,12 @@ jobs:
             test "$(git merge-base "$SOURCE_COMMIT" "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1")" = "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1"
             test "$(git diff --name-only 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT")" = "$(printf 'cloud_api/main.py\ncloud_api/test_aster_multi_bb.py')"
             test "$(git diff --numstat 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT")" = "$(printf '47\t27\tcloud_api/main.py\n196\t0\tcloud_api/test_aster_multi_bb.py')"
+          elif [ "$SOURCE_COMMIT" = "ad8ccbebb32dccc447c1a19e1781bc4c0505c75e" ]; then
+            # Account status read-only repair, only from deployed diagnostic source.
+            test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+            test "${{ inputs.confirmation }}" = "DEPLOY_PRODUCTION_BACKEND"
+            test "$(git merge-base --is-ancestor 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT"; echo $?)" = "0"
+            test "$(git diff --name-only 8ac3c98c6b0433bd318c571c46ac995fa7ca03b1 "$SOURCE_COMMIT")" = "cloud_api/main.py"
           else
             git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/amar-crypto-bot-2026-cloud"
           fi
