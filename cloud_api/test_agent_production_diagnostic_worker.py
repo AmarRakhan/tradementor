@@ -60,7 +60,9 @@ def test_billing_diagnostics_publish_only_sanitized_http_and_error_status():
     assert '(error or {}).get("status")' in text
     assert 'billing-project.json' in text
     assert 'billing-account.json' in text
-    assert 'rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json control-plane-report/web-root.html' in text
+    cleanup = next(line for line in text.splitlines() if line.strip().startswith("rm -f control-plane-report/aster-exchange-info.json"))
+    for filename in ("aster-exchange-info.json", "billing-project.json", "billing-account.json", "web-root.html"):
+        assert "control-plane-report/" + filename in cleanup
     assert 'getPaymentInfo' not in text
 
 
