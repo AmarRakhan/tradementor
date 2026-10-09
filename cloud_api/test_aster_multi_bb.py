@@ -1365,3 +1365,29 @@ def test_invalid_status_does_not_enter_tp_dca_projection_branch():
     status = text.split('def aster_status(', 1)[1].split('@app.', 1)[0]
     assert 'if strategy_id=="aster-strategy-2" and not status_settings_validation_error:' in status
     assert 'if status_settings_validation_error and strategy_id == "aster-strategy-2":' in status
+
+
+def test_zone_seats_toggle_cannot_resolve_existing_leverage_conflict():
+    """Reproduce reported 50x -> 20x followed by enabling price-zone seats."""
+    original = {
+        "engine": ENGINE, "maximumPositions": 30, "longSlots": 20,
+        "shortSlots": 10, "minimumLeverage": 50,
+        "maximumLeverage": 50,
+    }
+    lowered_maximum = {**original, "maximumLeverage": 20}
+    with pytest.raises(ValueError, match="Maximum leverage"):
+        MultiBbConfig.from_mapping(lowered_maximum)
+    with_seats = {
+        **lowered_maximum,
+        "priceZoneSeats": {"enabled": True, "longSeatsPerZone": 3, "shortSeatsPerZone": 3},
+    }
+    with pytest.raises(ValueError, match="Maximum leverage"):
+        MultiBbConfig.from_mapping(with_seats)
+    assert original["minimumLeverage"] == 50
+    assert original["maximumLeverage"] == 50
+    # Correctly paired lower leverage is valid with seats on, without any account reset.
+    safe_config = MultiBbConfig.from_mapping({
+        **with_seats, "minimumLeverage": 20,
+    })
+    assert safe_config.minimum_leverage == safe_config.maximum_leverage == 20
+    assert safe_config.zone_soldiers_enabled is True
