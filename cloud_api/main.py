@@ -6097,8 +6097,15 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     # in a temporary copy so the legacy Base Order validator cannot turn a
     # healthy account snapshot into HTTP 500. No stored setting is changed.
     multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)
+    status_configuration_invalid=False
     if multi_status_raw is not None:
-        multi_status_settings=MultiBbConfig.from_mapping(multi_status_raw)
+        try:
+            multi_status_settings=MultiBbConfig.from_mapping(multi_status_raw)
+        except (ValueError, TypeError):
+            # Dashboard-only compatibility fallback: never persist these defaults or
+            # send them to the scanner. Preserve the exchange-confirmed Snapshot.
+            status_configuration_invalid=True
+            multi_status_settings=MultiBbConfig()
         # Dashboard compatibility only: Multi BB is the live engine. The old
         # Strategy2Config shape is still consumed by legacy presentation helpers,
         # so project the current settings without re-validating Multi BB TP limits.
@@ -6372,6 +6379,14 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         "liveEnabled": bool(control.get("liveEnabled", False)),
         "ordersEnabled": os.getenv("ASTER_LIVE_EXECUTION_ENABLED", "false").lower() == "true",
     }
+
+    if status_configuration_invalid:
+        # Expose an explicit, fail-closed status rather than silently presenting
+        # legacy dashboard defaults as the user's saved trading configuration.
+        strategy2_public_error=public_response.get("strategy2")
+        if isinstance(strategy2_public_error,dict):
+            strategy2_public_error["settingsUnverified"]=True
+            strategy2_public_error["settingsErrorCode"]="INVALID_PERSISTED_CONFIGURATION"
 
     # Build 580: one canonical account/Strategy-2/zone state is assembled
     # server-side from the same exchange snapshot and persisted Strategy-2
