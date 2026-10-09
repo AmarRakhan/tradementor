@@ -593,7 +593,7 @@ jobs:
             printf -- "- Billing export tables metadata: %s\n" "$COST_TABLES_STATUS"
             printf -- "- Billing export table sizes: %s\n" "$BILLING_SIZE_STATUS"
             echo "### Billing service cost breakdown (one-off, <=50 MiB billed)"
-            printf "%s\\n" "$COST_BREAKDOWN"
+            echo "$COST_BREAKDOWN"
             printf -- "- Cloud Run health: %s\n" "$([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
             printf -- "- Live revision: %s\n" "${LIVE_REVISION:-unknown}"
             printf -- "- Latest ready revision: %s\n" "${READY_REVISION:-unknown}"
