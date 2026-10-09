@@ -226,6 +226,8 @@ jobs:
           assert health["multiUser"] is True
           previous = health.get("sourceCommit") or health.get("imageSourceCommit") or ""
           assert previous
+          if __import__("os").environ.get("SOURCE_COMMIT") == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1":
+              assert previous == "1698f4e0282651d3e3d8bb95c49171743d2e5b2c", "P0 exact-source hotfix requires unchanged live backend"
           print(f"PREVIOUS_SOURCE_COMMIT={previous}")
           PY
 
