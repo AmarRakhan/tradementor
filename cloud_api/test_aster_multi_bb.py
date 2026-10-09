@@ -1272,3 +1272,32 @@ def test_status_adapter_executes_invalid_config_without_mutating_stored_settings
     # Invalid execution config remains invalid: the display adapter never repairs it.
     with pytest.raises(ValueError, match="Maximum leverage"):
         MultiBbConfig.from_mapping(raw)
+
+
+def test_invalid_status_projection_masks_tp_dca_without_changing_exchange_values():
+    """Execute the real masking branch against an exchange-confirmed row."""
+    from pathlib import Path
+    from textwrap import dedent
+    src = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
+    section = src.split('def aster_status(', 1)[1]
+    first = section.index('        if status_settings_validation_error and strategy_id == "aster-strategy-2":')
+    last = section.index('        positions.append(row)', first)
+    mask = dedent(section[first:last])
+    row = {
+        "symbol": "BTCUSDT", "side": "LONG", "quantity": 0.125,
+        "entryPrice": 42000.0, "unrealizedPnl": 12.5,
+        "strategy2Tp": {"available": True, "targetPrice": 42500.0},
+        "strategy2DcaLadder": {"available": True, "levels": [{"price": 41000.0}]},
+        "focusAirbag": {"enabled": True},
+    }
+    exchange_keys = ("symbol", "side", "quantity", "entryPrice", "unrealizedPnl")
+    before = {k: row[k] for k in exchange_keys}
+    scope = {"row": row, "status_settings_validation_error": True, "strategy_id": "aster-strategy-2"}
+    exec(compile(mask, "<status-mask>", "exec"), scope)
+    assert {k: row[k] for k in exchange_keys} == before
+    assert row["strategy2Tp"]["available"] is False
+    assert row["strategy2Tp"]["status"] == "CONFIG_INVALID"
+    assert "targetPrice" not in row["strategy2Tp"]
+    assert row["strategy2DcaLadder"]["available"] is False
+    assert row["strategy2DcaLadder"]["levels"] == []
+    assert "focusAirbag" not in row
