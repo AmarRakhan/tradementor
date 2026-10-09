@@ -1,7 +1,7 @@
 {
   "action": "deploy-production-backend",
   "confirmation": "DEPLOY_PRODUCTION_BACKEND",
-  "sourceCommit": "1617c96a8b561a2ac0510027200825b3b10b3d0f",
+  "sourceCommit": "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1",
   "requestedBy": "AmarRakhan",
-  "requestId": "build574-portfolio-chart-zones-runtime-20261007"
+  "requestId": "p0-account-s-readonly-diagnosis-20261010"
 }
