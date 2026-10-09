@@ -1264,7 +1264,8 @@ def test_status_adapter_executes_invalid_config_without_mutating_stored_settings
         "MultiBbConfig": MultiBbConfig,
         "Strategy2Config": Strategy2Config,
     }
-    exec(compile(adapter, "<status-adapter>", "exec"), scope)
+    from textwrap import dedent
+    exec(compile(dedent(adapter), "<status-adapter>", "exec"), scope)
     assert scope["status_settings_validation_error"] is True
     assert raw == original
     assert scope["strategy2_settings"] is not None
