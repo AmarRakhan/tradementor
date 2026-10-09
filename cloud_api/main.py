@@ -6182,7 +6182,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 "rehedgeEnabled": auto_hedge_pair.get("rehedgeEnabled") is True,
                 "reservedHedgeQty": safe_float(auto_hedge_pair.get("reservedHedgeQty")),
             }
-        if strategy_id=="aster-strategy-2":
+        if strategy_id=="aster-strategy-2" and not status_settings_validation_error:
             if (symbol,side) in strategy2_airbag_by_key:
                 row["focusAirbag"]={**strategy2_airbag_by_key[(symbol,side)],"enabled":bool(strategy2_settings.focus_airbag_enabled)}
             elif str(row.get("strategy2Role","")).upper().startswith("FOCUS_SLOT_AIRBAG:"):
