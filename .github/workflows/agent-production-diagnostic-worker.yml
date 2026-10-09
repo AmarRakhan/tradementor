@@ -198,6 +198,29 @@ jobs:
           PY
           )"
 
+          # Read-only Billing export table metadata, no SQL jobs or billable scans.
+          COST_TABLES_FILE="control-plane-report/billing-tables.json"
+          COST_TABLES_HTTP="$(curl --silent --show-error --max-time 20 -o "$COST_TABLES_FILE" -w '%{http_code}' -H "Authorization: Bearer $ACCESS_TOKEN" "https://bigquery.googleapis.com/bigquery/v2/projects/$GCP_PROJECT_ID/datasets/cloud_billing_costs/tables?maxResults=100" 2>/dev/null || true)"
+          COST_TABLES_STATUS="$(python - "$COST_TABLES_FILE" "$COST_TABLES_HTTP" <<'PY'
+          import json,sys
+          status=sys.argv[2]
+          try:
+              with open(sys.argv[1],encoding="utf-8") as file: data=json.load(file)
+              if status=="200":
+                  names=[str(row.get("tableReference",{}).get("tableId","")) for row in data.get("tables",[])]
+                  standard=sum(name.startswith("gcp_billing_export_v1_") for name in names)
+                  detailed=sum(name.startswith("gcp_billing_export_resource_v1_") for name in names)
+                  print(f"HTTP_200_STANDARD_{standard}_DETAILED_{detailed}")
+              else:
+                  error=data.get("error") or {}
+                  allowed={"PERMISSION_DENIED","SERVICE_DISABLED","NOT_FOUND","UNAUTHENTICATED"}
+                  classification=str(error.get("status") or "")
+                  print("HTTP_"+status+"_"+(classification if classification in allowed else "OTHER"))
+          except Exception:
+              print("HTTP_"+status+"_UNREADABLE")
+          PY
+          )"
+
           BILLING_CONTROL="UNVERIFIED"
           if [ "$BILLING" = "True" ]; then
             BILLING_CONTROL="OK"
@@ -495,6 +518,7 @@ jobs:
             printf -- "- Billing direct account probe: HTTP %s%s\n" "$DIRECT_BILLING_HTTP" "${DIRECT_BILLING_ERROR:+ · $DIRECT_BILLING_ERROR}"
             printf -- "- Billing direct failure class: %s\n" "$DIRECT_BILLING_REASON"
             printf -- "- BigQuery billing export discovery (metadata only): %s\n" "$BILLING_EXPORT_METADATA"
+            printf -- "- Billing export tables metadata: %s\n" "$COST_TABLES_STATUS"
             printf -- "- Cloud Run health: %s\n" "$([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
             printf -- "- Live revision: %s\n" "${LIVE_REVISION:-unknown}"
             printf -- "- Latest ready revision: %s\n" "${READY_REVISION:-unknown}"
@@ -526,7 +550,7 @@ jobs:
             echo "_No secrets, wallet keys, private exchange credentials, order payloads, symbols, quantities, balances, profile data, or direct account identifiers were collected. Strategy state is sanitized and account IDs are hashed._"
           } >> "$REPORT"
 
-          rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json control-plane-report/billing-direct.json control-plane-report/bq-datasets.json control-plane-report/web-root.html
+          rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json control-plane-report/billing-direct.json control-plane-report/bq-datasets.json control-plane-report/billing-tables.json control-plane-report/web-root.html
           echo "$STATUS" > control-plane-report/status.txt
 
       - name: Publish diagnosis back to GitHub issue
