@@ -187,8 +187,12 @@ jobs:
           try:
               with open(sys.argv[1],encoding="utf-8") as file: rows=json.load(file)
               print(("DATASETS_VISIBLE" if rows else "NO_DATASETS_VISIBLE") if isinstance(rows,list) else ("DATASETS_WRAPPED" if isinstance(rows,dict) and ("datasets" in rows or "items" in rows) else "UNKNOWN_JSON_SHAPE"))
+          except json.JSONDecodeError:
+              print("INVALID_JSON")
+          except OSError:
+              print("FILE_READ_ERROR")
           except Exception:
-              print("UNAVAILABLE")
+              print("PARSE_ERROR")
           PY
               )"
             else
