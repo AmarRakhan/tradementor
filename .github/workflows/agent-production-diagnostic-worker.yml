@@ -243,6 +243,56 @@ jobs:
           PY
           )"
 
+          # One-off bounded financial attribution. Runs ONLY for the precisely named audit issue.
+          # A future general diagnosis will never execute a billable SQL query.
+          COST_BREAKDOWN="NOT_REQUESTED"
+          COST_AUDIT_TITLE="$(GH_TOKEN="${{ github.token }}" gh issue view "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --json title --jq .title 2>/dev/null || true)"
+          if [ "$COST_AUDIT_TITLE" = '[AGENT-CONTROL] diagnose production — bounded October cloud costs' ]; then
+            COST_BREAKDOWN="$(python - "$COST_TABLES_FILE" "$GCP_PROJECT_ID" "$ACCESS_TOKEN" <<'PY'
+          import json,sys,re,urllib.request
+          try:
+              payload=json.load(open(sys.argv[1],encoding="utf-8"))
+              tables=[t.get("tableReference",{}).get("tableId","") for t in payload.get("tables",[])]
+              table=next((t for t in tables if t.startswith("gcp_billing_export_v1_") and re.fullmatch(r"[A-Za-z0-9_]+",t)),None)
+              if not table:
+                  print("STANDARD_TABLE_NOT_VISIBLE")
+                  raise SystemExit(0)
+              sql=("""
+          SELECT FORMAT_DATE('%Y-%m', DATE(usage_start_time)) AS month,
+                 service.description AS service,
+                 ROUND(SUM(cost), 2) AS gross,
+                 ROUND(SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) AS c),0)),2) AS credits
+          FROM `%s.cloud_billing_costs.%s`
+          WHERE DATE(usage_start_time) BETWEEN '2026-09-01' AND '2026-10-10'
+          GROUP BY month, service
+          ORDER BY month DESC, gross DESC LIMIT 70
+              """ % (sys.argv[2],table))
+              body=json.dumps({"query":sql,"useLegacySql":False,"maximumBytesBilled":"52428800","timeoutMs":30000,"maxResults":70}).encode()
+              req=urllib.request.Request("https://bigquery.googleapis.com/bigquery/v2/projects/"+sys.argv[2]+"/queries",data=body,headers={"Authorization":"Bearer "+sys.argv[3],"Content-Type":"application/json"},method="POST")
+              with urllib.request.urlopen(req,timeout=40) as response: result=json.load(response)
+              if not result.get("jobComplete"):
+                  print("QUERY_RUNNING_NO_RESULTS")
+              else:
+                  rows=result.get("rows") or []
+                  clean=[]
+                  for row in rows:
+                      cells=row.get("f") or []
+                      if len(cells)<4: continue
+                      month,service,gross,credits=[str(v.get("v") or "") for v in cells[:4]]
+                      clean.append(f"{month} | {service[:55]} | EUR gross {gross} | credits {credits}")
+                  print("\\n".join(clean) if clean else "NO_COST_ROWS_RETURNED")
+          except urllib.error.HTTPError as exc:
+              try:
+                  d=json.load(exc)
+                  reason=str((d.get("error") or {}).get("status") or "OTHER")
+              except Exception: reason="UNKNOWN"
+              print("COST_QUERY_HTTP_"+str(exc.code)+"_"+reason)
+          except Exception:
+              print("COST_QUERY_FAILED")
+          PY
+            )"
+          fi
+
           BILLING_CONTROL="UNVERIFIED"
           if [ "$BILLING" = "True" ]; then
             BILLING_CONTROL="OK"
@@ -542,6 +592,8 @@ jobs:
             printf -- "- BigQuery billing export discovery (metadata only): %s\n" "$BILLING_EXPORT_METADATA"
             printf -- "- Billing export tables metadata: %s\n" "$COST_TABLES_STATUS"
             printf -- "- Billing export table sizes: %s\n" "$BILLING_SIZE_STATUS"
+            echo "### Billing service cost breakdown (one-off, <=50 MiB billed)"
+            printf "%s\\n" "$COST_BREAKDOWN"
             printf -- "- Cloud Run health: %s\n" "$([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
             printf -- "- Live revision: %s\n" "${LIVE_REVISION:-unknown}"
             printf -- "- Latest ready revision: %s\n" "${READY_REVISION:-unknown}"
