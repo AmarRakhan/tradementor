@@ -295,7 +295,7 @@ jobs:
                   raw=str(entry.get("textPayload") or (entry.get("jsonPayload") or {}).get("message") or "")
                   # Only highly constrained exception identifiers and Python file basenames.
                   classes=re.findall(r"(?m)^([A-Za-z][A-Za-z0-9_]{1,70}(?:Error|Exception)):",raw)
-                  locations=re.findall(r'File "[^"\\n]*/([A-Za-z0-9_]+\\.py)", line (\\d{1,6})',raw)
+                  locations=re.findall(r'File "[^"\n]*/([A-Za-z0-9_]+\.py)", line (\d{1,6})',raw)
                   if classes:
                       key=(classes[-1],locations[-1][0] if locations else "unknown",locations[-1][1] if locations else "?")
                       exceptions[key]+=1
