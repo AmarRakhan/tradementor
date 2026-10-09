@@ -186,7 +186,7 @@ jobs:
           import json,sys
           try:
               with open(sys.argv[1],encoding="utf-8") as file: rows=json.load(file)
-              print("DATASETS_VISIBLE" if isinstance(rows,list) and rows else "NO_DATASETS_VISIBLE")
+              print(("DATASETS_VISIBLE" if rows else "NO_DATASETS_VISIBLE") if isinstance(rows,list) else ("DATASETS_WRAPPED" if isinstance(rows,dict) and ("datasets" in rows or "items" in rows) else "UNKNOWN_JSON_SHAPE"))
           except Exception:
               print("UNAVAILABLE")
           PY
