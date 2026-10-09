@@ -6181,7 +6181,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 "rehedgeEnabled": auto_hedge_pair.get("rehedgeEnabled") is True,
                 "reservedHedgeQty": safe_float(auto_hedge_pair.get("reservedHedgeQty")),
             }
-        if strategy_id=="aster-strategy-2":
+        if strategy_id=="aster-strategy-2" and not status_settings_validation_error:
             if (symbol,side) in strategy2_airbag_by_key:
                 row["focusAirbag"]={**strategy2_airbag_by_key[(symbol,side)],"enabled":bool(strategy2_settings.focus_airbag_enabled)}
             elif str(row.get("strategy2Role","")).upper().startswith("FOCUS_SLOT_AIRBAG:"):
@@ -6216,7 +6216,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     v2_state=strategy2_state.get("focusV2State") if isinstance(strategy2_state.get("focusV2State"),dict) else {}
     v2_history=strategy2_state.get("focusV2History") if isinstance(strategy2_state.get("focusV2History"),dict) else {}
     v2_symbol=str(v2_state.get("symbol","")).upper()
-    if v2_symbol and str(v2_state.get("cycleId", "")):
+    if not status_settings_validation_error and v2_symbol and str(v2_state.get("cycleId", "")):
         v2_long=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="LONG"),{})
         v2_short=next((x for x in positions if str(x.get("symbol","")).upper()==v2_symbol and str(x.get("side","")).upper()=="SHORT"),{})
         current=safe_float(v2_history.get("currentPrice")) or safe_float(v2_long.get("markPrice")) or safe_float(v2_short.get("markPrice"))
@@ -6372,6 +6372,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     public_response = {
         **status,
         **aster_strategy2_public(uid),
+        "statusSettingsValidationError": status_settings_validation_error,
         "apiWalletAddress": secret.signer_address,
         "signerAddressSuffix": str(control.get("signerAddressSuffix", secret.signer_address[-6:])),
         # Credential replacement never preserves an enabled switch.
