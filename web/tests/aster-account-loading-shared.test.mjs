@@ -30,7 +30,9 @@ test("failed snapshot refresh preserves prior verified data but marks not live",
 });
 
 test("late response or failure from previous authenticated user is ignored", () => {
-  assert.match(snapshot, /const requestUid = firebaseAuth\.currentUser\?\.uid \?\? null/);
+  assert.match(snapshot, /await firebaseAuth\.authStateReady\(\)/);
+  assert.match(snapshot, /requestUid = firebaseAuth\.currentUser\?\.uid \?\? null/);
+  assert.match(snapshot, /if \(!requestUid\) throw new Error\("ASTER_AUTH_NOT_READY"\)/);
   assert.match(snapshot, /firebaseAuth\.currentUser\?\.uid !== requestUid \|\| snapshotUserRef\.current !== requestUid/);
 });
 

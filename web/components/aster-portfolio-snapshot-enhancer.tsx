@@ -1153,8 +1153,15 @@ export function AsterPortfolioSnapshotEnhancer() {
     const refresh=async()=>{
       if(refreshingSnapshotRef.current)return;
       refreshingSnapshotRef.current=true;
-      const requestUid = firebaseAuth.currentUser?.uid ?? null;
+      let requestUid: string | null = null;
       try{
+        // The first paint can precede Firebase persistence restoration.
+        // Capture the UID only after auth is ready, otherwise a valid first
+        // response is thrown away as a cross-account response.
+        await firebaseAuth.authStateReady();
+        if (!alive) return;
+        requestUid = firebaseAuth.currentUser?.uid ?? null;
+        if (!requestUid) throw new Error("ASTER_AUTH_NOT_READY");
         const next=await loadCanonicalSnapshotValues();
         if(!alive || firebaseAuth.currentUser?.uid !== requestUid || snapshotUserRef.current !== requestUid)return;
         lastConfirmedAtRef.current=Date.now();
