@@ -177,6 +177,27 @@ jobs:
           PY
           )"
 
+          # Read-only metadata probe; no BigQuery query jobs or exported billing row access.
+          BILLING_EXPORT_METADATA="UNAVAILABLE"
+          BQ_DATASETS_FILE="control-plane-report/bq-datasets.json"
+          if command -v bq >/dev/null 2>&1; then
+            if bq --project_id="$GCP_PROJECT_ID" ls --format=json > "$BQ_DATASETS_FILE" 2>/dev/null; then
+              BILLING_EXPORT_METADATA="$(python - "$BQ_DATASETS_FILE" <<'PY'
+          import json,sys
+          try:
+              with open(sys.argv[1],encoding="utf-8") as file: rows=json.load(file)
+              print("DATASETS_VISIBLE" if isinstance(rows,list) and rows else "NO_DATASETS_VISIBLE")
+          except Exception:
+              print("UNAVAILABLE")
+          PY
+              )"
+            else
+              BILLING_EXPORT_METADATA="LIST_FORBIDDEN_OR_ERROR"
+            fi
+          else
+            BILLING_EXPORT_METADATA="BQ_CLI_UNAVAILABLE"
+          fi
+
           BILLING_CONTROL="UNVERIFIED"
           if [ "$BILLING" = "True" ]; then
             BILLING_CONTROL="OK"
@@ -382,6 +403,7 @@ jobs:
             printf -- "- Billing account API: HTTP %s%s\n" "${BILLING_ACCOUNT_HTTP:-none}" "${BILLING_ACCOUNT_ERROR:+ · $BILLING_ACCOUNT_ERROR}"
             printf -- "- Billing direct account probe: HTTP %s%s\n" "$DIRECT_BILLING_HTTP" "${DIRECT_BILLING_ERROR:+ · $DIRECT_BILLING_ERROR}"
             printf -- "- Billing direct failure class: %s\n" "$DIRECT_BILLING_REASON"
+            printf -- "- BigQuery billing export discovery (metadata only): %s\n" "$BILLING_EXPORT_METADATA"
             printf -- "- Cloud Run health: %s\n" "$([ "$HEALTH_OK" = yes ] && echo '✅ ready' || echo '❌ unhealthy/unreachable')"
             printf -- "- Live revision: %s\n" "${LIVE_REVISION:-unknown}"
             printf -- "- Latest ready revision: %s\n" "${READY_REVISION:-unknown}"
@@ -409,7 +431,7 @@ jobs:
             echo "_No secrets, wallet keys, private exchange credentials, order payloads, symbols, quantities, balances, profile data, or direct account identifiers were collected. Strategy state is sanitized and account IDs are hashed._"
           } >> "$REPORT"
 
-          rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json control-plane-report/billing-direct.json control-plane-report/web-root.html
+          rm -f control-plane-report/aster-exchange-info.json control-plane-report/billing-project.json control-plane-report/billing-account.json control-plane-report/billing-direct.json control-plane-report/bq-datasets.json control-plane-report/web-root.html
           echo "$STATUS" > control-plane-report/status.txt
 
       - name: Publish diagnosis back to GitHub issue
