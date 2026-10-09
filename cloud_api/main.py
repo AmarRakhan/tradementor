@@ -6096,32 +6096,38 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
     # documents may not carry the explicit engine marker. Recognize that shape
     # in a temporary copy so the legacy Base Order validator cannot turn a
     # healthy account snapshot into HTTP 500. No stored setting is changed.
-    multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)
-    if multi_status_raw is not None:
-        multi_status_settings=MultiBbConfig.from_mapping(multi_status_raw)
-        # Dashboard compatibility only: Multi BB is the live engine. The old
-        # Strategy2Config shape is still consumed by legacy presentation helpers,
-        # so project the current settings without re-validating Multi BB TP limits.
-        dashboard_max_pairs=min(400,max(1,multi_status_settings.maximum_positions))
-        strategy2_settings=Strategy2Config.from_mapping({
-            "mode":multi_status_settings.mode,
-            # Legacy Strategy2Config requires Base Order >= $1. Multi BB may persist
-            # a stale shared baseNotional below $1 while the authoritative side-specific
-            # notionals remain valid (for example LONG $8 / SHORT $6). Use only a
-            # read-only compatibility value here; never mutate persisted settings.
-            "baseNotional":max(1.0,multi_status_settings.entry_notional_long_usd,multi_status_settings.entry_notional_short_usd),
-            "takeProfit":min(.20,max(.001,multi_status_settings.take_profit)),
-            "autoRestart":True,"dcaEnabled":True,
-            "longDcaDistance":multi_status_settings.dca_distance,
-            "shortDcaDistance":multi_status_settings.dca_distance,
-            "longMaxDca":min(50,max(0,multi_status_settings.max_dca)),
-            "shortMaxDca":min(50,max(0,multi_status_settings.max_dca)),
-            "maximumPairs":dashboard_max_pairs,
-            "universeTopN":max(1,multi_status_settings.universe_top_n),
-            "leverage":min(200,max(1,multi_status_settings.minimum_leverage)),
-        })
-    else:
-        strategy2_settings=Strategy2Config.from_mapping(strategy2_settings_raw)
+    status_settings_validation_error = False
+    try:
+        multi_status_raw=multi_bb_status_mapping(strategy2_settings_raw)
+        if multi_status_raw is not None:
+            multi_status_settings=MultiBbConfig.from_mapping(multi_status_raw)
+            # Dashboard compatibility only: Multi BB is the live engine. The old
+            # Strategy2Config shape is still consumed by legacy presentation helpers,
+            # so project the current settings without re-validating Multi BB TP limits.
+            dashboard_max_pairs=min(400,max(1,multi_status_settings.maximum_positions))
+            strategy2_settings=Strategy2Config.from_mapping({
+                "mode":multi_status_settings.mode,
+                # Legacy Strategy2Config requires Base Order >= $1. Multi BB may persist
+                # a stale shared baseNotional below $1 while the authoritative side-specific
+                # notionals remain valid (for example LONG $8 / SHORT $6). Use only a
+                # read-only compatibility value here; never mutate persisted settings.
+                "baseNotional":max(1.0,multi_status_settings.entry_notional_long_usd,multi_status_settings.entry_notional_short_usd),
+                "takeProfit":min(.20,max(.001,multi_status_settings.take_profit)),
+                "autoRestart":True,"dcaEnabled":True,
+                "longDcaDistance":multi_status_settings.dca_distance,
+                "shortDcaDistance":multi_status_settings.dca_distance,
+                "longMaxDca":min(50,max(0,multi_status_settings.max_dca)),
+                "shortMaxDca":min(50,max(0,multi_status_settings.max_dca)),
+                "maximumPairs":dashboard_max_pairs,
+                "universeTopN":max(1,multi_status_settings.universe_top_n),
+                "leverage":min(200,max(1,multi_status_settings.minimum_leverage)),
+            })
+        else:
+            strategy2_settings=Strategy2Config.from_mapping(strategy2_settings_raw)
+    except ValueError:
+        # Read-only isolation: never change persisted config or relax the trading engine.
+        status_settings_validation_error = True
+        strategy2_settings = Strategy2Config.from_mapping({})
     strategy2_focus_slots=[dict(x) for x in strategy2_state.get("focusLiveSlots",[]) if isinstance(x,dict)] if isinstance(strategy2_state.get("focusLiveSlots"),list) else []
     strategy2_airbag_by_key={(str(x.get("pair","")).upper(),str(x.get("side","")).upper()):dict(x.get("airbag")) for x in strategy2_focus_slots if isinstance(x.get("airbag"),dict)}
     strategy2_focus_slot_by_key={(str(x.get("pair","")).upper(),str(x.get("side","")).upper()):x for x in strategy2_focus_slots if str(x.get("pair","")).strip()}
@@ -7660,6 +7666,36 @@ def extend_smart_rescue_active_cycle(symbol: str, payload: dict[str, Any], user:
     finally:
         if queue_token: _release_strategy2_queue_lease(ref, str(queue_token))
         elif legacy_lease: ref.set({"leaseUntil": datetime.now(timezone.utc)}, merge=True)
+
+
+@app.get("/v1/me/aster/strategy2/config-health")
+def aster_strategy2_config_health(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    """Tenant-authenticated, read-only configuration health; no exchange calls or writes."""
+    raw = aster_strategy2_reference(str(user["uid"])).get().to_dict() or {}
+    settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
+    has_min = settings.get("minimumLeverage") is not None
+    has_max = settings.get("maximumLeverage") is not None
+    error_class = "NONE"
+    try:
+        normalized = multi_bb_status_mapping(settings)
+        if normalized is not None:
+            MultiBbConfig.from_mapping(normalized)
+        else:
+            error_class = "UNSUPPORTED_SETTINGS_SHAPE"
+    except ValueError:
+        error_class = "CONFIG_VALIDATION_ERROR"
+    return {
+        "readOnly": True,
+        "ordersSent": 0,
+        "configuredSettingsPresent": bool(settings),
+        "minimumLeveragePresent": has_min,
+        "maximumLeveragePresent": has_max,
+        "settingsValidation": error_class,
+        "storedPhase": str(raw.get("phase") or ""),
+        "storedMonitoringEnabled": raw.get("monitor") is True,
+        "storedBotEnabled": raw.get("enabled") is True,
+        "configVersionPresent": raw.get("configVersion") is not None,
+    }
 
 
 @app.put("/v1/me/aster/strategy2/settings")
