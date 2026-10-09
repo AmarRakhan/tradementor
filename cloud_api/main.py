@@ -7662,6 +7662,36 @@ def extend_smart_rescue_active_cycle(symbol: str, payload: dict[str, Any], user:
         elif legacy_lease: ref.set({"leaseUntil": datetime.now(timezone.utc)}, merge=True)
 
 
+@app.get("/v1/me/aster/strategy2/config-health")
+def aster_strategy2_config_health(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
+    """Tenant-authenticated, read-only configuration health; no exchange calls or writes."""
+    raw = aster_strategy2_reference(str(user["uid"])).get().to_dict() or {}
+    settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
+    has_min = settings.get("minimumLeverage") is not None
+    has_max = settings.get("maximumLeverage") is not None
+    error_class = "NONE"
+    try:
+        normalized = multi_bb_status_mapping(settings)
+        if normalized is not None:
+            MultiBbConfig.from_mapping(normalized)
+        else:
+            error_class = "UNSUPPORTED_SETTINGS_SHAPE"
+    except ValueError:
+        error_class = "CONFIG_VALIDATION_ERROR"
+    return {
+        "readOnly": True,
+        "ordersSent": 0,
+        "configuredSettingsPresent": bool(settings),
+        "minimumLeveragePresent": has_min,
+        "maximumLeveragePresent": has_max,
+        "settingsValidation": error_class,
+        "storedPhase": str(raw.get("phase") or ""),
+        "storedMonitoringEnabled": raw.get("monitor") is True,
+        "storedBotEnabled": raw.get("enabled") is True,
+        "configVersionPresent": raw.get("configVersion") is not None,
+    }
+
+
 @app.put("/v1/me/aster/strategy2/settings")
 def save_aster_strategy2_settings(request: AsterStrategySettingsRequest, user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     uid=str(user["uid"]); ref=aster_strategy2_reference(uid); existing=ref.get().to_dict() or {}; old=existing.get("settings") if isinstance(existing.get("settings"),dict) else {}
