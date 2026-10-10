@@ -5833,6 +5833,44 @@ def _verified_aster_daily_close_summary(client: AsterV3Client, user_ref: Any | N
     }
 
 
+@app.get("/v1/me/aster/closed-trades/history")
+def aster_closed_trades_history_page(
+    user: dict[str, Any] = Depends(authenticated_user),
+    limit: int = Query(default=30, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+) -> dict[str, Any]:
+    """Read-only, cursor-paginated view over the existing per-user close ledger.
+
+    No exchange API calls. The cursor points to a document in the authenticated
+    user's OWN collection and cannot grant access to another account.
+    """
+    collection = user_reference(user).collection("asterClosedTrades")
+    query = collection.order_by("closedAt", direction=firestore.Query.DESCENDING)
+    if cursor:
+        if not re.fullmatch(r"[a-f0-9]{64}", cursor):
+            raise HTTPException(status_code=400, detail="Invalid closed-trades cursor")
+        last_document = collection.document(cursor).get()
+        if not last_document.exists:
+            raise HTTPException(status_code=400, detail="Expired closed-trades cursor")
+        query = query.start_after(last_document)
+    documents = list(query.limit(limit + 1).stream())
+    selected = documents[:limit]
+    rows: list[dict[str, Any]] = []
+    for document in selected:
+        row = document.to_dict() or {}
+        for timestamp_field in ("openedAt", "closedAt"):
+            value = row.get(timestamp_field)
+            if isinstance(value, datetime):
+                row[timestamp_field] = value.isoformat()
+        row["recordId"] = document.id
+        rows.append(row)
+    return {
+        "closedTrades": rows,
+        "nextCursor": selected[-1].id if len(documents) > limit and selected else None,
+        "hasMore": len(documents) > limit,
+    }
+
+
 @app.get("/v1/me/aster/closed-trades")
 def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     """Return exchange-confirmed closes, including trades closed outside strategy 1."""
