@@ -652,3 +652,22 @@ def test_build597_historical_margin_writer_must_not_be_assumed_to_store_leverage
     assert '"marginUsd":' not in block
     assert '"leverage":' not in block
     assert '"executedNotionalUsd":' not in block
+
+def test_build597_missing_realized_pnl_in_confirmed_fill_is_not_verified_zero():
+    activity = {"entries": [], "exits": [
+        {"timestampMs": 61_000, "symbol": "BTCUSDT", "side": "LONG",
+         "quantity": 1, "orderId": "close-without-pnl"},
+    ]}
+    markers = aggregate_trade_activity(activity, "1m")
+    assert markers[0]["realizedPnlVerified"] is False
+    assert markers[0]["trades"][0]["realizedPnlVerified"] is False
+
+
+def test_build597_zero_realized_pnl_in_confirmed_fill_is_verified_zero():
+    activity = {"entries": [], "exits": [
+        {"timestampMs": 61_000, "symbol": "BTCUSDT", "side": "LONG",
+         "quantity": 1, "realizedPnlUsd": 0.0},
+    ]}
+    markers = aggregate_trade_activity(activity, "1m")
+    assert markers[0]["realizedPnlVerified"] is True
+    assert markers[0]["trades"][0]["realizedPnlVerified"] is True
