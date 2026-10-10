@@ -45,7 +45,7 @@ def main():
         print("STANDARD_EXPORT_TABLE_NOT_VISIBLE")
         return 2
     sql = """
-SELECT FORMAT_DATE('%Y-%m', DATE(usage_start_time)) AS month,
+SELECT FORMAT_DATE('%%Y-%%m', DATE(usage_start_time)) AS month,
        service.description AS service,
        ROUND(SUM(cost), 2) AS gross,
        ROUND(SUM(IFNULL((SELECT SUM(credit.amount)
