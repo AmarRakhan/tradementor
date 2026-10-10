@@ -530,14 +530,6 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   return <article id="strategy-2-maker" className="strategy-card strategy-two-card botsettings-ref" data-reference={BOT_SETTINGS_REFERENCE}>
     {!embedded && <div className="strategy-title-row"><div><span className="kicker">ASTER BOT</span><h2>Botinstellingen</h2></div><span className={`strategy-state ${enabled ? "on" : ""}`}>{status.pending ? "BEZIG" : enabled ? "AAN" : "UIT"}</span></div>}
 
-    <section className="slot-overview" aria-label="Slot-overzicht">
-      <header><span className="slot-icon">◇</span><div><b>Slot-overzicht</b><small>Bezetting van beschikbare botslots</small></div><span className="slot-cross">⇄ <b>CROSS</b></span><span className="slot-candidates">♙ <b>{candidateCount}</b> kandidaten</span></header>
-      <div className="slot-row long"><strong>LONG</strong><i><u style={{ width: `${longFill}%` }} /></i><b>{activeLong} / {longCapacity}</b><em>{displayRemainingLong} vrij</em></div>
-      <div className="slot-row short"><strong>SHORT</strong><i><u style={{ width: `${shortFill}%` }} /></i><b>{activeShort} / {shortCapacity}</b><em>{displayRemainingShort} vrij</em></div>
-      <div className="slot-row total"><strong>Totaal</strong><i><u style={{ width: `${totalFill}%` }} /></i><b>{totalActive} / {totalCapacity}</b><em>{Math.max(0, totalCapacity - totalActive)} vrij</em></div>
-      {dirty && <small className="slot-dirty">Niet opgeslagen</small>}
-    </section>
-
     <section className="live-settings-card">
       <div className={`strategy-power-control live-power ${enabled ? "enabled" : "ready"}`}><span><b><i className="live-dot" />Aster live bot</b><small>{dirty ? "eerst wijzigingen opslaan" : enabled ? "server bevestigt actief" : "uit"}</small></span><button type="button" role="switch" aria-checked={enabled} disabled={busy} onClick={toggleLive}><i />{busy ? "Bezig…" : status.pending ? "Status ophalen" : enabled ? "Uitschakelen" : "Inschakelen"}</button></div>
       <div className="live-config-grid">
