@@ -605,6 +605,7 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
                 "count": 0,
                 "notionalUsd": 0.0,
                 "realizedPnlUsd": 0.0,
+                "realizedPnlVerified": True,
                 "source": "aster-confirmed-fills",
             })
             group["count"] += 1
@@ -612,12 +613,14 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
             realized = _number(raw.get("realizedPnlUsd"))
             group["realizedPnlUsd"] += realized
             if kind == "tp":
+                group["realizedPnlVerified"] = group["realizedPnlVerified"] and raw.get("realizedPnlUsd") is not None
                 group.setdefault("trades", [])
                 group["trades"].append({
                     "symbol": _base_symbol(raw.get("symbol")),
                     "side": side,
                     "atMs": stamp,
                     "realizedPnlUsd": realized,
+                    "realizedPnlVerified": raw.get("realizedPnlUsd") is not None,
                     "durationMinutes": _duration_minutes(raw, stamp),
                     "orderId": str(raw.get("orderId", raw.get("id", "")) or ""),
                     "clientOrderId": str(raw.get("clientOrderId", "") or ""),
