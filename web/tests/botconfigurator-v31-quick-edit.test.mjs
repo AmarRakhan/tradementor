@@ -41,3 +41,10 @@ test("classic live surface keeps independent LONG SHORT entry and DCA values", (
   assert.match(maker, /0 is toegestaan per richting/);
   assert.match(maker, /shortSeatsPerZone: clampInt\(n\(v\.priceZoneShortSeats\), 0, 100\)/);
 });
+
+test("zone seat position cap stays independent of legacy side slots and validates persistence", () => {
+  assert.match(maker, /x\.priceZoneSeats && typeof x\.priceZoneSeats === "object"/);
+  assert.match(maker, /enabled === true : x\.zoneSoldiersEnabled === true\) \? Math\.max\(1, Math\.round\(Number\(x\.maximumPositions/);
+  assert.match(maker, /maximumPositions: v\.priceZoneSeatsEnabled/);
+  assert.match(maker, /Number\(savedSettings\.maximumPositions\) !== settings\.maximumPositions/);
+});
