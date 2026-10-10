@@ -38,6 +38,12 @@ class ClosedTradesHistoryContractTests(unittest.TestCase):
                             and entry.get("queryScope") == "COLLECTION"
                             and entry.get("fields") == required
                             for entry in definition.get("indexes", [])))
+    def test_verified_close_writer_batches_duplicate_checks(self):
+        writer = source[source.index("def _persist_verified_full_closes("):source.index('@app.get("/v1/me/aster/closed-trades/history")')]
+        self.assertIn("db.get_all(", writer)
+        self.assertIn("if snap.exists", writer)
+        self.assertIn("inserted += len(missing)", writer)
+        self.assertIn("if row.get(\"fullyClosed\") is not True", writer)
     def test_no_account_cross_reference(self):
         self.assertIn('collection.document(cursor).get()', handler)
         self.assertNotIn('user_reference(other_user)', handler)
