@@ -21,6 +21,11 @@ class ClosedTradesHistoryContractTests(unittest.TestCase):
     def test_read_only_no_exchange_scan(self):
         for unsafe in ('AsterV3Client(', 'user_trades(', 'income_history(', 'batch.commit(', '.set('):
             self.assertNotIn(unsafe, handler)
+    def test_today_reuses_authoritative_full_close_summary_without_exchange(self):
+        self.assertIn('summary.get("fullClosedTrades")', handler)
+        self.assertIn('summary.get("reliable") is not True', handler)
+        self.assertIn('_aster_closed_trades_cache.get(uid)', handler)
+        self.assertIn('time.monotonic() - cached[0] < 120.0', handler)
     def test_no_account_cross_reference(self):
         self.assertIn('collection.document(cursor).get()', handler)
         self.assertNotIn('user_reference(other_user)', handler)
