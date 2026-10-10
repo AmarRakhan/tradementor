@@ -5905,8 +5905,12 @@ def aster_closed_trades_history_page(
         if not re.fullmatch(r"[a-f0-9]{64}", cursor):
             raise HTTPException(status_code=400, detail="Invalid closed-trades cursor")
         last_document = collection.document(cursor).get()
-        if not last_document.exists:
-            raise HTTPException(status_code=400, detail="Expired closed-trades cursor")
+        if not last_document.exists or last_document.get("verifiedFullClose") is not True:
+            raise HTTPException(status_code=400, detail="Invalid closed-trades cursor")
+        if scope == "today":
+            closed_at_cursor = last_document.get("closedAt")
+            if not isinstance(closed_at_cursor, datetime) or not day_start.astimezone(timezone.utc) <= closed_at_cursor < day_end.astimezone(timezone.utc):
+                raise HTTPException(status_code=400, detail="Cursor buiten de geselecteerde dag")
         query = query.start_after(last_document)
     documents = list(query.limit(limit + 1).stream())
     selected = documents[:limit]
