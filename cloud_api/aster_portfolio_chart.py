@@ -760,6 +760,7 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
             "count": 0,
             "notionalUsd": 0.0,
             "realizedPnlUsd": 0.0,
+            "realizedPnlVerified": False,
             "source": "strategy2-confirmed-audit",
             "activityTypes": [],
         })
@@ -769,12 +770,20 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         if kind == "tp":
             realized=_number(raw.get("realizedPnlUsd", raw.get("realizedPnl", raw.get("pnl"))))
             group["realizedPnlUsd"] += realized
+            group["realizedPnlVerified"] = group["realizedPnlVerified"] or any(
+                raw.get(field) is not None
+                for field in ("realizedPnlUsd", "realizedPnl", "pnl")
+            )
             group.setdefault("trades", [])
             group["trades"].append({
                 "symbol": str(raw.get("symbol", "")).upper().strip(),
                 "side": str(raw.get("side", "")).upper().strip(),
                 "atMs": stamp,
                 "realizedPnlUsd": realized,
+                "realizedPnlVerified": any(
+                    raw.get(field) is not None
+                    for field in ("realizedPnlUsd", "realizedPnl", "pnl")
+                ),
                 "durationMinutes": None,
                 "activityType": event,
                 "originZone": raw.get("originZone"),
@@ -793,7 +802,14 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
                 "atMs": stamp,
                 "entryPrice": entry_price if entry_price > 0 else None,
                 "notionalUsd": notional_usd if notional_usd > 0 else None,
-                "marginUsd": _number(raw.get("marginUsd", raw.get("executedMarginUsd", raw.get("initialMarginUsd")))) or None,
+                "marginUsd": (
+                    _number(raw.get("marginUsd", raw.get("executedMarginUsd", raw.get("initialMarginUsd"))))
+                    or (
+                        notional_usd / _number(raw.get("leverage"))
+                        if notional_usd > 0 and _number(raw.get("leverage")) > 0
+                        else None
+                    )
+                ),
                 "activityType": activity_type,
                 "originZone": raw.get("originZone"),
                 "soldierId": str(raw.get("soldierId", "") or ""),

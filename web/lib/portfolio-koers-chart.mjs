@@ -82,7 +82,7 @@ function normalizeTpTrades(rows) {
     const realizedPnlUsd=finite(raw.realizedPnlUsd);
     const durationRaw=raw.durationMinutes;
     const durationMinutes=durationRaw===null||durationRaw===undefined||durationRaw===""?null:Math.max(0,Math.round(finite(durationRaw)));
-    return [{symbol,realizedPnlUsd,durationMinutes}];
+    return [{symbol,realizedPnlUsd,durationMinutes,realizedPnlVerified:raw.realizedPnlVerified!==false}];
   });
 }
 
@@ -120,6 +120,7 @@ export function normalizePortfolioKoersPayload(raw) {
           : Math.max(1,Math.floor(finite(row.count))),
         notionalUsd:finite(row.notionalUsd),
         realizedPnlUsd:finite(row.realizedPnlUsd),
+        realizedPnlVerified:row.realizedPnlVerified!==false,
         amountUsd:finite(row.amountUsd),
         trades:normalizeTpTrades(row.trades),
         entries,
@@ -174,7 +175,7 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
     ].map((value)=>String(value).toUpperCase()).filter(Boolean))).sort();
     const existingTrades=normalizeTpTrades(existing?.trades);
     const rawTrades=normalizeTpTrades(raw.trades);
-    const existingTradesAreRicher=existingTrades.some((trade)=>trade.durationMinutes!==null||Math.abs(finite(trade.realizedPnlUsd))>1e-12);
+    const existingTradesAreRicher=existingTrades.some((trade)=>trade.realizedPnlVerified!==false&&(trade.durationMinutes!==null||Math.abs(finite(trade.realizedPnlUsd))>1e-12));
     const trades=existingTradesAreRicher?existingTrades:(rawTrades.length?rawTrades:existingTrades);
     const entries=mergeEntryDetails(existing?.entries,raw.entries);
     if(!existing){
@@ -184,6 +185,7 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
         count:kind==="entry"&&entries.length?entries.length:kind==="tp"&&trades.length?trades.length:Math.max(1,Math.floor(finite(raw.count))),
         notionalUsd:finite(raw.notionalUsd),
         realizedPnlUsd:finite(raw.realizedPnlUsd),
+        realizedPnlVerified:raw.realizedPnlVerified!==false,
         amountUsd:finite(raw.amountUsd),
         originZones,soldierRoles,activityTypes,trades,entries,
       });
@@ -197,7 +199,8 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
       atMs:Math.min(Number(existing.atMs)||time*1000,Math.floor(finite(raw.atMs))||time*1000),
       count:kind==="entry"&&entries.length?entries.length:kind==="tp"&&trades.length?trades.length:Math.max(Math.max(1,Math.floor(finite(existing.count))),Math.max(1,Math.floor(finite(raw.count)))),
       notionalUsd:Math.max(Math.abs(finite(existing.notionalUsd)),Math.abs(finite(raw.notionalUsd))),
-      realizedPnlUsd:Math.abs(finite(raw.realizedPnlUsd))>Math.abs(finite(existing.realizedPnlUsd))?finite(raw.realizedPnlUsd):finite(existing.realizedPnlUsd),
+      realizedPnlUsd:raw.realizedPnlVerified!==false&&existing.realizedPnlVerified===false?finite(raw.realizedPnlUsd):existing.realizedPnlVerified!==false&&raw.realizedPnlVerified===false?finite(existing.realizedPnlUsd):Math.abs(finite(raw.realizedPnlUsd))>Math.abs(finite(existing.realizedPnlUsd))?finite(raw.realizedPnlUsd):finite(existing.realizedPnlUsd),
+      realizedPnlVerified:raw.realizedPnlVerified!==false||existing.realizedPnlVerified!==false,
       amountUsd:Math.abs(finite(raw.amountUsd))>Math.abs(finite(existing.amountUsd))?finite(raw.amountUsd):finite(existing.amountUsd),
       originZones,soldierRoles,activityTypes,trades,entries,
       source:preferRaw?String(raw.source||existing.source||""):String(existing.source||raw.source||""),

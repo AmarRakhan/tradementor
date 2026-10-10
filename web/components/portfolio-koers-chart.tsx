@@ -14,8 +14,8 @@ import { buildStrategyStatusCommandCenter, soldierOpenEventsFromManagedPositions
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
 type Zone={index:number;label:string;center:number;lower:number;upper:number;touches:number;atr:number;source:string};
 type EntryDetail={symbol:string;side:string;atMs:number;entryPrice:number|null;notionalUsd:number|null;marginUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
-type TpTrade={symbol:string;realizedPnlUsd:number;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null;marginUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
-type Marker={time:number;atMs:number;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];entries?:EntryDetail[];source?:string};
+type TpTrade={symbol:string;realizedPnlUsd:number;realizedPnlVerified?:boolean;durationMinutes:number|null;side?:"LONG"|"SHORT";entryPrice?:number|null;openedAtMs?:number|null;notionalUsd?:number|null;marginUsd?:number|null;activityType?:string;originZone?:number|null;soldierId?:string;soldierRole?:string;dcaNumber?:number|null;dcaDistancePercent?:number|null;anchorPrice?:number|null;triggerPrice?:number|null;fillQuantity?:number|null;orderId?:string;clientOrderId?:string;exchangeConfirmed?:boolean};
+type Marker={time:number;atMs:number;realizedPnlVerified?:boolean;kind?:string;side?:string;label?:string;count?:number;notionalUsd?:number;realizedPnlUsd?:number;amountUsd?:number;cashflowType?:string;originZones?:number[];soldierRoles?:string[];activityTypes?:string[];trades?:TpTrade[];entries?:EntryDetail[];source?:string};
 type Payload={timeframe:string;candles:Candle[];markers:Marker[];zones:Zone[];currentZone:number|null;cycleStartEquity:number|null;currentEquity:number|null;dayHigh:number|null;dayLow:number|null;snapshotAtMs:number|null;live:boolean;persistent:boolean;externalCashflowsSeparated:boolean;readOnly:boolean;ordersSent:number;source:string};
 type ZoneLayout={index:number;label:string;top:number;height:number;tone:"red"|"amber"|"green"|"blue"};
 type ZoneBoundaryLayout={price:number;top:number;kind:"regular"|"next-up"|"next-down";targetIndex:number|null};
@@ -27,7 +27,7 @@ type StructureOverlayLayout={
   newHigh:{left:number;top:number}|null;
   breakout:{left:number;top:number}|null;
 };
-type EventLabel={id:string;left:number;top:number;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number;realizedPnlUsd?:number;trades?:TpTrade[];entries?:EntryDetail[];markerTime?:number};
+type EventLabel={id:string;left:number;top:number;realizedPnlVerified?:boolean;position:"above"|"below";tone:"long"|"short"|"tp"|"cashflow"|"cluster";title:string;value:string;glyph?:string;multiplier?:string;compact?:boolean;eventCount?:number;anchorLeft?:number;anchorTop?:number;realizedPnlUsd?:number;trades?:TpTrade[];entries?:EntryDetail[];markerTime?:number};
 type SoldierActivityEvent={id:string;atMs:number;side:"LONG"|"SHORT";count:number;originZone:number|null;role?:string;source?:string};
 type PortfolioViewMode="performance"|"account"|"active";
 type ActiveTradesPayload={
@@ -254,7 +254,7 @@ function markerPresentation(row:Marker) {
     const label=side==="SHORT"?"S":"L";
     return {tone:(side==="SHORT"?"short":"long") as "short"|"long",glyph:side==="SHORT"?"down":"up",multiplier:`${label} ×${count}`,title:side==="SHORT"?"SHORT":"LONG",value:""};
   }
-  return {tone:"tp" as const,glyph:"money",multiplier:signedUsd(row.realizedPnlUsd),title:"Take Profit",value:""};
+  return {tone:"tp" as const,glyph:"money",multiplier:row.realizedPnlVerified===false?"—":signedUsd(row.realizedPnlUsd),title:"Take Profit",value:""};
 }
 
 function DirectionArrow({direction}:{direction:"up"|"down"}) {
@@ -1015,6 +1015,7 @@ export function PortfolioKoersChart({
           tone:copy.tone,title:copy.title,value:"",glyph:copy.glyph,multiplier:copy.multiplier,
           anchorLeft:Number(x),anchorTop:Number(y),markerTime:row.time,
           realizedPnlUsd:Number(row.realizedPnlUsd)||0,
+          realizedPnlVerified:row.realizedPnlVerified!==false,
           trades:Array.isArray(row.trades)?row.trades:[],
           entries:Array.isArray(row.entries)?row.entries:[],
           bandTop:upperY===null?null:Number(upperY),bandBottom:lowerY===null?null:Number(lowerY),
@@ -1134,7 +1135,7 @@ export function PortfolioKoersChart({
     setSelectedTpCluster(label);
     setTpDetailError("");
     const existing=Array.isArray(label.trades)?label.trades:[];
-    if(isTp&&existing.length>=expected&&existing.every((trade)=>trade.durationMinutes!==null))return;
+    if(isTp&&existing.length>=expected&&existing.every((trade)=>trade.durationMinutes!==null&&trade.realizedPnlVerified!==false))return;
     setTpDetailLoading(true);
     try{
       let activity:Record<string,unknown>|null=tradeActivityCacheRef.current;
@@ -1417,11 +1418,11 @@ export function PortfolioKoersChart({
       {selectedTpCluster?<div className="portfolio-koers-tp-detail-shell" data-reference={PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE}>
         {tpDetailConnectorStyle(selectedTpCluster)?<span className="portfolio-koers-tp-detail-leader" style={tpDetailConnectorStyle(selectedTpCluster)}/>:null}
         <section className="portfolio-koers-tp-detail" onDoubleClick={()=>setSelectedTpCluster(null)} aria-label={selectedTpCluster.tone==="tp"?"Take Profit details":"Entry-event details"}>
-          <header>{selectedTpCluster.tone==="tp"?<MoneyBagIcon/>:<DirectionArrow direction={selectedTpCluster.tone==="short"?"down":"up"}/>}<strong>{selectedTpCluster.tone==="tp"?<>Totaal gerealiseerd: <b>{signedUsd(selectedTpCluster.realizedPnlUsd)}</b></>:<>{selectedTpCluster.tone==="short"?"SHORT":"LONG"} · <b>{selectedTpCluster.eventCount||1} entry-events</b></>}</strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
+          <header>{selectedTpCluster.tone==="tp"?<MoneyBagIcon/>:<DirectionArrow direction={selectedTpCluster.tone==="short"?"down":"up"}/>}<strong>{selectedTpCluster.tone==="tp"?<>Totaal gerealiseerd: <b>{selectedTpCluster.realizedPnlVerified===false?"Niet bevestigd":signedUsd(selectedTpCluster.realizedPnlUsd)}</b></>:<>{selectedTpCluster.tone==="short"?"SHORT":"LONG"} · <b>{selectedTpCluster.eventCount||1} entry-events</b></>}</strong><button type="button" onClick={()=>setSelectedTpCluster(null)} aria-label="Sluiten">×</button></header>
           <div className="portfolio-koers-tp-trades">
             {(selectedTpCluster.trades||[]).map((trade,index)=><div className="portfolio-koers-tp-trade" key={`${trade.symbol}-${index}`}>
               <strong><CoinBadge symbol={trade.symbol}/><span>{String(trade.symbol||"").replace(/(?:USDT|USDC|BUSD|USD)$/,"")}{selectedTpCluster.tone!=="tp"&&["DCA","ADD"].includes(String(trade.activityType||"").toUpperCase())?<em>{String(trade.activityType).toUpperCase()}</em>:null}</span></strong>
-              {selectedTpCluster.tone==="tp"?<b>{signedUsd(trade.realizedPnlUsd)}</b>:<b title="Gebruikte margin">{trade.marginUsd?accountUsd(trade.marginUsd):"Margin niet beschikbaar"}</b>}
+              {selectedTpCluster.tone==="tp"?<b>{trade.realizedPnlVerified===false?"Niet bevestigd":signedUsd(trade.realizedPnlUsd)}</b>:<b title="Gebruikte margin">{trade.marginUsd?accountUsd(trade.marginUsd):"Margin niet beschikbaar"}</b>}
               <span>{selectedTpCluster.tone==="tp"?durationLabel(trade.durationMinutes):entryClock(trade.openedAtMs)}</span>
             </div>)}
             {tpDetailLoading?<div className="portfolio-koers-tp-empty loading">{selectedTpCluster.tone==="tp"?"Bevestigde fills laden…":"Bevestigde entries laden…"}</div>:null}
