@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8");
+const slot = fs.readFileSync(new URL("../components/aster-slot-overview.tsx", import.meta.url), "utf8");
 
 test("strategy maker reports current bot counts and never reuses stale slot balances", () => {
   assert.match(maker, /state\.longLegs \?\? rawReport\.activeLong/);
@@ -13,12 +14,13 @@ test("strategy maker reports current bot counts and never reuses stale slot bala
   assert.doesNotMatch(maker, /rawReport\.remainingShort \?\?/);
   assert.match(maker, /reportCurrent/);
   assert.match(maker, /rawReport\.scannedCandidateCount/);
-  assert.match(maker, /className="slot-overview"/);
-  assert.match(maker, /\{activeLong\} \/ \{longCapacity\}/);
-  assert.match(maker, /\{displayRemainingLong\} vrij/);
-  assert.match(maker, /\{activeShort\} \/ \{shortCapacity\}/);
-  assert.match(maker, /\{displayRemainingShort\} vrij/);
-  assert.match(maker, /\{totalActive\} \/ \{totalCapacity\}/);
+  assert.doesNotMatch(maker, /className="slot-overview"/);
+  assert.match(slot, /className="slot-overview"/);
+  assert.match(slot, /\{long\} \/ \{longCapacity\}/);
+  assert.match(slot, /\{freeLong\} vrij/);
+  assert.match(slot, /\{short\} \/ \{shortCapacity\}/);
+  assert.match(slot, /\{freeShort\} vrij/);
+  assert.match(slot, /\{total\} \/ \{totalCapacity\}/);
 });
 
 test("live toggle remains server/readiness gated", () => {
