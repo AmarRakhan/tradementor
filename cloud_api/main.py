@@ -5833,6 +5833,41 @@ def _verified_aster_daily_close_summary(client: AsterV3Client, user_ref: Any | N
     }
 
 
+
+def _persist_verified_full_closes(user: dict[str, Any], summary: dict[str, Any]) -> int:
+    """Materialize proven full closes in existing per-account Aster close ledger.
+
+    The old per-fill records remain untouched for legacy consumers. Distinct IDs
+    and a verifiedFullClose flag prevent partial fills from appearing as full closes.
+    """
+    if summary.get("reliable") is not True:
+        return 0
+    rows = summary.get("fullClosedTrades")
+    if not isinstance(rows, list):
+        return 0
+    collection = user_reference(user).collection("asterClosedTrades")
+    pending = []
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("fullyClosed") and row.get("closeKind") != "FULL_LEG_CLOSE":
+            continue
+        try:
+            closed_at = datetime.fromisoformat(str(row["closedAt"]).replace("Z", "+00:00")).astimezone(timezone.utc)
+        except (KeyError, TypeError, ValueError):
+            continue
+        identity = "|".join(str(row.get(k, "")) for k in ("symbol", "side", "openedAt", "closedAt", "exchangeOrderId", "exchangeTradeId"))
+        identifier = hashlib.sha256(("verified-full-close|" + identity).encode("utf-8")).hexdigest()
+        pending.append((collection.document(identifier), {
+            **row, "closedAt": closed_at, "verifiedFullClose": True,
+            "source": str(row.get("source") or "aster-verified-full-close"),
+        }))
+    for offset in range(0, len(pending), 400):
+        batch = db.batch()
+        for ref, payload in pending[offset:offset + 400]:
+            batch.set(ref, payload, merge=True)
+        batch.commit()
+    return len(pending)
+
+
 @app.get("/v1/me/aster/closed-trades/history")
 def aster_closed_trades_history_page(
     user: dict[str, Any] = Depends(authenticated_user),
@@ -5984,6 +6019,8 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
             fills.extend(row for row in rows if isinstance(row, dict))
         confirmed = closed_trades_from_fills(fills)
         closed_trade_summary_today = _verified_aster_daily_close_summary(client, user_reference(user))
+        if closed_trade_summary_today.get("reliable") is True:
+            _persist_verified_full_closes(user, closed_trade_summary_today)
         fresh_activity = recent_trade_activity_from_fills(
             fills, active_positions=active_positions, strategy_by_intent=strategy_by_intent,
             strategy_by_order_id=strategy_by_order_id,
