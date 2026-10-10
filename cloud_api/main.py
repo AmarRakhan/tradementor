@@ -5927,6 +5927,8 @@ def aster_closed_trades_history_page(
         "closedTrades": rows,
         "nextCursor": selected[-1].id if len(documents) > limit and selected else None,
         "hasMore": len(documents) > limit,
+        "historyCoverage": "VERIFIED_PERSISTED_ONLY",
+        "historicalBackfillComplete": False,
     }
 
 
