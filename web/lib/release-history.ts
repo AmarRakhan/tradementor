@@ -25,9 +25,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-10-10",
-  title: "Portfolio Koers winstzakjes direct opnieuw openen",
+  releasedAt: "2026-10-11",
+  title: "Slot-overzicht onder Actieve zone",
   newItems: [
+    "Build 597 verplaatst het bestaande Slot-overzicht van Botinstellingen naar direct onder Actieve zone en boven Portfolio Snapshot; alle botinstellingen en live trading blijven ongewijzigd.",
     "Build 596 hergebruikt reeds bevestigde marker-details direct bij opnieuw openen en voegt gelijktijdige detailaanvragen samen, zonder koers- of tradeaanpassing.",
     "Build 595 verrijkt historische instapmargin uitsluitend met de overeenkomende bevestigde uitvoeringsgegevens; de koersgrafiek en de winstzakjes blijven ongewijzigd.",
     "Build 594 onderscheidt niet-bevestigde winstbedragen van daadwerkelijk nulresultaat in de Portfolio Koers-markers, met een marginfallback op historisch vastgelegde notional en leverage.",
