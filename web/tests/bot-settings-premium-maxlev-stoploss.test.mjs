@@ -3,16 +3,19 @@ import fs from "node:fs";
 import test from "node:test";
 
 const maker = fs.readFileSync(new URL("../components/aster-strategy2-maker.tsx", import.meta.url), "utf8");
+const slot = fs.readFileSync(new URL("../components/aster-slot-overview.tsx", import.meta.url), "utf8");
+const chart = fs.readFileSync(new URL("../components/portfolio-koers-chart.tsx", import.meta.url), "utf8");
 const settingsRoute = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts", import.meta.url), "utf8");
 const tierRoute = fs.readFileSync(new URL("../app/api/exchanges/aster/strategy2/leverage-tiers/route.ts", import.meta.url), "utf8");
 const bridge = fs.readFileSync(new URL("../components/aster-profit-lock-ladder-bridge.tsx", import.meta.url), "utf8");
 
-test("Bot Settings uses the approved compact visual reference and one slot overview", () => {
+test("Bot Settings retains reference and Slot-overzicht is only rendered after active zone", () => {
   assert.ok(maker.includes("file_00000000d2ec81f4b0c6fe6b9befe97c"));
-  assert.ok(maker.includes('className="slot-overview"'));
-  assert.ok(maker.includes('className="slot-row long"'));
-  assert.ok(maker.includes('className="slot-row short"'));
-  assert.ok(maker.includes('className="slot-row total"'));
+  assert.equal(maker.includes('className="slot-overview"'), false);
+  assert.ok(slot.includes('className="slot-overview"'));
+  for (const side of ["long", "short", "total"]) assert.ok(slot.includes('className="slot-row ' + side + '"'));
+  assert.equal(chart.split('<AsterSlotOverview account={slotAccount}/>').length - 1, 1);
+  assert.ok(chart.indexOf('<ActiveZoneSeatBlock') < chart.indexOf('<AsterSlotOverview account={slotAccount}/>'));
   assert.equal(maker.includes('className="strategy-facts"'), false);
   assert.equal(maker.includes('className="strategy-message compact-scan"'), false);
 });
