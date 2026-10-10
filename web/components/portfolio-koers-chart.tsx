@@ -1126,7 +1126,7 @@ export function PortfolioKoersChart({
     const expected=Math.max(1,Number(label.eventCount)||1);
     const isTp=label.tone==="tp";
     const exactMarkerEntries=!isTp?markerEntryTrades(label.entries):[];
-    if(!isTp&&exactMarkerEntries.length===expected){
+    if(!isTp&&exactMarkerEntries.length===expected&&exactMarkerEntries.every((entry)=>Number(entry.marginUsd)>0)){
       setSelectedTpCluster({...label,trades:exactMarkerEntries});
       setTpDetailError("");
       setTpDetailLoading(false);
@@ -1156,10 +1156,23 @@ export function PortfolioKoersChart({
       const fallback=isTp
         ? tpTradesForBucketFromActivity(activity||{},timeframe,Number(label.markerTime)) as TpTrade[]
         : entryTradesForBucketFromActivity(activity||{},timeframe,Number(label.markerTime),label.tone==="short"?"SHORT":"LONG");
-      const trades=!isTp&&exactMarkerEntries.length?exactMarkerEntries:fallback;
+      const trades=!isTp&&exactMarkerEntries.length
+        ? exactMarkerEntries.map((entry)=>{
+            if(Number(entry.marginUsd)>0)return entry;
+            const match=fallback.find((candidate)=>{
+              if(candidate.symbol!==entry.symbol||candidate.side!==entry.side)return false;
+              const sameOrder=Boolean(entry.orderId&&candidate.orderId&&entry.orderId===candidate.orderId);
+              const sameClientOrder=Boolean(entry.clientOrderId&&candidate.clientOrderId&&entry.clientOrderId===candidate.clientOrderId);
+              const sameExecution=Boolean(entry.openedAtMs&&candidate.openedAtMs&&Math.abs(entry.openedAtMs-candidate.openedAtMs)<=1000);
+              return sameOrder||sameClientOrder||sameExecution;
+            });
+            return match&&Number(match.marginUsd)>0?{...entry,marginUsd:match.marginUsd}:entry;
+          })
+        :fallback;
       setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades}:current);
       if(!trades.length)setTpDetailError(isTp?"Geen bevestigde fillregels voor dit cluster gevonden.":"Geen bevestigde entryregels voor dit cluster gevonden.");
       else if(!isTp&&trades.length!==expected)setTpDetailError(`Cluster verwacht ${expected} bevestigde entries, maar ${trades.length} detailregels zijn beschikbaar.`);
+      else if(!isTp&&trades.some((trade)=>!(Number(trade.marginUsd)>0)))setTpDetailError("Historische instapmargin niet bevestigd; huidige positiemargin kan afwijken.");
     }catch(reason){
       if(!isTp&&exactMarkerEntries.length){
         setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades:exactMarkerEntries}:current);

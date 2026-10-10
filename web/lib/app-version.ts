@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 595: Historische LONG/SHORT-marker vult ontbrekende margin uitsluitend aan vanuit overeenkomende uitvoeringsgegevens.
 // Build 594: Portfolio Koers markerdetails: geverifieerde winst en historische marge; koers blijft ongewijzigd.
 // Build 593: global position cap in prijszone-stoelen persists across reload, with server save acknowledgment.
 // Build 592: Aster-only automatic exchange refresh; Hyperliquid manual/history preserved.
@@ -20,7 +21,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "594";
+export const WEBAPP_BUILD_NUMBER = "595";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
