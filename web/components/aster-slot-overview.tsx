@@ -9,8 +9,11 @@ const capacity = (value: unknown, fallback: number) => Math.max(0, Math.round(nu
  * Never persists settings and never submits orders. */
 export function AsterSlotOverview({ account }: { account: unknown }) {
   const root = object(account);
-  const payload = Object.keys(object(root.data)).length ? object(root.data) : root;
-  const strategy = object(payload.strategy2);
+  // Same nested account-shape selection as the existing Portfolio Koers advisor.
+  const sources = [root, object(root.data), object(root.snapshot), object(root.account)];
+  const payload = sources.find(source => Array.isArray(source.positions)) ?? root;
+  const strategySource = sources.find(source => Object.keys(object(source.strategy2)).length > 0) ?? root;
+  const strategy = object(strategySource.strategy2);
   const settings = object(strategy.settings);
   const report = Object.keys(object(strategy.multiBb)).length ? object(strategy.multiBb) : object(strategy.multiBbReport);
   const state = strategy;
