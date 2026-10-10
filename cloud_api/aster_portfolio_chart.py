@@ -637,7 +637,13 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
                     "atMs": stamp,
                     "entryPrice": entry_price if entry_price > 0 else None,
                     "notionalUsd": abs(_number(raw.get("executedNotionalUsd", raw.get("notionalUsd")))) or None,
-                    "marginUsd": abs(_number(raw.get("marginUsd", raw.get("executedMarginUsd", raw.get("initialMarginUsd"))))) or None,
+                    "marginUsd": (
+                        abs(_number(raw.get("marginUsd", raw.get("executedMarginUsd", raw.get("initialMarginUsd")))))
+                        or (
+                            abs(_number(raw.get("executedNotionalUsd", raw.get("notionalUsd")))) / abs(_number(raw.get("leverage")))
+                            if abs(_number(raw.get("leverage"))) > 0 else None
+                        )
+                    ),
                     "activityType": str(raw.get("activityType", "ENTRY") or "ENTRY").upper().strip(),
                     "originZone": raw.get("originZone"),
                     "soldierId": str(raw.get("soldierId", "") or ""),
