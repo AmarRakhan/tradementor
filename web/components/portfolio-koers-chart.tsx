@@ -557,6 +557,9 @@ export function PortfolioKoersChart({
 
   const loadAdvisor=useCallback(async()=>{
     try{
+      // Existing authenticated Aster account contract; fetch once for all users.
+      const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
+      setSlotAccount(account);
       const release=record(await authenticatedRequest("/api/releases/me",{cache:"no-store"}));
       const features=record(release.features);
       const zoneFeature=record(features.zone_soldiers);
@@ -567,9 +570,6 @@ export function PortfolioKoersChart({
       setAdvisorEnabled(strategyAccess);
       setCommandCenterAvailable(commandCenterAccess);
       setActiveTradesAvailable(activeTradesFeature.enabled===true);
-      // Reuse this existing account-scoped request for both advisor and slot overview.
-      const account=await authenticatedRequest("/api/exchanges/aster",{cache:"no-store"});
-      setSlotAccount(account);
       if(strategyAccess){
         const nextAdvisor=advisorSeatsFromPayload(account);
         setAdvisorSeats(nextAdvisor);
@@ -1487,7 +1487,7 @@ export function PortfolioKoersChart({
       <span className="portfolio-koers-ui41-info" title="Bollinger Band 20,2 · actieve zone uit live portfolio-equity">i</span>
     </div>
     <div className="portfolio-koers-active-zone-seat" data-reference="file_00000000796c8210aa150351316f20d1"><ActiveZoneSeatBlock summary={activeZoneSeatSummary ?? null} liveActiveZone={activeZoneSeatLiveZone ?? null} /></div>
-    <div className="portfolio-koers-slot-overview strategy-two-card botsettings-ref" data-reference="file_000000001f04821098b8a75dea2c4fa3">{slotAccount !== null && <AsterSlotOverview account={slotAccount}/>}</div>
+    <div className="portfolio-koers-slot-overview strategy-two-card botsettings-ref" data-reference="file_000000001f04821098b8a75dea2c4fa3">{slotAccount !== null ? <AsterSlotOverview account={slotAccount}/> : <section className="slot-overview" aria-label="Slot-overzicht"><header><b>Slot-overzicht</b><small> · Accountgegevens worden geladen</small></header></section>}</div>
     {viewMode==="active"?<section className="portfolio-koers-active-summary" aria-label="Actieve Trades Samenvatting">
       <h3>Actieve Trades Samenvatting</h3>
       <div className="portfolio-koers-active-summary-grid">
