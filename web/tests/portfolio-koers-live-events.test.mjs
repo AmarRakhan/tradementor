@@ -66,7 +66,9 @@ test("Build 514 keeps the exact Strategy-2 audit rows behind a merged LONG/SHORT
 test("Build 514 opens entry clusters from marker-owned details before using the old activity fallback",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("const exactMarkerEntries=!isTp?markerEntryTrades(label.entries):[]"));
-  assert.ok(component.includes("if(!isTp&&exactMarkerEntries.length===expected)"));
+  assert.ok(component.includes("if(!isTp&&exactMarkerEntries.length===expected&&exactMarkerEntries.every((entry)=>Number(entry.marginUsd)>0))"));
+  assert.ok(component.includes("const sameOrder=Boolean(entry.orderId"));
+  assert.ok(component.includes("marginUsd:match.marginUsd"));
   assert.ok(component.includes("setSelectedTpCluster({...label,trades:exactMarkerEntries})"));
   assert.ok(component.includes("entries:Array.isArray(row.entries)?row.entries:[]"));
 });
