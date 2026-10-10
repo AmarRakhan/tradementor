@@ -26,6 +26,7 @@ class ClosedTradesHistoryContractTests(unittest.TestCase):
         self.assertIn('summary.get("reliable") is not True', handler)
         self.assertIn('_aster_closed_trades_cache.get(uid)', handler)
         self.assertIn('time.monotonic() - cached[0] < 120.0', handler)
+        self.assertIn('summary.get("dayStartAt") != day_start.isoformat()', handler)
     def test_no_account_cross_reference(self):
         self.assertIn('collection.document(cursor).get()', handler)
         self.assertNotIn('user_reference(other_user)', handler)
