@@ -760,7 +760,7 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
             "count": 0,
             "notionalUsd": 0.0,
             "realizedPnlUsd": 0.0,
-            "realizedPnlVerified": False,
+            "realizedPnlVerified": True,
             "source": "strategy2-confirmed-audit",
             "activityTypes": [],
         })
@@ -770,7 +770,7 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         if kind == "tp":
             realized=_number(raw.get("realizedPnlUsd", raw.get("realizedPnl", raw.get("pnl"))))
             group["realizedPnlUsd"] += realized
-            group["realizedPnlVerified"] = group["realizedPnlVerified"] or any(
+            group["realizedPnlVerified"] = group["realizedPnlVerified"] and any(
                 raw.get(field) is not None
                 for field in ("realizedPnlUsd", "realizedPnl", "pnl")
             )
