@@ -606,3 +606,101 @@ def test_build569_historical_attribution_never_uses_current_settings_for_margin(
     block = source[start:end]
     assert "configured_margin" not in block
     assert 'item.get("marginUsd", item.get("executedMarginUsd"))' in block
+
+def test_build597_mixed_profit_bucket_requires_every_fill_to_have_pnl_evidence():
+    rows = [
+        {"event": "FULL_TP", "timestampMs": 61_000, "symbol": "BTCUSDT", "side": "LONG",
+         "orderId": "close-profit", "exchangeConfirmed": True, "realizedPnlUsd": 2.5},
+        {"event": "FULL_TP", "timestampMs": 62_000, "symbol": "ETHUSDT", "side": "LONG",
+         "orderId": "close-missing", "exchangeConfirmed": True},
+    ]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert len(markers) == 1
+    assert markers[0]["count"] == 2
+    assert markers[0]["realizedPnlVerified"] is False
+    assert markers[0]["trades"][0]["realizedPnlVerified"] is True
+    assert markers[0]["trades"][1]["realizedPnlVerified"] is False
+
+
+def test_build597_exchange_confirmed_zero_is_not_missing_profit():
+    rows = [{"event": "FULL_TP", "timestampMs": 61_000, "symbol": "BTCUSDT",
+             "side": "LONG", "orderId": "close-zero", "exchangeConfirmed": True,
+             "realizedPnlUsd": 0.0}]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert markers[0]["realizedPnlVerified"] is True
+    assert markers[0]["realizedPnlUsd"] == 0.0
+
+def test_build597_historical_order_attribution_passes_recorded_execution_basis():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index("def _portfolio_chart_order_attribution_rows")
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart/events")', start)
+    block = source[start:end]
+    assert '"executedNotionalUsd": safe_float(item.get(' in block
+    assert '"leverage": safe_float(item.get(' in block
+    assert "configuredMarginUsd" not in block
+
+def test_build597_historical_margin_writer_must_not_be_assumed_to_store_leverage():
+    """Document present limitation: provenance reader cannot invent missing execution fields."""
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index("def _record_aster_order_attribution(")
+    end = source.index("def _configured_universe_contract(", start)
+    block = source[start:end]
+    assert '"orderId":order_id' in block
+    assert '"recordedAt":datetime.now(timezone.utc)' in block
+    # Missing historical values require a separate exchange-proven enrichment,
+    # never today's position margin or current bot configuration.
+    assert '"marginUsd":' not in block
+    assert '"leverage":' not in block
+    assert '"executedNotionalUsd":' not in block
+
+def test_build597_missing_realized_pnl_in_confirmed_fill_is_not_verified_zero():
+    activity = {"entries": [], "exits": [
+        {"timestampMs": 61_000, "symbol": "BTCUSDT", "side": "LONG",
+         "quantity": 1, "orderId": "close-without-pnl"},
+    ]}
+    markers = aggregate_trade_activity(activity, "1m")
+    assert markers[0]["realizedPnlVerified"] is False
+    assert markers[0]["trades"][0]["realizedPnlVerified"] is False
+
+
+def test_build597_zero_realized_pnl_in_confirmed_fill_is_verified_zero():
+    activity = {"entries": [], "exits": [
+        {"timestampMs": 61_000, "symbol": "BTCUSDT", "side": "LONG",
+         "quantity": 1, "realizedPnlUsd": 0.0},
+    ]}
+    markers = aggregate_trade_activity(activity, "1m")
+    assert markers[0]["realizedPnlVerified"] is True
+    assert markers[0]["trades"][0]["realizedPnlVerified"] is True
+
+def test_build597_historical_entry_margin_uses_recorded_execution_basis():
+    rows = [{"event": "OPEN_LEG", "timestampMs": 61_000, "symbol": "PENGUUSDT",
+             "side": "LONG", "orderId": "pengu-entry-1",
+             "exchangeConfirmed": True, "executedNotionalUsd": 24.0,
+             "leverage": 12}]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert markers[0]["entries"][0]["marginUsd"] == 2.0
+
+
+def test_build597_historical_entry_margin_is_missing_without_original_leverage():
+    rows = [{"event": "OPEN_LEG", "timestampMs": 61_000, "symbol": "SNDKUSDT",
+             "side": "LONG", "orderId": "sndk-entry-1",
+             "exchangeConfirmed": True, "executedNotionalUsd": 24.0}]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert markers[0]["entries"][0]["marginUsd"] is None
+
+def test_build597_fill_history_margin_uses_recorded_notional_and_leverage():
+    activity = {"entries": [
+        {"timestampMs": 61_000, "symbol": "PENGUUSDT", "side": "LONG",
+         "quantity": 12, "executedNotionalUsd": 24.0, "leverage": 12},
+    ], "exits": []}
+    rows = aggregate_trade_activity(activity, "1m")
+    assert rows[0]["entries"][0]["marginUsd"] == 2.0
+
+
+def test_build597_fill_history_never_invents_margin_without_leverage():
+    activity = {"entries": [
+        {"timestampMs": 61_000, "symbol": "SNDKUSDT", "side": "LONG",
+         "quantity": 12, "executedNotionalUsd": 24.0},
+    ], "exits": []}
+    rows = aggregate_trade_activity(activity, "1m")
+    assert rows[0]["entries"][0]["marginUsd"] is None
