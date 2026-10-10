@@ -13,7 +13,7 @@ export function AsterSlotOverview({ account }: { account: unknown }) {
   const strategy = object(payload.strategy2);
   const settings = object(strategy.settings);
   const report = Object.keys(object(strategy.multiBb)).length ? object(strategy.multiBb) : object(strategy.multiBbReport);
-  const state = object(strategy.state);
+  const state = strategy;
   const zoneSettings = object(settings.priceZoneSeats);
   const zoneEnabled = Object.keys(zoneSettings).length ? zoneSettings.enabled === true : settings.zoneSoldiersEnabled === true;
 
@@ -35,7 +35,7 @@ export function AsterSlotOverview({ account }: { account: unknown }) {
   const freeLong = settings.smartRescueEnabled === true ? Math.max(0, globalCap - long) : zoneEnabled ? (zoneLongEnabled ? freeGlobal : 0) : Math.max(0, configuredLong - long);
   const freeShort = settings.smartRescueEnabled === true ? 0 : zoneEnabled ? (zoneShortEnabled ? freeGlobal : 0) : Math.max(0, configuredShort - short);
   const fill = (used: number, max: number) => max > 0 ? Math.min(100, used / max * 100) : 0;
-  const reportCurrent = numeric(report.configVersion, -1) === numeric(state.configVersion ?? settings.version ?? strategy.version, -2);
+  const reportCurrent = numeric(report.configVersion, -1) === numeric(state.configVersion ?? settings.version, -2);
   const candidates = reportCurrent ? capacity(report.candidateCount, 0) : 0;
 
   return <><section className="slot-overview" aria-label="Slot-overzicht">
