@@ -1148,6 +1148,7 @@ export function AsterPortfolioSnapshotEnhancer() {
     const uid = user?.uid ?? null;
     if (snapshotUserRef.current === uid) return;
     snapshotUserRef.current = uid;
+    setClosedHistoryMode(null);
     lastConfirmedAtRef.current = null;
     valuesRef.current = EMPTY;
     setValues(EMPTY);
