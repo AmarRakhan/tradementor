@@ -671,3 +671,19 @@ def test_build597_zero_realized_pnl_in_confirmed_fill_is_verified_zero():
     markers = aggregate_trade_activity(activity, "1m")
     assert markers[0]["realizedPnlVerified"] is True
     assert markers[0]["trades"][0]["realizedPnlVerified"] is True
+
+def test_build597_historical_entry_margin_uses_recorded_execution_basis():
+    rows = [{"event": "OPEN_LEG", "timestampMs": 61_000, "symbol": "PENGUUSDT",
+             "side": "LONG", "orderId": "pengu-entry-1",
+             "exchangeConfirmed": True, "executedNotionalUsd": 24.0,
+             "leverage": 12}]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert markers[0]["entries"][0]["marginUsd"] == 2.0
+
+
+def test_build597_historical_entry_margin_is_missing_without_original_leverage():
+    rows = [{"event": "OPEN_LEG", "timestampMs": 61_000, "symbol": "SNDKUSDT",
+             "side": "LONG", "orderId": "sndk-entry-1",
+             "exchangeConfirmed": True, "executedNotionalUsd": 24.0}]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert markers[0]["entries"][0]["marginUsd"] is None
