@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One-off, bounded, read-only Google Cloud Billing service-cost attribution."""
 import json
+from decimal import Decimal, InvalidOperation
 import os
 import re
 import sys
@@ -78,16 +79,22 @@ LIMIT 100
     print("Cost by service/month, raw usage charges and credits, no tax reconciliation")
     totals = {}
     rows = result.get("rows") or []
+    skipped = 0
     for row in rows:
         cells = row.get("f") or []
         if len(cells) != 4:
             continue
         month, service, gross, credits = [str(x.get("v") if x.get("v") is not None else "") for x in cells]
         service = " ".join(service.split())[:75].replace("|", "/")
-        gross_value = float(gross)
-        credit_value = float(credits or 0)
+        try:
+            gross_value = float(Decimal(gross))
+            credit_value = float(Decimal(credits)) if credits else 0.0
+        except (InvalidOperation, ValueError, TypeError):
+            skipped += 1
+            continue
         totals[month] = totals.get(month, 0) + gross_value + credit_value
         print(f"{month} | {service} | gross {gross_value:.2f} | credits {credit_value:.2f} | net {gross_value + credit_value:.2f}")
+    print(f"SKIPPED_UNPARSABLE_ROWS {skipped}")
     if not rows:
         print("NO_COST_ROWS_AVAILABLE")
     for month, total in sorted(totals.items()):
