@@ -1,5 +1,10 @@
 import { proxyCloud } from "@/lib/cloud-proxy";
 
 export async function GET(request: Request) {
-  return proxyCloud(request, "/v1/me/aster/closed-trades/history", "GET");
+  const incoming = new URL(request.url).searchParams;
+  const params = new URLSearchParams();
+  if (incoming.has("limit")) params.set("limit", incoming.get("limit") ?? "");
+  if (incoming.has("cursor")) params.set("cursor", incoming.get("cursor") ?? "");
+  const query = params.toString();
+  return proxyCloud(request, `/v1/me/aster/closed-trades/history${query ? `?${query}` : ""}`, "GET");
 }
