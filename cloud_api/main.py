@@ -5856,7 +5856,10 @@ def _persist_verified_full_closes(user: dict[str, Any], summary: dict[str, Any])
             continue
         identity = "|".join(str(row.get(k, "")) for k in ("symbol", "side", "openedAt", "closedAt", "exchangeOrderId", "exchangeTradeId"))
         identifier = hashlib.sha256(("verified-full-close|" + identity).encode("utf-8")).hexdigest()
-        pending.append((collection.document(identifier), {
+        document_ref = collection.document(identifier)
+        if document_ref.get().exists:
+            continue  # Stable verified identity: do not rewrite existing history every refresh.
+        pending.append((document_ref, {
             **row, "closedAt": closed_at, "verifiedFullClose": True,
             "source": str(row.get("source") or "aster-verified-full-close"),
         }))
