@@ -30,6 +30,7 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
     const sorted = uniqueClosedTrades(rows);
     return mode === "today" ? sorted.filter(row => { const ms = closedTradeTime(row); return ms !== null && dayKey(ms) === today; }) : sorted;
   }, [mode, rows, today]);
+  const expectedTodayCount = /^\\d+$/.test(todayCount.trim()) ? Number(todayCount) : null;
   const reachedYesterday = mode === "today" && rows.some(row => {
     const ms = closedTradeTime(row);
     return ms !== null && dayKey(ms) < today;
@@ -77,6 +78,7 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
         <div className="aps-closed-face aps-closed-back">
           <header><div><small>✦ AMAR · TRADE HISTORIE</small><h2>{mode === "all" ? "Gesloten resultaat" : "Trades gesloten vandaag"}</h2><p>Nieuwste eerst · {mode === "all" ? "Volledige historie" : "Alleen vandaag"}</p></div><button type="button" aria-label="Sluiten" onClick={onClose}>×</button></header>
           {mode === "today" ? <div className="aps-closed-summary"><span>Gesloten vandaag <strong>{todayCount}</strong></span><span>Resultaat <strong>{todayTotal}</strong></span></div> : null}
+          {mode === "today" && (reachedYesterday || !hasMore) && !loading && expectedTodayCount !== null && expectedTodayCount !== showRows.length ? <p role="alert" className="aps-closed-message">Historische registratie is nog niet gelijk aan de centrale dagtelling ({showRows.length} geregistreerde sluitingen versus {expectedTodayCount} volledig gesloten trades). De gegevens worden niet als overeenkomend gepresenteerd.</p> : null}
           <div className="aps-closed-scroll">
             {showRows.map(row => {
               const close = closedTradeTime(row);
