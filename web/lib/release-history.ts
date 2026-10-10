@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-10",
-  title: "Positielimiet prijszone-stoelen blijft opgeslagen",
+  title: "Portfolio Koers winstzakjes en historische entry-margin",
   newItems: [
+    "Build 594 onderscheidt niet-bevestigde winstbedragen van daadwerkelijk nulresultaat in de Portfolio Koers-markers, met een marginfallback op historisch vastgelegde notional en leverage.",
     "Build 593 bewaart de globale positielimiet bij actieve prijszone-stoelen onafhankelijk van de oude LONG/SHORT-slots en bevestigt de opgeslagen waarde via de server.",
     "Build 592 vervangt uitsluitend de automatische Hyperliquid- en Aster-duoverversing door Aster-only, bij appstart, zichtbaarheid en minuutinterval.",
     "Hyperliquid blijft beschikbaar bij expliciet gebruik en in bestaande historie/API-routes; Aster-accountgegevens, realtime, scanner en handelslogica blijven ongewijzigd.",
