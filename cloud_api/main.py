@@ -5846,7 +5846,7 @@ def _persist_verified_full_closes(user: dict[str, Any], summary: dict[str, Any])
     if not isinstance(rows, list):
         return 0
     collection = user_reference(user).collection("asterClosedTrades")
-    pending = []
+    candidates = {}
     for row in rows:
         if not isinstance(row, dict) or row.get("fullyClosed") is not True:
             continue
@@ -5856,19 +5856,26 @@ def _persist_verified_full_closes(user: dict[str, Any], summary: dict[str, Any])
             continue
         identity = "|".join(str(row.get(k, "")) for k in ("symbol", "side", "openedAt", "closedAt", "exchangeOrderId", "exchangeTradeId"))
         identifier = hashlib.sha256(("verified-full-close|" + identity).encode("utf-8")).hexdigest()
-        document_ref = collection.document(identifier)
-        if document_ref.get().exists:
-            continue  # Stable verified identity: do not rewrite existing history every refresh.
-        pending.append((document_ref, {
+        candidates[identifier] = {
             **row, "closedAt": closed_at, "verifiedFullClose": True,
             "source": str(row.get("source") or "aster-verified-full-close"),
-        }))
+        }
+    pending = [(collection.document(identifier), payload) for identifier, payload in candidates.items()]
+    inserted = 0
     for offset in range(0, len(pending), 400):
+        group = pending[offset:offset + 400]
+        # Batch-read existing IDs instead of issuing one Firestore read per
+        # trade: same account ledger, no duplicate writes on refresh.
+        existing = {snap.id for snap in db.get_all([ref for ref, _ in group]) if snap.exists}
+        missing = [(ref, payload) for ref, payload in group if ref.id not in existing]
+        if not missing:
+            continue
         batch = db.batch()
-        for ref, payload in pending[offset:offset + 400]:
+        for ref, payload in missing:
             batch.set(ref, payload, merge=True)
         batch.commit()
-    return len(pending)
+        inserted += len(missing)
+    return inserted
 
 
 @app.get("/v1/me/aster/closed-trades/history")
