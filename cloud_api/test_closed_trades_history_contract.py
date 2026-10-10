@@ -48,6 +48,10 @@ class ClosedTradesHistoryContractTests(unittest.TestCase):
         self.assertIn('last_document.get("verifiedFullClose") is not True', handler)
         self.assertIn('Cursor buiten de geselecteerde dag', handler)
         self.assertIn('query.start_after(last_document)', handler)
+    def test_optional_history_persist_does_not_break_snapshot(self):
+        callsite = source[source.index('closed_trade_summary_today = _verified_aster_daily_close_summary('):]
+        self.assertIn('try:\n                _persist_verified_full_closes(user, closed_trade_summary_today)', callsite)
+        self.assertIn('except Exception:', callsite)
     def test_no_account_cross_reference(self):
         self.assertIn('collection.document(cursor).get()', handler)
         self.assertNotIn('user_reference(other_user)', handler)
