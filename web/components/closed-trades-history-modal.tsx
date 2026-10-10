@@ -14,7 +14,7 @@ export type ClosedHistoryMode = "all" | "today";
 
 const numeric = (value: unknown): number | null => value == null || value === "" || !Number.isFinite(Number(value)) ? null : Number(value);
 const currency = (value: number | null) => value === null ? "Niet beschikbaar" : `US$ ${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(value))}`;
-const dayKey = (ms: number) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit" }).format(ms);
+const dayKey = (ms: number) => { const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(ms); const get = (name: string) => parts.find(part => part.type === name)?.value ?? ""; return `${get("year")}-${get("month")}-${get("day")}`; };
 const duration = (ms: number | null) => ms === null ? "Niet beschikbaar" : ms >= 86_400_000 ? `${Math.floor(ms / 86_400_000)}d ${Math.floor(ms % 86_400_000 / 3_600_000)}u` : ms >= 3_600_000 ? `${Math.floor(ms / 3_600_000)}u ${Math.floor(ms % 3_600_000 / 60_000)}m` : `${Math.floor(ms / 60_000)}m`;
 const closedWhen = (ms: number | null) => ms === null ? "Tijd onbekend" : new Intl.DateTimeFormat("nl-NL", { timeZone: "Europe/Amsterdam", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(ms);
 
