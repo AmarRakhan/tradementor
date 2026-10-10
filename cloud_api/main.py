@@ -5880,30 +5880,17 @@ def aster_closed_trades_history_page(
     No exchange API calls. The cursor points to a document in the authenticated
     user's OWN collection and cannot grant access to another account.
     """
+    collection = user_reference(user).collection("asterClosedTrades")
+    query = collection.where("verifiedFullClose", "==", True).order_by(
+        "closedAt", direction=firestore.Query.DESCENDING
+    )
     if scope == "today":
-        # Reuse the exact same verified full-position/leg closure summary as
-        # the front-side counter. No exchange requests or alternative counting.
-        uid = str(user["uid"])
-        with _cache_lock:
-            cached = _aster_closed_trades_cache.get(uid)
-        summary = cached[4] if cached and time.monotonic() - cached[0] < 120.0 else None
         local_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Amsterdam"))
         day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        if (not isinstance(summary, dict) or summary.get("reliable") is not True
-                or summary.get("dayStartAt") != day_start.isoformat()):
-            raise HTTPException(status_code=503, detail="Bevestigde daghistorie is tijdelijk niet beschikbaar")
-        if cursor:
-            raise HTTPException(status_code=400, detail="Vandaag gebruikt geen historische cursor")
-        rows = summary.get("fullClosedTrades")
-        if not isinstance(rows, list):
-            raise HTTPException(status_code=503, detail="Bevestigde daghistorie ontbreekt")
-        # Existing authoritative verifier already sorts its full closes.
-        return {"closedTrades": rows, "nextCursor": None, "hasMore": False,
-                "verifiedCount": summary.get("closedTrades"),
-                "verifiedRealizedPnlUsd": summary.get("realizedPnlUsd"),
-                "method": summary.get("method")}
-    collection = user_reference(user).collection("asterClosedTrades")
-    query = collection.order_by("closedAt", direction=firestore.Query.DESCENDING)
+        day_end = day_start + timedelta(days=1)
+        query = query.where("closedAt", ">=", day_start.astimezone(timezone.utc)).where(
+            "closedAt", "<", day_end.astimezone(timezone.utc)
+        )
     if cursor:
         if not re.fullmatch(r"[a-f0-9]{64}", cursor):
             raise HTTPException(status_code=400, detail="Invalid closed-trades cursor")
