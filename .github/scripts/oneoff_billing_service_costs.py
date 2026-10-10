@@ -45,20 +45,20 @@ def main():
         print("STANDARD_EXPORT_TABLE_NOT_VISIBLE")
         return 2
     sql = """
-SELECT FORMAT_DATE('%%Y-%%m', DATE(usage_start_time)) AS month,
+SELECT CAST(DATE(usage_start_time) AS STRING) AS usage_day,
        service.description AS service,
        ROUND(SUM(cost), 2) AS gross,
        ROUND(SUM(IFNULL((SELECT SUM(credit.amount)
              FROM UNNEST(credits) AS credit), 0)), 2) AS credits
 FROM `%s.%s.%s`
 WHERE DATE(usage_start_time) BETWEEN '2026-09-01' AND '2026-10-10'
-GROUP BY month, service
-ORDER BY month DESC, gross DESC
-LIMIT 100
+GROUP BY usage_day, service
+ORDER BY usage_day DESC, gross DESC
+LIMIT 500
 """ % (PROJECT, DATASET, table)
     payload = {
         "query": sql, "useLegacySql": False, "maximumBytesBilled": str(CAP_BYTES),
-        "useQueryCache": True, "timeoutMs": 30000, "maxResults": 100, "location": "EU"
+        "useQueryCache": False, "timeoutMs": 30000, "maxResults": 500, "location": "EU"
     }
     result = api_json(API + PROJECT + "/queries", token, payload)
     if not result.get("jobComplete", False):
@@ -76,15 +76,18 @@ LIMIT 100
         print("QUERY_STILL_RUNNING_NO_RESULTS")
         return 4
     print("COST_AUDIT_ONE_TIME | PERIOD 2026-09-01..2026-10-10 | BILLING_CURRENCY EUR")
-    print("Cost by service/month, raw usage charges and credits, no tax reconciliation")
+    print("Cost by usage day/service, raw usage charges and credits; no tax reconciliation; October only if exported")
     totals = {}
+    latest_day = ""
+    earliest_day = "9999-99-99"
+    october_rows = 0
     rows = result.get("rows") or []
     skipped = 0
     for row in rows:
         cells = row.get("f") or []
         if len(cells) != 4:
             continue
-        month, service, gross, credits = [str(x.get("v") if x.get("v") is not None else "") for x in cells]
+        usage_day, service, gross, credits = [str(x.get("v") if x.get("v") is not None else "") for x in cells]
         service = " ".join(service.split())[:75].replace("|", "/")
         try:
             gross_value = float(Decimal(gross))
@@ -92,8 +95,15 @@ LIMIT 100
         except (InvalidOperation, ValueError, TypeError):
             skipped += 1
             continue
+        month = usage_day[:7]
+        latest_day = max(latest_day, usage_day)
+        earliest_day = min(earliest_day, usage_day)
+        october_rows += int(month == "2026-10")
         totals[month] = totals.get(month, 0) + gross_value + credit_value
-        print(f"{month} | {service} | gross {gross_value:.2f} | credits {credit_value:.2f} | net {gross_value + credit_value:.2f}")
+        print(f"{usage_day} | {service} | gross {gross_value:.2f} | credits {credit_value:.2f} | net {gross_value + credit_value:.2f}")
+    print(f"COVERAGE_FIRST_DAY {earliest_day if rows else 'NONE'}")
+    print(f"COVERAGE_LAST_DAY {latest_day or 'NONE'}")
+    print(f"OCTOBER_SERVICE_DAY_ROWS {october_rows}")
     print(f"SKIPPED_UNPARSABLE_ROWS {skipped}")
     if not rows:
         print("NO_COST_ROWS_AVAILABLE")
