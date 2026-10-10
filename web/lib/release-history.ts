@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-10",
-  title: "Portfolio Koers LONG/SHORT historische margin",
+  title: "Portfolio Koers winstzakjes direct opnieuw openen",
   newItems: [
+    "Build 596 hergebruikt reeds bevestigde marker-details direct bij opnieuw openen en voegt gelijktijdige detailaanvragen samen, zonder koers- of tradeaanpassing.",
     "Build 595 verrijkt historische instapmargin uitsluitend met de overeenkomende bevestigde uitvoeringsgegevens; de koersgrafiek en de winstzakjes blijven ongewijzigd.",
     "Build 594 onderscheidt niet-bevestigde winstbedragen van daadwerkelijk nulresultaat in de Portfolio Koers-markers, met een marginfallback op historisch vastgelegde notional en leverage.",
     "Build 593 bewaart de globale positielimiet bij actieve prijszone-stoelen onafhankelijk van de oude LONG/SHORT-slots en bevestigt de opgeslagen waarde via de server.",
