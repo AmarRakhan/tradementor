@@ -495,6 +495,9 @@ export function PortfolioKoersChart({
   const candleDataRef=useRef<Candle[]>([]);
   const markerRowsRef=useRef<Marker[]>([]);
   const tradeActivityCacheRef=useRef<Record<string,unknown>|null>(null);
+  // Session-only, scoped to this mounted authenticated chart. No extra polling.
+  const confirmedClusterDetailsRef=useRef<Map<string,TpTrade[]>>(new Map());
+  const activityRequestRef=useRef<Promise<Record<string,unknown>>|null>(null);
   const syncOverlaysRef=useRef<()=>void>(()=>{});
   const advisorZoneLadderRef=useRef<any>(null);
   const lastConfirmedZoneLadderRef=useRef<any>(null);
@@ -1126,6 +1129,14 @@ export function PortfolioKoersChart({
     const expected=Math.max(1,Number(label.eventCount)||1);
     const isTp=label.tone==="tp";
     const exactMarkerEntries=!isTp?markerEntryTrades(label.entries):[];
+    const detailKey=`${timeframe}|${label.markerTime}|${label.tone}|${label.eventCount||1}`;
+    const saved=confirmedClusterDetailsRef.current.get(detailKey);
+    if(saved?.length){
+      setSelectedTpCluster({...label,trades:saved,realizedPnlUsd:isTp?saved.reduce((sum,row)=>sum+Number(row.realizedPnlUsd||0),0):label.realizedPnlUsd,realizedPnlVerified:isTp?true:label.realizedPnlVerified});
+      setTpDetailError("");
+      setTpDetailLoading(false);
+      return;
+    }
     if(!isTp&&exactMarkerEntries.length===expected&&exactMarkerEntries.every((entry)=>Number(entry.marginUsd)>0)){
       setSelectedTpCluster({...label,trades:exactMarkerEntries});
       setTpDetailError("");
@@ -1135,24 +1146,33 @@ export function PortfolioKoersChart({
     setSelectedTpCluster(label);
     setTpDetailError("");
     const existing=Array.isArray(label.trades)?label.trades:[];
-    if(isTp&&existing.length>=expected&&existing.every((trade)=>trade.durationMinutes!==null&&trade.realizedPnlVerified!==false))return;
+    if(isTp&&existing.length>=expected&&existing.every((trade)=>trade.durationMinutes!==null&&trade.realizedPnlVerified!==false)){
+      confirmedClusterDetailsRef.current.set(detailKey,existing);
+      setTpDetailLoading(false);
+      return;
+    }
     setTpDetailLoading(true);
     try{
       let activity:Record<string,unknown>|null=tradeActivityCacheRef.current;
-      let lastError:unknown=null;
-      for(let attempt=0;attempt<2;attempt+=1){
-        try{
-          const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
-          activity=record(response.recentTradeActivity);
-          tradeActivityCacheRef.current=activity;
-          lastError=null;
-          break;
-        }catch(reason){
-          lastError=reason;
-          if(attempt===0)await new Promise((resolve)=>window.setTimeout(resolve,350));
+      if(!activity){
+        if(!activityRequestRef.current){
+          activityRequestRef.current=(async()=>{
+            let lastError:unknown=null;
+            for(let attempt=0;attempt<2;attempt+=1){
+              try{
+                const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
+                return record(response.recentTradeActivity);
+              }catch(reason){
+                lastError=reason;
+                if(attempt===0)await new Promise((resolve)=>window.setTimeout(resolve,350));
+              }
+            }
+            throw lastError||new Error("Tradeactiviteit niet beschikbaar");
+          })().finally(()=>{activityRequestRef.current=null});
         }
+        activity=await activityRequestRef.current;
+        tradeActivityCacheRef.current=activity;
       }
-      if(!activity&&lastError)throw lastError;
       const fallback=isTp
         ? tpTradesForBucketFromActivity(activity||{},timeframe,Number(label.markerTime)) as TpTrade[]
         : entryTradesForBucketFromActivity(activity||{},timeframe,Number(label.markerTime),label.tone==="short"?"SHORT":"LONG");
@@ -1169,7 +1189,10 @@ export function PortfolioKoersChart({
             return match&&Number(match.marginUsd)>0?{...entry,marginUsd:match.marginUsd}:entry;
           })
         :fallback;
-      setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades}:current);
+      if(trades.length===expected&&(isTp?trades.every((row)=>row.realizedPnlVerified!==false):trades.every((row)=>Number(row.marginUsd)>0))){
+        confirmedClusterDetailsRef.current.set(detailKey,trades);
+      }
+      setSelectedTpCluster((current)=>current?.id===label.id?{...current,trades,realizedPnlUsd:isTp&&trades.length?trades.reduce((sum,row)=>sum+Number(row.realizedPnlUsd||0),0):current.realizedPnlUsd,realizedPnlVerified:isTp&&trades.length?trades.every((row)=>row.realizedPnlVerified!==false):current.realizedPnlVerified}:current);
       if(!trades.length)setTpDetailError(isTp?"Geen bevestigde fillregels voor dit cluster gevonden.":"Geen bevestigde entryregels voor dit cluster gevonden.");
       else if(!isTp&&trades.length!==expected)setTpDetailError(`Cluster verwacht ${expected} bevestigde entries, maar ${trades.length} detailregels zijn beschikbaar.`);
       else if(!isTp&&trades.some((trade)=>!(Number(trade.marginUsd)>0)))setTpDetailError("Historische instapmargin niet bevestigd; huidige positiemargin kan afwijken.");
