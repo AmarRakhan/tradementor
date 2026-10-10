@@ -5848,7 +5848,7 @@ def _persist_verified_full_closes(user: dict[str, Any], summary: dict[str, Any])
     collection = user_reference(user).collection("asterClosedTrades")
     pending = []
     for row in rows:
-        if not isinstance(row, dict) or not row.get("fullyClosed") and row.get("closeKind") != "FULL_LEG_CLOSE":
+        if not isinstance(row, dict) or row.get("fullyClosed") is not True:
             continue
         try:
             closed_at = datetime.fromisoformat(str(row["closedAt"]).replace("Z", "+00:00")).astimezone(timezone.utc)
