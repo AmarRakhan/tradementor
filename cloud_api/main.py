@@ -5838,12 +5838,32 @@ def aster_closed_trades_history_page(
     user: dict[str, Any] = Depends(authenticated_user),
     limit: int = Query(default=30, ge=1, le=100),
     cursor: str | None = Query(default=None, max_length=64),
+    scope: str = Query(default="all", pattern="^(all|today)$"),
 ) -> dict[str, Any]:
     """Read-only, cursor-paginated view over the existing per-user close ledger.
 
     No exchange API calls. The cursor points to a document in the authenticated
     user's OWN collection and cannot grant access to another account.
     """
+    if scope == "today":
+        # Reuse the exact same verified full-position/leg closure summary as
+        # the front-side counter. No exchange requests or alternative counting.
+        uid = str(user["uid"])
+        with _cache_lock:
+            cached = _aster_closed_trades_cache.get(uid)
+        summary = cached[4] if cached and time.monotonic() - cached[0] < 120.0 else None
+        if not isinstance(summary, dict) or summary.get("reliable") is not True:
+            raise HTTPException(status_code=503, detail="Bevestigde daghistorie is tijdelijk niet beschikbaar")
+        if cursor:
+            raise HTTPException(status_code=400, detail="Vandaag gebruikt geen historische cursor")
+        rows = summary.get("fullClosedTrades")
+        if not isinstance(rows, list):
+            raise HTTPException(status_code=503, detail="Bevestigde daghistorie ontbreekt")
+        # Existing authoritative verifier already sorts its full closes.
+        return {"closedTrades": rows, "nextCursor": None, "hasMore": False,
+                "verifiedCount": summary.get("closedTrades"),
+                "verifiedRealizedPnlUsd": summary.get("realizedPnlUsd"),
+                "method": summary.get("method")}
     collection = user_reference(user).collection("asterClosedTrades")
     query = collection.order_by("closedAt", direction=firestore.Query.DESCENDING)
     if cursor:
