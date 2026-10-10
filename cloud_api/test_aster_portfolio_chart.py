@@ -606,3 +606,26 @@ def test_build569_historical_attribution_never_uses_current_settings_for_margin(
     block = source[start:end]
     assert "configured_margin" not in block
     assert 'item.get("marginUsd", item.get("executedMarginUsd"))' in block
+
+def test_build597_mixed_profit_bucket_requires_every_fill_to_have_pnl_evidence():
+    rows = [
+        {"event": "FULL_TP", "timestampMs": 61_000, "symbol": "BTCUSDT", "side": "LONG",
+         "orderId": "close-profit", "exchangeConfirmed": True, "realizedPnlUsd": 2.5},
+        {"event": "FULL_TP", "timestampMs": 62_000, "symbol": "ETHUSDT", "side": "LONG",
+         "orderId": "close-missing", "exchangeConfirmed": True},
+    ]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert len(markers) == 1
+    assert markers[0]["count"] == 2
+    assert markers[0]["realizedPnlVerified"] is False
+    assert markers[0]["trades"][0]["realizedPnlVerified"] is True
+    assert markers[0]["trades"][1]["realizedPnlVerified"] is False
+
+
+def test_build597_exchange_confirmed_zero_is_not_missing_profit():
+    rows = [{"event": "FULL_TP", "timestampMs": 61_000, "symbol": "BTCUSDT",
+             "side": "LONG", "orderId": "close-zero", "exchangeConfirmed": True,
+             "realizedPnlUsd": 0.0}]
+    markers = strategy_audit_trade_markers(rows, "1m")
+    assert markers[0]["realizedPnlVerified"] is True
+    assert markers[0]["realizedPnlUsd"] == 0.0
