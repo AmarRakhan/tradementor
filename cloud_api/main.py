@@ -5852,7 +5852,10 @@ def aster_closed_trades_history_page(
         with _cache_lock:
             cached = _aster_closed_trades_cache.get(uid)
         summary = cached[4] if cached and time.monotonic() - cached[0] < 120.0 else None
-        if not isinstance(summary, dict) or summary.get("reliable") is not True:
+        local_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Amsterdam"))
+        day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        if (not isinstance(summary, dict) or summary.get("reliable") is not True
+                or summary.get("dayStartAt") != day_start.isoformat()):
             raise HTTPException(status_code=503, detail="Bevestigde daghistorie is tijdelijk niet beschikbaar")
         if cursor:
             raise HTTPException(status_code=400, detail="Vandaag gebruikt geen historische cursor")
