@@ -1,4 +1,5 @@
 import unittest
+import json
 from pathlib import Path
 
 # Architectural safety tests: the historical API must stay account-scoped,
@@ -26,6 +27,17 @@ class ClosedTradesHistoryContractTests(unittest.TestCase):
         self.assertIn('day_start.astimezone(timezone.utc)', handler)
         self.assertIn('day_end.astimezone(timezone.utc)', handler)
         self.assertNotIn('_aster_closed_trades_cache.get(uid)', handler)
+    def test_composite_index_declared_for_verified_close_history(self):
+        indexes_file = Path(__file__).resolve().parent.parent / "cloud" / "firestore.indexes.json"
+        definition = json.loads(indexes_file.read_text(encoding="utf-8"))
+        required = [
+            {"fieldPath": "verifiedFullClose", "order": "ASCENDING"},
+            {"fieldPath": "closedAt", "order": "DESCENDING"},
+        ]
+        self.assertTrue(any(entry.get("collectionGroup") == "asterClosedTrades"
+                            and entry.get("queryScope") == "COLLECTION"
+                            and entry.get("fields") == required
+                            for entry in definition.get("indexes", [])))
     def test_no_account_cross_reference(self):
         self.assertIn('collection.document(cursor).get()', handler)
         self.assertNotIn('user_reference(other_user)', handler)
