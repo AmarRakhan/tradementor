@@ -638,3 +638,17 @@ def test_build597_historical_order_attribution_passes_recorded_execution_basis()
     assert '"executedNotionalUsd": safe_float(item.get(' in block
     assert '"leverage": safe_float(item.get(' in block
     assert "configuredMarginUsd" not in block
+
+def test_build597_historical_margin_writer_must_not_be_assumed_to_store_leverage():
+    """Document present limitation: provenance reader cannot invent missing execution fields."""
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index("def _record_aster_order_attribution(")
+    end = source.index("def _configured_universe_contract(", start)
+    block = source[start:end]
+    assert '"orderId":order_id' in block
+    assert '"recordedAt":datetime.now(timezone.utc)' in block
+    # Missing historical values require a separate exchange-proven enrichment,
+    # never today's position margin or current bot configuration.
+    assert '"marginUsd":' not in block
+    assert '"leverage":' not in block
+    assert '"executedNotionalUsd":' not in block
