@@ -22,7 +22,6 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
   const [rows, setRows] = useState<ClosedTrade[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
-  const [verifiedCount, setVerifiedCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [flipped, setFlipped] = useState(false);
@@ -32,10 +31,7 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
     return mode === "today" ? sorted.filter(row => { const ms = closedTradeTime(row); return ms !== null && dayKey(ms) === today; }) : sorted;
   }, [mode, rows, today]);
   const expectedTodayCount = /^\\d+$/.test(todayCount.trim()) ? Number(todayCount) : null;
-  const reachedYesterday = mode === "today" && rows.some(row => {
-    const ms = closedTradeTime(row);
-    return ms !== null && dayKey(ms) < today;
-  });
+  const reachedYesterday = false; // Backend filters by canonical Amsterdam day.
   const load = useCallback(async (next: string | null, signal?: AbortSignal) => {
     if (loading) return;
     setLoading(true); setError("");
@@ -45,7 +41,6 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
       const page = await authenticatedRequest(`/api/exchanges/aster/closed-trades/history?${query}`, { cache: "no-store", signal }) as HistoryPage;
       if (signal?.aborted) return;
       if (!page || !Array.isArray(page.closedTrades)) throw new Error("Ongeldige historische gegevens ontvangen");
-      if (mode === "today") setVerifiedCount(typeof page.verifiedCount === "number" ? page.verifiedCount : null);
       setRows(previous => uniqueClosedTrades([...previous, ...page.closedTrades!]));
       setCursor(typeof page.nextCursor === "string" ? page.nextCursor : null);
       setHasMore(page.hasMore === true && Boolean(page.nextCursor));
@@ -78,9 +73,9 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
       <section className={`aps-closed-flip ${flipped ? "is-flipped" : ""}`} role="dialog" aria-modal="true" aria-label={mode === "all" ? "Gesloten resultaat" : "Trades gesloten vandaag"}>
         <div className="aps-closed-face aps-closed-front" aria-hidden="true"><span>✦</span><strong>{mode === "all" ? "GESLOTEN RESULTAAT" : "TRADES GESLOTEN"}</strong></div>
         <div className="aps-closed-face aps-closed-back">
-          <header><div><small>✦ AMAR · TRADE HISTORIE</small><h2>{mode === "all" ? "Gesloten resultaat" : "Trades gesloten vandaag"}</h2><p>Nieuwste eerst · {mode === "all" ? "Volledige historie" : "Alleen vandaag"}</p></div><button type="button" aria-label="Sluiten" onClick={onClose}>×</button></header>
+          <header><div><small>✦ AMAR · TRADE HISTORIE</small><h2>{mode === "all" ? "Gesloten resultaat" : "Trades gesloten vandaag"}</h2><p>Nieuwste eerst · {mode === "all" ? "Geverifieerde historie" : "Alleen vandaag"}</p></div><button type="button" aria-label="Sluiten" onClick={onClose}>×</button></header>
           {mode === "today" ? <div className="aps-closed-summary"><span>Gesloten vandaag <strong>{todayCount}</strong></span><span>Resultaat <strong>{todayTotal}</strong></span></div> : null}
-          {mode === "today" && (reachedYesterday || !hasMore) && !loading && expectedTodayCount !== null && verifiedCount !== null && expectedTodayCount !== verifiedCount ? <p role="alert" className="aps-closed-message">Historische registratie is nog niet gelijk aan de centrale dagtelling ({verifiedCount} geverifieerde sluitingen versus {expectedTodayCount} op de tegel). De gegevens worden niet als overeenkomend gepresenteerd.</p> : null}
+          {mode === "today" && (reachedYesterday || !hasMore) && !loading && expectedTodayCount !== null && expectedTodayCount !== showRows.length ? <p role="alert" className="aps-closed-message">Niet alle geverifieerde sluitingen zijn historisch beschikbaar ({showRows.length} geverifieerde sluitingen versus {expectedTodayCount} op de tegel). De gegevens worden niet als overeenkomend gepresenteerd.</p> : null}
           <div className="aps-closed-scroll">
             {showRows.map(row => {
               const close = closedTradeTime(row);
