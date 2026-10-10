@@ -150,7 +150,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     const storedShortNotional = x.entryNotionalShortUsd ?? x.entryNotionalShort ?? (persistedFixedPositionSize ? x.entryNotionalUsd : undefined);
     const legacyDcaDistance = Number(x.dcaDistance ?? .003); const legacyDcaAmount = Number(x.dcaMarginUsd ?? 2); const legacyMax = Number(x.maxDca ?? 3); const legacyTp = Number(x.takeProfit ?? .015);
     setV({
-      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, x.zoneSoldiersEnabled === true ? Math.max(1, Math.round(Number(x.maximumPositions ?? (longSlots + shortSlots)))) : (longSlots + shortSlots))), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50), maxLeverage: x.maximumLeverage === null || x.maximumLeverage === undefined ? "" : String(x.maximumLeverage),
+      name: String(x.name || initial.name), universe: String(x.universeTopN ?? 30), positions: String(Math.min(MAX_TOTAL_POSITIONS, (x.priceZoneSeats && typeof x.priceZoneSeats === "object" ? (x.priceZoneSeats as Record<string, unknown>).enabled === true : x.zoneSoldiersEnabled === true) ? Math.max(1, Math.round(Number(x.maximumPositions ?? (longSlots + shortSlots)))) : (longSlots + shortSlots))), longSlots: String(longSlots), shortSlots: String(shortSlots), minLeverage: String(x.minimumLeverage ?? 50), maxLeverage: x.maximumLeverage === null || x.maximumLeverage === undefined ? "" : String(x.maximumLeverage),
       priceZoneSeatsEnabled: x.priceZoneSeats && typeof x.priceZoneSeats === "object" ? (x.priceZoneSeats as Record<string, unknown>).enabled === true : x.zoneSoldiersEnabled === true,
       priceZoneLongSeats: txt(x.priceZoneSeats && typeof x.priceZoneSeats === "object" ? (x.priceZoneSeats as Record<string, unknown>).longSeatsPerZone : x.zoneBaseLongSoldiers, 2),
       priceZoneShortSeats: txt(x.priceZoneSeats && typeof x.priceZoneSeats === "object" ? (x.priceZoneSeats as Record<string, unknown>).shortSeatsPerZone : x.zoneBaseShortSoldiers, 2),
@@ -375,6 +375,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       if (kind === "save") {
         const savedSettings = confirmed?.settings && typeof confirmed.settings === "object" ? confirmed.settings as Record<string, unknown> : null;
         if (!savedSettings) throw new Error("Server bevestigde de opgeslagen Botinstellingen niet.");
+        if (Number(savedSettings.maximumPositions) !== settings.maximumPositions) throw new Error("Totaal posities is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
         const savedMax = savedSettings.maximumLeverage === null || savedSettings.maximumLeverage === undefined ? null : Number(savedSettings.maximumLeverage);
         if (savedMax !== settings.maximumLeverage) throw new Error("Maximum leverage is niet server-side bevestigd; instellingen blijven als niet opgeslagen gemarkeerd.");
         const savedSizing = String(savedSettings.entrySizingMode || "margin").toLowerCase();
