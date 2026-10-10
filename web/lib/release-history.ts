@@ -25,9 +25,11 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-10-09",
-  title: "Snapshot Auth Ready 2.4 · accountgegevens laden na sessieherstel",
+  releasedAt: "2026-10-10",
+  title: "Aster-only automatische verversing · Hyperliquid on-demand",
   newItems: [
+    "Build 592 vervangt uitsluitend de automatische Hyperliquid- en Aster-duoverversing door Aster-only, bij appstart, zichtbaarheid en minuutinterval.",
+    "Hyperliquid blijft beschikbaar bij expliciet gebruik en in bestaande historie/API-routes; Aster-accountgegevens, realtime, scanner en handelslogica blijven ongewijzigd.",
     "Build 591 wacht op het herstel van de Firebase-sessie voordat de Snapshot zijn account-ID vastlegt en gegevens uit de bestaande accountloader ontvangt.",
     "Build 590 onderscheidt ontbrekende Aster-autorisatie, ontbrekende accountkoppeling en een onvolledige backendstatus in de bestaande Portfolio Snapshot; gebruikt de huidige accountaanvraag.",
     "Build 589 gebruikt priceZoneSeats.enabled voor de expliciete globale prijszonepositielimiet, zonder legacy Zone Soldiers-interpretatie op de webinstellingenroute.",
