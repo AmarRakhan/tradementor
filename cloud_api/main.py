@@ -6021,7 +6021,12 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
         confirmed = closed_trades_from_fills(fills)
         closed_trade_summary_today = _verified_aster_daily_close_summary(client, user_reference(user))
         if closed_trade_summary_today.get("reliable") is True:
-            _persist_verified_full_closes(user, closed_trade_summary_today)
+            try:
+                _persist_verified_full_closes(user, closed_trade_summary_today)
+            except Exception:
+                # Historical materialization is supplemental; never disrupt
+                # the established account snapshot or live trading reads.
+                pass
         fresh_activity = recent_trade_activity_from_fills(
             fills, active_positions=active_positions, strategy_by_intent=strategy_by_intent,
             strategy_by_order_id=strategy_by_order_id,
