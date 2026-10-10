@@ -629,3 +629,12 @@ def test_build597_exchange_confirmed_zero_is_not_missing_profit():
     markers = strategy_audit_trade_markers(rows, "1m")
     assert markers[0]["realizedPnlVerified"] is True
     assert markers[0]["realizedPnlUsd"] == 0.0
+
+def test_build597_historical_order_attribution_passes_recorded_execution_basis():
+    source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
+    start = source.index("def _portfolio_chart_order_attribution_rows")
+    end = source.index('@app.get("/v1/me/aster/portfolio-chart/events")', start)
+    block = source[start:end]
+    assert '"executedNotionalUsd": safe_float(item.get(' in block
+    assert '"leverage": safe_float(item.get(' in block
+    assert "configuredMarginUsd" not in block
