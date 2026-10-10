@@ -9,7 +9,7 @@ type ClosedTrade = {
   realizedPnlUsd?: number | null; openedAt?: string | null; closedAt?: string | null;
   executedMarginUsd?: number | null; marginUsd?: number | null; initialMarginUsd?: number | null;
 };
-type HistoryPage = { closedTrades?: ClosedTrade[]; nextCursor?: string | null; hasMore?: boolean; verifiedCount?: number };
+type HistoryPage = { closedTrades?: ClosedTrade[]; nextCursor?: string | null; hasMore?: boolean; verifiedCount?: number; historicalBackfillComplete?: boolean };
 export type ClosedHistoryMode = "all" | "today";
 
 const numeric = (value: unknown): number | null => value == null || value === "" || !Number.isFinite(Number(value)) ? null : Number(value);
@@ -22,6 +22,7 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
   const [rows, setRows] = useState<ClosedTrade[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
+  const [historyComplete, setHistoryComplete] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [flipped, setFlipped] = useState(false);
@@ -44,6 +45,7 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
       setRows(previous => uniqueClosedTrades([...previous, ...page.closedTrades!]));
       setCursor(typeof page.nextCursor === "string" ? page.nextCursor : null);
       setHasMore(page.hasMore === true && Boolean(page.nextCursor));
+      setHistoryComplete(page.historicalBackfillComplete === true);
     } catch (cause) {
       if (signal?.aborted) return;
       setError(cause instanceof Error ? cause.message : "Historie tijdelijk niet bereikbaar");
@@ -76,6 +78,7 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
           <header><div><small>✦ AMAR · TRADE HISTORIE</small><h2>{mode === "all" ? "Gesloten resultaat" : "Trades gesloten vandaag"}</h2><p>Nieuwste eerst · {mode === "all" ? "Geverifieerde historie" : "Alleen vandaag"}</p></div><button type="button" aria-label="Sluiten" onClick={onClose}>×</button></header>
           {mode === "today" ? <div className="aps-closed-summary"><span>Gesloten vandaag <strong>{todayCount}</strong></span><span>Resultaat <strong>{todayTotal}</strong></span></div> : null}
           {mode === "today" && (reachedYesterday || !hasMore) && !loading && expectedTodayCount !== null && expectedTodayCount !== showRows.length ? <p role="alert" className="aps-closed-message">Niet alle geverifieerde sluitingen zijn historisch beschikbaar ({showRows.length} geverifieerde sluitingen versus {expectedTodayCount} op de tegel). De gegevens worden niet als overeenkomend gepresenteerd.</p> : null}
+          {mode === "all" && !historyComplete && !loading && !error ? <p role="status" className="aps-closed-message">Alleen geverifieerde opgeslagen sluitingen zijn beschikbaar. De volledigheid van oudere historie is nog niet bevestigd.</p> : null}
           <div className="aps-closed-scroll">
             {showRows.map(row => {
               const close = closedTradeTime(row);
