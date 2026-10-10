@@ -687,3 +687,20 @@ def test_build597_historical_entry_margin_is_missing_without_original_leverage()
              "exchangeConfirmed": True, "executedNotionalUsd": 24.0}]
     markers = strategy_audit_trade_markers(rows, "1m")
     assert markers[0]["entries"][0]["marginUsd"] is None
+
+def test_build597_fill_history_margin_uses_recorded_notional_and_leverage():
+    activity = {"entries": [
+        {"timestampMs": 61_000, "symbol": "PENGUUSDT", "side": "LONG",
+         "quantity": 12, "executedNotionalUsd": 24.0, "leverage": 12},
+    ], "exits": []}
+    rows = aggregate_trade_activity(activity, "1m")
+    assert rows[0]["entries"][0]["marginUsd"] == 2.0
+
+
+def test_build597_fill_history_never_invents_margin_without_leverage():
+    activity = {"entries": [
+        {"timestampMs": 61_000, "symbol": "SNDKUSDT", "side": "LONG",
+         "quantity": 12, "executedNotionalUsd": 24.0},
+    ], "exits": []}
+    rows = aggregate_trade_activity(activity, "1m")
+    assert rows[0]["entries"][0]["marginUsd"] is None
