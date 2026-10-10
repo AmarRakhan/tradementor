@@ -602,3 +602,23 @@ test("Build 579 keeps canonical event markers device-independent during responsi
   assert.ok(component.includes("syncAfterResize();"));
   assert.equal(/if\s*\([^)]*(?:iPhone|Android|Fold)/i.test(component),false);
 });
+
+test("unverified audit profit stays unverified rather than becoming a confirmed zero",()=>{
+  const audit=normalizePortfolioKoersPayload({markers:[{
+    time:900,kind:"tp",side:"ALL",count:1,realizedPnlUsd:0,
+    realizedPnlVerified:false,
+    source:"strategy2-confirmed-audit",
+    trades:[{symbol:"FILUSDT",realizedPnlUsd:0,realizedPnlVerified:false,durationMinutes:null}],
+  }]}).markers;
+  assert.equal(audit[0].realizedPnlVerified,false);
+  assert.equal(audit[0].trades[0].realizedPnlVerified,false);
+  const confirmed=normalizePortfolioKoersPayload({markers:[{
+    time:900,kind:"tp",side:"ALL",count:1,realizedPnlUsd:3.25,
+    source:"aster-confirmed-fills",
+    trades:[{symbol:"FILUSDT",realizedPnlUsd:3.25,durationMinutes:5}],
+  }]}).markers;
+  const merged=mergePortfolioKoersMarkers(audit,confirmed);
+  assert.equal(merged[0].realizedPnlVerified,true);
+  assert.equal(merged[0].realizedPnlUsd,3.25);
+  assert.equal(merged[0].trades[0].realizedPnlUsd,3.25);
+});
