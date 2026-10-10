@@ -1153,8 +1153,8 @@ export function PortfolioKoersChart({
     }
     setTpDetailLoading(true);
     try{
-      let activity:Record<string,unknown>|null=tradeActivityCacheRef.current;
-      if(!activity){
+      let activity:Record<string,unknown>|null=null;
+      {
         if(!activityRequestRef.current){
           activityRequestRef.current=(async()=>{
             let lastError:unknown=null;
