@@ -43,7 +43,7 @@ class ClosedTradesHistoryContractTests(unittest.TestCase):
         self.assertIn("db.get_all(", writer)
         self.assertIn("if snap.exists", writer)
         self.assertIn("inserted += len(missing)", writer)
-        self.assertIn("if row.get(\"fullyClosed\") is not True", writer)
+        self.assertIn('row.get("fullyClosed") is not True', writer)
     def test_no_account_cross_reference(self):
         self.assertIn('collection.document(cursor).get()', handler)
         self.assertNotIn('user_reference(other_user)', handler)
