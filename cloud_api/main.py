@@ -5846,6 +5846,10 @@ def _persist_verified_full_closes(user: dict[str, Any], summary: dict[str, Any])
     if not isinstance(rows, list):
         return 0
     collection = user_reference(user).collection("asterClosedTrades")
+    control_ref = user_reference(user).collection("executionControls").document("aster")
+    control = control_ref.get().to_dict() or {}
+    synced = control.get("verifiedFullClosesSyncedThrough")
+    synced_at = synced.astimezone(timezone.utc) if isinstance(synced, datetime) else datetime.fromtimestamp(0, tz=timezone.utc)
     pending = []
     for row in rows:
         if not isinstance(row, dict) or row.get("fullyClosed") is not True:
@@ -5853,6 +5857,8 @@ def _persist_verified_full_closes(user: dict[str, Any], summary: dict[str, Any])
         try:
             closed_at = datetime.fromisoformat(str(row["closedAt"]).replace("Z", "+00:00")).astimezone(timezone.utc)
         except (KeyError, TypeError, ValueError):
+            continue
+        if closed_at <= synced_at:
             continue
         identity = "|".join(str(row.get(k, "")) for k in ("symbol", "side", "openedAt", "closedAt", "exchangeOrderId", "exchangeTradeId"))
         identifier = hashlib.sha256(("verified-full-close|" + identity).encode("utf-8")).hexdigest()
@@ -5865,6 +5871,8 @@ def _persist_verified_full_closes(user: dict[str, Any], summary: dict[str, Any])
         for ref, payload in pending[offset:offset + 400]:
             batch.set(ref, payload, merge=True)
         batch.commit()
+    if pending:
+        control_ref.set({"verifiedFullClosesSyncedThrough": max(payload["closedAt"] for _, payload in pending)}, merge=True)
     return len(pending)
 
 
