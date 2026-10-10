@@ -44,6 +44,10 @@ class ClosedTradesHistoryContractTests(unittest.TestCase):
         self.assertIn("if snap.exists", writer)
         self.assertIn("inserted += len(missing)", writer)
         self.assertIn('row.get("fullyClosed") is not True', writer)
+    def test_cursor_rejects_unverified_and_cross_day_records(self):
+        self.assertIn('last_document.get("verifiedFullClose") is not True', handler)
+        self.assertIn('Cursor buiten de geselecteerde dag', handler)
+        self.assertIn('query.start_after(last_document)', handler)
     def test_no_account_cross_reference(self):
         self.assertIn('collection.document(cursor).get()', handler)
         self.assertNotIn('user_reference(other_user)', handler)
