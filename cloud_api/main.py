@@ -6772,6 +6772,9 @@ def _portfolio_chart_order_attribution_rows(uid: str, *, now_utc: datetime | Non
             "auditId": f"attribution:{order_id or client_order_id}",
             "activityType": "DCA" if action == "ADD_DCA" else "TP" if event == "FULL_TP" else "ENTRY",
             "marginUsd": safe_float(item.get("marginUsd", item.get("executedMarginUsd"))) or None,
+            # Historical execution evidence only, never current position settings.
+            "executedNotionalUsd": safe_float(item.get("executedNotionalUsd", item.get("filledNotional", item.get("notionalUsd")))) or None,
+            "leverage": safe_float(item.get("leverage", item.get("executionLeverage"))) or None,
             "marginSource": str(item.get("marginSource", "") or "UNAVAILABLE"),
             "source": "order-attribution",
         })

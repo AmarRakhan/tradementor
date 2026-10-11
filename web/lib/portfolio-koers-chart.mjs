@@ -200,7 +200,7 @@ export function mergePortfolioKoersMarkers(baseMarkers,recentMarkers) {
       count:kind==="entry"&&entries.length?entries.length:kind==="tp"&&trades.length?trades.length:Math.max(Math.max(1,Math.floor(finite(existing.count))),Math.max(1,Math.floor(finite(raw.count)))),
       notionalUsd:Math.max(Math.abs(finite(existing.notionalUsd)),Math.abs(finite(raw.notionalUsd))),
       realizedPnlUsd:raw.realizedPnlVerified!==false&&existing.realizedPnlVerified===false?finite(raw.realizedPnlUsd):existing.realizedPnlVerified!==false&&raw.realizedPnlVerified===false?finite(existing.realizedPnlUsd):Math.abs(finite(raw.realizedPnlUsd))>Math.abs(finite(existing.realizedPnlUsd))?finite(raw.realizedPnlUsd):finite(existing.realizedPnlUsd),
-      realizedPnlVerified:raw.realizedPnlVerified!==false||existing.realizedPnlVerified!==false,
+      realizedPnlVerified:kind!=="tp"||((raw.realizedPnlVerified!==false&&rawTrades.length>=Math.max(1,Math.floor(finite(raw.count)),Math.floor(finite(existing.count))))||(existing.realizedPnlVerified!==false&&existingTrades.length>=Math.max(1,Math.floor(finite(raw.count)),Math.floor(finite(existing.count))))),
       amountUsd:Math.abs(finite(raw.amountUsd))>Math.abs(finite(existing.amountUsd))?finite(raw.amountUsd):finite(existing.amountUsd),
       originZones,soldierRoles,activityTypes,trades,entries,
       source:preferRaw?String(raw.source||existing.source||""):String(existing.source||raw.source||""),

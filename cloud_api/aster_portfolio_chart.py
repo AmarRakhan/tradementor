@@ -605,6 +605,7 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
                 "count": 0,
                 "notionalUsd": 0.0,
                 "realizedPnlUsd": 0.0,
+                "realizedPnlVerified": True,
                 "source": "aster-confirmed-fills",
             })
             group["count"] += 1
@@ -612,12 +613,14 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
             realized = _number(raw.get("realizedPnlUsd"))
             group["realizedPnlUsd"] += realized
             if kind == "tp":
+                group["realizedPnlVerified"] = group["realizedPnlVerified"] and raw.get("realizedPnlUsd") is not None
                 group.setdefault("trades", [])
                 group["trades"].append({
                     "symbol": _base_symbol(raw.get("symbol")),
                     "side": side,
                     "atMs": stamp,
                     "realizedPnlUsd": realized,
+                    "realizedPnlVerified": raw.get("realizedPnlUsd") is not None,
                     "durationMinutes": _duration_minutes(raw, stamp),
                     "orderId": str(raw.get("orderId", raw.get("id", "")) or ""),
                     "clientOrderId": str(raw.get("clientOrderId", "") or ""),
@@ -634,7 +637,13 @@ def aggregate_trade_activity(activity: dict[str, Any] | None, timeframe: str) ->
                     "atMs": stamp,
                     "entryPrice": entry_price if entry_price > 0 else None,
                     "notionalUsd": abs(_number(raw.get("executedNotionalUsd", raw.get("notionalUsd")))) or None,
-                    "marginUsd": abs(_number(raw.get("marginUsd", raw.get("executedMarginUsd", raw.get("initialMarginUsd"))))) or None,
+                    "marginUsd": (
+                        abs(_number(raw.get("marginUsd", raw.get("executedMarginUsd", raw.get("initialMarginUsd")))))
+                        or (
+                            abs(_number(raw.get("executedNotionalUsd", raw.get("notionalUsd")))) / abs(_number(raw.get("leverage")))
+                            if abs(_number(raw.get("leverage"))) > 0 else None
+                        )
+                    ),
                     "activityType": str(raw.get("activityType", "ENTRY") or "ENTRY").upper().strip(),
                     "originZone": raw.get("originZone"),
                     "soldierId": str(raw.get("soldierId", "") or ""),
@@ -760,7 +769,7 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
             "count": 0,
             "notionalUsd": 0.0,
             "realizedPnlUsd": 0.0,
-            "realizedPnlVerified": False,
+            "realizedPnlVerified": True,
             "source": "strategy2-confirmed-audit",
             "activityTypes": [],
         })
@@ -770,7 +779,7 @@ def strategy_audit_trade_markers(rows: list[dict[str, Any]] | None, timeframe: s
         if kind == "tp":
             realized=_number(raw.get("realizedPnlUsd", raw.get("realizedPnl", raw.get("pnl"))))
             group["realizedPnlUsd"] += realized
-            group["realizedPnlVerified"] = group["realizedPnlVerified"] or any(
+            group["realizedPnlVerified"] = group["realizedPnlVerified"] and any(
                 raw.get(field) is not None
                 for field in ("realizedPnlUsd", "realizedPnl", "pnl")
             )

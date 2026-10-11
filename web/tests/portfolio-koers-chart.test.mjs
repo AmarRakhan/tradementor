@@ -622,3 +622,18 @@ test("unverified audit profit stays unverified rather than becoming a confirmed 
   assert.equal(merged[0].realizedPnlUsd,3.25);
   assert.equal(merged[0].trades[0].realizedPnlUsd,3.25);
 });
+
+test("Build 597 never marks a mixed close bucket verified on incomplete detail evidence",()=>{
+  const unverified=normalizePortfolioKoersPayload({markers:[{
+    time:900,kind:"tp",side:"ALL",source:"strategy2-confirmed-audit",
+    count:2,realizedPnlUsd:2.5,realizedPnlVerified:false,
+    trades:[{symbol:"BTCUSDT",realizedPnlUsd:2.5,realizedPnlVerified:true,durationMinutes:3},{symbol:"ETHUSDT",realizedPnlUsd:0,realizedPnlVerified:false,durationMinutes:null}]
+  }]}).markers;
+  const partial=normalizePortfolioKoersPayload({markers:[{
+    time:900,kind:"tp",side:"ALL",source:"aster-confirmed-fills",
+    count:1,realizedPnlUsd:2.5,
+    trades:[{symbol:"BTCUSDT",realizedPnlUsd:2.5,durationMinutes:3}]
+  }]}).markers;
+  const merged=mergePortfolioKoersMarkers(unverified,partial);
+  assert.equal(merged[0].realizedPnlVerified,false);
+});
