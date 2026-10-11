@@ -246,6 +246,19 @@ function normalizeActiveTradesPayload(value:unknown):ActiveTradesPayload{
   };
 }
 
+const confirmedTpMatch=(row:Marker,trades:TpTrade[])=>{
+  const expected=Math.max(1,Number(row.count)||1);
+  if(trades.length!==expected||!trades.every((trade)=>trade.realizedPnlVerified!==false&&Number.isFinite(Number(trade.realizedPnlUsd))))return false;
+  const originals=Array.isArray(row.trades)?row.trades:[];
+  const symbols=new Set(originals.map((trade)=>String(trade.symbol||"").toUpperCase()).filter(Boolean));
+  if(symbols.size&&trades.some((trade)=>!symbols.has(String(trade.symbol||"").toUpperCase())))return false;
+  // A bucket with multiple executions is not a unique event identity.
+  // Never infer its payout from coincident timestamp and symbol alone.
+  if(expected!==1)return false;
+  if(row.realizedPnlVerified===true&&Number.isFinite(Number(row.realizedPnlUsd))&&Number(row.realizedPnlUsd)!==0)return false;
+  return true;
+};
+
 function markerPresentation(row:Marker) {
   const kind=String(row.kind||"").toLowerCase(),side=String(row.side||"").toUpperCase(),count=Math.max(1,Number(row.count)||1);
   if(kind==="cashflow"){
@@ -547,9 +560,7 @@ export function PortfolioKoersChart({
     return rows.map((row)=>{
       if(String(row.kind||"").toLowerCase()!=="tp")return row;
       const confirmed=confirmedTpBuckets[`${timeframe}|${row.time}`];
-      if(!confirmed||confirmed.trades.length!==Math.max(1,Number(row.count)||1))return row;
-      const symbols=new Set((row.trades||[]).map((trade)=>trade.symbol).filter(Boolean));
-      if(symbols.size&&confirmed.trades.some((trade)=>!symbols.has(trade.symbol)))return row;
+      if(!confirmed||!confirmedTpMatch(row,confirmed.trades))return row;
       return {...row,realizedPnlUsd:confirmed.pnl,realizedPnlVerified:true,trades:confirmed.trades};
     });
   },[durableMarkers,recentMarkers,confirmedTpBuckets,timeframe]);
@@ -664,9 +675,7 @@ export function PortfolioKoersChart({
           if(String(row.kind||"").toLowerCase()!=="tp")continue;
           const expected=Math.max(1,Number(row.count)||1);
           const trades=tpTradesForBucketFromActivity(activity,timeframe,Number(row.time)) as TpTrade[];
-          if(trades.length!==expected||!trades.every((trade)=>trade.realizedPnlVerified!==false&&Number.isFinite(Number(trade.realizedPnlUsd))))continue;
-          const symbols=new Set((row.trades||[]).map((trade)=>trade.symbol).filter(Boolean));
-          if(symbols.size&&trades.some((trade)=>!symbols.has(trade.symbol)))continue;
+          if(!confirmedTpMatch(row,trades))continue;
           updates[`${timeframe}|${row.time}`]={pnl:trades.reduce((sum,trade)=>sum+Number(trade.realizedPnlUsd),0),trades};
         }
         if(Object.keys(updates).length)setConfirmedTpBuckets((current)=>({...current,...updates}));
