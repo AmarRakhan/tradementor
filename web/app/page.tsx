@@ -658,7 +658,7 @@ const premiumNavigation: Array<{ id: PremiumSection; label: string; glyph: strin
 
 function PremiumExperience({ cloudReady, initials, snapshots, refreshedAt, onRefresh, onStrategy2Confirmed, onRefreshAll, onUseLegacy, preferenceReady, preferenceMessage, appSkin, onAppSkinChange }: { cloudReady: boolean; initials: string; snapshots: ExchangeSnapshots; refreshedAt: string; onRefresh: (exchange: TradingExchange) => void; onStrategy2Confirmed: (strategy2: Record<string, unknown>) => void; onRefreshAll: () => void; onUseLegacy: () => void; preferenceReady: boolean; preferenceMessage: string; appSkin: AppSkin; onAppSkinChange: (skin: AppSkin) => void }) {
   const [section, setSection] = useState<PremiumSection>("dashboard");
-  const [portfolioExchange, setPortfolioExchange] = useState<TradingExchange>("hyperliquid");
+  const [portfolioExchange, setPortfolioExchange] = useState<TradingExchange>("aster");
   const [scanner, setScanner] = useState<Record<string, unknown> | null>(null);
   const [scannerError, setScannerError] = useState("");
 
