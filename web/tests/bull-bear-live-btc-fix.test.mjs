@@ -30,8 +30,8 @@ test("each timeframe keeps its own Bollinger bands while the same live mark pric
 });
 
 test("forward and reverse masters are range-served for normal film playback", () => {
-  assert.match(component, /MASTER_SOURCE = "\/api\/media\/bull-bear-master\?v=3"/);
-  assert.match(component, /REVERSE_SOURCE = "\/api\/media\/bull-bear-master\?direction=reverse&v=3"/);
+  assert.match(component, /MASTER_SOURCE = `\/api\/media\/bull-bear-master\?v=\$\{WEBAPP_BUILD_NUMBER\}`/);
+  assert.match(component, /REVERSE_SOURCE = `\/api\/media\/bull-bear-master\?direction=reverse&v=\$\{WEBAPP_BUILD_NUMBER\}`/);
   assert.match(mediaRoute, /FORWARD_FILE_PATH/);
   assert.match(mediaRoute, /REVERSE_FILE_PATH/);
   assert.match(mediaRoute, /filePathFor\(request\)/);
