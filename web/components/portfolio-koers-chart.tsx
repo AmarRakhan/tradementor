@@ -535,10 +535,20 @@ export function PortfolioKoersChart({
   const [soldierActivity,setSoldierActivity]=useState<SoldierActivityEvent[]>([]);
   const [zoneSoldiersScreenOpen,setZoneSoldiersScreenOpen]=useState(false);
   const durableMarkers=viewMode==="active"?activePayload.markers:payload.markers;
-  const combinedMarkers=useMemo(
-    ()=>mergePortfolioKoersMarkers(durableMarkers,recentMarkers) as Marker[],
-    [durableMarkers,recentMarkers],
-  );
+  // Confirmed close-details must update the chart marker as well as the popup.
+  // Keys are timeframe-scoped because TP clusters aggregate different buckets.
+  const [confirmedTpBuckets,setConfirmedTpBuckets]=useState<Record<string,{pnl:number;trades:TpTrade[]}>>({});
+  const combinedMarkers=useMemo(()=>{
+    const rows=mergePortfolioKoersMarkers(durableMarkers,recentMarkers) as Marker[];
+    return rows.map((row)=>{
+      if(String(row.kind||"").toLowerCase()!=="tp")return row;
+      const confirmed=confirmedTpBuckets[`${timeframe}|${row.time}`];
+      if(!confirmed||confirmed.trades.length!==Math.max(1,Number(row.count)||1))return row;
+      const symbols=new Set((row.trades||[]).map((trade)=>trade.symbol).filter(Boolean));
+      if(symbols.size&&confirmed.trades.some((trade)=>!symbols.has(trade.symbol)))return row;
+      return {...row,realizedPnlUsd:confirmed.pnl,realizedPnlVerified:true,trades:confirmed.trades};
+    });
+  },[durableMarkers,recentMarkers,confirmedTpBuckets,timeframe]);
   const cashflowSignature=useMemo(
     ()=>combinedMarkers
       .filter((row)=>String(row.kind||"").toLowerCase()==="cashflow")
@@ -1193,6 +1203,14 @@ export function PortfolioKoersChart({
             return match&&Number(match.marginUsd)>0?{...entry,marginUsd:match.marginUsd}:entry;
           })
         :fallback;
+      const confirmedTp=isTp&&trades.length===expected&&trades.every((row)=>row.realizedPnlVerified!==false&&Number.isFinite(Number(row.realizedPnlUsd)));
+      if(confirmedTp){
+        const symbols=new Set((label.trades||[]).map((trade)=>trade.symbol).filter(Boolean));
+        if(!symbols.size||trades.every((trade)=>symbols.has(trade.symbol))){
+          const pnl=trades.reduce((sum,row)=>sum+Number(row.realizedPnlUsd),0);
+          setConfirmedTpBuckets((current)=>({...current,[`${timeframe}|${label.markerTime}`]:{pnl,trades}}));
+        }
+      }
       if(trades.length===expected&&(isTp?trades.every((row)=>row.realizedPnlVerified!==false):trades.every((row)=>Number(row.marginUsd)>0))){
         confirmedClusterDetailsRef.current.set(detailKey,trades);
       }
