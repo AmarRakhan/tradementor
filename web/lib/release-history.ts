@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-11",
-  title: "Premium 3D-flip voor gesloten trades",
+  title: "Centrale frontend- en media-cache synchronisatie",
   newItems: [
+    "Build 599 koppelt de PWA-cache en stier/beer-mastervideo aan dezelfde centrale releaseversie, zodat oude visuele bestanden niet onbedoeld naast actuele frontendcode blijven hangen; geen trading- of backendwijzigingen.",
     "Build 598 voegt premium 3D-flipoverzichten toe aan Gesloten resultaat en Trades gesloten, met bestaande accountgebonden Aster-historie; geen trading- of backendwijzigingen.",
     "Build 597 verplaatst het bestaande Slot-overzicht van Botinstellingen naar direct onder Actieve zone en boven Portfolio Snapshot; alle botinstellingen en live trading blijven ongewijzigd.",
     "Build 596 hergebruikt reeds bevestigde marker-details direct bij opnieuw openen en voegt gelijktijdige detailaanvragen samen, zonder koers- of tradeaanpassing.",
