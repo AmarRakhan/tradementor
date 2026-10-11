@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-11",
-  title: "Slot-overzicht onder Actieve zone",
+  title: "Premium 3D-flip voor gesloten trades",
   newItems: [
+    "Build 598 voegt premium 3D-flipoverzichten toe aan Gesloten resultaat en Trades gesloten, met bestaande accountgebonden Aster-historie; geen trading- of backendwijzigingen.",
     "Build 597 verplaatst het bestaande Slot-overzicht van Botinstellingen naar direct onder Actieve zone en boven Portfolio Snapshot; alle botinstellingen en live trading blijven ongewijzigd.",
     "Build 596 hergebruikt reeds bevestigde marker-details direct bij opnieuw openen en voegt gelijktijdige detailaanvragen samen, zonder koers- of tradeaanpassing.",
     "Build 595 verrijkt historische instapmargin uitsluitend met de overeenkomende bevestigde uitvoeringsgegevens; de koersgrafiek en de winstzakjes blijven ongewijzigd.",
