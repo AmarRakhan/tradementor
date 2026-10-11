@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 599: central PWA and bull/bear cache synchronization; preserve all build 598 features.
 // Build 598: twee bestaande snapshot-tegels met hergebruik van de centrale Aster gesloten-tradehistorie en 3D-flip.
 // Build 597: Slot-overzicht verplaatst onder Actieve zone; geen botinstellingen- of tradingwijzigingen.
 // Build 596: bevestigd winstzakje onthouden tijdens sessie, direct heropenen, gedeelde in-flight aanvraag.
@@ -24,7 +25,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "598";
+export const WEBAPP_BUILD_NUMBER = "599";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
