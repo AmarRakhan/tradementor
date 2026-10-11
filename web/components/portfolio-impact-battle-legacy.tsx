@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import {
   battleStatus,
   bollingerScore,
@@ -50,8 +51,8 @@ const REFRESH_MS: Record<Timeframe, number> = {
   "4h": 120_000,
   "24h": 300_000,
 };
-const MASTER_SOURCE = "/api/media/bull-bear-master?v=3";
-const REVERSE_SOURCE = "/api/media/bull-bear-master?direction=reverse&v=3";
+const MASTER_SOURCE = `/api/media/bull-bear-master?v=${WEBAPP_BUILD_NUMBER}`;
+const REVERSE_SOURCE = `/api/media/bull-bear-master?direction=reverse&v=${WEBAPP_BUILD_NUMBER}`;
 const POSTER_SOURCE = "/portfolio-impact-bull-bear-neutral.webp";
 const ASTER_BTC_MARK_STREAM = "wss://fstream.asterdex.com/ws/btcusdt@markPrice@1s";
 const SCORE_SMOOTHING_MS = 1_250;
