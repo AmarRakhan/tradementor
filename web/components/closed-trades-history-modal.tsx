@@ -32,7 +32,6 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
     return mode === "today" ? sorted.filter(row => { const ms = closedTradeTime(row); return ms !== null && dayKey(ms) === today; }) : sorted;
   }, [mode, rows, today]);
   const expectedTodayCount = /^\\d+$/.test(todayCount.trim()) ? Number(todayCount) : null;
-  const reachedYesterday = false; // Backend filters by canonical Amsterdam day.
   const load = useCallback(async (next: string | null, signal?: AbortSignal) => {
     if (loading) return;
     setLoading(true); setError("");
@@ -77,7 +76,7 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
         <div className="aps-closed-face aps-closed-back">
           <header><div><small>✦ AMAR · TRADE HISTORIE</small><h2>{mode === "all" ? "Gesloten resultaat" : "Trades gesloten vandaag"}</h2><p>Nieuwste eerst · {mode === "all" ? "Geverifieerde historie" : "Alleen vandaag"}</p></div><button type="button" aria-label="Sluiten" onClick={onClose}>×</button></header>
           {mode === "today" ? <div className="aps-closed-summary"><span>Gesloten vandaag <strong>{todayCount}</strong></span><span>Resultaat <strong>{todayTotal}</strong></span></div> : null}
-          {mode === "today" && (reachedYesterday || !hasMore) && !loading && expectedTodayCount !== null && expectedTodayCount !== showRows.length ? <p role="alert" className="aps-closed-message">Niet alle geverifieerde sluitingen zijn historisch beschikbaar ({showRows.length} geverifieerde sluitingen versus {expectedTodayCount} op de tegel). De gegevens worden niet als overeenkomend gepresenteerd.</p> : null}
+          {mode === "today" && !hasMore && !loading && !error && expectedTodayCount !== null && expectedTodayCount !== showRows.length ? <p role="alert" className="aps-closed-message">Niet alle geverifieerde sluitingen zijn historisch beschikbaar ({showRows.length} geverifieerde sluitingen versus {expectedTodayCount} op de tegel). De gegevens worden niet als overeenkomend gepresenteerd.</p> : null}
           {mode === "all" && !historyComplete && !loading && !error ? <p role="status" className="aps-closed-message">Alleen geverifieerde opgeslagen sluitingen zijn beschikbaar. De volledigheid van oudere historie is nog niet bevestigd.</p> : null}
           <div className="aps-closed-scroll">
             {showRows.map(row => {
@@ -92,7 +91,7 @@ export function ClosedTradesHistoryModal({ mode, onClose, todayCount, todayTotal
             {loading ? <p role="status" className="aps-closed-message">Gesloten trades laden…</p> : null}
             {error ? <p role="alert" className="aps-closed-message">{error}</p> : null}
             {!loading && !error && showRows.length === 0 ? <p className="aps-closed-message">Geen bevestigde gesloten trades gevonden.</p> : null}
-            {(hasMore && !reachedYesterday || error) && !loading ? <button type="button" className="aps-closed-more" onClick={() => void load(error && rows.length === 0 ? null : cursor)}>{error ? "Opnieuw proberen" : "Meer laden · oudere trades"}</button> : null}
+            {(hasMore || error) && !loading ? <button type="button" className="aps-closed-more" onClick={() => void load(error && rows.length === 0 ? null : cursor)}>{error ? "Opnieuw proberen" : "Meer laden · oudere trades"}</button> : null}
           </div>
           <footer>Geregistreerde exchange-resultaten · ontbrekende gegevens worden niet geschat</footer>
         </div>
