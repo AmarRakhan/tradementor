@@ -1,4 +1,5 @@
-const CACHE_NAME = "amar-bot-shell-v46-build451";
+const ACTIVE_BUILD = new URL(self.location.href).searchParams.get("build") || "unknown";
+const CACHE_NAME = `amar-bot-shell-v46-build${ACTIVE_BUILD}`;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.add("/offline.html")));
