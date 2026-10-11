@@ -647,20 +647,18 @@ export function PortfolioKoersChart({
 
   // One shared historical detail read per mounted chart (never per marker or
   // on a polling interval). Reconcile only complete, verified execution buckets.
-  const historicalTpReadRef=useRef(false);
+  const historicalTpReadRef=useRef<Set<string>>(new Set());
   useEffect(()=>{
-    if(historicalTpReadRef.current||viewMode==="active")return;
+    if(historicalTpReadRef.current.has(timeframe)||viewMode==="active")return;
     const missing=combinedMarkers.some((row)=>String(row.kind||"").toLowerCase()==="tp"&&
       (row.realizedPnlVerified===false||(!Number(row.realizedPnlUsd)&&!(row.trades||[]).some((trade)=>Number(trade.realizedPnlUsd)!==0))));
     if(!missing)return;
-    historicalTpReadRef.current=true;
-    let cancelled=false;
+    historicalTpReadRef.current.add(timeframe);
     void (async()=>{
       try{
         const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
         const activity=record(response.recentTradeActivity);
         tradeActivityCacheRef.current=activity;
-        if(cancelled)return;
         const updates:Record<string,{pnl:number;trades:TpTrade[]}>={};
         for(const row of combinedMarkers){
           if(String(row.kind||"").toLowerCase()!=="tp")continue;
@@ -671,12 +669,11 @@ export function PortfolioKoersChart({
           if(symbols.size&&trades.some((trade)=>!symbols.has(trade.symbol)))continue;
           updates[`${timeframe}|${row.time}`]={pnl:trades.reduce((sum,trade)=>sum+Number(trade.realizedPnlUsd),0),trades};
         }
-        if(!cancelled&&Object.keys(updates).length)setConfirmedTpBuckets((current)=>({...current,...updates}));
+        if(Object.keys(updates).length)setConfirmedTpBuckets((current)=>({...current,...updates}));
       }catch{
         // Historic details are optional display evidence, never trading truth.
       }
     })();
-    return()=>{cancelled=true};
   },[combinedMarkers,timeframe,viewMode]);
 
   useEffect(()=>{
