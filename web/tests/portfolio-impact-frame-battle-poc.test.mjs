@@ -10,8 +10,8 @@ const mediaRoute = readFileSync(new URL("../app/api/media/bull-bear-master/route
 const dockerfile = readFileSync(new URL("../Dockerfile", import.meta.url), "utf8");
 
 test("Bull vs Bear keeps the premium master movie but uses normal bidirectional playback", () => {
-  assert.match(component, /MASTER_SOURCE = "\/api\/media\/bull-bear-master\?v=3"/);
-  assert.match(component, /REVERSE_SOURCE = "\/api\/media\/bull-bear-master\?direction=reverse&v=3"/);
+  assert.match(component, /MASTER_SOURCE = `\/api\/media\/bull-bear-master\?v=\$\{WEBAPP_BUILD_NUMBER\}`/);
+  assert.match(component, /REVERSE_SOURCE = `\/api\/media\/bull-bear-master\?direction=reverse&v=\$\{WEBAPP_BUILD_NUMBER\}`/);
   assert.match(component, /POSTER_SOURCE = "\/portfolio-impact-bull-bear-neutral\.webp"/);
   assert.match(component, /forwardVideoRef/);
   assert.match(component, /reverseVideoRef/);
