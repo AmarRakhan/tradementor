@@ -147,7 +147,11 @@ function entryTradesForBucketFromActivity(activity:unknown,timeframe:string,buck
     const explicitMargin=Math.abs(Number(row.marginUsd??row.executedMarginUsd??row.initialMarginUsd)||0);
     const leverage=Math.abs(Number(row.leverage)||0);
     const marginUsd=explicitMargin>0?explicitMargin:notionalUsd&&leverage>0?notionalUsd/leverage:null;
-    return [{symbol,realizedPnlUsd:0,durationMinutes:null,side,entryPrice:Number.isFinite(entryPrice)&&entryPrice>0?entryPrice:null,openedAtMs:stamp,notionalUsd,marginUsd}];
+    // Retain historical execution identity when enriching the original marker.
+    // Without these fields, a valid order-id match is unnecessarily lost.
+    const orderId=String(row.orderId??row.order_id??"").trim();
+    const clientOrderId=String(row.clientOrderId??row.client_order_id??"").trim();
+    return [{symbol,realizedPnlUsd:0,durationMinutes:null,side,entryPrice:Number.isFinite(entryPrice)&&entryPrice>0?entryPrice:null,openedAtMs:stamp,notionalUsd,marginUsd,orderId,clientOrderId,fillQuantity:quantity>0?quantity:null,exchangeConfirmed:row.exchangeConfirmed===true}];
   });
 }
 const integerOrNull=(value:unknown)=>{
@@ -1193,13 +1197,20 @@ export function PortfolioKoersChart({
       const trades=!isTp&&exactMarkerEntries.length
         ? exactMarkerEntries.map((entry)=>{
             if(Number(entry.marginUsd)>0)return entry;
-            const match=fallback.find((candidate)=>{
+            const matches=fallback.filter((candidate)=>{
               if(candidate.symbol!==entry.symbol||candidate.side!==entry.side)return false;
               const sameOrder=Boolean(entry.orderId&&candidate.orderId&&entry.orderId===candidate.orderId);
               const sameClientOrder=Boolean(entry.clientOrderId&&candidate.clientOrderId&&entry.clientOrderId===candidate.clientOrderId);
-              const sameExecution=Boolean(entry.openedAtMs&&candidate.openedAtMs&&Math.abs(entry.openedAtMs-candidate.openedAtMs)<=1000);
+              // Time-only match is permitted only at execution precision and
+              // when neither side carries contradictory order identity.
+              const mismatchedOrder=Boolean(entry.orderId&&candidate.orderId&&entry.orderId!==candidate.orderId);
+              const mismatchedClient=Boolean(entry.clientOrderId&&candidate.clientOrderId&&entry.clientOrderId!==candidate.clientOrderId);
+              const sameExecution=Boolean(entry.openedAtMs&&candidate.openedAtMs&&Math.abs(entry.openedAtMs-candidate.openedAtMs)<=1000&&!mismatchedOrder&&!mismatchedClient);
               return sameOrder||sameClientOrder||sameExecution;
             });
+            // Multiple same-symbol executions in one candle must never borrow
+            // margin from an arbitrarily selected neighbouring DCA fill.
+            const match=matches.length===1?matches[0]:null;
             return match&&Number(match.marginUsd)>0?{...entry,marginUsd:match.marginUsd}:entry;
           })
         :fallback;
