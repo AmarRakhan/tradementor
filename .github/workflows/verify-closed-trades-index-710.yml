@@ -30,11 +30,11 @@ jobs:
           matches=[]
           for index in indexes:
               name=index.get("name","")
-              if not name.endswith("/indexes/") and index.get("queryScope") in ("COLLECTION", "QUERY_SCOPE_COLLECTION"):
+              if "/collectionGroups/asterClosedTrades/indexes/" in name and index.get("queryScope") in ("COLLECTION", "QUERY_SCOPE_COLLECTION"):
                   fields=index.get("fields") or []
                   def field(name,order):
                       return any(f.get("fieldPath")==name and f.get("order") in (order, "ORDER_"+order) for f in fields)
-                  if "/collectionGroups/asterClosedTrades/" in name and field("verifiedFullClose","ASCENDING") and field("closedAt","DESCENDING"):
+                  if field("verifiedFullClose","ASCENDING") and field("closedAt","DESCENDING"):
                       matches.append(index)
           if not matches:
               raise SystemExit("BLOCKED: required asterClosedTrades index is absent")
