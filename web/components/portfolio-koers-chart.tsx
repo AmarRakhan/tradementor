@@ -147,7 +147,11 @@ function entryTradesForBucketFromActivity(activity:unknown,timeframe:string,buck
     const explicitMargin=Math.abs(Number(row.marginUsd??row.executedMarginUsd??row.initialMarginUsd)||0);
     const leverage=Math.abs(Number(row.leverage)||0);
     const marginUsd=explicitMargin>0?explicitMargin:notionalUsd&&leverage>0?notionalUsd/leverage:null;
-    return [{symbol,realizedPnlUsd:0,durationMinutes:null,side,entryPrice:Number.isFinite(entryPrice)&&entryPrice>0?entryPrice:null,openedAtMs:stamp,notionalUsd,marginUsd}];
+    // Retain historical execution identity when enriching the original marker.
+    // Without these fields, a valid order-id match is unnecessarily lost.
+    const orderId=String(row.orderId??row.order_id??"").trim();
+    const clientOrderId=String(row.clientOrderId??row.client_order_id??"").trim();
+    return [{symbol,realizedPnlUsd:0,durationMinutes:null,side,entryPrice:Number.isFinite(entryPrice)&&entryPrice>0?entryPrice:null,openedAtMs:stamp,notionalUsd,marginUsd,orderId,clientOrderId,fillQuantity:quantity>0?quantity:null,exchangeConfirmed:row.exchangeConfirmed===true}];
   });
 }
 const integerOrNull=(value:unknown)=>{
@@ -241,6 +245,19 @@ function normalizeActiveTradesPayload(value:unknown):ActiveTradesPayload{
     ordersSent:Math.max(0,Math.round(Number(root.ordersSent)||0)),source:String(root.source||""),
   };
 }
+
+const confirmedTpMatch=(row:Marker,trades:TpTrade[])=>{
+  const expected=Math.max(1,Number(row.count)||1);
+  if(trades.length!==expected||!trades.every((trade)=>trade.realizedPnlVerified!==false&&Number.isFinite(Number(trade.realizedPnlUsd))))return false;
+  const originals=Array.isArray(row.trades)?row.trades:[];
+  const symbols=new Set(originals.map((trade)=>String(trade.symbol||"").toUpperCase()).filter(Boolean));
+  if(symbols.size&&trades.some((trade)=>!symbols.has(String(trade.symbol||"").toUpperCase())))return false;
+  // A bucket with multiple executions is not a unique event identity.
+  // Never infer its payout from coincident timestamp and symbol alone.
+  if(expected!==1)return false;
+  if(row.realizedPnlVerified===true&&Number.isFinite(Number(row.realizedPnlUsd))&&Number(row.realizedPnlUsd)!==0)return false;
+  return true;
+};
 
 function markerPresentation(row:Marker) {
   const kind=String(row.kind||"").toLowerCase(),side=String(row.side||"").toUpperCase(),count=Math.max(1,Number(row.count)||1);
@@ -535,10 +552,18 @@ export function PortfolioKoersChart({
   const [soldierActivity,setSoldierActivity]=useState<SoldierActivityEvent[]>([]);
   const [zoneSoldiersScreenOpen,setZoneSoldiersScreenOpen]=useState(false);
   const durableMarkers=viewMode==="active"?activePayload.markers:payload.markers;
-  const combinedMarkers=useMemo(
-    ()=>mergePortfolioKoersMarkers(durableMarkers,recentMarkers) as Marker[],
-    [durableMarkers,recentMarkers],
-  );
+  // Confirmed close-details must update the chart marker as well as the popup.
+  // Keys are timeframe-scoped because TP clusters aggregate different buckets.
+  const [confirmedTpBuckets,setConfirmedTpBuckets]=useState<Record<string,{pnl:number;trades:TpTrade[]}>>({});
+  const combinedMarkers=useMemo(()=>{
+    const rows=mergePortfolioKoersMarkers(durableMarkers,recentMarkers) as Marker[];
+    return rows.map((row)=>{
+      if(String(row.kind||"").toLowerCase()!=="tp")return row;
+      const confirmed=confirmedTpBuckets[`${timeframe}|${row.time}`];
+      if(!confirmed||!confirmedTpMatch(row,confirmed.trades))return row;
+      return {...row,realizedPnlUsd:confirmed.pnl,realizedPnlVerified:true,trades:confirmed.trades};
+    });
+  },[durableMarkers,recentMarkers,confirmedTpBuckets,timeframe]);
   const cashflowSignature=useMemo(
     ()=>combinedMarkers
       .filter((row)=>String(row.kind||"").toLowerCase()==="cashflow")
@@ -630,6 +655,35 @@ export function PortfolioKoersChart({
     document.addEventListener("visibilitychange",visible);
     return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
   },[loadRecentEvents]);
+
+  // One shared historical detail read per mounted chart (never per marker or
+  // on a polling interval). Reconcile only complete, verified execution buckets.
+  const historicalTpReadRef=useRef<Set<string>>(new Set());
+  useEffect(()=>{
+    if(historicalTpReadRef.current.has(timeframe)||viewMode==="active")return;
+    const missing=combinedMarkers.some((row)=>String(row.kind||"").toLowerCase()==="tp"&&
+      (row.realizedPnlVerified===false||(!Number(row.realizedPnlUsd)&&!(row.trades||[]).some((trade)=>Number(trade.realizedPnlUsd)!==0))));
+    if(!missing)return;
+    historicalTpReadRef.current.add(timeframe);
+    void (async()=>{
+      try{
+        const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
+        const activity=record(response.recentTradeActivity);
+        tradeActivityCacheRef.current=activity;
+        const updates:Record<string,{pnl:number;trades:TpTrade[]}>={};
+        for(const row of combinedMarkers){
+          if(String(row.kind||"").toLowerCase()!=="tp")continue;
+          const expected=Math.max(1,Number(row.count)||1);
+          const trades=tpTradesForBucketFromActivity(activity,timeframe,Number(row.time)) as TpTrade[];
+          if(!confirmedTpMatch(row,trades))continue;
+          updates[`${timeframe}|${row.time}`]={pnl:trades.reduce((sum,trade)=>sum+Number(trade.realizedPnlUsd),0),trades};
+        }
+        if(Object.keys(updates).length)setConfirmedTpBuckets((current)=>({...current,...updates}));
+      }catch{
+        // Historic details are optional display evidence, never trading truth.
+      }
+    })();
+  },[combinedMarkers,timeframe,viewMode]);
 
   useEffect(()=>{
     markerRowsRef.current=combinedMarkers;
@@ -1183,16 +1237,31 @@ export function PortfolioKoersChart({
       const trades=!isTp&&exactMarkerEntries.length
         ? exactMarkerEntries.map((entry)=>{
             if(Number(entry.marginUsd)>0)return entry;
-            const match=fallback.find((candidate)=>{
+            const matches=fallback.filter((candidate)=>{
               if(candidate.symbol!==entry.symbol||candidate.side!==entry.side)return false;
               const sameOrder=Boolean(entry.orderId&&candidate.orderId&&entry.orderId===candidate.orderId);
               const sameClientOrder=Boolean(entry.clientOrderId&&candidate.clientOrderId&&entry.clientOrderId===candidate.clientOrderId);
-              const sameExecution=Boolean(entry.openedAtMs&&candidate.openedAtMs&&Math.abs(entry.openedAtMs-candidate.openedAtMs)<=1000);
+              // Time-only match is permitted only at execution precision and
+              // when neither side carries contradictory order identity.
+              const mismatchedOrder=Boolean(entry.orderId&&candidate.orderId&&entry.orderId!==candidate.orderId);
+              const mismatchedClient=Boolean(entry.clientOrderId&&candidate.clientOrderId&&entry.clientOrderId!==candidate.clientOrderId);
+              const sameExecution=Boolean(entry.openedAtMs&&candidate.openedAtMs&&Math.abs(entry.openedAtMs-candidate.openedAtMs)<=1000&&!mismatchedOrder&&!mismatchedClient);
               return sameOrder||sameClientOrder||sameExecution;
             });
+            // Multiple same-symbol executions in one candle must never borrow
+            // margin from an arbitrarily selected neighbouring DCA fill.
+            const match=matches.length===1?matches[0]:null;
             return match&&Number(match.marginUsd)>0?{...entry,marginUsd:match.marginUsd}:entry;
           })
         :fallback;
+      const confirmedTp=isTp&&trades.length===expected&&trades.every((row)=>row.realizedPnlVerified!==false&&Number.isFinite(Number(row.realizedPnlUsd)));
+      if(confirmedTp){
+        const symbols=new Set((label.trades||[]).map((trade)=>trade.symbol).filter(Boolean));
+        if(!symbols.size||trades.every((trade)=>symbols.has(trade.symbol))){
+          const pnl=trades.reduce((sum,row)=>sum+Number(row.realizedPnlUsd),0);
+          setConfirmedTpBuckets((current)=>({...current,[`${timeframe}|${label.markerTime}`]:{pnl,trades}}));
+        }
+      }
       if(trades.length===expected&&(isTp?trades.every((row)=>row.realizedPnlVerified!==false):trades.every((row)=>Number(row.marginUsd)>0))){
         confirmedClusterDetailsRef.current.set(detailKey,trades);
       }
