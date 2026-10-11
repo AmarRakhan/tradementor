@@ -26,7 +26,7 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-11",
-  title: "Centrale frontend- en media-cache synchronisatie",
+  title: "Centrale frontend- en media-cache synchronisatie · build 599",
   newItems: [
     "Build 599 koppelt de PWA-cache en stier/beer-mastervideo aan dezelfde centrale releaseversie, zodat oude visuele bestanden niet onbedoeld naast actuele frontendcode blijven hangen; geen trading- of backendwijzigingen.",
     "Build 598 voegt premium 3D-flipoverzichten toe aan Gesloten resultaat en Trades gesloten, met bestaande accountgebonden Aster-historie; geen trading- of backendwijzigingen.",

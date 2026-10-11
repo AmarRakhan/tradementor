@@ -1,5 +1,6 @@
 export const WEBAPP_VERSION = "46";
 // Build 599: central PWA and bull/bear cache synchronization; preserve all build 598 features.
+// Canonical release metadata synchronized with release-history.ts for shared V46 deployment.
 // Build 598: twee bestaande snapshot-tegels met hergebruik van de centrale Aster gesloten-tradehistorie en 3D-flip.
 // Build 597: Slot-overzicht verplaatst onder Actieve zone; geen botinstellingen- of tradingwijzigingen.
 // Build 596: bevestigd winstzakje onthouden tijdens sessie, direct heropenen, gedeelde in-flight aanvraag.
