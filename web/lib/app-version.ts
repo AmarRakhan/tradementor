@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 598: synchronize PWA cache namespaces and bull/bear media URLs with central release version.
 // Build 597: Slot-overzicht verplaatst onder Actieve zone; geen botinstellingen- of tradingwijzigingen.
 // Build 596: bevestigd winstzakje onthouden tijdens sessie, direct heropenen, gedeelde in-flight aanvraag.
 // Build 595: Historische LONG/SHORT-marker vult ontbrekende margin uitsluitend aan vanuit overeenkomende uitvoeringsgegevens.
@@ -23,7 +24,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "597";
+export const WEBAPP_BUILD_NUMBER = "598";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
