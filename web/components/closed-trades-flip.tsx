@@ -6,7 +6,7 @@ type Trade = Record<string, unknown>;
 type Mode = "all" | "today";
 const asNumber = (v:unknown) => v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v);
 const asDate = (v:unknown) => { const t= typeof v === "number" ? (v < 1e10 ? v*1000 : v) : Date.parse(String(v||"")); return Number.isFinite(t)&&t>0?t:null; };
-const dateKey = (t:number) => new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Amsterdam",year:"numeric",month:"2-digit",day:"2-digit"}).format(t);
+const dateKey = (t:number) => {const parts=new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Amsterdam",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(t); const pick=(key:string)=>parts.find(p=>p.type===key)?.value||"";return `${pick("year")}-${pick("month")}-${pick("day")}`;};
 const formatted = (n:number|null) => n===null?"—":new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(n));
 const duration = (row:Trade) => {const opened=asDate(row.openedAt),closed=asDate(row.closedAt);if(opened===null||closed===null||closed<opened)return "—";const mins=Math.floor((closed-opened)/60000);return mins>=1440?`${Math.floor(mins/1440)}d ${Math.floor(mins%1440/60)}u`:mins>=60?`${Math.floor(mins/60)}u ${mins%60}m`:`${mins}m`;};
 export function ClosedTradesFlip({mode,onClose,todayCount}:{mode:Mode;onClose:()=>void;todayCount:string}) {
