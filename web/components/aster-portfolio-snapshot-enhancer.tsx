@@ -8,6 +8,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { normalizeAsterAccountTruth, type AsterAccountTruth } from "@/lib/aster-account-truth";
 import { AsterHedgeManager } from "./aster-hedge-manager";
 import { PortfolioKoersChart } from "./portfolio-koers-chart";
+import { ClosedTradesHistoryModal, type ClosedHistoryMode } from "./closed-trades-history-modal";
 import { TradeIntelligenceAdvisorCenter } from "./trade-intelligence-advisor-center";
 import { PriceZoneCycleOverview } from "./price-zone-cycle-overview";
 import { ActiveZoneSeatBlock, resolveActiveZoneSeatState, type ActiveZoneSeatSummary } from "./active-zone-seat-block";
@@ -537,8 +538,11 @@ function Icon({ name }: { name: "wallet" | "coins" | "capital" | "positions" | "
   return <svg {...common}><path d="M12 3 5 6v5c0 4.7 2.8 8.2 7 10 4.2-1.8 7-5.3 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>;
 }
 
-function MetricCard({ icon, label, value, tone = "normal", detail, detailTone = "muted" }: { icon: Parameters<typeof Icon>[0]["name"]; label: string; value: string; tone?: "normal" | "positive" | "negative"; detail?: string; detailTone?: "muted" | "positive" | "negative" }) {
-  return <article className={`aps-metric aps-${tone}`}><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong>{detail ? <em className={`aps-metric-detail aps-detail-${detailTone}`}>{detail}</em> : null}</div></article>;
+function MetricCard({ icon, label, value, tone = "normal", detail, detailTone = "muted", onClick }: { icon: Parameters<typeof Icon>[0]["name"]; label: string; value: string; tone?: "normal" | "positive" | "negative"; detail?: string; detailTone?: "muted" | "positive" | "negative"; onClick?: () => void }) {
+  const content = <><span className="aps-icon"><Icon name={icon} /></span><div><small>{label}</small><strong>{value}</strong>{detail ? <em className={`aps-metric-detail aps-detail-${detailTone}`}>{detail}</em> : null}</div></>;
+  return onClick
+    ? <button type="button" className={`aps-metric aps-${tone} aps-flip-trigger`} onClick={onClick} aria-label={`${label}: ${value}. Open gesloten-tradehistorie.`}>{content}</button>
+    : <article className={`aps-metric aps-${tone}`}>{content}</article>;
 }
 
 function GrowthCard({ icon, label, value, tone, detail, onClick }: { icon: "growth" | "calendar"; label: string; value: string; tone: Tone; detail?: string; onClick?: () => void }) {
@@ -1025,7 +1029,7 @@ function ScannerStatusPage({ snapshot, onBack }: { snapshot: ScannerStatusSnapsh
   </section>;
 }
 
-function Snapshot({ values, snapshotLoadWarning, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner, onOpenPerformance }: {
+function Snapshot({ values, snapshotLoadWarning, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner, onOpenPerformance, onOpenHistory }: {
   values: SnapshotValues;
   snapshotLoadWarning: string;
   profitPreview: ProfitPreview | null;
@@ -1037,6 +1041,7 @@ function Snapshot({ values, snapshotLoadWarning, profitPreview, liquidationDiagn
   onOpenPriceZone: () => void;
   onOpenScanner: () => void;
   onOpenPerformance: (tab: PerformanceInitialTab) => void;
+  onOpenHistory: (mode: ClosedHistoryMode) => void;
 }) {
   return <section className="aster-portfolio-snapshot" aria-label="Portfolio Snapshot" data-reference={SNAPSHOT_V2_REFERENCE}>
     <header>
@@ -1054,8 +1059,8 @@ function Snapshot({ values, snapshotLoadWarning, profitPreview, liquidationDiagn
       <MetricCard icon="coins" label="AVAILABLE TO TRADE" value={values.available} />
       <MetricCard icon="capital" label="ACTIEF TRADE CAPITAL" value={values.activeCapital} />
       <MetricCard icon="positions" label="ACTIEVE POSITIES" value={values.activePositions} detail={values.longs !== "—" && values.shorts !== "—" ? `${values.longs} Long  ${values.shorts} Short` : undefined} />
-      <MetricCard icon="result" label="GESLOTEN RESULTAAT" value={values.realized} tone={values.realizedTone === "positive" ? "positive" : values.realizedTone === "negative" ? "negative" : "normal"} detail="Vandaag" detailTone={values.realizedTone === "positive" ? "positive" : values.realizedTone === "negative" ? "negative" : "muted"} />
-      <MetricCard icon="trades" label="TRADES GESLOTEN" value={values.tradesClosed} detail="Vandaag" />
+      <MetricCard icon="result" label="GESLOTEN RESULTAAT" value={values.realized} tone={values.realizedTone === "positive" ? "positive" : values.realizedTone === "negative" ? "negative" : "normal"} detail="Vandaag" detailTone={values.realizedTone === "positive" ? "positive" : values.realizedTone === "negative" ? "negative" : "muted"} onClick={() => onOpenHistory("all")} />
+      <MetricCard icon="trades" label="TRADES GESLOTEN" value={values.tradesClosed} detail="Vandaag" onClick={() => onOpenHistory("today")} />
     </div>
     <HedgeSummary preview={profitPreview} onOpen={onOpenHedge} />
     <div className="aps-health-grid">
@@ -1128,6 +1133,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [detailView, setDetailView] = useState<SnapshotDetailView>("portfolio");
   const [performanceInitialTab, setPerformanceInitialTab] = useState<PerformanceInitialTab>("per-day");
   const [hedgeOpen, setHedgeOpen] = useState(false);
+  const [closedHistoryMode, setClosedHistoryMode] = useState<ClosedHistoryMode | null>(null);
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const [asterSubtab, setAsterSubtab] = useState<AsterSubtab>("portfolio");
   const [advisorDayRangePosition, setAdvisorDayRangePosition] = useState<"low"|"middle"|"high">("middle");
@@ -1142,6 +1148,7 @@ export function AsterPortfolioSnapshotEnhancer() {
     const uid = user?.uid ?? null;
     if (snapshotUserRef.current === uid) return;
     snapshotUserRef.current = uid;
+    setClosedHistoryMode(null);
     lastConfirmedAtRef.current = null;
     valuesRef.current = EMPTY;
     setValues(EMPTY);
@@ -1479,9 +1486,11 @@ export function AsterPortfolioSnapshotEnhancer() {
             onOpenPriceZone={() => openDetail("price-zone")}
             onOpenScanner={() => openDetail("scanner")}
             onOpenPerformance={openPerformance}
+            onOpenHistory={setClosedHistoryMode}
           />
         </> : asterSubtab==="advisor" ? <TradeIntelligenceAdvisorCenter dayRangePosition={advisorDayRangePosition} /> : null}
 
+        {closedHistoryMode ? <ClosedTradesHistoryModal key={closedHistoryMode} mode={closedHistoryMode} onClose={() => setClosedHistoryMode(null)} todayCount={values.tradesClosed} todayTotal={values.realized} /> : null}
         {hedgeOpen ? <AsterHedgeManager onClose={() => setHedgeOpen(false)} /> : null}
         {confirmScope && confirmBucket && profitPreview ? <CloseImpactSheet
           scope={confirmScope}

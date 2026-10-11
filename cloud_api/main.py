@@ -5833,6 +5833,105 @@ def _verified_aster_daily_close_summary(client: AsterV3Client, user_ref: Any | N
     }
 
 
+
+def _persist_verified_full_closes(user: dict[str, Any], summary: dict[str, Any]) -> int:
+    """Materialize proven full closes in existing per-account Aster close ledger.
+
+    The old per-fill records remain untouched for legacy consumers. Distinct IDs
+    and a verifiedFullClose flag prevent partial fills from appearing as full closes.
+    """
+    if summary.get("reliable") is not True:
+        return 0
+    rows = summary.get("fullClosedTrades")
+    if not isinstance(rows, list):
+        return 0
+    collection = user_reference(user).collection("asterClosedTrades")
+    candidates = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("fullyClosed") is not True:
+            continue
+        try:
+            closed_at = datetime.fromisoformat(str(row["closedAt"]).replace("Z", "+00:00")).astimezone(timezone.utc)
+        except (KeyError, TypeError, ValueError):
+            continue
+        identity = "|".join(str(row.get(k, "")) for k in ("symbol", "side", "openedAt", "closedAt", "exchangeOrderId", "exchangeTradeId"))
+        identifier = hashlib.sha256(("verified-full-close|" + identity).encode("utf-8")).hexdigest()
+        candidates[identifier] = {
+            **row, "closedAt": closed_at, "verifiedFullClose": True,
+            "source": str(row.get("source") or "aster-verified-full-close"),
+        }
+    pending = [(collection.document(identifier), payload) for identifier, payload in candidates.items()]
+    inserted = 0
+    for offset in range(0, len(pending), 400):
+        group = pending[offset:offset + 400]
+        # Batch-read existing IDs instead of issuing one Firestore read per
+        # trade: same account ledger, no duplicate writes on refresh.
+        existing = {snap.id for snap in db.get_all([ref for ref, _ in group]) if snap.exists}
+        missing = [(ref, payload) for ref, payload in group if ref.id not in existing]
+        if not missing:
+            continue
+        batch = db.batch()
+        for ref, payload in missing:
+            batch.set(ref, payload, merge=True)
+        batch.commit()
+        inserted += len(missing)
+    return inserted
+
+
+@app.get("/v1/me/aster/closed-trades/history")
+def aster_closed_trades_history_page(
+    user: dict[str, Any] = Depends(authenticated_user),
+    limit: int = Query(default=30, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=64),
+    scope: str = Query(default="all", pattern="^(all|today)$"),
+) -> dict[str, Any]:
+    """Read-only, cursor-paginated view over the existing per-user close ledger.
+
+    No exchange API calls. The cursor points to a document in the authenticated
+    user's OWN collection and cannot grant access to another account.
+    """
+    collection = user_reference(user).collection("asterClosedTrades")
+    query = collection.where("verifiedFullClose", "==", True).order_by(
+        "closedAt", direction=firestore.Query.DESCENDING
+    )
+    if scope == "today":
+        local_now = datetime.now(timezone.utc).astimezone(ZoneInfo("Europe/Amsterdam"))
+        day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        query = query.where("closedAt", ">=", day_start.astimezone(timezone.utc)).where(
+            "closedAt", "<", day_end.astimezone(timezone.utc)
+        )
+    if cursor:
+        if not re.fullmatch(r"[a-f0-9]{64}", cursor):
+            raise HTTPException(status_code=400, detail="Invalid closed-trades cursor")
+        last_document = collection.document(cursor).get()
+        if not last_document.exists or last_document.get("verifiedFullClose") is not True:
+            raise HTTPException(status_code=400, detail="Invalid closed-trades cursor")
+        if scope == "today":
+            closed_at_cursor = last_document.get("closedAt")
+            if not isinstance(closed_at_cursor, datetime) or not day_start.astimezone(timezone.utc) <= closed_at_cursor < day_end.astimezone(timezone.utc):
+                raise HTTPException(status_code=400, detail="Cursor buiten de geselecteerde dag")
+        query = query.start_after(last_document)
+    documents = list(query.limit(limit + 1).stream())
+    selected = documents[:limit]
+    rows: list[dict[str, Any]] = []
+    for document in selected:
+        row = document.to_dict() or {}
+        for timestamp_field in ("openedAt", "closedAt"):
+            value = row.get(timestamp_field)
+            if isinstance(value, datetime):
+                row[timestamp_field] = value.isoformat()
+        row["recordId"] = document.id
+        rows.append(row)
+    return {
+        "closedTrades": rows,
+        "nextCursor": selected[-1].id if len(documents) > limit and selected else None,
+        "hasMore": len(documents) > limit,
+        "historyCoverage": "VERIFIED_PERSISTED_ONLY",
+        "historicalBackfillComplete": False,
+    }
+
+
 @app.get("/v1/me/aster/closed-trades")
 def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     """Return exchange-confirmed closes, including trades closed outside strategy 1."""
@@ -5923,6 +6022,13 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
             fills.extend(row for row in rows if isinstance(row, dict))
         confirmed = closed_trades_from_fills(fills)
         closed_trade_summary_today = _verified_aster_daily_close_summary(client, user_reference(user))
+        if closed_trade_summary_today.get("reliable") is True:
+            try:
+                _persist_verified_full_closes(user, closed_trade_summary_today)
+            except Exception:
+                # Historical materialization is supplemental; never disrupt
+                # the established account snapshot or live trading reads.
+                pass
         fresh_activity = recent_trade_activity_from_fills(
             fills, active_positions=active_positions, strategy_by_intent=strategy_by_intent,
             strategy_by_order_id=strategy_by_order_id,

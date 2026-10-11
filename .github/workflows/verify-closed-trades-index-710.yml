@@ -1,0 +1,47 @@
+name: Closed Trades Firestore Index Read-Only Gate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate as existing production observer
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+          service_account: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify Firestore index without modifying production
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF_NAME" = "amar-crypto-bot-2026-cloud"
+          gcloud firestore indexes composite list --project tradementor-production --database='(default)' --format=json > "$RUNNER_TEMP/indices.json"
+          python - "$RUNNER_TEMP/indices.json" <<'PY'
+          import json,sys
+          indexes=json.load(open(sys.argv[1]))
+          matches=[]
+          for index in indexes:
+              name=index.get("name","")
+              if "/collectionGroups/asterClosedTrades/indexes/" in name and index.get("queryScope") in ("COLLECTION", "QUERY_SCOPE_COLLECTION"):
+                  fields=index.get("fields") or []
+                  def field(name,order):
+                      return any(f.get("fieldPath")==name and f.get("order") in (order, "ORDER_"+order) for f in fields)
+                  if field("verifiedFullClose","ASCENDING") and field("closedAt","DESCENDING"):
+                      matches.append(index)
+          if not matches:
+              raise SystemExit("BLOCKED: required asterClosedTrades index is absent")
+          for index in matches:
+              status=index.get("state","UNKNOWN")
+              print("Verified closed history index state:",status)
+          if not any(x.get("state") in ("READY","STATE_READY") for x in matches):
+              raise SystemExit("BLOCKED: required asterClosedTrades index not READY")
+          print("PASS: existing production Firestore composite index READY")
+          PY
