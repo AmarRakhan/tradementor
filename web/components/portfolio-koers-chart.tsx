@@ -656,34 +656,48 @@ export function PortfolioKoersChart({
     return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
   },[loadRecentEvents]);
 
-  // One shared historical detail read per mounted chart (never per marker or
-  // on a polling interval). Reconcile only complete, verified execution buckets.
-  const historicalTpReadRef=useRef<Set<string>>(new Set());
+  // Historical TP detail hydration is presentation-only. Retry incomplete
+  // buckets after a bounded delay, including buckets added after the first read.
+  // Never trigger an exchange scan per marker or overlap endpoint requests.
+  const historicalTpAttemptRef=useRef<Map<string,number>>(new Map());
+  const historicalTpPendingRef=useRef(false);
+  const [historicalTpRetryTick,setHistoricalTpRetryTick]=useState(0);
   useEffect(()=>{
-    if(historicalTpReadRef.current.has(timeframe)||viewMode==="active")return;
-    const missing=combinedMarkers.some((row)=>String(row.kind||"").toLowerCase()==="tp"&&
+    const timer=window.setInterval(()=>{
+      if(document.visibilityState==="visible")setHistoricalTpRetryTick((tick)=>tick+1);
+    },60_000);
+    return()=>window.clearInterval(timer);
+  },[]);
+  useEffect(()=>{
+    if(viewMode==="active"||historicalTpPendingRef.current)return;
+    const incomplete=combinedMarkers.filter((row)=>String(row.kind||"").toLowerCase()==="tp"&&
+      !confirmedTpBuckets[`${timeframe}|${row.time}`]&&
       (row.realizedPnlVerified===false||(!Number(row.realizedPnlUsd)&&!(row.trades||[]).some((trade)=>Number(trade.realizedPnlUsd)!==0))));
-    if(!missing)return;
-    historicalTpReadRef.current.add(timeframe);
+    if(!incomplete.length)return;
+    const fingerprint=`${timeframe}:${incomplete.map((row)=>`${row.time}/${row.count||1}`).join(",")}`;
+    const now=Date.now();
+    if(now-(historicalTpAttemptRef.current.get(fingerprint)||0)<60_000)return;
+    historicalTpAttemptRef.current.set(fingerprint,now);
+    historicalTpPendingRef.current=true;
     void (async()=>{
       try{
         const response=record(await authenticatedRequest("/api/exchanges/aster/closed-trades",{cache:"no-store"}));
         const activity=record(response.recentTradeActivity);
         tradeActivityCacheRef.current=activity;
         const updates:Record<string,{pnl:number;trades:TpTrade[]}>={};
-        for(const row of combinedMarkers){
-          if(String(row.kind||"").toLowerCase()!=="tp")continue;
-          const expected=Math.max(1,Number(row.count)||1);
+        for(const row of incomplete){
           const trades=tpTradesForBucketFromActivity(activity,timeframe,Number(row.time)) as TpTrade[];
           if(!confirmedTpMatch(row,trades))continue;
           updates[`${timeframe}|${row.time}`]={pnl:trades.reduce((sum,trade)=>sum+Number(trade.realizedPnlUsd),0),trades};
         }
         if(Object.keys(updates).length)setConfirmedTpBuckets((current)=>({...current,...updates}));
       }catch{
-        // Historic details are optional display evidence, never trading truth.
+        // Retry next minute; never invent realized PnL or mutate trading truth.
+      }finally{
+        historicalTpPendingRef.current=false;
       }
     })();
-  },[combinedMarkers,timeframe,viewMode]);
+  },[combinedMarkers,confirmedTpBuckets,timeframe,viewMode,historicalTpRetryTick]);
 
   useEffect(()=>{
     markerRowsRef.current=combinedMarkers;
