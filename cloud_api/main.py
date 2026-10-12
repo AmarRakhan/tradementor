@@ -73,7 +73,7 @@ from aster_gateway import (
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, full_leg_closes_from_sweep_ledgers, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
 from aster_account_truth import build_aster_account_truth
-from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, collection_for_timeframe as portfolio_chart_collection, daily_equity_range as portfolio_chart_daily_equity_range, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
+from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, confirmed_durable_close_activity_rows, collection_for_timeframe as portfolio_chart_collection, daily_equity_range as portfolio_chart_daily_equity_range, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
 from aster_strategy2_simulation import standard_suite as strategy2_standard_suite, failure_suite as strategy2_failure_suite
@@ -7086,35 +7086,11 @@ def aster_portfolio_chart(
         dict(row) for row in recent_activity.get("exits", [])
         if isinstance(row, dict)
     ] if isinstance(recent_activity.get("exits"), list) else []
-    known_close_ids = {
-        str(row.get("exchangeTradeId") or row.get("tradeId") or "").strip()
-        for row in cached_exits
-        if str(row.get("exchangeTradeId") or row.get("tradeId") or "").strip()
-    }
     durable_exits = []
     try:
-        for row in _stored_aster_closed_trades(user):
-            identity = str(row.get("exchangeTradeId") or "").strip()
-            if not identity or identity in known_close_ids:
-                continue
-            try:
-                closed_at = datetime.fromisoformat(str(row.get("closedAt", "")).replace("Z", "+00:00"))
-                if closed_at.tzinfo is None:
-                    continue
-                stamp = int(closed_at.timestamp() * 1000)
-            except (ValueError, TypeError, OverflowError):
-                continue
-            side = str(row.get("side") or "").upper().strip()
-            if stamp <= 0 or side not in {"LONG", "SHORT"}:
-                continue
-            pnl = row.get("realizedPnlUsd")
-            if pnl is None:
-                continue
-            known_close_ids.add(identity)
-            durable_exits.append({
-                **row, "timestampMs": stamp,
-                "exchangeTradeId": identity, "side": side,
-            })
+        durable_exits = confirmed_durable_close_activity_rows(
+            _stored_aster_closed_trades(user), cached_exits
+        )
     except google_exceptions.GoogleAPICallError:
         # A transient Firestore read error must not remove cached chart data.
         pass
