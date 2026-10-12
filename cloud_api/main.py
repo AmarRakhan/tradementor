@@ -7079,11 +7079,43 @@ def aster_portfolio_chart(
             if str(ownership.get("soldierRole", "")).strip():
                 entry["soldierRole"] = str(ownership.get("soldierRole"))
         attributed_entries.append(entry)
+    # The signed exchange-fill cache is short-lived and may be empty after a
+    # restart. Reuse already persisted, exchange-confirmed closes so historical
+    # TP labels survive cold starts without another exchange request.
+    cached_exits = [
+        dict(row) for row in recent_activity.get("exits", [])
+        if isinstance(row, dict)
+    ] if isinstance(recent_activity.get("exits"), list) else []
+    known_close_ids = {
+        str(row.get("exchangeTradeId") or row.get("tradeId") or "").strip()
+        for row in cached_exits
+        if str(row.get("exchangeTradeId") or row.get("tradeId") or "").strip()
+    }
+    durable_exits = []
+    try:
+        for row in _stored_aster_closed_trades(user):
+            identity = str(row.get("exchangeTradeId") or "").strip()
+            if not identity or identity in known_close_ids:
+                continue
+            stamp = _portfolio_chart_timestamp_ms(row.get("closedAt"))
+            side = str(row.get("side") or "").upper().strip()
+            if stamp <= 0 or side not in {"LONG", "SHORT"}:
+                continue
+            pnl = row.get("realizedPnlUsd")
+            if pnl is None:
+                continue
+            known_close_ids.add(identity)
+            durable_exits.append({
+                **row, "timestampMs": stamp,
+                "exchangeTradeId": identity, "side": side,
+            })
+    except google_exceptions.GoogleAPICallError:
+        # A transient Firestore read error must not remove cached chart data.
+        pass
     marker_activity = {
         **recent_activity,
         "entries": attributed_entries,
-        "exits": [dict(row) for row in recent_activity.get("exits", []) if isinstance(row, dict)]
-            if isinstance(recent_activity.get("exits"), list) else [],
+        "exits": [*cached_exits, *durable_exits],
     }
     trade_markers = portfolio_chart_trade_markers(marker_activity, timeframe)
     cashflow_markers = portfolio_chart_cashflow_markers(_portfolio_chart_cashflows(user, client), timeframe)
