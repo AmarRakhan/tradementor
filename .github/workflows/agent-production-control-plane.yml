@@ -17,6 +17,20 @@ env:
   TARGET_BRANCH: amar-crypto-bot-2026-cloud
 
 jobs:
+  dispatch-workstation-readonly:
+    if: github.event.issue.title == '[AGENT-CONTROL] workstation read-only probe' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Start trusted GET-only workstation probe
+        run: |
+          set -euo pipefail
+          gh workflow run agent-workstations-access-readonly.yml --repo "$GITHUB_REPOSITORY" --ref "$TARGET_BRANCH" -f request_issue="$ISSUE_NUMBER"
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Read-only Workstations API probe dispatched via trusted branch."
+
   dispatch-one-off-billing-costs:
     if: github.event.issue.title == '[AGENT-CONTROL] billing costs one-off' && github.event.issue.user.login == 'AmarRakhan'
     runs-on: ubuntu-latest
