@@ -1,0 +1,65 @@
+name: Read-only Workstations Access Probe
+on:
+  workflow_dispatch:
+    inputs:
+      request_issue:
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+concurrency:
+  group: workstation-access-readonly
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    env:
+      GCP_PROJECT_ID: tradementor-production
+      WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+      OBSERVER_SA: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Enforce immutable scope
+        env:
+          REQUEST_ISSUE: ${{ inputs.request_issue }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+          [[ "$REQUEST_ISSUE" =~ ^[0-9]+$ ]]
+          test "$(gh issue view "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --json title --jq .title)" = '[AGENT-CONTROL] workstation read-only probe'
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Probe only Workstations API GET
+        env:
+          REQUEST_ISSUE: ${{ inputs.request_issue }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="$(gcloud auth print-access-token)"
+          BASE="https://workstations.googleapis.com/v1/projects/$GCP_PROJECT_ID/locations/europe-west4"
+          REPORT="$RUNNER_TEMP/workstation-probe.txt"
+          echo "## Read-only Workstations access probe" > "$REPORT"
+          echo "Source: trusted branch; mode: GET-only, no start/stop/mutation." >> "$REPORT"
+          for ITEM in "workstationClusters/cluster-mthll54f" "workstationClusters/cluster-mthll54f/workstationConfigs/config-mthlka1d" "workstationClusters/cluster-mthll54f/workstationConfigs/config-mthlka1d/workstations/w-tradementoradmin-mthm3sja"; do
+            BODY="$RUNNER_TEMP/response.json"
+            CODE="$(curl -sS --max-time 15 -o "$BODY" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$BASE/$ITEM" || true)"
+            STATUS="$(python3 - "$BODY" <<'PY'
+          import sys,json
+          try:
+              x=json.load(open(sys.argv[1]))
+              print(str(x.get('state','N/A')) if 'error' not in x else str(x.get('error',{}).get('status','API_ERROR')))
+          except Exception:
+              print('INVALID_RESPONSE')
+          PY
+            )"
+            printf -- '- %s: HTTP %s; status %s\n' "${ITEM##*/}" "$CODE" "$STATUS" >> "$REPORT"
+          done
+          gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$REPORT"
