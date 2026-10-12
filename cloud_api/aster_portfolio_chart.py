@@ -6,7 +6,43 @@ confirmed portfolio-equity samples, display zones and read-only chart markers.
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from typing import Any
+
+
+def confirmed_durable_close_activity_rows(
+    stored: list[dict[str, Any]], cached_exits: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Project only persisted confirmed executions absent from the fill cache.
+
+    This function is read-only. No synthetic fills, PnL or account-wide source
+    are permitted; callers supply rows from the already account-scoped ledger.
+    """
+    seen = {
+        str(row.get("exchangeTradeId") or row.get("tradeId") or "").strip()
+        for row in cached_exits
+        if str(row.get("exchangeTradeId") or row.get("tradeId") or "").strip()
+    }
+    result: list[dict[str, Any]] = []
+    for row in stored:
+        if not isinstance(row, dict):
+            continue
+        identity = str(row.get("exchangeTradeId") or "").strip()
+        side = str(row.get("side") or "").upper().strip()
+        if not identity or identity in seen or side not in {"LONG", "SHORT"} or row.get("realizedPnlUsd") is None:
+            continue
+        try:
+            closed_at = datetime.fromisoformat(str(row.get("closedAt", "")).replace("Z", "+00:00"))
+            if closed_at.tzinfo is None:
+                continue
+            stamp = int(closed_at.timestamp() * 1000)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if stamp <= 0:
+            continue
+        seen.add(identity)
+        result.append({**row, "timestampMs": stamp, "exchangeTradeId": identity, "side": side})
+    return result
 
 TIMEFRAME_MS: dict[str, int] = {
     "1m": 60_000,
