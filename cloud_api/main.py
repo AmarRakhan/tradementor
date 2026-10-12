@@ -7097,7 +7097,13 @@ def aster_portfolio_chart(
             identity = str(row.get("exchangeTradeId") or "").strip()
             if not identity or identity in known_close_ids:
                 continue
-            stamp = _portfolio_chart_timestamp_ms(row.get("closedAt"))
+            try:
+                closed_at = datetime.fromisoformat(str(row.get("closedAt", "")).replace("Z", "+00:00"))
+                if closed_at.tzinfo is None:
+                    continue
+                stamp = int(closed_at.timestamp() * 1000)
+            except (ValueError, TypeError, OverflowError):
+                continue
             side = str(row.get("side") or "").upper().strip()
             if stamp <= 0 or side not in {"LONG", "SHORT"}:
                 continue
