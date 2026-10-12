@@ -17,6 +17,33 @@ env:
   TARGET_BRANCH: amar-crypto-bot-2026-cloud
 
 jobs:
+  dispatch-tp-markers-738:
+    if: github.event.issue.title == '[AGENT-CONTROL] deploy confirmed TP markers f87d6b2' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - name: Dispatch exact-source guarded backend deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run deploy-cloud-production.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref amar-crypto-bot-2026-cloud \
+            -f confirmation=DEPLOY_PRODUCTION_BACKEND \
+            -f source_commit=f87d6b201790d612f970355f3b8c4c8766938941 \
+            -f request_issue="$ISSUE_NUMBER"
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body 'Exact-source guarded TP-marker backend deployment dispatched; monitor full backend CI, candidate and rollback checks.'
+      - name: Report dispatch failure
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body 'Backend workflow dispatch failed; no production promotion confirmed.'
+
   dispatch-workstation-readonly:
     if: github.event.issue.title == '[AGENT-CONTROL] workstation read-only probe' && github.event.issue.user.login == 'AmarRakhan'
     runs-on: ubuntu-latest
