@@ -10,6 +10,7 @@ from aster_portfolio_chart import (
     bucket_start_ms,
     candle_integrity_report,
     classify_confirmed_close,
+    confirmed_durable_close_activity_rows,
     derive_equity_zones,
     external_cashflow_markers,
     latest_contiguous_candles,
@@ -606,3 +607,29 @@ def test_build569_historical_attribution_never_uses_current_settings_for_margin(
     block = source[start:end]
     assert "configured_margin" not in block
     assert 'item.get("marginUsd", item.get("executedMarginUsd"))' in block
+
+
+def test_durable_tp_markers_survive_cold_cache_without_fabricating_closes():
+    stored = [
+        {"exchangeTradeId": "exec-1", "symbol": "ADAUSDT", "side": "SHORT",
+         "closedAt": "2026-10-12T16:31:00Z", "realizedPnlUsd": 0.73},
+        {"exchangeTradeId": "exec-1", "symbol": "ADAUSDT", "side": "SHORT",
+         "closedAt": "2026-10-12T16:31:00Z", "realizedPnlUsd": 0.73},
+        {"exchangeTradeId": "", "side": "SHORT", "closedAt": "2026-10-12T16:31:00Z", "realizedPnlUsd": 99},
+        {"exchangeTradeId": "exec-2", "side": "LONG", "closedAt": "invalid", "realizedPnlUsd": 4},
+        {"exchangeTradeId": "exec-3", "side": "LONG", "closedAt": "2026-10-12T16:31:00Z", "realizedPnlUsd": None},
+    ]
+    rows = confirmed_durable_close_activity_rows(stored, [])
+    assert len(rows) == 1
+    assert rows[0]["timestampMs"] == 1791822660000
+    assert rows[0]["realizedPnlUsd"] == 0.73
+    assert aggregate_trade_activity({"entries": [], "exits": rows}, "15m")[0]["kind"] == "tp"
+    assert confirmed_durable_close_activity_rows(stored, [{"exchangeTradeId": "exec-1"}]) == []
+
+
+def test_durable_tp_marker_does_not_reuse_unverified_timestamps():
+    rows = confirmed_durable_close_activity_rows([
+        {"exchangeTradeId": "exec-4", "side": "SHORT", "closedAt": "2026-10-12T16:31:00", "realizedPnlUsd": 1.0},
+        {"exchangeTradeId": "exec-5", "side": "HEDGE", "closedAt": "2026-10-12T16:31:00Z", "realizedPnlUsd": 1.0},
+    ], [])
+    assert rows == []
