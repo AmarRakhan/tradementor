@@ -23,7 +23,8 @@ def test_direct_panel_contains_only_multi_bb_strategy_controls():
 
 def test_direct_panel_is_cross_and_manual_selection_is_exchange_truth_aware():
     ui=(HERE.parent/"web/components/aster-strategy2-maker.tsx").read_text()
-    assert "CROSS" in ui
+    # The saved runtime contract is authoritative; an uppercase UI label is not.
+    assert 'marginMode: "cross"' in ui
     assert "Zelf munten kiezen" in ui
     assert "leverage-tiers" in ui
     assert "entryOrderValid" in ui
