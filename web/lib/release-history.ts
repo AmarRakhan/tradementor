@@ -25,9 +25,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-10-11",
-  title: "Historische TP-markers en instapmarge · build 600",
+  releasedAt: "2026-10-12",
+  title: "TP-marker herladen na mislukte aanvraag · build 601",
   newItems: [
+    "Build 601 probeert ontbrekende historische TP-details opnieuw op te halen via de bestaande beveiligde closed-trades route; alleen bevestigde PnL wordt getoond, trading blijft ongewijzigd.",
     "Build 600 werkt historische TP-winstzakjes bij vanuit bestaande bevestigde tradeactiviteit, en behandelt niet-eenduidige clusters conservatief; historische entrymargin behoudt de orderidentificatie voor bewijsgebaseerde matching.",
     "Build 599 koppelt de PWA-cache en stier/beer-mastervideo aan dezelfde centrale releaseversie, zodat oude visuele bestanden niet onbedoeld naast actuele frontendcode blijven hangen; geen trading- of backendwijzigingen.",
     "Build 598 voegt premium 3D-flipoverzichten toe aan Gesloten resultaat en Trades gesloten, met bestaande accountgebonden Aster-historie; geen trading- of backendwijzigingen.",
