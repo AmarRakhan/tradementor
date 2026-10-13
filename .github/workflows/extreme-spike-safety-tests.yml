@@ -8,6 +8,8 @@ on:
       - 'cloud_api/test_aster_spike_saved_settings_scanner.py'
       - 'cloud_api/test_aster_spike_pre_mutation.py'
       - 'cloud_api/test_aster_spike_real_scanner_dry_run.py'
+      - 'cloud_api/aster_spike_api_scanner_smoke.py'
+      - 'web/tests/extreme-spike-api-scanner-smoke.mjs'
       - 'cloud_api/aster_multi_bb_core.py'
       - 'web/components/aster-extreme-spike-entry-card.tsx'
       - '.github/workflows/extreme-spike-safety-tests.yml'
@@ -29,3 +31,11 @@ jobs:
             cloud_api.test_aster_spike_saved_settings_scanner \
             cloud_api.test_aster_spike_pre_mutation \
             cloud_api.test_aster_spike_real_scanner_dry_run
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run isolated real API-to-scanner smoke
+        working-directory: web
+        run: |
+          npm ci --ignore-scripts
+          node tests/extreme-spike-api-scanner-smoke.mjs
