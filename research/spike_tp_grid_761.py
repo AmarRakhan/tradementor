@@ -44,13 +44,26 @@ def main():
     p=argparse.ArgumentParser()
     p.add_argument("--symbols",default="BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,BNBUSDT,DOGEUSDT")
     p.add_argument("--timeframes",default="1m,5m,15m")
+    p.add_argument("--top",type=int,default=0)
+    p.add_argument("--pause",type=float,default=0.12)
     p.add_argument("--limit",type=int,default=900)
     p.add_argument("--out",default="spike-results")
     args=p.parse_args();os.makedirs(args.out,exist_ok=True);now=int(time.time()*1000)
     events=[];errors=[]
-    for sym in args.symbols.split(","):
+    symbols=[x.strip() for x in args.symbols.split(",") if x.strip()]
+    if args.top:
+        info=fetch("/fapi/v1/exchangeInfo",{})
+        available={x.get("symbol") for x in info.get("symbols",[]) if x.get("quoteAsset")=="USDT" and x.get("contractType")=="PERPETUAL" and x.get("status")=="TRADING"}
+        ticker=fetch("/fapi/v1/ticker/24hr",{})
+        if not isinstance(ticker,list):raise RuntimeError("Ticker list unavailable")
+        ranked=sorted((x for x in ticker if x.get("symbol") in available),key=lambda x:float(x.get("quoteVolume") or 0),reverse=True)
+        symbols=[x["symbol"] for x in ranked[:args.top]]
+        if len(symbols)<args.top:raise RuntimeError(f"Only {len(symbols)} eligible markets, requested {args.top}")
+    for sym in symbols:
         for tf in args.timeframes.split(","):
-            try:events.extend(run_market(sym,tf,args.limit,now))
+            try:
+                events.extend(run_market(sym,tf,args.limit,now))
+                time.sleep(args.pause)
             except Exception as exc:errors.append({"symbol":sym,"timeframe":tf,"error":type(exc).__name__})
     if not events and errors:raise RuntimeError("All market reads failed")
     fields=list(events[0].keys()) if events else ["symbol","tf","side","time_utc","score_sigma","score_bin","wick_extreme","bb20_2","overshoot_pct","entry_next_open","observed_minutes","max_adverse_pct"]+[f"tp_{str(p).replace('.','_')}_minutes" for p in TP]
@@ -66,7 +79,7 @@ def main():
                     mature=[e for e in subset if e["observed_minutes"]>=h]
                     hits=sum(bool(e[field]) and e[field]<=h for e in mature)
                     result.append({"tf":tf,"sigma_bin":group,"tp_pct":pval,"horizon_min":h,"spike_count":len(subset),"mature_count":len(mature),"tp_hits":hits,"winrate_pct":round(100*hits/len(mature),2) if mature else None})
-    data={"generated_utc":datetime.now(timezone.utc).isoformat(),"events":len(events),"errors":errors,"method":"20 prior completed closes, first wick crossing 2 sigma, next-bar open, TP from OHLC highs/lows, no real fills, exclude insufficient follow-up by horizon, no stop or fees","results":result}
+    data={"generated_utc":datetime.now(timezone.utc).isoformat(),"events":len(events),"symbols_requested":len(symbols),"symbols":symbols,"errors":errors,"method":"20 prior completed closes, first wick crossing 2 sigma, next-bar open, TP from OHLC highs/lows, no real fills, exclude insufficient follow-up by horizon, no stop or fees","results":result}
     with open(args.out+"/tp_grid.json","w") as f:json.dump(data,f,indent=2)
     print(json.dumps({"events":len(events),"errors":errors,"tp_grid_rows":len(result)}))
 if __name__=="__main__":main()
