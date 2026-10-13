@@ -1692,7 +1692,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # primary sides independently for every candidate. Otherwise an equal
         # 25L/25S account with one free seat on each side would keep testing LONG
         # first and could starve a valid SHORT-above-upper-band entry forever.
-        def candidate_entry_filter_pass(candidate_side: str) -> bool:
+        def candidate_bb_pass(candidate_side: str) -> bool:
             side_diag = scanner_side_diagnostics[candidate_side]
             side_diag["marketsScanned"] += 1
             try:
@@ -1708,7 +1708,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             except (BollingerEntryRejected, SpikeFilterRejected) as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side,
                                 "reason": getattr(exc, "reason_code", getattr(exc, "reason", "ENTRY_FILTER_REJECTED")),
-                                "entryFilterMode": settings.entry_filter_mode})
+                                "entryFilterMode": settings.entry_filter_mode,
+                                "bollingerEntryFilter15m": settings.entry_filter_mode == "BOLLINGER"})
                 return False
             side_diag["bbCandidates"] += 1
             return True
@@ -1730,7 +1731,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 continue
             selected_side: str | None = None
             for candidate_side in side_candidates:
-                if not candidate_entry_filter_pass(candidate_side):
+                if not candidate_bb_pass(candidate_side):
                     continue
                 selected_side = candidate_side
                 break
@@ -1749,7 +1750,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         side = opposite
                     else:
                         continue
-            if settings.entry_filter_mode != "OFF" and not candidate_entry_filter_pass(side):
+            if (settings.bollinger_entry_filter_15m_enabled or settings.entry_filter_mode == "EXTREME_SPIKE") and not candidate_bb_pass(side):
                 continue
 
         # The final side can change after the allocator gate above (notably in
