@@ -5,7 +5,7 @@ It establishes why a rollout must not silently reinterpret legacy and
 canonical price-zone switches when they disagree.
 """
 import unittest
-from cloud_api.aster_multi_bb_core import MultiBbConfig
+from aster_multi_bb_core import MultiBbConfig
 
 
 class ZoneConfigurationRegressionCharacterization(unittest.TestCase):
