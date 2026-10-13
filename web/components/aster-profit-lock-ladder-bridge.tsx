@@ -227,7 +227,16 @@ export function AsterProfitLockLadderBridge() {
           saved.extremeSpikeLongTimeframe!==next.longTimeframe || saved.extremeSpikeShortTimeframe!==next.shortTimeframe) {
         throw new Error("Server heeft de volledige Extreme Spike-configuratie niet bevestigd.");
       }
-      setSettings(saved);setEntryMode(next.mode);setBbEnabled(next.mode==="BOLLINGER");
+      // Verify independently persisted server state, not just PUT response echo.
+      const readbackSnapshot = await authenticatedRequest("/api/exchanges/aster", {cache:"no-store"}) as Record<string,unknown>;
+      const readback = extract(readbackSnapshot).settings;
+      if (readback.entryFilterMode!==next.mode || readback.bollingerEntryFilter15mEnabled !== (next.mode==="BOLLINGER") ||
+          readback.extremeSpikeLevel!==next.level ||
+          readback.extremeSpikeLongTimeframe!==next.longTimeframe ||
+          readback.extremeSpikeShortTimeframe!==next.shortTimeframe) {
+        throw new Error("Opgeslagen filterinstellingen komen niet overeen met de server; opnieuw laden vereist.");
+      }
+      setSettings(readback);setEntryMode(next.mode);setBbEnabled(next.mode==="BOLLINGER");
       setSpikeLevel(next.level);setSpikeLongTf(next.longTimeframe);setSpikeShortTf(next.shortTimeframe);
       setBbMessage("Instapfilter opgeslagen.");
       window.dispatchEvent(new Event("aster-strategy2-settings-changed"));
