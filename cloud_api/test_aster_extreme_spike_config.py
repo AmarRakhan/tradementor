@@ -24,4 +24,27 @@ class ExtremeSpikeConfigTests(unittest.TestCase):
     def test_invalid_level_rejected(self):
         raw=self.base();raw.update(entryFilterMode="EXTREME_SPIKE",bollingerEntryFilter15mEnabled=False,extremeSpikeLevel="9-10")
         with self.assertRaises(ValueError): MultiBbConfig.from_mapping(raw)
+    def test_saved_mode_transitions_do_not_change_trading_controls(self):
+        raw=self.base()
+        raw.update(name="Existing bot",takeProfitMode="PORTFOLIO",portfolioTpValue=0.5,
+                   longDcaDistance=0.003,shortDcaDistance=0.005,
+                   priceZoneSeats={"enabled":True,"longSeatsPerZone":2,"shortSeatsPerZone":0})
+        snapshots=[]
+        for mode in ("OFF","EXTREME_SPIKE","BOLLINGER","OFF"):
+            settings=dict(raw,entryFilterMode=mode,bollingerEntryFilter15mEnabled=(mode=="BOLLINGER"),
+                          extremeSpikeLevel="5-6",extremeSpikeLongTimeframe="1m",
+                          extremeSpikeShortTimeframe="15m")
+            config=MultiBbConfig.from_mapping(settings)
+            persisted=config.public_dict()
+            restarted=MultiBbConfig.from_mapping(persisted)
+            self.assertEqual(restarted.entry_filter_mode,mode)
+            self.assertEqual(restarted.extreme_spike_long_timeframe,"1m")
+            self.assertEqual(restarted.extreme_spike_short_timeframe,"15m")
+            self.assertEqual(restarted.name,"Existing bot")
+            snapshots.append(persisted)
+        for previous,current in zip(snapshots,snapshots[1:]):
+            for field in ("name","maximumPositions","longSlots","shortSlots",
+                          "takeProfitMode","portfolioTpValue","priceZoneSeats"):
+                self.assertEqual(previous.get(field),current.get(field),field)
+
 if __name__=="__main__": unittest.main()
