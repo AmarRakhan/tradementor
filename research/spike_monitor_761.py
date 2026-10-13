@@ -44,7 +44,7 @@ def analyze(symbol,tf,rows,now):
                     for j in range(i+1,len(rows)):
                         jt,jo,jh,jl,jc,jend=rows[j]
                         if jend>=now:break
-                        adverse=max(adverse, (entry-jl)/entry if side=="SHORT" else (jh-entry)/entry)
+                        adverse=max(adverse, (jh-entry)/entry if side=="SHORT" else (entry-jl)/entry)
                         good=(jh>=target if side=="LONG" else jl<=target)
                         if good:
                             hit=(j-i)*minutes
