@@ -1485,7 +1485,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         configured_zone_short = max(0, int(getattr(settings, "zone_base_short_soldiers", 0)))
         active_zone_raw = (zone_state or {}).get("activeZone")
         active_zone_value = _i(active_zone_raw) if active_zone_raw is not None else None
-        active_pool = ((zone_state or {}).get("pools") or {}).get(str(active_zone_value), {}) if active_zone_value or str(active_zone_value) in ((zone_state or {}).get("pools") or {}) else {}
+        active_pool = ((zone_state or {}).get("pools") or {}).get(str(active_zone_value), {}) if active_zone_value is not None else {}
         active_soldiers = active_pool.get("soldiers") if isinstance(active_pool, dict) and isinstance(active_pool.get("soldiers"), dict) else {}
         active_zone_open_long = sum(
             1 for row in active_soldiers.values()
