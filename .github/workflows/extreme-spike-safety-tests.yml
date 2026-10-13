@@ -16,4 +16,4 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - run: PYTHONPATH=cloud_api python3 -m unittest -v cloud_api/test_aster_extreme_spike_filter.py cloud_api/test_aster_extreme_spike_config.py
+      - run: python3 -m pip install httpx\n      - run: PYTHONPATH=cloud_api python3 -m unittest -v cloud_api/test_aster_extreme_spike_filter.py cloud_api/test_aster_extreme_spike_config.py
