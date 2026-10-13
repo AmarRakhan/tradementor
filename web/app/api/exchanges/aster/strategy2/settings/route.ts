@@ -77,6 +77,14 @@ async function preserveExistingPairOverrides(request: Request) {
     for (const key of missing) {
       if (Object.prototype.hasOwnProperty.call(current, key)) merged[key] = current[key];
     }
+    // Legacy editors do not know entryFilterMode. They must never switch an
+    // existing Extreme Spike account to Bollinger by sending a stale BB flag.
+    // Explicit mode updates from the new selector remain authoritative.
+    if (!Object.prototype.hasOwnProperty.call(settingsRecord, "entryFilterMode") &&
+        current.entryFilterMode === "EXTREME_SPIKE") {
+      merged.entryFilterMode = "EXTREME_SPIKE";
+      merged.bollingerEntryFilter15mEnabled = false;
+    }
     const headers = new Headers(request.headers);
     headers.delete("content-length");
     headers.set("content-type", "application/json");
