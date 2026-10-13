@@ -140,3 +140,15 @@ atomic Spike reservation. Therefore a scanner dry-run is a **valuable separate
 test**, NOT a substitute for pre-submit/Firestore controls or authenticated
 settings-to-scanner staging E2E. Existing tests cover those layers separately;
 do not report them as one integrated execution.
+
+## Integrated isolated smoke — confirmed 2026-10-13
+Commit `c3970783aacdf9ceb8b189af2b9e89f758c74db0`:
+- Extreme Spike isolated safety tests run **38449696379 succeeded**.
+- Real Strategy2 PUT route is executed against an injected mock backend; its
+  output feeds `run_multi_bb_step` in dry_run with controlled candles.
+- Backend, Firestore emulator, runtime and web CI also succeeded.
+- This is not an authenticated deployment/staging test. Final pre-submit order
+  admission is bypassed by dry_run, but covered by separate order-gate tests.
+- Remaining: isolated authenticated staging account and full settings host
+  visual confirmation, plus explicit review/GO. Do not merge or deploy on
+  green CI alone.
