@@ -123,3 +123,27 @@ def spike_event_key(*, symbol: str, side: str, timeframe: str, candle_close_ms: 
         raise SpikeFilterRejected("SPIKE_INVALID_EVENT_IDENTITY")
     raw=f"{symbol.upper()}|{side}|{timeframe}|{candle_close_ms}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+def claim_spike_entry_once(account_ref: Any, *, event_key: str, symbol: str,
+                           side: str, timeframe: str, now_ms: int) -> None:
+    """Atomically reserve a spike event within the existing account document tree.
+
+    Firestore document.create is create-if-absent. Never automatically release
+    an uncertain claim: missing an opportunity is safer than duplicate entry.
+    The canonical order executor still performs the only order submission.
+    """
+    if not event_key or len(event_key) != 32:
+        raise SpikeFilterRejected("SPIKE_INVALID_EVENT_IDENTITY")
+    try:
+        account_ref.collection("spikeEntryClaims").document(event_key).create({
+            "eventId": event_key,
+            "symbol": str(symbol).upper(),
+            "side": side,
+            "timeframe": timeframe,
+            "claimedAtMs": int(now_ms),
+            "status": "RESERVED",
+        })
+    except Exception as exc:
+        # Includes ALREADY_EXISTS, transport uncertainty, and permission issues.
+        # Never retry the claim or place an order when reservation is unclear.
+        raise SpikeFilterRejected("SPIKE_EVENT_CLAIM_FAILED_OR_REPLAY") from exc
