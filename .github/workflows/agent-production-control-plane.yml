@@ -17,6 +17,49 @@ env:
   TARGET_BRANCH: amar-crypto-bot-2026-cloud
 
 jobs:
+  audit-github-history-readonly:
+    if: github.event.issue.title == '[AGENT-CONTROL] github actions historical usage' && github.event.issue.user.login == 'AmarRakhan'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      SOURCE_COMMIT: d9ddcace4b4526eaad025c1571353e8d3c221f8f
+    steps:
+      - name: Checkout pinned reviewed GitHub-only audit
+        uses: actions/checkout@v4
+        with:
+          ref: d9ddcace4b4526eaad025c1571353e8d3c221f8f
+          fetch-depth: 0
+      - name: Verify repository, issue and canonical source ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          git merge-base --is-ancestor "$SOURCE_COMMIT" origin/amar-crypto-bot-2026-cloud
+      - name: Read historical Actions job metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/github_actions_usage_history.py "$RUNNER_TEMP/github-history.json" > "$RUNNER_TEMP/github-history.md"
+      - name: Publish sanitized audit or explicit failure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -s "$RUNNER_TEMP/github-history.md" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/github-history.md"
+          else
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "Historical job audit did not yield a verified report. No Google Cloud, trading or production changes."
+          fi
+
   dispatch-tp-markers-738:
     if: github.event.issue.title == '[AGENT-CONTROL] deploy confirmed TP markers f87d6b2' && github.event.issue.user.login == 'AmarRakhan'
     runs-on: ubuntu-latest
