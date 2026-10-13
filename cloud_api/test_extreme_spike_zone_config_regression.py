@@ -6,6 +6,7 @@ canonical price-zone switches when they disagree.
 """
 import unittest
 from aster_multi_bb_core import MultiBbConfig
+from pathlib import Path
 
 
 class ZoneConfigurationRegressionCharacterization(unittest.TestCase):
@@ -29,6 +30,11 @@ class ZoneConfigurationRegressionCharacterization(unittest.TestCase):
             raw["zoneSoldiersEnabled"], parsed.zone_soldiers_enabled,
             "Conflicting legacy/canonical flags should be visible to the gate",
         )
+
+    def test_missing_zone_must_not_be_implicitly_converted_to_zero(self):
+        source = (Path(__file__).parent / "aster_multi_bb_core.py").read_text()
+        self.assertIn('active_zone_value = _i(active_zone_raw) if active_zone_raw is not None else None', source)
+        self.assertIn('active_zone_value=_i(active_zone_raw) if active_zone_raw is not None else None', source)
 
     def test_matching_flags_preserve_price_zone_mode(self):
         raw = {
