@@ -9,7 +9,7 @@ import copy, hashlib, math, time
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed
 from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
-from aster_extreme_spike_filter import SpikeFilterRejected, require_extreme_spike_entry, spike_event_key
+from aster_extreme_spike_filter import SpikeFilterRejected, require_extreme_spike_entry, spike_event_key, claim_spike_entry_once
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, is_definite_contract_rejection, plan_pair
 from aster_unified_execution import execute_approved_leg_once
 from aster_gateway import ContractRules, PositionSide
@@ -2083,6 +2083,13 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                             **admission.public_dict(),
                             "timestamp":datetime.now(timezone.utc),
                         })
+                if admission.allowed and settings.entry_filter_mode == "EXTREME_SPIKE":
+                    # Reservation occurs after all current account/config admission
+                    # checks and before the single canonical exchange submit.
+                    claim_spike_entry_once(
+                        ref, event_key=spike_candidates[side], symbol=symbol,
+                        side=side, timeframe=spike_timeframe,
+                        now_ms=int(time.time() * 1000))
                 entry_action["admission"]=admission.public_dict()
                 return admission
             try:
