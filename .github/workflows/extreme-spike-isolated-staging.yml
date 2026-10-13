@@ -70,7 +70,7 @@ jobs:
           gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" \
             --image "$REGION-docker.pkg.dev/$PROJECT/tradementor/spike-staging:$GITHUB_SHA" \
             --no-traffic --tag extreme-spike-candidate \
-            --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,FIREBASE_PROJECT_ID=$PROJECT,FIREBASE_AUTH_PROJECT_ID=tradementor-production,TRADEMENTOR_ENV=staging,TRADEMENTOR_ENVIRONMENT=staging,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false" \
+            --update-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,FIREBASE_PROJECT_ID=$PROJECT,FIREBASE_AUTH_PROJECT_ID=tradementor-production,TRADEMENTOR_ENV=staging,TRADEMENTOR_ENVIRONMENT=staging,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false" \
             --quiet
       - name: Confirm revision has no live traffic
         run: |
