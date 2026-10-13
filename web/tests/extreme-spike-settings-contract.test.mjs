@@ -29,3 +29,11 @@ test("legacy save fails closed if current Spike mode cannot be verified",()=>{
  assert.match(route,/if \(!status\.ok\) return missingSpikeMode \? safeFailure\(\) : request/);
  assert.match(route,/if \(preserved instanceof Response\) return preserved/);
 });
+
+test("Spike save confirms independent GET readback, not merely PUT echo",()=>{
+ assert.match(bridge,/const readbackSnapshot = await authenticatedRequest\("\/api\/exchanges\/aster", \{cache:"no-store"\}\)/);
+ assert.match(bridge,/const readback = extract\(readbackSnapshot\)\.settings/);
+ assert.match(bridge,/readback\.entryFilterMode!==next\.mode/);
+ assert.match(bridge,/readback\.extremeSpikeShortTimeframe!==next\.shortTimeframe/);
+ assert.match(bridge,/setSettings\(readback\);setEntryMode\(next\.mode\)/);
+});
