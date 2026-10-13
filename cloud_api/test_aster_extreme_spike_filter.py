@@ -102,4 +102,18 @@ class SpikeTests(unittest.TestCase):
         self.assertEqual(attempt(),"BLOCKED")  # after process restart / TP
         self.assertEqual(acct.store.write_count,1)
 
+    def test_claim_transport_uncertainty_is_fail_closed(self):
+        class BrokenAccount:
+            def collection(self,name):
+                class Col:
+                    def document(self,key):
+                        class Doc:
+                            def create(self,payload):
+                                raise TimeoutError("uncertain write")
+                        return Doc()
+                return Col()
+        with self.assertRaises(SpikeFilterRejected) as ctx:
+            claim_spike_entry_once(BrokenAccount(),event_key="f"*32,symbol="BTCUSDT",side="LONG",timeframe="1m",now_ms=1000)
+        self.assertEqual(ctx.exception.reason,"SPIKE_EVENT_CLAIM_FAILED_OR_REPLAY")
+
 if __name__=="__main__": unittest.main()
