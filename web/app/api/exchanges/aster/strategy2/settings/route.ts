@@ -4,6 +4,11 @@ import { proxyStrategy2Live } from "@/lib/secure-strategy2-live";
 /** Fields unknown to older/global editors must survive their saves. */
 const preserveKeys = [
   "pairOverrides",
+  // Preserve optional entry filters when an older/global form submits only legacy fields.
+  "entryFilterMode",
+  "extremeSpikeLevel",
+  "extremeSpikeLongTimeframe",
+  "extremeSpikeShortTimeframe",
   "takeProfitMode",
   "portfolioTpPercent",
   "portfolioTpInputMode",
