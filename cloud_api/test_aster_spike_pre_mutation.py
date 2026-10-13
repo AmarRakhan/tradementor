@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 from aster_unified_engine import ActionType
 from aster_unified_execution import execute_approved_leg_once
+from aster_extreme_spike_filter import claim_spike_entry_once, SpikeFilterRejected
 
 class Decision:
     allowed=True
@@ -44,4 +45,37 @@ class PreMutationTests(unittest.TestCase):
               expected_action=ActionType.INITIAL_ENTRY,
               decision_provider=final,pre_mutation_admission=pre)
         self.assertEqual(sequence,["pre","executor","final","submit"])
+    def test_exchange_failure_keeps_spike_claim_reserved(self):
+        class Doc:
+            def __init__(self,seen):self.seen=seen
+            def create(self,payload):
+                if payload["eventId"] in self.seen:raise RuntimeError("ALREADY_EXISTS")
+                self.seen.add(payload["eventId"])
+        class Account:
+            def __init__(self):self.seen=set()
+            def collection(self,name):
+                account=self
+                class Collection:
+                    def document(self,key):return Doc(account.seen)
+                return Collection()
+        account=Account()
+        events=[]
+        def claim():
+            claim_spike_entry_once(account,event_key="f"*32,symbol="BTCUSDT",side="LONG",timeframe="1m",now_ms=1000)
+            return Decision()
+        def order_failure(*args,**kwargs):
+            events.append("attempt")
+            raise TimeoutError("uncertain exchange order")
+        with patch("aster_unified_execution.execute_leg_once",side_effect=order_failure):
+            with self.assertRaises(TimeoutError):
+                execute_approved_leg_once(None,None,side="LONG",action="OPEN",id_prefix="mbb-open-test",
+                    confirm=True,expected_action=ActionType.INITIAL_ENTRY,
+                    decision_provider=lambda:Decision(),pre_mutation_admission=claim)
+            with self.assertRaises(SpikeFilterRejected):
+                execute_approved_leg_once(None,None,side="LONG",action="OPEN",id_prefix="mbb-open-test",
+                    confirm=True,expected_action=ActionType.INITIAL_ENTRY,
+                    decision_provider=lambda:Decision(),pre_mutation_admission=claim)
+        self.assertEqual(events,["attempt"])
+        self.assertEqual(len(account.seen),1)
+
 if __name__=="__main__":unittest.main()
