@@ -1714,6 +1714,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             side_diag["bbCandidates"] += 1
             return True
 
+        # Legacy Bollinger activation remains an explicit part of the shared gate.
+        if settings.bollinger_entry_filter_15m_enabled and settings.entry_filter_mode == "OFF":
+            raise ValueError("BOLLINGER_MODE_CONFIG_INCONSISTENT")
+
         independent_bb_scan = (
             settings.entry_filter_mode != "OFF"
             and not settings.asymmetric_hedge_enabled
