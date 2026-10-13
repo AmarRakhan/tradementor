@@ -1,4 +1,6 @@
 import unittest
+import hashlib
+from aster_execution import client_order_id
 from aster_extreme_spike_filter import evaluate_spike, SpikeFilterRejected, normalize_mode,validate_settings,require_extreme_spike_entry,spike_event_key
 class SpikeTests(unittest.TestCase):
     def setUp(self):
@@ -50,5 +52,16 @@ class SpikeTests(unittest.TestCase):
         self.assertNotEqual(first,spike_event_key(symbol="BTCUSDT",side="LONG",timeframe="1m",candle_close_ms=2000))
         self.assertNotEqual(first,spike_event_key(symbol="BTCUSDT",side="SHORT",timeframe="1m",candle_close_ms=1000))
         self.assertNotEqual(first,spike_event_key(symbol="BTCUSDT",side="LONG",timeframe="5m",candle_close_ms=1000))
+
+    def test_order_id_stable_after_restart_and_tp(self):
+        uid="test-account"
+        event=spike_event_key(symbol="DOGEUSDT",side="LONG",timeframe="1m",candle_close_ms=150000)
+        prefix=lambda tick: "mbb-open-"+hashlib.sha256((uid+event).encode()).hexdigest()[:12]
+        order1=client_order_id(prefix(150100),"open","long")
+        order2=client_order_id(prefix(170000),"open","long")
+        self.assertEqual(order1,order2)
+        self.assertLessEqual(len(order1),36)
+        newer=spike_event_key(symbol="DOGEUSDT",side="LONG",timeframe="1m",candle_close_ms=210000)
+        self.assertNotEqual(order1,client_order_id("mbb-open-"+hashlib.sha256((uid+newer).encode()).hexdigest()[:12],"open","long"))
 
 if __name__=="__main__": unittest.main()
