@@ -48,3 +48,13 @@ test("Spike and OFF expose save errors visibly outside legacy Bollinger card",()
  assert.match(bridge,/role="status" aria-live="polite"/);
  assert.match(bridge,/es-save-feedback/);
 });
+
+test("partial settings saves preserve existing price-zone fields or fail closed",()=>{
+  for (const field of ["priceZoneSeats","zoneSoldiersEnabled","zoneSoldiersOptInVersion","zoneBaseLongSoldiers","zoneBaseShortSoldiers"]) {
+    assert.match(route,new RegExp('"' + field + '"'));
+  }
+  assert.match(route,/const missingZoneSettings =/);
+  assert.match(route,/const requiresVerifiedRead = missingSpikeMode \|\| missingZoneSettings/);
+  assert.match(route,/if \(missingZoneSettings &&/);
+  assert.match(route,/return safeFailure\(\)/);
+});
