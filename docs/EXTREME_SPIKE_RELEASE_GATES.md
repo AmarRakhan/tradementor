@@ -83,3 +83,32 @@ configuration change is authorized solely by green CI.
 staging with disposable user, including OFF/BOLLINGER/EXTREME_SPIKE, refresh,
 legacy editor, and failure rollback; then validate integrated settings host
 for overlay/z-index and clipping. Record PASS evidence before merge/deploy.
+
+## Staging end-to-end acceptance procedure — required before GO
+**Isolated environment only:** use a disposable staging account and exchange
+sandbox/mock executor with trading disabled. No production user tokens, accounts,
+Firestore documents, exchange API keys or orders.
+
+1. GET authenticated `/api/exchanges/aster`; record the original staging
+   `strategy2.settings` snapshot and the canonical version.
+2. PUT to `/api/exchanges/aster/strategy2/settings` all existing settings,
+   changing only `entryFilterMode=EXTREME_SPIKE`,
+   `bollingerEntryFilter15mEnabled=false`, sigma `5-6`,
+   LONG `1m`, SHORT `15m`. Require 2xx and an independent GET readback
+   with exact matching values.
+3. Invoke the **actual existing scanner tick** with controlled closed candles
+   in sandbox/mock exchange. Assert LONG reads 1m candles and SHORT reads 15m;
+   observed gate result must match the configured sigma band, not an old
+   Bollinger gate. Assert ZERO exchange POSTs and ZERO margin/leverage mutations.
+4. Save `OFF`, reload and assert no additional entry filter; save
+   `BOLLINGER`, reload and assert Spike evaluation is absent.
+5. With Spike active, submit a legacy-editor payload without `entryFilterMode`
+   and assert persisted Spike mode is unchanged. Inject a failed GET and
+   assert 409 with zero setting mutations.
+6. Verify full authenticated settings host on narrow phone and Fold widths:
+   dropdown options remain clickable and unoccluded, success/error status
+   visible, and no horizontal overflow.
+7. Restore original staging snapshot. Confirm no production account touched.
+   Attach request/response redacted logs, scanner admission trace, and screenshots.
+**Release authority:** require a human review of logs/screenshots and explicit
+GO before merging/deploying; previous passing CI alone is insufficient.
