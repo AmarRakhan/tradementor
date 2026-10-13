@@ -112,3 +112,22 @@ Firestore documents, exchange API keys or orders.
    Attach request/response redacted logs, scanner admission trace, and screenshots.
 **Release authority:** require a human review of logs/screenshots and explicit
 GO before merging/deploying; previous passing CI alone is insufficient.
+
+## Explicit end-to-end execution target (2026-10-13)
+The real scanner entrypoint is `cloud_api.aster_multi_bb_core.run_multi_bb_step`
+(line ~760 at feature head), **not** `require_extreme_spike_entry` in
+isolation. The final staging/sandbox test must call `run_multi_bb_step`
+using an isolated account document with settings read back through the
+authenticated settings API. Inject a controlled exchange client and assert:
+* Complete qualifying candles yield the correct admission route for configured
+  LONG 1m / SHORT 15m; nonqualifying and OFF/BOLLINGER choices use their
+  respective canonical paths.
+* No real order POST, margin or leverage mutation is possible from the test;
+  all trading methods are hard-failed mocks, and no real exchange credentials
+  are available.
+* The account's existing DCA, take-profit and position state remain unchanged.
+* Both save error rollback and switching settings during a scanner tick reject
+  stale admissions.
+Do **not** interpret standalone candle adapter, config-roundtrip or route
+unit-test success as this final proof. Production GO remains blocked until the
+real scanner entrypoint plus authenticated API has been exercised together.
