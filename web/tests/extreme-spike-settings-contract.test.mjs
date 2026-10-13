@@ -37,3 +37,8 @@ test("Spike save confirms independent GET readback, not merely PUT echo",()=>{
  assert.match(bridge,/readback\.extremeSpikeShortTimeframe!==next\.shortTimeframe/);
  assert.match(bridge,/setSettings\(readback\);setEntryMode\(next\.mode\)/);
 });
+
+test("explicit OFF remains OFF despite legacy Bollinger flag on reload",()=>{
+ assert.match(bridge,/next\.settings\.entryFilterMode === "OFF" \? "OFF"/);
+ assert.match(bridge,/next\.settings\.entryFilterMode === "BOLLINGER" \? "BOLLINGER"/);
+});
