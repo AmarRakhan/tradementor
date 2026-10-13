@@ -1995,7 +1995,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 f"plannedNotional={_f(entry_sizing.get('plannedInputNotionalUsd'))}",
                 flush=True,
             )
+            spike_claimed_for_order = False
             def initial_entry_decision_provider() -> Any:
+                nonlocal spike_claimed_for_order
                 effective_timeframe=_effective_entry_timeframe(settings, side, exposure_refill)
                 if settings.entry_filter_mode == "EXTREME_SPIKE":
                     spike_timeframe=(settings.extreme_spike_long_timeframe if side == "LONG" else settings.extreme_spike_short_timeframe)
@@ -2083,13 +2085,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                             **admission.public_dict(),
                             "timestamp":datetime.now(timezone.utc),
                         })
-                if admission.allowed and settings.entry_filter_mode == "EXTREME_SPIKE":
+                if admission.allowed and settings.entry_filter_mode == "EXTREME_SPIKE" and not spike_claimed_for_order:
                     # Reservation occurs after all current account/config admission
                     # checks and before the single canonical exchange submit.
                     claim_spike_entry_once(
                         ref, event_key=spike_candidates[side], symbol=symbol,
                         side=side, timeframe=spike_timeframe,
                         now_ms=int(time.time() * 1000))
+                    spike_claimed_for_order = True
                 entry_action["admission"]=admission.public_dict()
                 return admission
             try:
@@ -2098,6 +2101,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     id_prefix=f"mbb-open-{hashlib.sha256((uid + (spike_candidates[side] if settings.entry_filter_mode=='EXTREME_SPIKE' and side in spike_candidates else symbol+side+str(timestamp_ms))).encode()).hexdigest()[:12]}",
                     confirm=True, expected_action=ActionType.INITIAL_ENTRY,
                     decision_provider=initial_entry_decision_provider,
+                    pre_mutation_admission=(initial_entry_decision_provider if settings.entry_filter_mode=="EXTREME_SPIKE" else None),
                     new_position_leverage=plan.leverage,
                     before_submit=before_order,
                 )
