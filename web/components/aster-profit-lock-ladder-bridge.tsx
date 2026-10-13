@@ -103,7 +103,7 @@ export function AsterProfitLockLadderBridge() {
       setSummary(next.summary);
       if (!bbWriteInFlight.current && readEpoch === bbReadEpoch.current) {
         setBbEnabled(next.settings.bollingerEntryFilter15mEnabled === true);
-        setEntryMode(next.settings.entryFilterMode === "EXTREME_SPIKE" ? "EXTREME_SPIKE" : next.settings.bollingerEntryFilter15mEnabled === true ? "BOLLINGER" : "OFF");
+        setEntryMode(next.settings.entryFilterMode === "EXTREME_SPIKE" ? "EXTREME_SPIKE" : next.settings.entryFilterMode === "OFF" ? "OFF" : next.settings.entryFilterMode === "BOLLINGER" ? "BOLLINGER" : next.settings.bollingerEntryFilter15mEnabled === true ? "BOLLINGER" : "OFF");
         setSpikeLevel((["2-3","3-4","4-5","5-6","6-7","7+"].includes(String(next.settings.extremeSpikeLevel)) ? next.settings.extremeSpikeLevel : "5-6") as SpikeLevel);
         setSpikeLongTf(normalizeBollingerTimeframe(next.settings.extremeSpikeLongTimeframe ?? "1m"));
         setSpikeShortTf(normalizeBollingerTimeframe(next.settings.extremeSpikeShortTimeframe ?? "1m"));
