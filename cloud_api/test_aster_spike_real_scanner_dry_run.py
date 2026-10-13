@@ -80,4 +80,22 @@ class ScannerDryRunTests(unittest.TestCase):
         self.assertIn("15m",client.intervals)
         self.assertTrue(any(a.get("kind")=="ENTRY" and a.get("side")=="SHORT" for a in result["actions"]),result["actions"])
 
+    def test_real_scanner_rejects_nonmatching_sigma_without_order(self):
+        settings=MultiBbConfig.from_mapping({
+           "universeTopN":1,"maximumPositions":1,"longSlots":1,"shortSlots":0,
+           "minimumLeverage":20,"maximumLeverage":20,
+           "entryFilterMode":"EXTREME_SPIKE","bollingerEntryFilter15mEnabled":False,
+           "extremeSpikeLevel":"7+","extremeSpikeLongTimeframe":"1m",
+           "extremeSpikeShortTimeframe":"15m"})
+        client=FakeClient()
+        with patch("aster_multi_bb_core.rank_top_volume",return_value=[{"symbol":"BTCUSDT","quoteVolume":1000000}]), \
+             patch("aster_multi_bb_core.max_contract_leverage",return_value=20):
+            result=run_multi_bb_step(client=client,ref=Ref(),raw_state={},settings=settings,
+                uid="test-only",account={"availableBalance":100,"totalMarginBalance":100},
+                positions=[],open_orders=[],timestamp_ms=21*60000+10,dry_run=True,
+                order_budget=1)
+        self.assertEqual(result["ordersSent"],0)
+        self.assertFalse(any(a.get("kind")=="ENTRY" for a in result["actions"]),result["actions"])
+        self.assertTrue(any(a.get("reason")=="SPIKE_OUTSIDE_SELECTED_RANGE" for a in result["actions"]),result["actions"])
+
 if __name__=="__main__":unittest.main()
