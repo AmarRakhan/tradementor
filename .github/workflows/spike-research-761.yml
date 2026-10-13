@@ -16,13 +16,12 @@ concurrency:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Read-only Aster historical spike evaluation
         run: |
-          python3 research/spike_monitor_761.py --out spike-results
-          python3 research/spike_tp_grid_761.py --out spike-results
+          python3 research/spike_tp_grid_761.py --top 350 --timeframes 15m --out spike-results
       - uses: actions/upload-artifact@v4
         if: always()
         with:
