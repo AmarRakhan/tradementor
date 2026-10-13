@@ -9,6 +9,7 @@ import copy, hashlib, math, time
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed
 from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
+from aster_extreme_spike_filter import SpikeFilterRejected, require_extreme_spike_entry, spike_event_key, claim_spike_entry_once
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, is_definite_contract_rejection, plan_pair
 from aster_unified_execution import execute_approved_leg_once
 from aster_gateway import ContractRules, PositionSide
@@ -42,7 +43,7 @@ def _i(value: Any, default: int = 0) -> int:
 def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any,
                               symbol: str, side: str, action: str, cycle_id: str,
                               margin_usd: float | None = None,
-                              margin_source: str = "") -> None:
+                              margin_source: str = "", spike_event_id: str = "") -> None:
     """Persist confirmed Multi-BB order identity for notification/history consumers."""
     order_id = str(result.get("orderId", result.get("orderID", ""))).strip()
     client_order_id = str(result.get("clientOrderId", result.get("clientOrderID", ""))).strip()
@@ -72,6 +73,7 @@ def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any
         "strategyId": "aster-strategy-2",
         "strategyName": str(getattr(settings, "name", "") or "Aster Multi DCA"),
         "cycleId": str(cycle_id or ""),
+        **({"spikeEventId": spike_event_id} if spike_event_id else {}),
         "configVersion": int(getattr(settings, "version", 1) or 1),
         "symbol": str(symbol).upper(),
         "side": str(side).upper(),
@@ -102,6 +104,10 @@ class MultiBbConfig:
     maximum_leverage: int | None = None
     bollinger_entry_filter_15m_enabled: bool = False
     bollinger_entry_filter_timeframe: str = DEFAULT_TIMEFRAME
+    entry_filter_mode: str = "OFF"
+    extreme_spike_level: str = "5-6"
+    extreme_spike_long_timeframe: str = "1m"
+    extreme_spike_short_timeframe: str = "1m"
     directional_bollinger_enabled: bool = False
     bollinger_long_timeframe: str = DEFAULT_TIMEFRAME
     bollinger_short_timeframe: str = DEFAULT_TIMEFRAME
@@ -168,6 +174,10 @@ class MultiBbConfig:
             maximum_leverage=maximum_leverage,
             bollinger_entry_filter_15m_enabled=bool(raw.get("bollingerEntryFilter15mEnabled", raw.get("bollinger_entry_filter_15m_enabled", False))),
             bollinger_entry_filter_timeframe=normalize_bollinger_timeframe(raw.get("bollingerEntryFilterTimeframe", raw.get("bollinger_entry_filter_timeframe", DEFAULT_TIMEFRAME))),
+            entry_filter_mode=str(raw.get("entryFilterMode") or ("BOLLINGER" if raw.get("bollingerEntryFilter15mEnabled", raw.get("bollinger_entry_filter_15m_enabled", False)) else "OFF")).upper(),
+            extreme_spike_level=str(raw.get("extremeSpikeLevel", "5-6")),
+            extreme_spike_long_timeframe=str(raw.get("extremeSpikeLongTimeframe", "1m")),
+            extreme_spike_short_timeframe=str(raw.get("extremeSpikeShortTimeframe", "1m")),
             directional_bollinger_enabled=bool(raw.get("directionalBollingerEnabled", False)),
             bollinger_long_timeframe=normalize_bollinger_timeframe(raw.get("bollingerLongTimeframe", raw.get("bollingerEntryFilterTimeframe", DEFAULT_TIMEFRAME))),
             bollinger_short_timeframe=normalize_bollinger_timeframe(raw.get("bollingerShortTimeframe", raw.get("bollingerEntryFilterTimeframe", DEFAULT_TIMEFRAME))),
@@ -200,6 +210,8 @@ class MultiBbConfig:
         return cfg.validated()
 
     def validated(self) -> "MultiBbConfig":
+        from aster_extreme_spike_filter import validate_settings
+        validate_settings(mode=self.entry_filter_mode, level=self.extreme_spike_level, long_tf=self.extreme_spike_long_timeframe, short_tf=self.extreme_spike_short_timeframe, legacy_bb_enabled=self.bollinger_entry_filter_15m_enabled)
         if self.engine != ENGINE: raise ValueError("Alleen de nieuwe Multi BB-strategie is toegestaan")
         if not 1 <= self.universe_top_n <= 800: raise ValueError("Top-N moet tussen 1 en 800 liggen")
         maximum_capacity = 200 if self.manual_symbol_selection_enabled else self.universe_top_n * 2
@@ -245,6 +257,10 @@ class MultiBbConfig:
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
             "shortRequiresLongEnabled": self.short_requires_long_enabled,
             "bollingerEntryFilter15mEnabled": self.bollinger_entry_filter_15m_enabled,
+            "entryFilterMode": self.entry_filter_mode,
+            "extremeSpikeLevel": self.extreme_spike_level,
+            "extremeSpikeLongTimeframe": self.extreme_spike_long_timeframe,
+            "extremeSpikeShortTimeframe": self.extreme_spike_short_timeframe,
             "bollingerEntryFilterTimeframe": self.bollinger_entry_filter_timeframe,
             "directionalBollingerEnabled": self.directional_bollinger_enabled,
             "bollingerLongTimeframe": self.bollinger_long_timeframe,
@@ -1677,20 +1693,38 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # primary sides independently for every candidate. Otherwise an equal
         # 25L/25S account with one free seat on each side would keep testing LONG
         # first and could starve a valid SHORT-above-upper-band entry forever.
+        spike_candidates: dict[str, str] = {}
         def candidate_bb_pass(candidate_side: str) -> bool:
             side_diag = scanner_side_diagnostics[candidate_side]
             side_diag["marketsScanned"] += 1
             try:
-                require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, timeframe=_effective_entry_timeframe(settings, candidate_side, exposure_refill),
-                                        live_price=prices[symbol], force_refresh=False, stage="candidate", now_ms=timestamp_ms)
-            except BollingerEntryRejected as exc:
-                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side, "reason": exc.reason_code, "bollingerEntryFilter15m": True})
+                if settings.entry_filter_mode == "EXTREME_SPIKE":
+                    spike_timeframe=(settings.extreme_spike_long_timeframe if candidate_side == "LONG" else settings.extreme_spike_short_timeframe)
+                    spike_snapshot=require_extreme_spike_entry(
+                        client, symbol=symbol, side=candidate_side, level=settings.extreme_spike_level,
+                        timeframe=spike_timeframe, now_ms=timestamp_ms)
+                    spike_candidates[candidate_side]=spike_event_key(
+                        symbol=symbol, side=candidate_side, timeframe=spike_timeframe,
+                        candle_close_ms=spike_snapshot.candle_close_ms)
+                elif settings.entry_filter_mode == "BOLLINGER":
+                    require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True,
+                        timeframe=_effective_entry_timeframe(settings, candidate_side, exposure_refill),
+                        live_price=prices[symbol], force_refresh=False, stage="candidate", now_ms=timestamp_ms)
+            except (BollingerEntryRejected, SpikeFilterRejected) as exc:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side,
+                                "reason": getattr(exc, "reason_code", getattr(exc, "reason", "ENTRY_FILTER_REJECTED")),
+                                "entryFilterMode": settings.entry_filter_mode,
+                                "bollingerEntryFilter15m": settings.entry_filter_mode == "BOLLINGER"})
                 return False
             side_diag["bbCandidates"] += 1
             return True
 
+        # Legacy Bollinger activation remains an explicit part of the shared gate.
+        if settings.bollinger_entry_filter_15m_enabled and settings.entry_filter_mode == "OFF":
+            raise ValueError("BOLLINGER_MODE_CONFIG_INCONSISTENT")
+
         independent_bb_scan = (
-            settings.bollinger_entry_filter_15m_enabled
+            settings.entry_filter_mode != "OFF"
             and not settings.asymmetric_hedge_enabled
             and not (settings.manual_symbol_selection_enabled and ranked_row.get("manualReserved"))
         )
@@ -1725,7 +1759,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         side = opposite
                     else:
                         continue
-            if settings.bollinger_entry_filter_15m_enabled and not candidate_bb_pass(side):
+            if (settings.bollinger_entry_filter_15m_enabled or settings.entry_filter_mode == "EXTREME_SPIKE") and not candidate_bb_pass(side):
                 continue
 
         # The final side can change after the allocator gate above (notably in
@@ -1961,10 +1995,28 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 f"plannedNotional={_f(entry_sizing.get('plannedInputNotionalUsd'))}",
                 flush=True,
             )
+            spike_claimed_for_order = False
             def initial_entry_decision_provider() -> Any:
+                nonlocal spike_claimed_for_order
                 effective_timeframe=_effective_entry_timeframe(settings, side, exposure_refill)
-                require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
-                                        timeframe=effective_timeframe, live_price=None, force_refresh=True, stage="pre_order")
+                if settings.entry_filter_mode == "EXTREME_SPIKE":
+                    spike_timeframe=(settings.extreme_spike_long_timeframe if side == "LONG" else settings.extreme_spike_short_timeframe)
+                    final_spike=require_extreme_spike_entry(client, symbol=symbol, side=side,
+                        level=settings.extreme_spike_level, timeframe=spike_timeframe,
+                        now_ms=int(time.time() * 1000))
+                    final_event_key=spike_event_key(symbol=symbol,side=side,timeframe=spike_timeframe,
+                        candle_close_ms=final_spike.candle_close_ms)
+                    if spike_candidates.get(side) != final_event_key:
+                        raise SpikeFilterRejected("SPIKE_CANDIDATE_CHANGED_BEFORE_ORDER")
+                    # Existing account-scoped confirmed order history is reused.
+                    # This is an additional replay guard, not an atomic cross-worker lock.
+                    existing_spikes=(ref.get().to_dict() or {}).get("orderAttributions", [])
+                    if any(isinstance(row,dict) and row.get("spikeEventId")==final_event_key
+                           and row.get("action")=="OPEN_LEG" for row in existing_spikes):
+                        raise SpikeFilterRejected("SPIKE_EVENT_ALREADY_TRADED")
+                else:
+                    require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
+                                            timeframe=effective_timeframe, live_price=None, force_refresh=True, stage="pre_order")
                 # Canonical initial-entry admission runs immediately before the
                 # exchange submit. Re-read both Aster truth and Firestore truth:
                 # a config save or bot-toggle during this tick invalidates this
@@ -1972,6 +2024,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 latest_doc=ref.get().to_dict() or {}
                 latest_settings=latest_doc.get("settings") if isinstance(latest_doc.get("settings"),dict) else {}
                 latest_version=max(1,_i(latest_settings.get("version"),_i(getattr(settings,"version",1),1)))
+                # Mode/settings may have changed without a reliable version bump.
+                # Explicitly compare the effective filter snapshot before any order.
+                latest_mode=str(latest_settings.get("entryFilterMode") or (
+                    "BOLLINGER" if latest_settings.get("bollingerEntryFilter15mEnabled",False) else "OFF")).upper()
+                if latest_mode != settings.entry_filter_mode:
+                    raise PermissionError("ASTERBOT_ACTION_DENIED:ENTRY_FILTER_SETTINGS_CHANGED")
+                if latest_mode == "EXTREME_SPIKE":
+                    expected_tf=(settings.extreme_spike_long_timeframe if side=="LONG" else settings.extreme_spike_short_timeframe)
+                    latest_tf=str(latest_settings.get("extremeSpikeLongTimeframe" if side=="LONG" else "extremeSpikeShortTimeframe","1m"))
+                    if (latest_tf != expected_tf or
+                        str(latest_settings.get("extremeSpikeLevel","5-6")) != settings.extreme_spike_level):
+                        raise PermissionError("ASTERBOT_ACTION_DENIED:ENTRY_FILTER_SETTINGS_CHANGED")
                 # Explicit false always blocks. Absence is a legacy-record
                 # compatibility case and preserves pre-migration AsterBot parity.
                 latest_enabled=bool(latest_doc.get("enabled",True))
@@ -1994,8 +2058,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     )
                 filter_results=(
                     FilterResult(
-                        "bollinger",
-                        FilterStatus.PASS if settings.bollinger_entry_filter_15m_enabled else FilterStatus.SKIP,
+                        "entry_filter",
+                        FilterStatus.PASS if settings.entry_filter_mode != "OFF" else FilterStatus.SKIP,
                         values={"timeframe":effective_timeframe},
                     ),
                 )
@@ -2021,17 +2085,30 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                             **admission.public_dict(),
                             "timestamp":datetime.now(timezone.utc),
                         })
+                if admission.allowed and settings.entry_filter_mode == "EXTREME_SPIKE" and not spike_claimed_for_order:
+                    # Reservation occurs after all current account/config admission
+                    # checks and before the single canonical exchange submit.
+                    claim_spike_entry_once(
+                        ref, event_key=spike_candidates[side], symbol=symbol,
+                        side=side, timeframe=spike_timeframe,
+                        now_ms=int(time.time() * 1000))
+                    spike_claimed_for_order = True
                 entry_action["admission"]=admission.public_dict()
                 return admission
             try:
                 result = execute_approved_leg_once(
                     client, plan, side=PositionSide(side), action="OPEN",
-                    id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}",
+                    id_prefix=f"mbb-open-{hashlib.sha256((uid + (spike_candidates[side] if settings.entry_filter_mode=='EXTREME_SPIKE' and side in spike_candidates else symbol+side+str(timestamp_ms))).encode()).hexdigest()[:12]}",
                     confirm=True, expected_action=ActionType.INITIAL_ENTRY,
                     decision_provider=initial_entry_decision_provider,
+                    pre_mutation_admission=(initial_entry_decision_provider if settings.entry_filter_mode=="EXTREME_SPIKE" else None),
                     new_position_leverage=plan.leverage,
                     before_submit=before_order,
                 )
+            except SpikeFilterRejected as exc:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason,
+                                "entryFilterMode":"EXTREME_SPIKE", "stage":"pre_order"})
+                continue
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason_code, "bollingerEntryFilter15m": True, "stage": "pre_order"})
                 continue
@@ -2088,6 +2165,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 action="OPEN_LEG", cycle_id=cycle_id,
                 margin_usd=_f(entry_sizing.get("plannedInputMarginUsd")),
                 margin_source="PLANNED_INPUT_MARGIN_AT_EXECUTION",
+                spike_event_id=(spike_candidates.get(side, "") if settings.entry_filter_mode=="EXTREME_SPIKE" else ""),
             )
             zone_claim = claim_soldier(zone_state or {}, side, trade_key=key, symbol=symbol,
                 entry_price=fill_price, entry_portfolio_equity=_f(account.get("totalMarginBalance", account.get("equity"))),

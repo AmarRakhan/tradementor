@@ -1,0 +1,41 @@
+name: Extreme Spike isolated safety tests
+on:
+  pull_request:
+    paths:
+      - 'cloud_api/aster_extreme_spike_filter.py'
+      - 'cloud_api/test_aster_extreme_spike_filter.py'
+      - 'cloud_api/test_aster_extreme_spike_config.py'
+      - 'cloud_api/test_aster_spike_saved_settings_scanner.py'
+      - 'cloud_api/test_aster_spike_pre_mutation.py'
+      - 'cloud_api/test_aster_spike_real_scanner_dry_run.py'
+      - 'cloud_api/aster_spike_api_scanner_smoke.py'
+      - 'web/tests/extreme-spike-api-scanner-smoke.mjs'
+      - 'cloud_api/aster_multi_bb_core.py'
+      - 'web/components/aster-extreme-spike-entry-card.tsx'
+      - '.github/workflows/extreme-spike-safety-tests.yml'
+permissions:
+  contents: read
+jobs:
+  spike-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: python3 -m pip install httpx
+      - name: Run scanner saved-settings and Spike safety unit tests
+        run: |
+          PYTHONPATH=cloud_api python3 -m unittest -v \
+            cloud_api.test_aster_extreme_spike_filter \
+            cloud_api.test_aster_extreme_spike_config \
+            cloud_api.test_aster_spike_saved_settings_scanner \
+            cloud_api.test_aster_spike_pre_mutation \
+            cloud_api.test_aster_spike_real_scanner_dry_run
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run isolated real API-to-scanner smoke
+        working-directory: web
+        run: |
+          npm ci --ignore-scripts
+          node tests/extreme-spike-api-scanner-smoke.mjs
