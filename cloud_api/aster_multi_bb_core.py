@@ -2007,6 +2007,18 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 latest_doc=ref.get().to_dict() or {}
                 latest_settings=latest_doc.get("settings") if isinstance(latest_doc.get("settings"),dict) else {}
                 latest_version=max(1,_i(latest_settings.get("version"),_i(getattr(settings,"version",1),1)))
+                # Mode/settings may have changed without a reliable version bump.
+                # Explicitly compare the effective filter snapshot before any order.
+                latest_mode=str(latest_settings.get("entryFilterMode") or (
+                    "BOLLINGER" if latest_settings.get("bollingerEntryFilter15mEnabled",False) else "OFF")).upper()
+                if latest_mode != settings.entry_filter_mode:
+                    raise PermissionError("ASTERBOT_ACTION_DENIED:ENTRY_FILTER_SETTINGS_CHANGED")
+                if latest_mode == "EXTREME_SPIKE":
+                    expected_tf=(settings.extreme_spike_long_timeframe if side=="LONG" else settings.extreme_spike_short_timeframe)
+                    latest_tf=str(latest_settings.get("extremeSpikeLongTimeframe" if side=="LONG" else "extremeSpikeShortTimeframe","1m"))
+                    if (latest_tf != expected_tf or
+                        str(latest_settings.get("extremeSpikeLevel","5-6")) != settings.extreme_spike_level):
+                        raise PermissionError("ASTERBOT_ACTION_DENIED:ENTRY_FILTER_SETTINGS_CHANGED")
                 # Explicit false always blocks. Absence is a legacy-record
                 # compatibility case and preserves pre-migration AsterBot parity.
                 latest_enabled=bool(latest_doc.get("enabled",True))
@@ -2067,6 +2079,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     new_position_leverage=plan.leverage,
                     before_submit=before_order,
                 )
+            except SpikeFilterRejected as exc:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason,
+                                "entryFilterMode":"EXTREME_SPIKE", "stage":"pre_order"})
+                continue
             except BollingerEntryRejected as exc:
                 actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "reason": exc.reason_code, "bollingerEntryFilter15m": True, "stage": "pre_order"})
                 continue
