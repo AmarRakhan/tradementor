@@ -1,5 +1,9 @@
 name: Spike Research 761 - read only
 on:
+  pull_request:
+    paths:
+      - 'research/spike_monitor_761.py'
+      - '.github/workflows/spike-research-761.yml'
   workflow_dispatch:
   schedule:
     - cron: "*/10 * * * *"
