@@ -78,3 +78,36 @@ def evaluate_spike(*, side: str, level: str, timeframe: str,
         raise SpikeFilterRejected("SPIKE_INVALID_BAND")
     overshoot = (band-wick)/band if side == "LONG" else (wick-band)/band
     return SpikeSnapshot(side,level,timeframe,wick,band,score,100*overshoot,candle_close_ms)
+
+def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: str,
+                                timeframe: str, now_ms: int) -> SpikeSnapshot:
+    """Fail-closed read-only market adapter; only completed candles count.
+
+    The candidate gate and final pre-order gate must both call this same
+    function. Transport uses the existing client, not another scanner.
+    """
+    if timeframe not in TIMEFRAMES:
+        raise SpikeFilterRejected("SPIKE_INVALID_TIMEFRAME")
+    try:
+        rows = client.klines(symbol=str(symbol).upper(), interval=timeframe, limit=23)
+        if not isinstance(rows, list) or len(rows) < 22:
+            raise SpikeFilterRejected("SPIKE_INSUFFICIENT_CANDLES")
+        def close_ms(row: Any) -> int:
+            return int(row[6] if isinstance(row, (list, tuple)) else row["closeTime"])
+        def value(row: Any, position: int, key: str) -> float:
+            return float(row[position] if isinstance(row, (list, tuple)) else row[key])
+        completed = [row for row in rows if close_ms(row) < now_ms]
+        if len(completed) < 21:
+            raise SpikeFilterRejected("SPIKE_INSUFFICIENT_COMPLETED_CANDLES")
+        prior = completed[-21:-1]
+        signal = completed[-1]
+        interval_ms={"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe]
+        return evaluate_spike(side=side,level=level,timeframe=timeframe,
+            previous_closes=[value(row,4,"close") for row in prior],
+            candle_high=value(signal,2,"high"),candle_low=value(signal,3,"low"),
+            candle_close_ms=close_ms(signal),now_ms=now_ms,
+            max_staleness_ms=interval_ms+300000)
+    except SpikeFilterRejected:
+        raise
+    except Exception as exc:
+        raise SpikeFilterRejected("SPIKE_DATA_UNAVAILABLE") from exc
