@@ -47,7 +47,7 @@ jobs:
           BASE="https://workstations.googleapis.com/v1/projects/$GCP_PROJECT_ID/locations/europe-west4"
           REPORT="$RUNNER_TEMP/workstation-probe.txt"
           echo "## Read-only Workstations access probe" > "$REPORT"
-          echo "Source: trusted branch; mode: GET-only, no start/stop/mutation." >> "$REPORT"
+          echo "Source: trusted branch; mode: resource GET and read-only testIamPermissions; no start/stop/IAM mutation." >> "$REPORT"
           for ITEM in "workstationClusters/cluster-mthll54f" "workstationClusters/cluster-mthll54f/workstationConfigs/config-mthlka1d" "workstationClusters/cluster-mthll54f/workstationConfigs/config-mthlka1d/workstations/w-tradementoradmin-mthm3sja"; do
             BODY="$RUNNER_TEMP/response.json"
             CODE="$(curl -sS --max-time 15 -o "$BODY" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$BASE/$ITEM" || true)"
@@ -62,4 +62,17 @@ jobs:
             )"
             printf -- '- %s: HTTP %s; status %s\n' "${ITEM##*/}" "$CODE" "$STATUS" >> "$REPORT"
           done
+          WORKSTATION="$BASE/workstationClusters/cluster-mthll54f/workstationConfigs/config-mthlka1d/workstations/w-tradementoradmin-mthm3sja"
+          CODE="$(curl -sS --max-time 15 -o "$BODY" -w '%{http_code}' -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data '{"permissions":["workstations.workstations.get","workstations.workstations.use","workstations.workstations.start","workstations.workstations.stop"]}' "$WORKSTATION:testIamPermissions" || true)"
+          python3 - "$BODY" "$CODE" >> "$REPORT" <<'PY'
+          import json,sys
+          allowed={"workstations.workstations.get","workstations.workstations.use","workstations.workstations.start","workstations.workstations.stop"}
+          try:
+              data=json.load(open(sys.argv[1]))
+              granted=sorted(set(data.get("permissions",[])) & allowed)
+              status=data.get("error",{}).get("status","OK")
+              print(f"- Permission test: HTTP {sys.argv[2]}; status {status}; granted requested permissions: {', '.join(granted) or 'none'}")
+          except Exception:
+              print(f"- Permission test: HTTP {sys.argv[2]}; INVALID_RESPONSE")
+          PY
           gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$REPORT"
