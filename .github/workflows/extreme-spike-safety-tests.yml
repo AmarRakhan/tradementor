@@ -7,6 +7,7 @@ on:
       - 'cloud_api/test_aster_extreme_spike_config.py'
       - 'cloud_api/test_aster_spike_saved_settings_scanner.py'
       - 'cloud_api/test_aster_spike_pre_mutation.py'
+      - 'cloud_api/test_aster_spike_real_scanner_dry_run.py'
       - 'cloud_api/aster_multi_bb_core.py'
       - 'web/components/aster-extreme-spike-entry-card.tsx'
       - '.github/workflows/extreme-spike-safety-tests.yml'
@@ -26,4 +27,5 @@ jobs:
             cloud_api.test_aster_extreme_spike_filter \
             cloud_api.test_aster_extreme_spike_config \
             cloud_api.test_aster_spike_saved_settings_scanner \
-            cloud_api.test_aster_spike_pre_mutation
+            cloud_api.test_aster_spike_pre_mutation \
+            cloud_api.test_aster_spike_real_scanner_dry_run
