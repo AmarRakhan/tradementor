@@ -4,14 +4,14 @@ import argparse,csv,json,math,os,statistics,time,urllib.parse,urllib.request
 from datetime import datetime,timezone
 BASE=os.environ.get("ASTER_PUBLIC_FAPI_BASE","https://fapi.asterdex.com").rstrip("/")
 TP=(0.2,0.3,0.5,0.75,1.0,1.5)
-HORIZONS=(5,15,30,60,240)
+HORIZONS=(5,15,30,60,240,1440,2880)
 def fetch(path,query):
     req=urllib.request.Request(BASE+path+"?"+urllib.parse.urlencode(query),headers={"User-Agent":"AmarSpikeResearch/1.1"})
     with urllib.request.urlopen(req,timeout=20) as response:return json.load(response)
 def run_market(symbol,tf,limit,now):
     raw=fetch("/fapi/v1/klines",{"symbol":symbol,"interval":tf,"limit":limit})
     rows=[(int(x[0]),float(x[1]),float(x[2]),float(x[3]),float(x[4]),int(x[6])) for x in raw]
-    mins={"1m":1,"5m":5,"15m":15}[tf];out=[]
+    mins={"1m":1,"5m":5,"15m":15,"1h":60,"4h":240}[tf];out=[]
     active={"LONG":False,"SHORT":False}
     for i in range(20,len(rows)-1):
         t,o,high,low,close,end=rows[i]
@@ -79,7 +79,15 @@ def main():
                     mature=[e for e in subset if e["observed_minutes"]>=h]
                     hits=sum(bool(e[field]) and e[field]<=h for e in mature)
                     result.append({"tf":tf,"sigma_bin":group,"tp_pct":pval,"horizon_min":h,"spike_count":len(subset),"mature_count":len(mature),"tp_hits":hits,"winrate_pct":round(100*hits/len(mature),2) if mature else None})
-    data={"generated_utc":datetime.now(timezone.utc).isoformat(),"events":len(events),"symbols_requested":len(symbols),"symbols":symbols,"errors":errors,"method":"20 prior completed closes, first wick crossing 2 sigma, next-bar open, TP from OHLC highs/lows, no real fills, exclude insufficient follow-up by horizon, no stop or fees","results":result}
+    lifetime=[]
+    for tf in args.timeframes.split(","):
+        for group in ("2-3","3-4","4-5","5-6","6-7","7+"):
+            sample=[e for e in events if e["tf"]==tf and e["score_bin"]==group]
+            for pval in TP:
+                field="tp_"+str(pval).replace(".","_")+"_minutes"
+                hits=[e[field] for e in sample if isinstance(e[field],(float,int))]
+                lifetime.append({"tf":tf,"sigma_bin":group,"tp_pct":pval,"events":len(sample),"tp_seen":len(hits),"still_unhit":len(sample)-len(hits),"observed_hit_rate_pct":round(100*len(hits)/len(sample),2) if sample else None,"median_minutes_to_tp":statistics.median(hits) if hits else None,"max_observation_minutes":max((e["observed_minutes"] for e in sample),default=None),"note":"Censored: open spikes are not failures; unequal follow-up"})
+    data={"generated_utc":datetime.now(timezone.utc).isoformat(),"events":len(events),"symbols_requested":len(symbols),"symbols":symbols,"errors":errors,"method":"20 prior completed closes, first wick crossing 2 sigma, next-bar open, TP from OHLC highs/lows, no real fills, exclude insufficient follow-up by horizon, no stop or fees","results":result,"lifetime":lifetime}
     with open(args.out+"/tp_grid.json","w") as f:json.dump(data,f,indent=2)
     print(json.dumps({"events":len(events),"errors":errors,"tp_grid_rows":len(result)}))
 if __name__=="__main__":main()
