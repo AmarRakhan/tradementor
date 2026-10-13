@@ -69,8 +69,8 @@ class ScannerDryRunTests(unittest.TestCase):
            "extremeSpikeShortTimeframe":"15m"})
         client=FakeClient()
         plan=SimpleNamespace(leverage=20,notional_per_leg=20,quantity=.2)
-        with patch("aster_multi_bb_core.rank_top_volume",return_value=[{"symbol":"BTCUSDT","quoteVolume":1000000}]), \\
-             patch("aster_multi_bb_core.max_contract_leverage",return_value=20), \\
+        with patch("aster_multi_bb_core.rank_top_volume",return_value=[{"symbol":"BTCUSDT","quoteVolume":1000000}]), \
+             patch("aster_multi_bb_core.max_contract_leverage",return_value=20), \
              patch("aster_multi_bb_core._plan_new",return_value=(plan,{"exchangeMaxLeverage":20,"forcedBelowConfiguredMinimum":False})):
             result=run_multi_bb_step(client=client,ref=Ref(),raw_state={},settings=settings,
                 uid="test-only",account={"availableBalance":100,"totalMarginBalance":100},
