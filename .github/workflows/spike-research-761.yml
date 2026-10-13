@@ -1,0 +1,24 @@
+name: Spike Research 761 - read only
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
+permissions:
+  contents: read
+concurrency:
+  group: spike-research-761
+  cancel-in-progress: false
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read-only Aster historical spike evaluation
+        run: python3 research/spike_monitor_761.py --out spike-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-research-761-${{ github.run_id }}
+          path: spike-results/
+          retention-days: 7
