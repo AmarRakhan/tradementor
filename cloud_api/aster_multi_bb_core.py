@@ -9,7 +9,7 @@ import copy, hashlib, math, time
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed
 from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
-from aster_extreme_spike_filter import SpikeFilterRejected, require_extreme_spike_entry
+from aster_extreme_spike_filter import SpikeFilterRejected, require_extreme_spike_entry, spike_event_key
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, is_definite_contract_rejection, plan_pair
 from aster_unified_execution import execute_approved_leg_once
 from aster_gateway import ContractRules, PositionSide
@@ -1692,15 +1692,19 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # primary sides independently for every candidate. Otherwise an equal
         # 25L/25S account with one free seat on each side would keep testing LONG
         # first and could starve a valid SHORT-above-upper-band entry forever.
+        spike_candidates: dict[str, str] = {}
         def candidate_bb_pass(candidate_side: str) -> bool:
             side_diag = scanner_side_diagnostics[candidate_side]
             side_diag["marketsScanned"] += 1
             try:
                 if settings.entry_filter_mode == "EXTREME_SPIKE":
-                    require_extreme_spike_entry(
+                    spike_timeframe=(settings.extreme_spike_long_timeframe if candidate_side == "LONG" else settings.extreme_spike_short_timeframe)
+                    spike_snapshot=require_extreme_spike_entry(
                         client, symbol=symbol, side=candidate_side, level=settings.extreme_spike_level,
-                        timeframe=settings.extreme_spike_long_timeframe if candidate_side == "LONG" else settings.extreme_spike_short_timeframe,
-                        now_ms=timestamp_ms)
+                        timeframe=spike_timeframe, now_ms=timestamp_ms)
+                    spike_candidates[candidate_side]=spike_event_key(
+                        symbol=symbol, side=candidate_side, timeframe=spike_timeframe,
+                        candle_close_ms=spike_snapshot.candle_close_ms)
                 elif settings.entry_filter_mode == "BOLLINGER":
                     require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True,
                         timeframe=_effective_entry_timeframe(settings, candidate_side, exposure_refill),
@@ -1993,10 +1997,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             def initial_entry_decision_provider() -> Any:
                 effective_timeframe=_effective_entry_timeframe(settings, side, exposure_refill)
                 if settings.entry_filter_mode == "EXTREME_SPIKE":
-                    require_extreme_spike_entry(client, symbol=symbol, side=side,
-                        level=settings.extreme_spike_level,
-                        timeframe=settings.extreme_spike_long_timeframe if side == "LONG" else settings.extreme_spike_short_timeframe,
+                    spike_timeframe=(settings.extreme_spike_long_timeframe if side == "LONG" else settings.extreme_spike_short_timeframe)
+                    final_spike=require_extreme_spike_entry(client, symbol=symbol, side=side,
+                        level=settings.extreme_spike_level, timeframe=spike_timeframe,
                         now_ms=int(time.time() * 1000))
+                    final_event_key=spike_event_key(symbol=symbol,side=side,timeframe=spike_timeframe,
+                        candle_close_ms=final_spike.candle_close_ms)
+                    if spike_candidates.get(side) != final_event_key:
+                        raise SpikeFilterRejected("SPIKE_CANDIDATE_CHANGED_BEFORE_ORDER")
                 else:
                     require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
                                             timeframe=effective_timeframe, live_price=None, force_refresh=True, stage="pre_order")
@@ -2073,7 +2081,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             try:
                 result = execute_approved_leg_once(
                     client, plan, side=PositionSide(side), action="OPEN",
-                    id_prefix=f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}",
+                    id_prefix=(f"mbb-spike-{hashlib.sha256((uid+spike_candidates[side]).encode()).hexdigest()[:14]}"
+                               if settings.entry_filter_mode=="EXTREME_SPIKE" and side in spike_candidates
+                               else f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}"),
                     confirm=True, expected_action=ActionType.INITIAL_ENTRY,
                     decision_provider=initial_entry_decision_provider,
                     new_position_leverage=plan.leverage,
