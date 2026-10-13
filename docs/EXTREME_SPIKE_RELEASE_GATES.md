@@ -66,3 +66,20 @@ calls and order POST counts; any claim failure must cause zero exchange mutation
   GET -> PUT -> GET readback remains unverified. Tests must exercise unavailable
   GET => 409 (no mutation), explicit mode changes, and restored settings.
 - **Release remains NO-GO** pending those three real integration checks.
+
+## Latest release checkpoint (commit 60af1b1)
+All 6 workflows completed SUCCESS: emulator 38423995982, backend 38423995491,
+runtime 38423995542, web 38423995305, bot settings reference 38423995361,
+Android 38423995461. The emulator gate runs real Firestore create operations
+against a disposable loopback emulator, but is **not** a production IAM test.
+Responsive visual artifact captures the isolated Extreme Spike component
+including expanded dropdown, not the entire authenticated settings host.
+GET-after-PUT verification is implemented and covered with source contract
+tests, but an authenticated end-to-end test against a disposable application
+backend has not been proven. No current production rollout or live user
+configuration change is authorized solely by green CI.
+
+**Remaining sign-off:** exercise authenticated settings GET -> PUT -> GET on
+staging with disposable user, including OFF/BOLLINGER/EXTREME_SPIKE, refresh,
+legacy editor, and failure rollback; then validate integrated settings host
+for overlay/z-index and clipping. Record PASS evidence before merge/deploy.
