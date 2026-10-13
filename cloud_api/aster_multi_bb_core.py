@@ -2081,9 +2081,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             try:
                 result = execute_approved_leg_once(
                     client, plan, side=PositionSide(side), action="OPEN",
-                    id_prefix=(f"mbb-spike-{hashlib.sha256((uid+spike_candidates[side]).encode()).hexdigest()[:14]}"
-                               if settings.entry_filter_mode=="EXTREME_SPIKE" and side in spike_candidates
-                               else f"mbb-open-{hashlib.sha256((uid+symbol+side+str(timestamp_ms)).encode()).hexdigest()[:12]}"),
+                    id_prefix=f"mbb-open-{hashlib.sha256((uid + (spike_candidates[side] if settings.entry_filter_mode=='EXTREME_SPIKE' and side in spike_candidates else symbol+side+str(timestamp_ms))).encode()).hexdigest()[:12]}",
                     confirm=True, expected_action=ActionType.INITIAL_ENTRY,
                     decision_provider=initial_entry_decision_provider,
                     new_position_leverage=plan.leverage,
