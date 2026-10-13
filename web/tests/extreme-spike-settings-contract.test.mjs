@@ -26,7 +26,7 @@ test("old Bollinger UI is displayed only in Bollinger mode",()=>{
 test("legacy save fails closed if current Spike mode cannot be verified",()=>{
  assert.match(route,/const missingSpikeMode = !Object\.prototype\.hasOwnProperty\.call\(settingsRecord, "entryFilterMode"\)/);
  assert.match(route,/status:409/);
- assert.match(route,/if \(!status\.ok\) return missingSpikeMode \? safeFailure\(\) : request/);
+ assert.match(route,/if \(!status\.ok\) return requiresVerifiedRead \? safeFailure\(\) : request/);
  assert.match(route,/if \(preserved instanceof Response\) return preserved/);
 });
 
