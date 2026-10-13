@@ -359,6 +359,13 @@
               ...new Set(sel.excludedCodes.map(code=>code==='5TW10AA'?'9X3V1UT#ABB':code))
             ];
           }
+
+          // Legacy iPad case migration: active templates now use PS025496T.
+          if(Array.isArray(sel.excludedCodes) && sel.excludedCodes.includes('13-02441')){
+            sel.excludedCodes=[
+              ...new Set(sel.excludedCodes.map(code=>code==='13-02441'?'PS025496T':code))
+            ];
+          }
         });
 
         state.customPackages.forEach(pkg=>{
