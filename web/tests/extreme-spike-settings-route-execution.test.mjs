@@ -48,6 +48,11 @@ test("actual API route retains Spike mode and TP on a legacy settings save",asyn
  }
  assert.equal(result.lastWrite.maxDca,10);
 });
+test("actual API route rejects legacy save when canonical settings are missing",async()=>{
+ const result=await executeRoute({incoming:{bollingerEntryFilter15mEnabled:true},current:null});
+ assert.equal(result.response.status,409);
+ assert.equal(result.writes,0);
+});
 test("actual API route fails closed without readback and never writes",async()=>{
  const result=await executeRoute({incoming:{bollingerEntryFilter15mEnabled:true},current:base,fetchFails:true});
  assert.equal(result.response.status,409);
