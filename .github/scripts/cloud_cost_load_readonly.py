@@ -55,7 +55,14 @@ def safe_probe(name, operation):
     try:
         print(name + ' ' + json.dumps(operation(), separators=(',', ':')))
     except urllib.error.HTTPError as error:
-        print(name + ' UNAVAILABLE_HTTP_' + str(error.code))
+        try:
+            payload = json.load(error).get('error', {})
+            reasons = sorted({str(item.get('reason', '')) for item in payload.get('details', []) if item.get('reason')})
+            permissions = sorted({str(item.get('metadata', {}).get('permission', '')) for item in payload.get('details', []) if item.get('metadata', {}).get('permission')})
+            state = str(payload.get('status', 'UNKNOWN'))
+        except Exception:
+            reasons, permissions, state = [], [], 'UNREADABLE'
+        print(name + ' UNAVAILABLE_HTTP_' + str(error.code) + ' ' + json.dumps({'status': state, 'reasons': reasons, 'permissions': permissions}))
     except Exception as error:
         print(name + ' UNAVAILABLE_' + type(error).__name__)
 
