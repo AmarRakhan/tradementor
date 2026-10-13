@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 from typing import Any
+import hashlib
 
 LEVELS = {"2-3": (2.0,3.0), "3-4":(3.0,4.0), "4-5":(4.0,5.0),
           "5-6":(5.0,6.0), "6-7":(6.0,7.0), "7+":(7.0,None)}
@@ -111,3 +112,14 @@ def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: s
         raise
     except Exception as exc:
         raise SpikeFilterRejected("SPIKE_DATA_UNAVAILABLE") from exc
+
+def spike_event_key(*, symbol: str, side: str, timeframe: str, candle_close_ms: int) -> str:
+    """Deterministic event identity, independent of scheduler tick or TP cycle.
+
+    This is not sufficient by itself for exactly-once execution. The order
+    executor must durably claim/check this key atomically before submission.
+    """
+    if side not in ("LONG","SHORT") or timeframe not in TIMEFRAMES or candle_close_ms <= 0:
+        raise SpikeFilterRejected("SPIKE_INVALID_EVENT_IDENTITY")
+    raw=f"{symbol.upper()}|{side}|{timeframe}|{candle_close_ms}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
