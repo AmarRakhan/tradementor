@@ -4,6 +4,11 @@ import { proxyStrategy2Live } from "@/lib/secure-strategy2-live";
 /** Fields unknown to older/global editors must survive their saves. */
 const preserveKeys = [
   "pairOverrides",
+  "priceZoneSeats",
+  "zoneSoldiersEnabled",
+  "zoneSoldiersOptInVersion",
+  "zoneBaseLongSoldiers",
+  "zoneBaseShortSoldiers",
   // Preserve optional entry filters when an older/global form submits only legacy fields.
   "entryFilterMode",
   "extremeSpikeLevel",
@@ -62,9 +67,12 @@ async function preserveExistingPairOverrides(request: Request) {
   if (!missing.length) return request;
 
   const missingSpikeMode = !Object.prototype.hasOwnProperty.call(settingsRecord, "entryFilterMode");
+  const missingZoneSettings = !Object.prototype.hasOwnProperty.call(settingsRecord, "priceZoneSeats") &&
+    !Object.prototype.hasOwnProperty.call(settingsRecord, "zoneSoldiersEnabled");
+  const requiresVerifiedRead = missingSpikeMode || missingZoneSettings;
   const safeFailure = () => new Response(JSON.stringify({error:"Filterinstellingen niet verifieerbaar; opslaan geblokkeerd."}), {status:409,headers:{"content-type":"application/json"}});
   const authorization = request.headers.get("authorization");
-  if (!authorization?.startsWith("Bearer ")) return missingSpikeMode ? safeFailure() : request;
+  if (!authorization?.startsWith("Bearer ")) return requiresVerifiedRead ? safeFailure() : request;
   try {
     const status = await fetch(new URL("/api/exchanges/aster", request.url), {
       method: "GET",
@@ -75,7 +83,10 @@ async function preserveExistingPairOverrides(request: Request) {
     const snapshot = await status.json() as Record<string, unknown>;
     const strategy2 = snapshot.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 as Record<string, unknown> : {};
     const current = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : {};
-    if (missingSpikeMode && (!strategy2.settings || typeof strategy2.settings !== "object" || Array.isArray(strategy2.settings))) return safeFailure();
+    if (requiresVerifiedRead && (!strategy2.settings || typeof strategy2.settings !== "object" || Array.isArray(strategy2.settings))) return safeFailure();
+    if (missingZoneSettings &&
+        !Object.prototype.hasOwnProperty.call(current, "priceZoneSeats") &&
+        !Object.prototype.hasOwnProperty.call(current, "zoneSoldiersEnabled")) return safeFailure();
     const merged = { ...settingsRecord };
     for (const key of missing) {
       if (Object.prototype.hasOwnProperty.call(current, key)) merged[key] = current[key];
