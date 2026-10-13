@@ -9,6 +9,7 @@ import copy, hashlib, math, time
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed
 from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
+from aster_extreme_spike_filter import SpikeFilterRejected, require_extreme_spike_entry
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, is_definite_contract_rejection, plan_pair
 from aster_unified_execution import execute_approved_leg_once
 from aster_gateway import ContractRules, PositionSide
@@ -1691,20 +1692,29 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # primary sides independently for every candidate. Otherwise an equal
         # 25L/25S account with one free seat on each side would keep testing LONG
         # first and could starve a valid SHORT-above-upper-band entry forever.
-        def candidate_bb_pass(candidate_side: str) -> bool:
+        def candidate_entry_filter_pass(candidate_side: str) -> bool:
             side_diag = scanner_side_diagnostics[candidate_side]
             side_diag["marketsScanned"] += 1
             try:
-                require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True, timeframe=_effective_entry_timeframe(settings, candidate_side, exposure_refill),
-                                        live_price=prices[symbol], force_refresh=False, stage="candidate", now_ms=timestamp_ms)
-            except BollingerEntryRejected as exc:
-                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side, "reason": exc.reason_code, "bollingerEntryFilter15m": True})
+                if settings.entry_filter_mode == "EXTREME_SPIKE":
+                    require_extreme_spike_entry(
+                        client, symbol=symbol, side=candidate_side, level=settings.extreme_spike_level,
+                        timeframe=settings.extreme_spike_long_timeframe if candidate_side == "LONG" else settings.extreme_spike_short_timeframe,
+                        now_ms=timestamp_ms)
+                elif settings.entry_filter_mode == "BOLLINGER":
+                    require_bollinger_entry(client, symbol=symbol, side=candidate_side, enabled=True,
+                        timeframe=_effective_entry_timeframe(settings, candidate_side, exposure_refill),
+                        live_price=prices[symbol], force_refresh=False, stage="candidate", now_ms=timestamp_ms)
+            except (BollingerEntryRejected, SpikeFilterRejected) as exc:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": candidate_side,
+                                "reason": getattr(exc, "reason_code", getattr(exc, "reason", "ENTRY_FILTER_REJECTED")),
+                                "entryFilterMode": settings.entry_filter_mode})
                 return False
             side_diag["bbCandidates"] += 1
             return True
 
         independent_bb_scan = (
-            settings.bollinger_entry_filter_15m_enabled
+            settings.entry_filter_mode != "OFF"
             and not settings.asymmetric_hedge_enabled
             and not (settings.manual_symbol_selection_enabled and ranked_row.get("manualReserved"))
         )
@@ -1720,7 +1730,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 continue
             selected_side: str | None = None
             for candidate_side in side_candidates:
-                if not candidate_bb_pass(candidate_side):
+                if not candidate_entry_filter_pass(candidate_side):
                     continue
                 selected_side = candidate_side
                 break
@@ -1739,7 +1749,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         side = opposite
                     else:
                         continue
-            if settings.bollinger_entry_filter_15m_enabled and not candidate_bb_pass(side):
+            if settings.entry_filter_mode != "OFF" and not candidate_entry_filter_pass(side):
                 continue
 
         # The final side can change after the allocator gate above (notably in
@@ -1977,8 +1987,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             )
             def initial_entry_decision_provider() -> Any:
                 effective_timeframe=_effective_entry_timeframe(settings, side, exposure_refill)
-                require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
-                                        timeframe=effective_timeframe, live_price=None, force_refresh=True, stage="pre_order")
+                if settings.entry_filter_mode == "EXTREME_SPIKE":
+                    require_extreme_spike_entry(client, symbol=symbol, side=side,
+                        level=settings.extreme_spike_level,
+                        timeframe=settings.extreme_spike_long_timeframe if side == "LONG" else settings.extreme_spike_short_timeframe,
+                        now_ms=int(time.time() * 1000))
+                else:
+                    require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
+                                            timeframe=effective_timeframe, live_price=None, force_refresh=True, stage="pre_order")
                 # Canonical initial-entry admission runs immediately before the
                 # exchange submit. Re-read both Aster truth and Firestore truth:
                 # a config save or bot-toggle during this tick invalidates this
@@ -2008,8 +2024,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     )
                 filter_results=(
                     FilterResult(
-                        "bollinger",
-                        FilterStatus.PASS if settings.bollinger_entry_filter_15m_enabled else FilterStatus.SKIP,
+                        "entry_filter",
+                        FilterStatus.PASS if settings.entry_filter_mode != "OFF" else FilterStatus.SKIP,
                         values={"timeframe":effective_timeframe},
                     ),
                 )
