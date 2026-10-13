@@ -1,7 +1,9 @@
 import unittest
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from aster_execution import client_order_id
-from aster_extreme_spike_filter import evaluate_spike, SpikeFilterRejected, normalize_mode,validate_settings,require_extreme_spike_entry,spike_event_key
+from aster_extreme_spike_filter import evaluate_spike, SpikeFilterRejected, normalize_mode,validate_settings,require_extreme_spike_entry,spike_event_key,claim_spike_entry_once
 class SpikeTests(unittest.TestCase):
     def setUp(self):
         self.closes=[100.0 + (i%2)*2 for i in range(20)]
@@ -63,5 +65,41 @@ class SpikeTests(unittest.TestCase):
         self.assertLessEqual(len(order1),36)
         newer=spike_event_key(symbol="DOGEUSDT",side="LONG",timeframe="1m",candle_close_ms=210000)
         self.assertNotEqual(order1,client_order_id("mbb-open-"+hashlib.sha256((uid+newer).encode()).hexdigest()[:12],"open","long"))
+
+    def test_atomic_spike_reservation_two_workers_and_restart(self):
+        class AtomicCollection:
+            def __init__(self):
+                self.lock=threading.Lock()
+                self.created=set()
+                self.write_count=0
+            def document(self,key):
+                store=self
+                class Doc:
+                    def create(self,payload):
+                        with store.lock:
+                            if key in store.created:
+                                raise RuntimeError("ALREADY_EXISTS")
+                            store.created.add(key)
+                            store.write_count+=1
+                return Doc()
+        class Account:
+            def __init__(self):self.store=AtomicCollection()
+            def collection(self,name):
+                assert name=="spikeEntryClaims"
+                return self.store
+        acct=Account()
+        args=dict(event_key="a"*32,symbol="DOGEUSDT",side="LONG",timeframe="1m",now_ms=10000)
+        def attempt():
+            try:
+                claim_spike_entry_once(acct,**args)
+                return "OK"
+            except SpikeFilterRejected:
+                return "BLOCKED"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(lambda _:attempt(),range(2)))
+        self.assertEqual(sorted(results),["BLOCKED","OK"])
+        self.assertEqual(acct.store.write_count,1)
+        self.assertEqual(attempt(),"BLOCKED")  # after process restart / TP
+        self.assertEqual(acct.store.write_count,1)
 
 if __name__=="__main__": unittest.main()
