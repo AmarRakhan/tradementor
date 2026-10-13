@@ -131,3 +131,12 @@ authenticated settings API. Inject a controlled exchange client and assert:
 Do **not** interpret standalone candle adapter, config-roundtrip or route
 unit-test success as this final proof. Production GO remains blocked until the
 real scanner entrypoint plus authenticated API has been exercised together.
+
+## Scanner dry-run boundary confirmed
+`run_multi_bb_step(..., dry_run=True)` traverses the real scanner candidate
+admission path and returns simulated `ENTRY` actions, but intentionally
+bypasses `execute_approved_leg_once`, final fresh-settings validation, and
+atomic Spike reservation. Therefore a scanner dry-run is a **valuable separate
+test**, NOT a substitute for pre-submit/Firestore controls or authenticated
+settings-to-scanner staging E2E. Existing tests cover those layers separately;
+do not report them as one integrated execution.
