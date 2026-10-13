@@ -3,7 +3,7 @@ import {spawnSync} from "node:child_process";
 import ts from "typescript";
 const source=readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts",import.meta.url),"utf8");
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-const settings={universeTopN:1,maximumPositions:1,longSlots:1,shortSlots:0,minimumLeverage:20,maximumLeverage:20,entryFilterMode:"EXTREME_SPIKE",bollingerEntryFilter15mEnabled:false,extremeSpikeLevel:"5-6",extremeSpikeLongTimeframe:"1m",extremeSpikeShortTimeframe:"15m"};
+const settings={universeTopN:1,maximumPositions:1,longSlots:1,shortSlots:0,minimumLeverage:20,maximumLeverage:20,entryFilterMode:"EXTREME_SPIKE",bollingerEntryFilter15mEnabled:false,extremeSpikeLevel:"5-6",extremeSpikeLongTimeframe:"1m",extremeSpikeShortTimeframe:"15m",priceZoneSeats:{enabled:false,longSeatsPerZone:1,shortSeatsPerZone:0},zoneSoldiersEnabled:false};
 let persisted=null;
 const mockRequire=name=> {
  if(name==="@/lib/aster-strategy2-settings-guard")return {guardedAsterStrategy2Request:async request=>({request})};
