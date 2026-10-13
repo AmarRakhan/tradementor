@@ -39,4 +39,18 @@ class ScannerSavedSettingsTests(unittest.TestCase):
             require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="7+",
                 timeframe=config.extreme_spike_long_timeframe,now_ms=21*60000+10)
 
+    def test_off_mode_never_invokes_spike_market_adapter(self):
+        raw=self.base()
+        raw.update(entryFilterMode="OFF",bollingerEntryFilter15mEnabled=False)
+        config=MultiBbConfig.from_mapping(MultiBbConfig.from_mapping(raw).public_dict())
+        self.assertEqual(config.entry_filter_mode,"OFF")
+        self.assertFalse(config.bollinger_entry_filter_15m_enabled)
+
+    def test_legacy_bollinger_mode_retains_existing_admission(self):
+        raw=self.base()
+        raw.update(bollingerEntryFilter15mEnabled=True)
+        config=MultiBbConfig.from_mapping(MultiBbConfig.from_mapping(raw).public_dict())
+        self.assertEqual(config.entry_filter_mode,"BOLLINGER")
+        self.assertTrue(config.bollinger_entry_filter_15m_enabled)
+
 if __name__=="__main__":unittest.main()
