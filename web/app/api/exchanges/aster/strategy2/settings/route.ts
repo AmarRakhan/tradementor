@@ -61,15 +61,17 @@ async function preserveExistingPairOverrides(request: Request) {
   const missing = preserveKeys.filter((key) => !Object.prototype.hasOwnProperty.call(settingsRecord, key));
   if (!missing.length) return request;
 
+  const missingSpikeMode = !Object.prototype.hasOwnProperty.call(settingsRecord, "entryFilterMode");
+  const safeFailure = () => new Response(JSON.stringify({error:"Filterinstellingen niet verifieerbaar; opslaan geblokkeerd."}), {status:409,headers:{"content-type":"application/json"}});
   const authorization = request.headers.get("authorization");
-  if (!authorization?.startsWith("Bearer ")) return request;
+  if (!authorization?.startsWith("Bearer ")) return missingSpikeMode ? safeFailure() : request;
   try {
     const status = await fetch(new URL("/api/exchanges/aster", request.url), {
       method: "GET",
       headers: { Authorization: authorization },
       cache: "no-store",
     });
-    if (!status.ok) return request;
+    if (!status.ok) return missingSpikeMode ? safeFailure() : request;
     const snapshot = await status.json() as Record<string, unknown>;
     const strategy2 = snapshot.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 as Record<string, unknown> : {};
     const current = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : {};
@@ -94,7 +96,7 @@ async function preserveExistingPairOverrides(request: Request) {
       body: JSON.stringify({ ...payload, settings: merged }),
     });
   } catch {
-    return request;
+    return missingSpikeMode ? safeFailure() : request;
   }
 }
 
@@ -102,6 +104,7 @@ export async function PUT(request: Request) {
   const guarded = await guardedAsterStrategy2Request(request);
   if ("response" in guarded) return guarded.response;
   const preserved = await preserveExistingPairOverrides(guarded.request);
+  if (preserved instanceof Response) return preserved;
   if (preserved === guarded.request) {
     return proxyStrategy2Live(guarded.request, "/v1/me/aster/strategy2/settings", "PUT");
   }
