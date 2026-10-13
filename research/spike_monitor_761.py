@@ -49,11 +49,13 @@ def analyze(symbol,tf,rows,now):
                         if good:
                             hit=(j-i)*minutes
                             break
-                    events.append({"symbol":symbol,"timeframe":tf,"period":n,"sigma":k,"side":side,"spike_utc":datetime.fromtimestamp(t/1000,timezone.utc).isoformat(),"overshoot_pct":round(overshoot*100,5),"entry":entry,"target":target,"tp_minutes":hit,"observed_minutes":max(0,(now-rows[i+1][0])/60000),"max_adverse_pct":round(adverse*100,4)})
+                    events.append({"symbol":symbol,"timeframe":tf,"period":n,"sigma":k,"side":side,"wick_extreme":lo if side=="LONG" else hi,"band_at_signal":lower if side=="LONG" else upper,"band_mean":mean,"band_stddev":dev,"spike_utc":datetime.fromtimestamp(t/1000,timezone.utc).isoformat(),"overshoot_pct":round(overshoot*100,5),"entry":entry,"target":target,"tp_minutes":hit,"observed_minutes":max(0,(now-rows[i+1][0])/60000),"max_adverse_pct":round(adverse*100,4)})
     return events
 def main():
     p=argparse.ArgumentParser()
     p.add_argument("--symbols",default="BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,BNBUSDT,DOGEUSDT")
+    p.add_argument("--top",type=int,default=0,help="Discover top N Aster USDT perpetual contracts by 24h quote volume")
+    p.add_argument("--pause",type=float,default=0.10,help="Seconds between public kline requests")
     p.add_argument("--timeframes",default="1m,5m,15m")
     p.add_argument("--limit",type=int,default=900)
     p.add_argument("--out",default="spike-results")
@@ -61,12 +63,26 @@ def main():
     os.makedirs(a.out,exist_ok=True)
     now=int(time.time()*1000)
     all_events=[];errors=[]
-    for symbol in a.symbols.split(","):
+    symbols=[sym.strip() for sym in a.symbols.split(",") if sym.strip()]
+    if a.top:
+        try:
+            info=get("/fapi/v1/exchangeInfo",{})
+            eligible={str(x.get("symbol","")) for x in info.get("symbols",[]) if x.get("quoteAsset")=="USDT" and x.get("contractType")=="PERPETUAL" and x.get("status")=="TRADING"}
+            tickers=get("/fapi/v1/ticker/24hr",{})
+            if not isinstance(tickers,list):raise ValueError("ticker format")
+            ranked=sorted((x for x in tickers if x.get("symbol") in eligible),key=lambda x:float(x.get("quoteVolume") or 0),reverse=True)
+            symbols=[x["symbol"] for x in ranked[:a.top]]
+            if not symbols:raise ValueError("No eligible symbols in exchangeInfo/ticker overlap")
+        except Exception as exc:
+            raise RuntimeError("Top-N market discovery failed closed: "+type(exc).__name__) from exc
+    for symbol in symbols:
         for tf in a.timeframes.split(","):
-            try:all_events+=analyze(symbol.strip(),tf,candles(symbol.strip(),tf,a.limit),now)
+            try:
+                all_events+=analyze(symbol,tf,candles(symbol,tf,a.limit),now)
+                time.sleep(a.pause)
             except Exception as exc:errors.append({"symbol":symbol,"timeframe":tf,"error":type(exc).__name__})
     with open(a.out+"/events.csv","w",newline="") as f:
-        w=csv.DictWriter(f,fieldnames=["symbol","timeframe","period","sigma","side","spike_utc","overshoot_pct","entry","target","tp_minutes","observed_minutes","max_adverse_pct"])
+        w=csv.DictWriter(f,fieldnames=["symbol","timeframe","period","sigma","side","wick_extreme","band_at_signal","band_mean","band_stddev","spike_utc","overshoot_pct","entry","target","tp_minutes","observed_minutes","max_adverse_pct"])
         w.writeheader();w.writerows(all_events)
     report=[]
     for tf in a.timeframes.split(","):
@@ -80,7 +96,7 @@ def main():
                 tp=[x["tp_minutes"] for x in sample if x["tp_minutes"] is not None]
                 row["median_tp_minutes"]=statistics.median(tp) if tp else None
                 report.append(row)
-    out={"generated_utc":datetime.now(timezone.utc).isoformat(),"mode":"HISTORICAL_READ_ONLY","data_note":"OHLC next-bar open assumed; price TP gross, not fills; intrabar TP coarse; spike event keyed by time and BB variant; excludes ongoing candle; sample bounded by limit; events overlap across variants","symbols":a.symbols.split(","),"errors":errors,"events":len(all_events),"table":report}
+    out={"generated_utc":datetime.now(timezone.utc).isoformat(),"mode":"HISTORICAL_READ_ONLY","data_note":"OHLC next-bar open assumed; price TP gross, not fills; intrabar TP coarse; spike event keyed by time and BB variant; excludes ongoing candle; sample bounded by limit; events overlap across variants","symbols":symbols,"requested_top":a.top,"errors":errors,"events":len(all_events),"table":report}
     with open(a.out+"/summary.json","w") as f:json.dump(out,f,indent=2)
     print(json.dumps({"events":len(all_events),"errors":errors,"out":a.out}))
 if __name__=="__main__":main()
