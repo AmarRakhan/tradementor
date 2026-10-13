@@ -35,6 +35,7 @@ class ZoneConfigurationRegressionCharacterization(unittest.TestCase):
         source = (Path(__file__).parent / "aster_multi_bb_core.py").read_text()
         self.assertIn('active_zone_value = _i(active_zone_raw) if active_zone_raw is not None else None', source)
         self.assertIn('active_zone_value=_i(active_zone_raw) if active_zone_raw is not None else None', source)
+        self.assertIn('if active_zone_value is not None else {}', source)
 
     def test_matching_flags_preserve_price_zone_mode(self):
         raw = {
