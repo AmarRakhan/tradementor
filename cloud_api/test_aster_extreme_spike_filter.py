@@ -1,5 +1,5 @@
 import unittest
-from aster_extreme_spike_filter import evaluate_spike, SpikeFilterRejected, normalize_mode,validate_settings,require_extreme_spike_entry
+from aster_extreme_spike_filter import evaluate_spike, SpikeFilterRejected, normalize_mode,validate_settings,require_extreme_spike_entry,spike_event_key
 class SpikeTests(unittest.TestCase):
     def setUp(self):
         self.closes=[100.0 + (i%2)*2 for i in range(20)]
@@ -44,4 +44,11 @@ class SpikeTests(unittest.TestCase):
         self.assertAlmostEqual(found.score,5.5)
         with self.assertRaises(SpikeFilterRejected):
             require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="7+",timeframe="1m",now_ms=21*60000+10)
+    def test_stable_spike_identity_across_scanner_ticks(self):
+        first=spike_event_key(symbol="btcusdt",side="LONG",timeframe="1m",candle_close_ms=1000)
+        self.assertEqual(first,spike_event_key(symbol="BTCUSDT",side="LONG",timeframe="1m",candle_close_ms=1000))
+        self.assertNotEqual(first,spike_event_key(symbol="BTCUSDT",side="LONG",timeframe="1m",candle_close_ms=2000))
+        self.assertNotEqual(first,spike_event_key(symbol="BTCUSDT",side="SHORT",timeframe="1m",candle_close_ms=1000))
+        self.assertNotEqual(first,spike_event_key(symbol="BTCUSDT",side="LONG",timeframe="5m",candle_close_ms=1000))
+
 if __name__=="__main__": unittest.main()
