@@ -33,5 +33,6 @@ jobs:
           python -m pip install google-cloud-firestore
       - name: Start local Firestore emulator and run actual integration test
         run: |
-          npx firebase emulators:exec --only firestore --project spike-release-test-only \
+          printf '%s\\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/spike-firebase.json
+          npx firebase emulators:exec --config /tmp/spike-firebase.json --only firestore --project spike-release-test-only \
             'PYTHONPATH=cloud_api python -m unittest -v cloud_api.test_aster_spike_firestore_emulator'
