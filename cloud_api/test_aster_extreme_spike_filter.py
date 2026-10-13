@@ -1,5 +1,5 @@
 import unittest
-from aster_extreme_spike_filter import evaluate_spike, SpikeFilterRejected, normalize_mode,validate_settings
+from aster_extreme_spike_filter import evaluate_spike, SpikeFilterRejected, normalize_mode,validate_settings,require_extreme_spike_entry
 class SpikeTests(unittest.TestCase):
     def setUp(self):
         self.closes=[100.0 + (i%2)*2 for i in range(20)]
@@ -28,4 +28,20 @@ class SpikeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_settings(mode="BOLLINGER",level="5-6",long_tf="1m",short_tf="15m",legacy_bb_enabled=False)
         validate_settings(mode="EXTREME_SPIKE",level="5-6",long_tf="1m",short_tf="4h",legacy_bb_enabled=False)
+
+    def test_completed_candle_adapter_and_rejection(self):
+        class Client:
+            def klines(self, **kwargs):
+                rows=[]
+                for i in range(21):
+                    price=100+(i%2)*2
+                    lo=95.5 if i==20 else 100
+                    rows.append([i*60000,price,102,lo,price,0,(i+1)*60000-1])
+                rows.append([21*60000,101,102,90,101,0,22*60000-1])
+                return rows
+        c=Client()
+        found=require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5-6",timeframe="1m",now_ms=21*60000+10)
+        self.assertAlmostEqual(found.score,5.5)
+        with self.assertRaises(SpikeFilterRejected):
+            require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="7+",timeframe="1m",now_ms=21*60000+10)
 if __name__=="__main__": unittest.main()
