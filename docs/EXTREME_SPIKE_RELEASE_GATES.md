@@ -46,3 +46,23 @@ OFF/BOLLINGER behavior, OR demonstrate an equivalent pre-existing account-level
 exclusive lock plus test proof. Preserve the revalidation immediately before
 actual submit. Add concurrency/failure-injection tests for leverage/margin
 calls and order POST counts; any claim failure must cause zero exchange mutations.
+
+## Verified development-branch checks (2026-10-13)
+- Cloud Backend CI 38419996531: SUCCESS.
+- Runtime Contract V1 38419996653: SUCCESS.
+- Web Cloud CI 38419996730: SUCCESS.
+- Spike OPEN now uses pre_mutation_admission before entering low-level executor;
+  final decision_provider revalidates before order POST. Earlier ordering
+  warning above describes the **pre-fix** state; retain it as an audit trail.
+- Unit tests for concurrent same-account claims, cross-account identity,
+  uncertain order retry suppression, and pre-mutation denial exist and passed CI.
+- No real Firestore emulator/project integration was run, so atomic claim
+  authorization and document-path isolation against the deployed IAM rules are
+  unverified. Run in a disposable **non-production** Firebase test project only.
+- Existing visual QA artifact is for legacy Botconfigurator, NOT a pixel check of
+  Extreme Spike component. Screenshot the actual new card in 390px and Fold
+  layouts including an open dropdown, compare against approved design.
+- Legacy save protection is tested by source-contract tests. End-to-end actual
+  GET -> PUT -> GET readback remains unverified. Tests must exercise unavailable
+  GET => 409 (no mutation), explicit mode changes, and restored settings.
+- **Release remains NO-GO** pending those three real integration checks.
