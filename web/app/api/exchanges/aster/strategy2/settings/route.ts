@@ -79,7 +79,7 @@ async function preserveExistingPairOverrides(request: Request) {
       headers: { Authorization: authorization },
       cache: "no-store",
     });
-    if (!status.ok) return missingSpikeMode ? safeFailure() : request;
+    if (!status.ok) return requiresVerifiedRead ? safeFailure() : request;
     const snapshot = await status.json() as Record<string, unknown>;
     const strategy2 = snapshot.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 as Record<string, unknown> : {};
     const current = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : {};
@@ -108,7 +108,7 @@ async function preserveExistingPairOverrides(request: Request) {
       body: JSON.stringify({ ...payload, settings: merged }),
     });
   } catch {
-    return missingSpikeMode ? safeFailure() : request;
+    return requiresVerifiedRead ? safeFailure() : request;
   }
 }
 
