@@ -1,0 +1,86 @@
+name: Extreme Spike isolated staging candidate
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type STAGE_SPIKE_ONLY"
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: extreme-spike-migration-staging
+  cancel-in-progress: false
+jobs:
+  isolated-stage:
+    if: github.ref == 'refs/heads/feat/extreme-spike-single-pipeline-20261013'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 25
+    env:
+      PROJECT: tradementor-migration-20260812
+      REGION: europe-west4
+      SERVICE: tradementor-migration-api
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert isolated target
+        run: |
+          test "${{ inputs.confirmation }}" = "STAGE_SPIKE_ONLY"
+          test "$PROJECT" = "tradementor-migration-20260812"
+          test "$SERVICE" = "tradementor-migration-api"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run Spike gates
+        run: |
+          python -m pip install httpx
+          PYTHONPATH=cloud_api python -m unittest -v \
+            cloud_api.test_aster_extreme_spike_filter \
+            cloud_api.test_aster_extreme_spike_config \
+            cloud_api.test_aster_spike_real_scanner_dry_run \
+            cloud_api.test_aster_spike_pre_mutation
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.MIGRATION_GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.MIGRATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Verify isolation before any build
+        run: |
+          test -n "${{ vars.MIGRATION_GCP_WORKLOAD_IDENTITY_PROVIDER }}"
+          test -n "${{ vars.MIGRATION_GCP_DEPLOY_SERVICE_ACCOUNT }}"
+          gcloud config set project "$PROJECT"
+          gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format=json > /tmp/spike-service.json
+          python - <<'PY'
+          import json
+          data=json.load(open('/tmp/spike-service.json'))
+          container=data['spec']['template']['spec']['containers'][0]
+          env={x['name']:x.get('value') for x in container.get('env',[])}
+          assert env.get('GOOGLE_CLOUD_PROJECT')=='tradementor-migration-20260812'
+          for name in ('TRADEMENTOR_ALLOW_LIVE','ASTER_LIVE_EXECUTION_ENABLED','ASTER_STRATEGY2_LIVE_ENABLED'):
+              assert env.get(name)=='false',name
+          PY
+      - name: Build isolated candidate image
+        run: |
+          gcloud builds submit cloud_api --project "$PROJECT" \
+            --tag "$REGION-docker.pkg.dev/$PROJECT/tradementor/spike-staging:$GITHUB_SHA" \
+            --quiet
+      - name: Deploy zero-traffic candidate revision
+        run: |
+          gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" \
+            --image "$REGION-docker.pkg.dev/$PROJECT/tradementor/spike-staging:$GITHUB_SHA" \
+            --no-traffic --tag extreme-spike-candidate \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,FIREBASE_PROJECT_ID=$PROJECT,FIREBASE_AUTH_PROJECT_ID=tradementor-production,TRADEMENTOR_ENV=staging,TRADEMENTOR_ENVIRONMENT=staging,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false" \
+            --quiet
+      - name: Confirm revision has no live traffic
+        run: |
+          gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" \
+            --format='json(status.traffic)' > /tmp/spike-traffic.json
+          python - <<'PY'
+          import json
+          entries=json.load(open('/tmp/spike-traffic.json')).get('status',{}).get('traffic',[])
+          tagged=[x for x in entries if x.get('tag')=='extreme-spike-candidate']
+          assert tagged, "candidate tag missing"
+          assert all(int(x.get('percent') or 0)==0 for x in tagged),"candidate received traffic"
+          print("Isolated staging candidate deployed with zero normal service traffic")
+          PY
