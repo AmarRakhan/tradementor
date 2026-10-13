@@ -42,3 +42,9 @@ test("explicit OFF remains OFF despite legacy Bollinger flag on reload",()=>{
  assert.match(bridge,/next\.settings\.entryFilterMode === "OFF" \? "OFF"/);
  assert.match(bridge,/next\.settings\.entryFilterMode === "BOLLINGER" \? "BOLLINGER"/);
 });
+
+test("Spike and OFF expose save errors visibly outside legacy Bollinger card",()=>{
+ assert.match(bridge,/entryMode !== "BOLLINGER" && bbMessage/);
+ assert.match(bridge,/role="status" aria-live="polite"/);
+ assert.match(bridge,/es-save-feedback/);
+});
