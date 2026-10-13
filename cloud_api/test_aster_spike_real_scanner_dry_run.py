@@ -30,7 +30,8 @@ class FakeClient:
         for i in range(21):
             price=100+(i%2)*2
             rows.append([i*step,price,102,100,price,0,(i+1)*step-1])
-        rows[20][3]=95.5
+        rows[20][3]=95.5 if interval=="1m" else 100
+        rows[20][2]=106.5 if interval=="15m" else 102
         rows.append([21*step,101,102,90,101,0,22*step-1])
         return rows
     def __getattr__(self,name):
@@ -58,5 +59,25 @@ class ScannerDryRunTests(unittest.TestCase):
         self.assertEqual(result["ordersSent"],0)
         self.assertIn("1m",client.intervals)
         self.assertTrue(any(a.get("kind")=="ENTRY" for a in result["actions"]),result["actions"])
+
+    def test_real_scanner_short_15m_spike_without_order(self):
+        settings=MultiBbConfig.from_mapping({
+           "universeTopN":1,"maximumPositions":1,"longSlots":0,"shortSlots":1,
+           "minimumLeverage":20,"maximumLeverage":20,
+           "entryFilterMode":"EXTREME_SPIKE","bollingerEntryFilter15mEnabled":False,
+           "extremeSpikeLevel":"5-6","extremeSpikeLongTimeframe":"1m",
+           "extremeSpikeShortTimeframe":"15m"})
+        client=FakeClient()
+        plan=SimpleNamespace(leverage=20,notional_per_leg=20,quantity=.2)
+        with patch("aster_multi_bb_core.rank_top_volume",return_value=[{"symbol":"BTCUSDT","quoteVolume":1000000}]), \\
+             patch("aster_multi_bb_core.max_contract_leverage",return_value=20), \\
+             patch("aster_multi_bb_core._plan_new",return_value=(plan,{"exchangeMaxLeverage":20,"forcedBelowConfiguredMinimum":False})):
+            result=run_multi_bb_step(client=client,ref=Ref(),raw_state={},settings=settings,
+                uid="test-only",account={"availableBalance":100,"totalMarginBalance":100},
+                positions=[],open_orders=[],timestamp_ms=21*900000+10,dry_run=True,
+                order_budget=1)
+        self.assertEqual(result["ordersSent"],0)
+        self.assertIn("15m",client.intervals)
+        self.assertTrue(any(a.get("kind")=="ENTRY" and a.get("side")=="SHORT" for a in result["actions"]),result["actions"])
 
 if __name__=="__main__":unittest.main()
