@@ -43,7 +43,7 @@ def _i(value: Any, default: int = 0) -> int:
 def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any,
                               symbol: str, side: str, action: str, cycle_id: str,
                               margin_usd: float | None = None,
-                              margin_source: str = "") -> None:
+                              margin_source: str = "", spike_event_id: str = "") -> None:
     """Persist confirmed Multi-BB order identity for notification/history consumers."""
     order_id = str(result.get("orderId", result.get("orderID", ""))).strip()
     client_order_id = str(result.get("clientOrderId", result.get("clientOrderID", ""))).strip()
@@ -73,6 +73,7 @@ def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any
         "strategyId": "aster-strategy-2",
         "strategyName": str(getattr(settings, "name", "") or "Aster Multi DCA"),
         "cycleId": str(cycle_id or ""),
+        **({"spikeEventId": spike_event_id} if spike_event_id else {}),
         "configVersion": int(getattr(settings, "version", 1) or 1),
         "symbol": str(symbol).upper(),
         "side": str(side).upper(),
@@ -2005,6 +2006,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         candle_close_ms=final_spike.candle_close_ms)
                     if spike_candidates.get(side) != final_event_key:
                         raise SpikeFilterRejected("SPIKE_CANDIDATE_CHANGED_BEFORE_ORDER")
+                    # Existing account-scoped confirmed order history is reused.
+                    # This is an additional replay guard, not an atomic cross-worker lock.
+                    existing_spikes=(ref.get().to_dict() or {}).get("orderAttributions", [])
+                    if any(isinstance(row,dict) and row.get("spikeEventId")==final_event_key
+                           and row.get("action")=="OPEN_LEG" for row in existing_spikes):
+                        raise SpikeFilterRejected("SPIKE_EVENT_ALREADY_TRADED")
                 else:
                     require_bollinger_entry(client, symbol=symbol, side=side, enabled=settings.bollinger_entry_filter_15m_enabled,
                                             timeframe=effective_timeframe, live_price=None, force_refresh=True, stage="pre_order")
@@ -2147,6 +2154,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 action="OPEN_LEG", cycle_id=cycle_id,
                 margin_usd=_f(entry_sizing.get("plannedInputMarginUsd")),
                 margin_source="PLANNED_INPUT_MARGIN_AT_EXECUTION",
+                spike_event_id=(spike_candidates.get(side, "") if settings.entry_filter_mode=="EXTREME_SPIKE" else ""),
             )
             zone_claim = claim_soldier(zone_state or {}, side, trade_key=key, symbol=symbol,
                 entry_price=fill_price, entry_portfolio_equity=_f(account.get("totalMarginBalance", account.get("equity"))),
