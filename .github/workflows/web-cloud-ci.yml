@@ -63,6 +63,18 @@ jobs:
           done
           node tests/visual/botconfigurator-v31-screenshots.mjs
 
+      - name: Capture Extreme Spike UI and open dropdown at mobile widths
+        working-directory: web
+        run: node tests/visual/extreme-spike-screenshots.mjs
+
+      - name: Upload Extreme Spike visual QA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extreme-spike-visual-qa
+          path: web/artifacts/extreme-spike
+          if-no-files-found: error
+
       - name: Upload Botconfigurator visual QA
         if: always()
         uses: actions/upload-artifact@v4
