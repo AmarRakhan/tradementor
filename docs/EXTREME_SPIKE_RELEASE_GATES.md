@@ -1,0 +1,34 @@
+# Extreme Spike 1.0 — concurrent order safety release gate
+
+Status: NOT PROVEN, NO-GO for production.
+
+## Confirmed code behavior
+- Same spike candle/side/timeframe yields a deterministic event key.
+- Candidate and pre-order evaluation must match the same completed candle.
+- Normal order submit uses `mbb-open-...` client order IDs.
+- `aster_gateway.submit_order_once` recovers an uncertain POST with one GET, and never blindly retries that uncertain POST.
+
+## Critical residual race
+Two concurrent account ticks may both:
+1. Observe the same spike.
+2. See no current position.
+3. Pass the same config/capacity gates.
+4. Submit the same client order ID.
+
+A deterministic ID does NOT prove that both cannot produce a second order. A subsequent tick after a completed TP may also re-use a prior event if Aster permits client-order-ID recycling or if old order history is unavailable.
+
+## Mandatory fail-closed solution
+- Identify the existing account-level scanner lock/lease, transaction boundaries, and order-intent persistence.
+- Claim the (account, symbol, side, timeframe, spike candle) event atomically before **any** exchange side effect (including leverage/margin changes), within existing canonical order execution. No second independent scanning pipeline.
+- Claim states should support PENDING/SUBMITTED/FILLED/UNKNOWN with a safe TTL/reconciliation contract. Do not automatically unlock UNKNOWN for a retry.
+- Existing historical signals must not be re-consumed after TP; enable a new event only for a newly completed qualifying spike candle.
+- Add controlled two-worker barrier/concurrency test, restart and error-injection tests. Verify one POST at most, no new OPEN after TP for the same event, and a newly qualified event permits an OPEN.
+- Validate that legacy OFF/BOLLINGER paths never use this new claim and retain current behavior.
+
+## Remaining UI release gates
+- Only one authoritative mode OFF/BOLLINGER/EXTREME_SPIKE; avoid two competing controls and PUT races.
+- 1:1 screenshots for reference IDs file_00000000b64c820a8071cb6453a32f6d and file_000000001f408243967fc81117b60b75.
+- Per-user saved GET/PUT state and active runtime mode readback, including failure rollback.
+- Cross-account safety tests with existing positions, DCA, TP and portfolio TP unchanged.
+
+Never merge to production without these tests and explicit production verification.
