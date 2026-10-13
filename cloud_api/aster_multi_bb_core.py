@@ -102,6 +102,10 @@ class MultiBbConfig:
     maximum_leverage: int | None = None
     bollinger_entry_filter_15m_enabled: bool = False
     bollinger_entry_filter_timeframe: str = DEFAULT_TIMEFRAME
+    entry_filter_mode: str = "OFF"
+    extreme_spike_level: str = "5-6"
+    extreme_spike_long_timeframe: str = "1m"
+    extreme_spike_short_timeframe: str = "1m"
     directional_bollinger_enabled: bool = False
     bollinger_long_timeframe: str = DEFAULT_TIMEFRAME
     bollinger_short_timeframe: str = DEFAULT_TIMEFRAME
@@ -168,6 +172,10 @@ class MultiBbConfig:
             maximum_leverage=maximum_leverage,
             bollinger_entry_filter_15m_enabled=bool(raw.get("bollingerEntryFilter15mEnabled", raw.get("bollinger_entry_filter_15m_enabled", False))),
             bollinger_entry_filter_timeframe=normalize_bollinger_timeframe(raw.get("bollingerEntryFilterTimeframe", raw.get("bollinger_entry_filter_timeframe", DEFAULT_TIMEFRAME))),
+            entry_filter_mode=str(raw.get("entryFilterMode") or ("BOLLINGER" if raw.get("bollingerEntryFilter15mEnabled", raw.get("bollinger_entry_filter_15m_enabled", False)) else "OFF")).upper(),
+            extreme_spike_level=str(raw.get("extremeSpikeLevel", "5-6")),
+            extreme_spike_long_timeframe=str(raw.get("extremeSpikeLongTimeframe", "1m")),
+            extreme_spike_short_timeframe=str(raw.get("extremeSpikeShortTimeframe", "1m")),
             directional_bollinger_enabled=bool(raw.get("directionalBollingerEnabled", False)),
             bollinger_long_timeframe=normalize_bollinger_timeframe(raw.get("bollingerLongTimeframe", raw.get("bollingerEntryFilterTimeframe", DEFAULT_TIMEFRAME))),
             bollinger_short_timeframe=normalize_bollinger_timeframe(raw.get("bollingerShortTimeframe", raw.get("bollingerEntryFilterTimeframe", DEFAULT_TIMEFRAME))),
@@ -200,6 +208,8 @@ class MultiBbConfig:
         return cfg.validated()
 
     def validated(self) -> "MultiBbConfig":
+        from aster_extreme_spike_filter import validate_settings
+        validate_settings(mode=self.entry_filter_mode, level=self.extreme_spike_level, long_tf=self.extreme_spike_long_timeframe, short_tf=self.extreme_spike_short_timeframe, legacy_bb_enabled=self.bollinger_entry_filter_15m_enabled)
         if self.engine != ENGINE: raise ValueError("Alleen de nieuwe Multi BB-strategie is toegestaan")
         if not 1 <= self.universe_top_n <= 800: raise ValueError("Top-N moet tussen 1 en 800 liggen")
         maximum_capacity = 200 if self.manual_symbol_selection_enabled else self.universe_top_n * 2
@@ -245,6 +255,10 @@ class MultiBbConfig:
             "longSlots": self.long_slots, "shortSlots": self.short_slots, "minimumLeverage": self.minimum_leverage,
             "shortRequiresLongEnabled": self.short_requires_long_enabled,
             "bollingerEntryFilter15mEnabled": self.bollinger_entry_filter_15m_enabled,
+            "entryFilterMode": self.entry_filter_mode,
+            "extremeSpikeLevel": self.extreme_spike_level,
+            "extremeSpikeLongTimeframe": self.extreme_spike_long_timeframe,
+            "extremeSpikeShortTimeframe": self.extreme_spike_short_timeframe,
             "bollingerEntryFilterTimeframe": self.bollinger_entry_filter_timeframe,
             "directionalBollingerEnabled": self.directional_bollinger_enabled,
             "bollingerLongTimeframe": self.bollinger_long_timeframe,
