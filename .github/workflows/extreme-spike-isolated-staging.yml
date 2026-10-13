@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   isolated-stage:
-    if: github.ref == 'refs/heads/feat/extreme-spike-single-pipeline-20261013'
+    if: github.ref == 'refs/heads/fix/extreme-spike-zone-regression-gate-20261013'
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 25
@@ -29,6 +29,8 @@ jobs:
           test "${{ inputs.confirmation }}" = "STAGE_SPIKE_ONLY"
           test "$PROJECT" = "tradementor-migration-20260812"
           test "$SERVICE" = "tradementor-migration-api"
+          test "$GITHUB_REF" = "refs/heads/fix/extreme-spike-zone-regression-gate-20261013"
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -57,6 +59,7 @@ jobs:
           container=data['spec']['template']['spec']['containers'][0]
           env={x['name']:x.get('value') for x in container.get('env',[])}
           assert env.get('GOOGLE_CLOUD_PROJECT')=='tradementor-migration-20260812'
+          assert env.get('FIREBASE_AUTH_PROJECT_ID')=='tradementor-migration-20260812'
           for name in ('TRADEMENTOR_ALLOW_LIVE','ASTER_LIVE_EXECUTION_ENABLED','ASTER_STRATEGY2_LIVE_ENABLED'):
               assert env.get(name)=='false',name
           PY
@@ -69,8 +72,8 @@ jobs:
         run: |
           gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" \
             --image "$REGION-docker.pkg.dev/$PROJECT/tradementor/spike-staging:$GITHUB_SHA" \
-            --no-traffic --tag spike26 \
-            --update-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,FIREBASE_PROJECT_ID=$PROJECT,FIREBASE_AUTH_PROJECT_ID=tradementor-production,TRADEMENTOR_ENV=staging,TRADEMENTOR_ENVIRONMENT=staging,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false" \
+            --no-traffic --tag spike766 \
+            --update-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,FIREBASE_PROJECT_ID=$PROJECT,FIREBASE_AUTH_PROJECT_ID=$PROJECT,TRADEMENTOR_ENV=staging,TRADEMENTOR_ENVIRONMENT=staging,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false" \
             --quiet
       - name: Confirm revision has no live traffic
         run: |
@@ -79,7 +82,7 @@ jobs:
           python - <<'PY'
           import json
           entries=json.load(open('/tmp/spike-traffic.json')).get('status',{}).get('traffic',[])
-          tagged=[x for x in entries if x.get('tag')=='spike26']
+          tagged=[x for x in entries if x.get('tag')=='spike766']
           assert tagged, "candidate tag missing"
           assert all(int(x.get('percent') or 0)==0 for x in tagged),"candidate received traffic"
           print("Isolated staging candidate deployed with zero normal service traffic")
