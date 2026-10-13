@@ -5,7 +5,31 @@ on:
     branches:
       - main
       - develop
+    paths:
+      - "app/**"
+      - "cloud_api/**"
+      - "trading_server/**"
+      - "cloud/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradle/**"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/android-ci.yml"
   pull_request:
+    paths:
+      - "app/**"
+      - "cloud_api/**"
+      - "trading_server/**"
+      - "cloud/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle.properties"
+      - "gradle/**"
+      - "gradlew"
+      - "gradlew.bat"
+      - ".github/workflows/android-ci.yml"
 
 jobs:
   build:
@@ -24,8 +48,8 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Clean & build debug APK
+      - name: Build debug APKs and run unit tests
         run: |
-          chmod +x gradlew
-          ./gradlew :app:assembleDebug
-
+          ./gradlew :app:assembleDebug :app:testAdminDebugUnitTest :app:testPublicDebugUnitTest \
+            -Dorg.gradle.jvmargs="-Xmx4096m -Dfile.encoding=UTF-8" \
+            --max-workers=2
