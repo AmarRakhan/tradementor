@@ -75,6 +75,7 @@ async function preserveExistingPairOverrides(request: Request) {
     const snapshot = await status.json() as Record<string, unknown>;
     const strategy2 = snapshot.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 as Record<string, unknown> : {};
     const current = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : {};
+    if (missingSpikeMode && (!strategy2.settings || typeof strategy2.settings !== "object" || Array.isArray(strategy2.settings))) return safeFailure();
     const merged = { ...settingsRecord };
     for (const key of missing) {
       if (Object.prototype.hasOwnProperty.call(current, key)) merged[key] = current[key];
