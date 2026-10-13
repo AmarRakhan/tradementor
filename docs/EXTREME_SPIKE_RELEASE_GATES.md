@@ -32,3 +32,17 @@ A deterministic ID does NOT prove that both cannot produce a second order. A sub
 - Cross-account safety tests with existing positions, DCA, TP and portfolio TP unchanged.
 
 Never merge to production without these tests and explicit production verification.
+
+## Critical verified ordering — must resolve before production
+Current `aster_execution.execute_leg_once` configures margin mode and
+leverage for OPEN *before* calling `before_submit`.
+Current Spike claim occurs inside the canonical decision_provider reached in
+`before_submit`. Thus an unsuccessful/double Spike claim prevents the order
+POST, but may still follow a margin/leverage side effect. This is **NOT**
+sufficient to claim the four accounts are untouched on rejection.
+Required before GO: move the necessary gate/reservation ahead of any
+risk-increasing side effect for Spike OPEN, without changing the legacy
+OFF/BOLLINGER behavior, OR demonstrate an equivalent pre-existing account-level
+exclusive lock plus test proof. Preserve the revalidation immediately before
+actual submit. Add concurrency/failure-injection tests for leverage/margin
+calls and order POST counts; any claim failure must cause zero exchange mutations.
