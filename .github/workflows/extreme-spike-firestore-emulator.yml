@@ -1,0 +1,37 @@
+name: Extreme Spike Firestore emulator gate
+on:
+  pull_request:
+    paths:
+      - 'cloud_api/aster_extreme_spike_filter.py'
+      - 'cloud_api/test_aster_spike_firestore_emulator.py'
+      - '.github/workflows/extreme-spike-firestore-emulator.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
+      GCLOUD_PROJECT: spike-release-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install isolated emulator and Firestore Python client
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          python -m pip install google-cloud-firestore
+      - name: Start local Firestore emulator and run actual integration test
+        run: |
+          npx firebase emulators:exec --only firestore --project spike-release-test-only \
+            'PYTHONPATH=cloud_api python -m unittest -v cloud_api.test_aster_spike_firestore_emulator'
