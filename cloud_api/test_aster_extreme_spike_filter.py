@@ -116,4 +116,26 @@ class SpikeTests(unittest.TestCase):
             claim_spike_entry_once(BrokenAccount(),event_key="f"*32,symbol="BTCUSDT",side="LONG",timeframe="1m",now_ms=1000)
         self.assertEqual(ctx.exception.reason,"SPIKE_EVENT_CLAIM_FAILED_OR_REPLAY")
 
+    def test_spike_claim_isolated_between_accounts(self):
+        class Account:
+            def __init__(self): self.events=set()
+            def collection(self,name):
+                account=self
+                class Collection:
+                    def document(self,key):
+                        class Document:
+                            def create(self,payload):
+                                if key in account.events: raise RuntimeError("ALREADY_EXISTS")
+                                account.events.add(key)
+                        return Document()
+                return Collection()
+        first,second=Account(),Account()
+        params=dict(event_key="e"*32,symbol="SOLUSDT",side="SHORT",timeframe="15m",now_ms=123456)
+        claim_spike_entry_once(first,**params)
+        claim_spike_entry_once(second,**params)
+        with self.assertRaises(SpikeFilterRejected):
+            claim_spike_entry_once(first,**params)
+        self.assertEqual(len(first.events),1)
+        self.assertEqual(len(second.events),1)
+
 if __name__=="__main__": unittest.main()
