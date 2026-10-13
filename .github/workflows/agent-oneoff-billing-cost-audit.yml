@@ -43,12 +43,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Authenticate observer without key files
+        id: observer_auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.OBSERVER_SA }}
 
       - name: Install Cloud CLI
+        id: sdk_setup
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Run single capped standard-export cost query
@@ -56,6 +58,13 @@ jobs:
         run: |
           set -euo pipefail
           GOOGLE_ACCESS_TOKEN="$(gcloud auth print-access-token)" python3 .github/scripts/oneoff_billing_service_costs.py > "$RUNNER_TEMP/billing-cost-report.txt"
+
+      - name: Read bounded existing Monitoring and request-log aggregates
+        if: ${{ !cancelled() && steps.observer_auth.outcome == 'success' && steps.sdk_setup.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOOGLE_ACCESS_TOKEN="$(gcloud auth print-access-token)" python3 .github/scripts/cloud_cost_load_readonly.py >> "$RUNNER_TEMP/billing-cost-report.txt"
 
       - name: Publish sanitized financial summary
         if: always()
