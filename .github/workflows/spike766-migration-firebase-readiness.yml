@@ -1,5 +1,10 @@
 name: Spike 766 migration Firebase readiness (read only)
 on:
+  push:
+    branches:
+      - fix/extreme-spike-zone-regression-gate-20261013
+    paths:
+      - .github/workflows/spike766-migration-firebase-readiness.yml
   workflow_dispatch:
     inputs:
       confirmation:
@@ -9,6 +14,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  issues: write
 jobs:
   inspect-migration-firebase:
     if: github.ref == 'refs/heads/fix/extreme-spike-zone-regression-gate-20261013'
