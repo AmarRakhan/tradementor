@@ -31,7 +31,7 @@ jobs:
           test "$SERVICE" = "tradementor-migration-api"
           test "$GITHUB_REF" = "refs/heads/fix/extreme-spike-zone-regression-gate-20261013"
           test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
-          test "$GITHUB_SHA" = "fef122c49e1803ad8629714ed9f67e6b6ae6c24f"
+          test "$GITHUB_SHA" = "7d9ff97c08c8a6ebc0d68649bc46279f53c50505"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
