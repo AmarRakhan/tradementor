@@ -66,6 +66,7 @@ jobs:
       - name: Build isolated candidate image
         run: |
           gcloud builds submit cloud_api --project "$PROJECT" --region "$REGION" \
+            --gcs-source-staging-dir "gs://run-sources-$PROJECT-$REGION/spike766-source" \
             --tag "$REGION-docker.pkg.dev/$PROJECT/tradementor/spike-staging:$GITHUB_SHA" \
             --quiet
       - name: Deploy zero-traffic candidate revision
