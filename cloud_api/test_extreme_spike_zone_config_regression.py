@@ -7,6 +7,7 @@ canonical price-zone switches when they disagree.
 import unittest
 from aster_multi_bb_core import MultiBbConfig
 from pathlib import Path
+import ast
 
 
 class ZoneConfigurationRegressionCharacterization(unittest.TestCase):
@@ -36,6 +37,21 @@ class ZoneConfigurationRegressionCharacterization(unittest.TestCase):
         self.assertIn('active_zone_value = _i(active_zone_raw) if active_zone_raw is not None else None', source)
         self.assertIn('active_zone_value=_i(active_zone_raw) if active_zone_raw is not None else None', source)
         self.assertIn('if active_zone_value is not None else {}', source)
+
+    def test_backend_explicit_zone_opt_in_uses_canonical_when_present(self):
+        # Extract only the pure helper to avoid importing the live API module.
+        source = (Path(__file__).parent / "main.py").read_text()
+        module = ast.parse(source)
+        fn = next(node for node in module.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "_explicit_zone_soldier_opt_in")
+        ns = {"Any": object, "safe_float": lambda value: float(value or 0)}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), "<zone-opt-in>", "exec"), ns)
+        enabled = ns["_explicit_zone_soldier_opt_in"]
+        self.assertTrue(enabled({"priceZoneSeats": {"enabled": True}}))
+        self.assertFalse(enabled({"priceZoneSeats": {"enabled": False},
+                                  "zoneSoldiersEnabled": True, "zoneSoldiersOptInVersion": 1}))
+        self.assertTrue(enabled({"zoneSoldiersEnabled": True, "zoneSoldiersOptInVersion": 1}))
+        self.assertFalse(enabled({"zoneSoldiersEnabled": True, "zoneSoldiersOptInVersion": 0}))
 
     def test_matching_flags_preserve_price_zone_mode(self):
         raw = {
