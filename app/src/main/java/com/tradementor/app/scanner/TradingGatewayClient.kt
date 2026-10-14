@@ -85,7 +85,7 @@ data class TpProtectionResult(
 object LocalTradingGatewayStore {
     private const val PREFS = "cloud_trading_gateway"
     private const val TEST_TOKEN = "one_test_token"
-    const val DEFAULT_URL = BuildConfig.CLOUD_API_URL.ifBlank {
+    val DEFAULT_URL = BuildConfig.CLOUD_API_URL.ifBlank {
         "https://tradementor-api-604335232956.europe-west4.run.app"
     }
 
