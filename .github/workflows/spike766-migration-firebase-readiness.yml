@@ -1,0 +1,64 @@
+name: Spike 766 migration Firebase readiness (read only)
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type CHECK_MIGRATION_FIREBASE'
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  inspect-migration-firebase:
+    if: github.ref == 'refs/heads/fix/extreme-spike-zone-regression-gate-20261013'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 6
+    env:
+      PROJECT: tradementor-migration-20260812
+    steps:
+      - name: Enforce trusted exact candidate
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = "CHECK_MIGRATION_FIREBASE"
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/fix/extreme-spike-zone-regression-gate-20261013"
+          test "$GITHUB_SHA" = "ab1a1413d30bd66476e77e78132ed41845bb6eb4"
+          test "$PROJECT" = "tradementor-migration-20260812"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.MIGRATION_GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.MIGRATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Inspect migration Identity Toolkit without modifying resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud config set project "$PROJECT" >/dev/null
+          if gcloud services list --enabled --project="$PROJECT" --format='value(config.name)' | grep -Fxq identitytoolkit.googleapis.com; then
+            echo "identitytoolkit_api=ENABLED"
+          else
+            echo "identitytoolkit_api=NOT_LISTED_OR_INACCESSIBLE"
+          fi
+          TOKEN="$(gcloud auth print-access-token)"
+          STATUS="$(curl --silent --show-error --max-time 20 -o /tmp/firebase-readiness-response.json -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT/config")"
+          unset TOKEN
+          echo "identitytoolkit_config_http_status=$STATUS"
+          if [ "$STATUS" = 200 ]; then
+            python3 - <<'PY'
+          import json
+          p=json.load(open('/tmp/firebase-readiness-response.json'))
+          print('migration_identity_config_readable=true')
+          print('email_password_signin_enabled='+str(bool(p.get('signIn',{}).get('email',{}).get('enabled',False))).lower())
+          print('anonymous_signin_enabled='+str(bool(p.get('signIn',{}).get('anonymous',{}).get('enabled',False))).lower())
+          PY
+          else
+            echo "migration_identity_config_readable=false"
+            echo "No identity was created; an authorized migration-only operator must review access/provider readiness."
+          fi
+          rm -f /tmp/firebase-readiness-response.json
