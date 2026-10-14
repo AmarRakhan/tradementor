@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  issues: write
 jobs:
   inspect-migration-firebase:
     if: github.ref == 'refs/heads/fix/extreme-spike-zone-regression-gate-20261013'
@@ -28,7 +29,7 @@ jobs:
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/fix/extreme-spike-zone-regression-gate-20261013"
           git fetch --no-tags --deepen=1 origin "$GITHUB_REF_NAME"
-          test "$(git rev-parse HEAD^)" = "ab1a1413d30bd66476e77e78132ed41845bb6eb4"
+          test "$(git rev-parse HEAD^)" = "7b9d96ddca9ed416f0abb83fc8feec5654e917e6"
           test "$PROJECT" = "tradementor-migration-20260812"
       - uses: google-github-actions/auth@v2
         with:
@@ -36,14 +37,17 @@ jobs:
           service_account: ${{ vars.MIGRATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
       - name: Inspect migration Identity Toolkit without modifying resources
+        id: readiness
         shell: bash
         run: |
           set -euo pipefail
           gcloud config set project "$PROJECT" >/dev/null
           if gcloud services list --enabled --project="$PROJECT" --format='value(config.name)' | grep -Fxq identitytoolkit.googleapis.com; then
             echo "identitytoolkit_api=ENABLED"
+            echo "api=ENABLED" >> "$GITHUB_OUTPUT"
           else
             echo "identitytoolkit_api=NOT_LISTED_OR_INACCESSIBLE"
+            echo "api=NOT_LISTED_OR_INACCESSIBLE" >> "$GITHUB_OUTPUT"
           fi
           TOKEN="$(gcloud auth print-access-token)"
           STATUS="$(curl --silent --show-error --max-time 20 -o /tmp/firebase-readiness-response.json -w '%{http_code}' \
@@ -51,6 +55,7 @@ jobs:
             "https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT/config")"
           unset TOKEN
           echo "identitytoolkit_config_http_status=$STATUS"
+          echo "http_status=$STATUS" >> "$GITHUB_OUTPUT"
           if [ "$STATUS" = 200 ]; then
             python3 - <<'PY'
           import json
@@ -64,3 +69,23 @@ jobs:
             echo "No identity was created; an authorized migration-only operator must review access/provider readiness."
           fi
           rm -f /tmp/firebase-readiness-response.json
+      - name: Publish sanitized readiness result to PR 766
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          API_STATUS: ${{ steps.readiness.outputs.api }}
+          HTTP_STATUS: ${{ steps.readiness.outputs.http_status }}
+          STEP_RESULT: ${{ steps.readiness.outcome }}
+        run: |
+          set -euo pipefail
+          case "$API_STATUS" in ENABLED|NOT_LISTED_OR_INACCESSIBLE) ;; *) API_STATUS=NOT_CHECKED ;; esac
+          case "$HTTP_STATUS" in 200|400|401|403|404|429|500|502|503) ;; *) HTTP_STATUS=NOT_CHECKED ;; esac
+          case "$STEP_RESULT" in success|failure|cancelled|skipped) ;; *) STEP_RESULT=unknown ;; esac
+          gh issue comment 766 --repo AmarRakhan/tradementor --body "### Migration Firebase readiness — automated report
+          - Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          - Candidate: $GITHUB_SHA
+          - Migration Identity Toolkit API: $API_STATUS
+          - Read-only config HTTP: $HTTP_STATUS
+          - Inspection step: $STEP_RESULT
+          - No users created, no settings changed, no production access.
+          - A green workflow alone does not imply an authenticated test account is ready."
