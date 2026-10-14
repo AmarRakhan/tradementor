@@ -1,5 +1,10 @@
 name: Spike 766 migration Firebase readiness (read only)
 on:
+  push:
+    branches:
+      - fix/extreme-spike-zone-regression-gate-20261013
+    paths:
+      - .github/workflows/spike766-migration-firebase-readiness.yml
   workflow_dispatch:
     inputs:
       confirmation:
@@ -25,11 +30,15 @@ jobs:
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
-          test "$CONFIRMATION" = "CHECK_MIGRATION_FIREBASE"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "$CONFIRMATION" = "CHECK_MIGRATION_FIREBASE"
+          else
+            test "$GITHUB_EVENT_NAME" = "push"
+          fi
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/fix/extreme-spike-zone-regression-gate-20261013"
           git fetch --no-tags --deepen=1 origin "$GITHUB_REF_NAME"
-          test "$(git rev-parse HEAD^)" = "7b9d96ddca9ed416f0abb83fc8feec5654e917e6"
+          test "$(git rev-parse HEAD^)" = "cdf050a0e9ad49477181745713aabcc189d42b07"
           test "$PROJECT" = "tradementor-migration-20260812"
       - uses: google-github-actions/auth@v2
         with:
