@@ -3304,6 +3304,11 @@ def _release_feature_record(key: str) -> dict[str, Any]:
 
 
 def _explicit_zone_soldier_opt_in(settings: dict[str, Any]) -> bool:
+    # The unified price-zone switch is authoritative when explicitly supplied.
+    # Legacy records without that switch retain the original versioned opt-in.
+    seats = settings.get("priceZoneSeats")
+    if isinstance(seats, dict) and isinstance(seats.get("enabled"), bool):
+        return seats["enabled"]
     return bool(
         settings.get("zoneSoldiersEnabled") is True
         and int(safe_float(settings.get("zoneSoldiersOptInVersion"))) >= 1
