@@ -1,0 +1,31 @@
+name: Spike staging build read-only status
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/spike-staging-build-readonly.yml'
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  check-staging-build:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 8
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.MIGRATION_GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.MIGRATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read existing staging build without modifying cloud resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT=tradementor-migration-20260812
+          REGION=europe-west4
+          BUILD=67cac95d-f0eb-4807-9ae5-709f27b61d08
+          gcloud builds describe "$BUILD" --project="$PROJECT" --region="$REGION" \
+            --format='json(id,status,createTime,finishTime,images,results.images)'
+          gcloud run services describe tradementor-migration-api \
+            --project="$PROJECT" --region="$REGION" \
+            --format='json(status.traffic,status.latestReadyRevisionName)'
