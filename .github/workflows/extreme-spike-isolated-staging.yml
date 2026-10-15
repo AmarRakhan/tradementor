@@ -70,13 +70,17 @@ jobs:
           # A previous staging attempt created this build but could not stream logs.
           PREVIOUS_BUILD=6cf17786-3df1-47d8-a57b-77f55be4c6f4
           BUILD_ID=""
-          if [ "$GITHUB_SHA" = "497bade7dd9fb81a77a611637f2a360c384634e7" ]; then
+          IMAGE_SHA="$GITHUB_SHA"
+          # Workflow-only changes do not require rebuilding identical backend source.
+          if git diff --quiet 497bade7dd9fb81a77a611637f2a360c384634e7 HEAD -- cloud_api; then
             PRIOR_STATUS="$(gcloud builds describe "$PREVIOUS_BUILD" --project="$PROJECT" --region="$REGION" --format='value(status)' 2>/dev/null || true)"
             if [ "$PRIOR_STATUS" = "SUCCESS" ]; then
               BUILD_ID="$PREVIOUS_BUILD"
+              IMAGE_SHA="497bade7dd9fb81a77a611637f2a360c384634e7"
               echo "Reusing already successful isolated Cloud Build $BUILD_ID"
             elif [ "$PRIOR_STATUS" = "WORKING" ] || [ "$PRIOR_STATUS" = "QUEUED" ] || [ "$PRIOR_STATUS" = "PENDING" ]; then
               BUILD_ID="$PREVIOUS_BUILD"
+              IMAGE_SHA="497bade7dd9fb81a77a611637f2a360c384634e7"
               echo "Waiting for previously started isolated Cloud Build $BUILD_ID"
             fi
           fi
@@ -89,6 +93,7 @@ jobs:
             test -n "$BUILD_ID"
             echo "Submitted new isolated Cloud Build $BUILD_ID"
           fi
+          echo "IMAGE_SHA=$IMAGE_SHA" >> "$GITHUB_ENV"
           for n in $(seq 1 90); do
             STATUS="$(gcloud builds describe "$BUILD_ID" --project="$PROJECT" --region="$REGION" --format='value(status)')"
             case "$STATUS" in
@@ -103,7 +108,7 @@ jobs:
       - name: Deploy zero-traffic candidate revision
         run: |
           gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" \
-            --image "$REGION-docker.pkg.dev/$PROJECT/tradementor/spike-staging:$GITHUB_SHA" \
+            --image "$REGION-docker.pkg.dev/$PROJECT/tradementor/spike-staging:$IMAGE_SHA" \
             --no-traffic --tag spike766 \
             --update-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,FIREBASE_PROJECT_ID=$PROJECT,FIREBASE_AUTH_PROJECT_ID=$PROJECT,TRADEMENTOR_ENV=staging,TRADEMENTOR_ENVIRONMENT=staging,TRADEMENTOR_ALLOW_LIVE=false,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_STRATEGY3_LIVE_ENABLED=false,MEXC_LIVE_EXECUTION_ENABLED=false" \
             --quiet
