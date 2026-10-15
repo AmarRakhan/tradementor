@@ -397,6 +397,7 @@ export function AsterPositionLossAutoHedgeBridge() {
   const [state, setState] = useState<AutoHedgeState>(DEFAULT_STATE);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [draft, setDraft] = useState("10");
+  const draftDirty = useRef(false);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -429,7 +430,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       setAvailable(true);
       document.documentElement.setAttribute("data-position-loss-auto-hedge", "true");
       setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
-      setDraft(String(threshold));
+      if (!draftDirty.current) setDraft(String(threshold));
       setError("");
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Auto Hedge kon niet worden geladen.";
@@ -563,6 +564,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         body: JSON.stringify({ enabled, thresholdUsd: threshold, confirmDisable: state.enabled === true && enabled === false, clientBuild: WEBAPP_BUILD_NUMBER, clientSource: source }),
       }) as AutoHedgeState;
       setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
+      draftDirty.current = false;
       setDraft(String(Number(next.thresholdUsd)));
       if (!next.executionEnabled) {
         const actions = Array.isArray(next.lastReport?.actions) ? next.lastReport?.actions ?? [] : [];
@@ -920,11 +922,11 @@ export function AsterPositionLossAutoHedgeBridge() {
         <section className="plah-threshold-card">
           <div className="plah-threshold-head">
             <label htmlFor="plah-threshold-number">Hedge vanaf verlies per positie</label>
-            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => setDraft(event.target.value)} disabled={saving} /></label></div>
+            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { draftDirty.current = true; setDraft(event.target.value); }} disabled={saving} /></label></div>
           </div>
           <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)}</div>
           <button type="button" onClick={() => void persist(state.enabled, threshold, false, "AUTO_HEDGE_THRESHOLD_SAVE")} disabled={saving || loading || !Number.isFinite(threshold) || threshold < 0.01 || threshold > 100000 || Math.abs(threshold * 100 - Math.round(threshold * 100)) > 0.000001}>Bedrag opslaan</button>
-          <input className="plah-range" type="range" min="0.01" max="100" step="0.01" value={sliderValue} onChange={(event) => setDraft(event.target.value)} disabled={saving} aria-label="Auto Hedge verliesgrens" />
+          <input className="plah-range" type="range" min="0.01" max="100" step="0.01" value={sliderValue} onChange={(event) => { draftDirty.current = true; setDraft(event.target.value); }} disabled={saving} aria-label="Auto Hedge verliesgrens" />
           <div className="plah-range-labels" aria-hidden="true"><span>$0,01</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
           <p className="plah-info"><span>i</span> Bij -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager wordt de tegengestelde zijde aangepast tot exact 1:1 coin quantity.</p>
         </section>
