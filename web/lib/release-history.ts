@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-15",
-  title: "Auto Hedge verliesgrens vanaf $0,01 · build 602",
+  title: "Auto Hedge invoer blijft behouden tijdens verversen · build 603",
   newItems: [
+    "Build 603 voorkomt dat de bestaande Auto Hedge-polling iedere drie seconden een nog niet opgeslagen verliesgrens terugzet naar de serverwaarde. Opslaan en hedge-logica blijven ongewijzigd.",
     "Build 602 laat Auto Hedge verliesgrenzen vanaf $0,01 instellen via de bestaande API en een aparte knop Bedrag opslaan; hedge-engine en tradinglogica blijven ongewijzigd.",
     "Build 601 probeert ontbrekende historische TP-details opnieuw op te halen via de bestaande beveiligde closed-trades route; alleen bevestigde PnL wordt getoond, trading blijft ongewijzigd.",
     "Build 600 werkt historische TP-winstzakjes bij vanuit bestaande bevestigde tradeactiviteit, en behandelt niet-eenduidige clusters conservatief; historische entrymargin behoudt de orderidentificatie voor bewijsgebaseerde matching.",
