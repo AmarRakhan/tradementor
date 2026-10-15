@@ -923,7 +923,7 @@ export function AsterPositionLossAutoHedgeBridge() {
             <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => setDraft(event.target.value)} disabled={saving} /></label></div>
           </div>
           <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)}</div>
-          <button type="button" onClick={() => void persist(state.enabled, threshold, false, "AUTO_HEDGE_THRESHOLD_SAVE")} disabled={saving || loading || !Number.isFinite(threshold) || threshold < 0.01 || threshold > 100000 || !Number.isInteger(Math.round(threshold * 100))}>Bedrag opslaan</button>
+          <button type="button" onClick={() => void persist(state.enabled, threshold, false, "AUTO_HEDGE_THRESHOLD_SAVE")} disabled={saving || loading || !Number.isFinite(threshold) || threshold < 0.01 || threshold > 100000 || Math.abs(threshold * 100 - Math.round(threshold * 100)) > 0.000001}>Bedrag opslaan</button>
           <input className="plah-range" type="range" min="0.01" max="100" step="0.01" value={sliderValue} onChange={(event) => setDraft(event.target.value)} disabled={saving} aria-label="Auto Hedge verliesgrens" />
           <div className="plah-range-labels" aria-hidden="true"><span>$0,01</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
           <p className="plah-info"><span>i</span> Bij -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager wordt de tegengestelde zijde aangepast tot exact 1:1 coin quantity.</p>
