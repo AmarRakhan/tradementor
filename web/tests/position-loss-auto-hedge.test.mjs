@@ -215,3 +215,13 @@ test("Auto Hedge cent-level thresholds are editable and explicitly saved without
   assert.match(component, /setDraft\(String\(threshold\)\)/);
   assert.match(component, /Math.abs\(threshold \* 100 - Math.round\(threshold \* 100\)\) > 0\.000001/);
 });
+
+
+test("Auto Hedge polling never overwrites an unsaved loss threshold", async () => {
+  const component = await readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
+  assert.match(component, /const draftDirty = useRef\(false\)/);
+  assert.match(component, /if \(!draftDirty\.current\) setDraft\(String\(threshold\)\)/);
+  assert.match(component, /draftDirty\.current = true; setDraft\(event\.target\.value\)/);
+  assert.match(component, /draftDirty\.current = false;\s*setDraft\(String\(Number\(next\.thresholdUsd\)\)\)/);
+  assert.match(component, /open \? 3000 : 10000/);
+});
