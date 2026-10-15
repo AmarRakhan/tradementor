@@ -147,10 +147,23 @@ jobs:
           if not isinstance(readback,dict) or not expected.issubset(readback):
               print("STAGING_SETTINGS_READBACK=FAIL_MISSING_FIELDS")
               raise SystemExit(1)
-          if not isinstance(readback.get("priceZoneSeats"),dict):
+          seats=readback.get("priceZoneSeats")
+          if seats is None:
+              # A fresh migration test account may not have saved zone-seat settings.
+              # Distinguish absent persistence from an invalid type; never synthesize enabled seats.
+              if readback.get("zoneSoldiersEnabled") is True:
+                  print("STAGING_SETTINGS_READBACK=FAIL_ENABLED_WITHOUT_ZONE_CONFIG")
+                  raise SystemExit(1)
+              print("STAGING_ZONE_SEATS=NOT_PERSISTED")
+          elif not isinstance(seats,dict):
               print("STAGING_SETTINGS_READBACK=FAIL_BAD_ZONE_SHAPE")
               raise SystemExit(1)
-          print("STAGING_SETTINGS_READBACK=PASS")
+          elif not {"enabled","longSeatsPerZone","shortSeatsPerZone"}.issubset(seats):
+              print("STAGING_SETTINGS_READBACK=FAIL_INCOMPLETE_ZONE_SHAPE")
+              raise SystemExit(1)
+          else:
+              print("STAGING_ZONE_SEATS=OBJECT_PRESENT")
+          print("STAGING_SETTINGS_READBACK=PASS_STRUCTURE_ONLY")
           print("STAGING_SETTINGS_WRITE=NOT_ATTEMPTED")
           PY
       - name: Publish sanitized readiness result to PR 766
@@ -165,6 +178,8 @@ jobs:
           case "$API_STATUS" in ENABLED|NOT_LISTED_OR_INACCESSIBLE) ;; *) API_STATUS=NOT_CHECKED ;; esac
           case "$HTTP_STATUS" in 200|400|401|403|404|429|500|502|503) ;; *) HTTP_STATUS=NOT_CHECKED ;; esac
           case "$STEP_RESULT" in success|failure|cancelled|skipped) ;; *) STEP_RESULT=unknown ;; esac
+          # PR comment permissions can be restricted independently of the read-only check.
+          # Never fail the readiness job solely because GitHub denies a report comment.
           gh issue comment 766 --repo AmarRakhan/tradementor --body "### Migration Firebase readiness — automated report
           - Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
           - Candidate: $GITHUB_SHA
@@ -172,4 +187,4 @@ jobs:
           - Read-only config HTTP: $HTTP_STATUS
           - Inspection step: $STEP_RESULT
           - No users created, no settings changed, no production access.
-          - A green workflow alone does not imply an authenticated test account is ready."
+          - A green workflow alone does not imply an authenticated test account is ready." || echo "READINESS_REPORT_COMMENT=SKIPPED_PERMISSION_DENIED"
