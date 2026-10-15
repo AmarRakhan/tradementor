@@ -53,6 +53,35 @@ class ZoneConfigurationRegressionCharacterization(unittest.TestCase):
         self.assertTrue(enabled({"zoneSoldiersEnabled": True, "zoneSoldiersOptInVersion": 1}))
         self.assertFalse(enabled({"zoneSoldiersEnabled": True, "zoneSoldiersOptInVersion": 0}))
 
+    def test_zone_feature_gate_preserves_canonical_opt_in_when_entitled(self):
+        # Exercise the real settings normalization, rather than only the
+        # isolated opt-in helper. The live rollback involved zone mode loss.
+        source = (Path(__file__).parent / "main.py").read_text()
+        module = ast.parse(source)
+        selected = [node for node in module.body if isinstance(node, ast.FunctionDef)
+                    and node.name in {"_explicit_zone_soldier_opt_in",
+                                      "_strip_unreleased_beta_settings"}]
+        ns = {
+            "Any": object,
+            "safe_float": lambda value: float(value or 0),
+            "_release_feature_enabled": lambda user, key: key == "zone_soldiers",
+        }
+        exec(compile(ast.Module(body=selected, type_ignores=[]),
+                     "<zone-gate>", "exec"), ns)
+        normalize = ns["_strip_unreleased_beta_settings"]
+        for enabled in (True, False):
+            with self.subTest(canonical_enabled=enabled):
+                saved = {"priceZoneSeats": {"enabled": enabled,
+                                             "longSeatsPerZone": 2,
+                                             "shortSeatsPerZone": 0},
+                         "zoneSoldiersEnabled": not enabled,
+                         "zoneSoldiersOptInVersion": 1 if not enabled else 0}
+                result = normalize(saved, {})
+                self.assertIs(result["zoneSoldiersEnabled"], enabled)
+                self.assertEqual(result["zoneSoldiersOptInVersion"], int(enabled))
+                self.assertIs(result["priceZoneSeats"]["enabled"], enabled)
+                self.assertIs(MultiBbConfig.from_mapping(result).zone_soldiers_enabled, enabled)
+
     def test_matching_flags_preserve_price_zone_mode(self):
         raw = {
             "zoneSoldiersEnabled": True,
