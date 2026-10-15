@@ -68,9 +68,16 @@ export async function authenticatedRequest(path: string, init: RequestInit = {})
     let { response, payload } = await request(false);
     if (response.status === 401) ({ response, payload } = await request(true));
     if (!response.ok) {
-      throw new Error(typeof payload.detail === "string" ? payload.detail :
+      // Preserve the server's actionable, non-sensitive validation error. The
+      // Strategy-2 settings guard returns { error } on 409 (not { detail }).
+      // Previously that became the generic "Accountgegevens ... HTTP 409",
+      // concealing whether the conflict happened during a settings save.
+      const serverMessage = [payload.detail, payload.error].find(
+        (value) => typeof value === "string" && value.length > 0 && value.length <= 500,
+      );
+      throw new Error(typeof serverMessage === "string" ? serverMessage :
         response.status === 403 ? "Geen toegang tot accountgegevens." :
-        `Accountgegevens niet beschikbaar (HTTP ${response.status}).`);
+        `Accountgegevens niet beschikbaar (HTTP ${response.status}) bij ${method} ${path}.`);
     }
     return payload;
   };
