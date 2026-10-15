@@ -7703,6 +7703,13 @@ def aster_strategy2_config_health(user: dict[str, Any] = Depends(authenticated_u
         "storedMonitoringEnabled": raw.get("monitor") is True,
         "storedBotEnabled": raw.get("enabled") is True,
         "configVersionPresent": raw.get("configVersion") is not None,
+        "zoneConfiguration": {
+            "canonicalEnabled": (settings.get("priceZoneSeats") or {}).get("enabled") if isinstance(settings.get("priceZoneSeats"), dict) and isinstance((settings.get("priceZoneSeats") or {}).get("enabled"), bool) else None,
+            "legacyEnabled": settings.get("zoneSoldiersEnabled") if isinstance(settings.get("zoneSoldiersEnabled"), bool) else None,
+            "legacyOptInVersionPresent": settings.get("zoneSoldiersOptInVersion") is not None,
+            "runtimeZoneEnabled": (raw.get("zoneSoldierReport") or {}).get("enabled") if isinstance(raw.get("zoneSoldierReport"), dict) else None,
+            "activeZonePresent": (raw.get("zoneSoldierReport") or {}).get("activeZone") is not None if isinstance(raw.get("zoneSoldierReport"), dict) else False,
+        },
     }
 
 
