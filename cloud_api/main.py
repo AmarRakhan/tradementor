@@ -3304,6 +3304,11 @@ def _release_feature_record(key: str) -> dict[str, Any]:
 
 
 def _explicit_zone_soldier_opt_in(settings: dict[str, Any]) -> bool:
+    # The unified price-zone switch is authoritative when explicitly supplied.
+    # Legacy records without that switch retain the original versioned opt-in.
+    seats = settings.get("priceZoneSeats")
+    if isinstance(seats, dict) and isinstance(seats.get("enabled"), bool):
+        return seats["enabled"]
     return bool(
         settings.get("zoneSoldiersEnabled") is True
         and int(safe_float(settings.get("zoneSoldiersOptInVersion"))) >= 1
@@ -7692,7 +7697,31 @@ def aster_strategy2_config_health(user: dict[str, Any] = Depends(authenticated_u
             error_class = "UNSUPPORTED_SETTINGS_SHAPE"
     except ValueError:
         error_class = "CONFIG_VALIDATION_ERROR"
+    # Strictly isolated staging-only test projection: authenticated caller's
+    # own document, explicit allowlist, no credentials or account identifiers.
+    isolated_staging = (
+        os.getenv("TRADEMENTOR_ENVIRONMENT", "").lower() == "staging"
+        and os.getenv("GOOGLE_CLOUD_PROJECT") == "tradementor-migration-20260812"
+        and os.getenv("FIREBASE_AUTH_PROJECT_ID") == "tradementor-migration-20260812"
+    )
+    staging_readback = None
+    if isolated_staging:
+        seats = settings.get("priceZoneSeats") if isinstance(settings.get("priceZoneSeats"), dict) else {}
+        staging_readback = {
+            "entryFilterMode": settings.get("entryFilterMode"),
+            "extremeSpikeLevel": settings.get("extremeSpikeLevel"),
+            "extremeSpikeLongTimeframe": settings.get("extremeSpikeLongTimeframe"),
+            "extremeSpikeShortTimeframe": settings.get("extremeSpikeShortTimeframe"),
+            "bollingerEntryFilter15mEnabled": settings.get("bollingerEntryFilter15mEnabled"),
+            "priceZoneSeats": {key: seats.get(key) for key in
+                               ("enabled", "longSeatsPerZone", "shortSeatsPerZone")},
+            "zoneSoldiersEnabled": settings.get("zoneSoldiersEnabled"),
+            "zoneSoldiersOptInVersion": settings.get("zoneSoldiersOptInVersion"),
+            "settingsVersion": settings.get("version"),
+            "configVersion": raw.get("configVersion"),
+        }
     return {
+        **({"stagingSettingsReadback": staging_readback} if isolated_staging else {}),
         "readOnly": True,
         "ordersSent": 0,
         "configuredSettingsPresent": bool(settings),

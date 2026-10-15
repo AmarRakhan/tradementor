@@ -1,0 +1,164 @@
+name: Spike 766 migration Firebase readiness (read only)
+on:
+  push:
+    branches:
+      - fix/extreme-spike-zone-regression-gate-20261013
+    paths:
+      - .github/workflows/spike766-migration-firebase-readiness.yml
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type CHECK_MIGRATION_FIREBASE'
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+jobs:
+  inspect-migration-firebase:
+    if: github.ref == 'refs/heads/fix/extreme-spike-zone-regression-gate-20261013'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 6
+    env:
+      PROJECT: tradementor-migration-20260812
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce trusted exact candidate
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            test "$CONFIRMATION" = "CHECK_MIGRATION_FIREBASE"
+          else
+            test "$GITHUB_EVENT_NAME" = "push"
+          fi
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/fix/extreme-spike-zone-regression-gate-20261013"
+          # Exact trusted branch is asserted above; do not pin an obsolete parent commit.
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          test "$PROJECT" = "tradementor-migration-20260812"
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.MIGRATION_GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.MIGRATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Inspect migration Identity Toolkit without modifying resources
+        id: readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud config set project "$PROJECT" >/dev/null
+          if gcloud services list --enabled --project="$PROJECT" --format='value(config.name)' | grep -Fxq identitytoolkit.googleapis.com; then
+            echo "identitytoolkit_api=ENABLED"
+            echo "api=ENABLED" >> "$GITHUB_OUTPUT"
+          else
+            echo "identitytoolkit_api=NOT_LISTED_OR_INACCESSIBLE"
+            echo "api=NOT_LISTED_OR_INACCESSIBLE" >> "$GITHUB_OUTPUT"
+          fi
+          TOKEN="$(gcloud auth print-access-token)"
+          STATUS="$(curl --silent --show-error --max-time 20 -o /tmp/firebase-readiness-response.json -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://identitytoolkit.googleapis.com/admin/v2/projects/$PROJECT/config")"
+          unset TOKEN
+          echo "identitytoolkit_config_http_status=$STATUS"
+          echo "http_status=$STATUS" >> "$GITHUB_OUTPUT"
+          if [ "$STATUS" = 200 ]; then
+            python3 - <<'PY'
+          import json
+          p=json.load(open('/tmp/firebase-readiness-response.json'))
+          print('migration_identity_config_readable=true')
+          print('email_password_signin_enabled='+str(bool(p.get('signIn',{}).get('email',{}).get('enabled',False))).lower())
+          print('anonymous_signin_enabled='+str(bool(p.get('signIn',{}).get('anonymous',{}).get('enabled',False))).lower())
+          PY
+          else
+            echo "migration_identity_config_readable=false"
+            # Print only allowlisted error classes; never log HTTP response bodies.
+            python3 - <<'PY'
+          import json
+          try:
+              data=json.load(open('/tmp/firebase-readiness-response.json'))
+              err=data.get('error') if isinstance(data,dict) else None
+              err=err if isinstance(err,dict) else {}
+              status=err.get('status')
+              reasons=[d.get('reason') for d in err.get('details',[]) if isinstance(d,dict)] if isinstance(err.get('details'),list) else []
+              allowed={'PERMISSION_DENIED','UNAUTHENTICATED','FAILED_PRECONDITION','NOT_FOUND','USER_PROJECT_DENIED','IAM_PERMISSION_DENIED','SERVICE_DISABLED','ACCESS_TOKEN_SCOPE_INSUFFICIENT'}
+              print('identity_error_status='+ (status if status in allowed else 'OTHER_OR_UNKNOWN'))
+              safe_reasons=sorted({r for r in reasons if isinstance(r,str) and r in allowed})
+              print('identity_error_reasons='+(','.join(safe_reasons) or 'NOT_PROVIDED'))
+          except (OSError,ValueError,TypeError):
+              print('identity_error_status=UNREADABLE')
+              print('identity_error_reasons=NOT_PROVIDED')
+          PY
+            echo "No identity was created; an authorized migration-only operator must review access/provider readiness."
+          fi
+          rm -f /tmp/firebase-readiness-response.json
+      - name: Authenticate disposable staging user and check account health (read only)
+        if: ${{ success() }}
+        env:
+          STAGING_TEST_EMAIL: ${{ secrets.SPIKE_STAGING_TEST_EMAIL }}
+          STAGING_TEST_PASSWORD: ${{ secrets.SPIKE_STAGING_TEST_PASSWORD }}
+          STAGING_FIREBASE_WEB_API_KEY: ${{ secrets.SPIKE_STAGING_FIREBASE_WEB_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.error
+          project="tradementor-migration-20260812"
+          base="https://spike766---tradementor-migration-api-jnjcwyq63q-ez.a.run.app"
+          email=os.getenv("STAGING_TEST_EMAIL","")
+          password=os.getenv("STAGING_TEST_PASSWORD","")
+          api_key=os.getenv("STAGING_FIREBASE_WEB_API_KEY","")
+          if not all((email,password,api_key)):
+              print("STAGING_AUTH_CHECK=NOT_RUN_MISSING_STAGING_SECRETS")
+              raise SystemExit(0)
+          def request(url, *, data=None, token=None):
+              headers={"Content-Type":"application/json"}
+              if token: headers["Authorization"]="Bearer "+token
+              req=urllib.request.Request(url,headers=headers,data=data,method="POST" if data else "GET")
+              try:
+                  with urllib.request.urlopen(req,timeout=20) as response:
+                      return response.status,json.load(response)
+              except urllib.error.HTTPError as exc:
+                  return exc.code,{}
+          status, health=request(base+"/health")
+          if status!=200 or health.get("environment")!="staging" or health.get("dataProject")!=project or health.get("identityProject")!=project or health.get("ordersEnabled") is not False:
+              print("STAGING_ISOLATION=FAIL")
+              raise SystemExit(1)
+          print("STAGING_ISOLATION=PASS")
+          payload=json.dumps({"email":email,"password":password,"returnSecureToken":True}).encode()
+          status,auth=request("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key="+api_key,data=payload)
+          token=auth.get("idToken","")
+          if status!=200 or not token:
+              print("STAGING_AUTH_CHECK=FAIL_HTTP_"+str(status))
+              raise SystemExit(1)
+          print("STAGING_AUTH_CHECK=PASS")
+          status,config=request(base+"/v1/me/aster/strategy2/config-health",token=token)
+          if status!=200 or config.get("readOnly") is not True or config.get("ordersSent")!=0:
+              print("STAGING_CONFIG_HEALTH=FAIL_HTTP_"+str(status))
+              raise SystemExit(1)
+          print("STAGING_CONFIG_HEALTH=PASS")
+          print("STAGING_SETTINGS_WRITE=NOT_ATTEMPTED")
+          PY
+      - name: Publish sanitized readiness result to PR 766
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          API_STATUS: ${{ steps.readiness.outputs.api }}
+          HTTP_STATUS: ${{ steps.readiness.outputs.http_status }}
+          STEP_RESULT: ${{ steps.readiness.outcome }}
+        run: |
+          set -euo pipefail
+          case "$API_STATUS" in ENABLED|NOT_LISTED_OR_INACCESSIBLE) ;; *) API_STATUS=NOT_CHECKED ;; esac
+          case "$HTTP_STATUS" in 200|400|401|403|404|429|500|502|503) ;; *) HTTP_STATUS=NOT_CHECKED ;; esac
+          case "$STEP_RESULT" in success|failure|cancelled|skipped) ;; *) STEP_RESULT=unknown ;; esac
+          gh issue comment 766 --repo AmarRakhan/tradementor --body "### Migration Firebase readiness — automated report
+          - Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          - Candidate: $GITHUB_SHA
+          - Migration Identity Toolkit API: $API_STATUS
+          - Read-only config HTTP: $HTTP_STATUS
+          - Inspection step: $STEP_RESULT
+          - No users created, no settings changed, no production access.
+          - A green workflow alone does not imply an authenticated test account is ready."

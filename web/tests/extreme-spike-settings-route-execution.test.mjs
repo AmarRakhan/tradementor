@@ -34,7 +34,9 @@ async function executeRoute({incoming,current,fetchFails=false}){
 
 const base={entryFilterMode:"EXTREME_SPIKE",bollingerEntryFilter15mEnabled:false,
  extremeSpikeLevel:"5-6",extremeSpikeLongTimeframe:"1m",extremeSpikeShortTimeframe:"15m",
- takeProfitMode:"PORTFOLIO",portfolioTpValue:0.5,maximumLeverage:20};
+ takeProfitMode:"PORTFOLIO",portfolioTpValue:0.5,maximumLeverage:20,
+ zoneSoldiersEnabled:true,zoneSoldiersOptInVersion:1,
+ priceZoneSeats:{enabled:true,longSeatsPerZone:2,shortSeatsPerZone:0}};
 
 test("actual API route retains Spike mode and TP on a legacy settings save",async()=>{
  const result=await executeRoute({incoming:{bollingerEntryFilter15mEnabled:true,maxDca:10},current:base});
@@ -66,4 +68,24 @@ test("explicit OFF and Bollinger modes are respected by actual API handler",asyn
   assert.equal(result.lastWrite.entryFilterMode,mode);
   assert.equal(result.lastWrite.bollingerEntryFilter15mEnabled,mode==="BOLLINGER");
  }
+});
+
+test("partial editor with explicit Spike mode cannot erase zones if GET fails",async()=>{
+ const result=await executeRoute({incoming:{entryFilterMode:"EXTREME_SPIKE",maxDca:10},current:base,fetchFails:true});
+ assert.equal(result.response.status,409);
+ assert.equal(result.writes,0);
+});
+test("partial editor preserves active zone 0 configuration",async()=>{
+ const result=await executeRoute({incoming:{entryFilterMode:"EXTREME_SPIKE",maxDca:10},current:base});
+ assert.equal(result.response.status,200);
+ assert.equal(result.writes,1);
+ assert.equal(result.lastWrite.zoneSoldiersEnabled,true);
+ assert.equal(result.lastWrite.priceZoneSeats.enabled,true);
+ assert.equal(result.lastWrite.priceZoneSeats.shortSeatsPerZone,0);
+});
+test("explicit user zone OFF is retained on save",async()=>{
+ const result=await executeRoute({incoming:{...base,priceZoneSeats:{enabled:false,longSeatsPerZone:2,shortSeatsPerZone:0},zoneSoldiersEnabled:false},current:base});
+ assert.equal(result.response.status,200);
+ assert.equal(result.lastWrite.priceZoneSeats.enabled,false);
+ assert.equal(result.lastWrite.zoneSoldiersEnabled,false);
 });

@@ -26,7 +26,7 @@ test("old Bollinger UI is displayed only in Bollinger mode",()=>{
 test("legacy save fails closed if current Spike mode cannot be verified",()=>{
  assert.match(route,/const missingSpikeMode = !Object\.prototype\.hasOwnProperty\.call\(settingsRecord, "entryFilterMode"\)/);
  assert.match(route,/status:409/);
- assert.match(route,/if \(!status\.ok\) return missingSpikeMode \? safeFailure\(\) : request/);
+ assert.match(route,/if \(!status\.ok\) return requiresVerifiedRead \? safeFailure\(\) : request/);
  assert.match(route,/if \(preserved instanceof Response\) return preserved/);
 });
 
@@ -47,4 +47,14 @@ test("Spike and OFF expose save errors visibly outside legacy Bollinger card",()
  assert.match(bridge,/entryMode !== "BOLLINGER" && bbMessage/);
  assert.match(bridge,/role="status" aria-live="polite"/);
  assert.match(bridge,/es-save-feedback/);
+});
+
+test("partial settings saves preserve existing price-zone fields or fail closed",()=>{
+  for (const field of ["priceZoneSeats","zoneSoldiersEnabled","zoneSoldiersOptInVersion","zoneBaseLongSoldiers","zoneBaseShortSoldiers"]) {
+    assert.match(route,new RegExp('"' + field + '"'));
+  }
+  assert.match(route,/const missingZoneSettings =/);
+  assert.match(route,/const requiresVerifiedRead = missingSpikeMode \|\| missingZoneSettings/);
+  assert.match(route,/if \(missingZoneSettings &&/);
+  assert.match(route,/return safeFailure\(\)/);
 });

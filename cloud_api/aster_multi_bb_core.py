@@ -1483,8 +1483,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # they must never create NEW capacity beyond the configured side count.
         configured_zone_long = max(0, int(getattr(settings, "zone_base_long_soldiers", 0)))
         configured_zone_short = max(0, int(getattr(settings, "zone_base_short_soldiers", 0)))
-        active_zone_value = _i((zone_state or {}).get("activeZone"))
-        active_pool = ((zone_state or {}).get("pools") or {}).get(str(active_zone_value), {}) if active_zone_value or str(active_zone_value) in ((zone_state or {}).get("pools") or {}) else {}
+        active_zone_raw = (zone_state or {}).get("activeZone")
+        active_zone_value = _i(active_zone_raw) if active_zone_raw is not None else None
+        active_pool = ((zone_state or {}).get("pools") or {}).get(str(active_zone_value), {}) if active_zone_value is not None else {}
         active_soldiers = active_pool.get("soldiers") if isinstance(active_pool, dict) and isinstance(active_pool.get("soldiers"), dict) else {}
         active_zone_open_long = sum(
             1 for row in active_soldiers.values()
@@ -2041,7 +2042,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 latest_enabled=bool(latest_doc.get("enabled",True))
                 fresh_positions=_position_map(client.position_risk())
                 fresh_side_count=sum(1 for active_key in fresh_positions if active_key.endswith(f"|{side}"))
-                active_zone_value=_i((zone_state or {}).get("activeZone")) if zone_mode else None
+                active_zone_raw=(zone_state or {}).get("activeZone") if zone_mode else None
+                active_zone_value=_i(active_zone_raw) if active_zone_raw is not None else None
                 active_zone_side_count=0
                 if zone_mode and active_zone_value is not None:
                     active_pool=((zone_state or {}).get("pools") or {}).get(str(active_zone_value),{})
