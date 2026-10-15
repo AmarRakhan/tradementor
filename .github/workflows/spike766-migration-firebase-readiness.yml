@@ -75,6 +75,23 @@ jobs:
           PY
           else
             echo "migration_identity_config_readable=false"
+            # Print only allowlisted error classes; never log HTTP response bodies.
+            python3 - <<'PY'
+          import json
+          try:
+              data=json.load(open('/tmp/firebase-readiness-response.json'))
+              err=data.get('error') if isinstance(data,dict) else None
+              err=err if isinstance(err,dict) else {}
+              status=err.get('status')
+              reasons=[d.get('reason') for d in err.get('details',[]) if isinstance(d,dict)] if isinstance(err.get('details'),list) else []
+              allowed={'PERMISSION_DENIED','UNAUTHENTICATED','FAILED_PRECONDITION','NOT_FOUND','USER_PROJECT_DENIED','IAM_PERMISSION_DENIED','SERVICE_DISABLED','ACCESS_TOKEN_SCOPE_INSUFFICIENT'}
+              print('identity_error_status='+ (status if status in allowed else 'OTHER_OR_UNKNOWN'))
+              safe_reasons=sorted({r for r in reasons if isinstance(r,str) and r in allowed})
+              print('identity_error_reasons='+(','.join(safe_reasons) or 'NOT_PROVIDED'))
+          except (OSError,ValueError,TypeError):
+              print('identity_error_status=UNREADABLE')
+              print('identity_error_reasons=NOT_PROVIDED')
+          PY
             echo "No identity was created; an authorized migration-only operator must review access/provider readiness."
           fi
           rm -f /tmp/firebase-readiness-response.json
