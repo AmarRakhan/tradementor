@@ -140,6 +140,17 @@ jobs:
               print("STAGING_CONFIG_HEALTH=FAIL_HTTP_"+str(status))
               raise SystemExit(1)
           print("STAGING_CONFIG_HEALTH=PASS")
+          readback=config.get("stagingSettingsReadback")
+          expected={"entryFilterMode","extremeSpikeLevel","extremeSpikeLongTimeframe",
+                    "extremeSpikeShortTimeframe","priceZoneSeats","zoneSoldiersEnabled",
+                    "zoneSoldiersOptInVersion","settingsVersion","configVersion"}
+          if not isinstance(readback,dict) or not expected.issubset(readback):
+              print("STAGING_SETTINGS_READBACK=FAIL_MISSING_FIELDS")
+              raise SystemExit(1)
+          if not isinstance(readback.get("priceZoneSeats"),dict):
+              print("STAGING_SETTINGS_READBACK=FAIL_BAD_ZONE_SHAPE")
+              raise SystemExit(1)
+          print("STAGING_SETTINGS_READBACK=PASS")
           print("STAGING_SETTINGS_WRITE=NOT_ATTEMPTED")
           PY
       - name: Publish sanitized readiness result to PR 766
