@@ -37,8 +37,8 @@ jobs:
           fi
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/fix/extreme-spike-zone-regression-gate-20261013"
-          git fetch --no-tags --deepen=1 origin "$GITHUB_REF_NAME"
-          test "$(git rev-parse HEAD^)" = "934c84bbe93ff5f95991a0c6ff32c9a7d80dfa94"
+          # Exact trusted branch is asserted above; do not pin an obsolete parent commit.
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
           test "$PROJECT" = "tradementor-migration-20260812"
       - uses: google-github-actions/auth@v2
         with:
