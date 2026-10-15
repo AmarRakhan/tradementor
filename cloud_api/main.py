@@ -7732,6 +7732,25 @@ def aster_strategy2_config_health(user: dict[str, Any] = Depends(authenticated_u
         "storedMonitoringEnabled": raw.get("monitor") is True,
         "storedBotEnabled": raw.get("enabled") is True,
         "configVersionPresent": raw.get("configVersion") is not None,
+        # Readback only for the isolated migration project; never expose
+        # user settings in production or another staging environment.
+        **({"stagingSettingsReadback": {
+            "entryFilterMode": settings.get("entryFilterMode"),
+            "extremeSpikeLevel": settings.get("extremeSpikeLevel"),
+            "extremeSpikeLongTimeframe": settings.get("extremeSpikeLongTimeframe"),
+            "extremeSpikeShortTimeframe": settings.get("extremeSpikeShortTimeframe"),
+            "priceZoneSeats": {
+                "enabled": (settings.get("priceZoneSeats") or {}).get("enabled"),
+                "longSeatsPerZone": (settings.get("priceZoneSeats") or {}).get("longSeatsPerZone"),
+                "shortSeatsPerZone": (settings.get("priceZoneSeats") or {}).get("shortSeatsPerZone"),
+            } if isinstance(settings.get("priceZoneSeats"), dict) else None,
+            "zoneSoldiersEnabled": settings.get("zoneSoldiersEnabled"),
+            "zoneSoldiersOptInVersion": settings.get("zoneSoldiersOptInVersion"),
+            "settingsVersion": settings.get("version"),
+            "configVersion": raw.get("configVersion"),
+        }} if os.getenv("TRADEMENTOR_ENVIRONMENT", "").lower() == "staging"
+            and os.getenv("GOOGLE_CLOUD_PROJECT") == "tradementor-migration-20260812"
+            and os.getenv("FIREBASE_AUTH_PROJECT_ID") == "tradementor-migration-20260812" else {}),
     }
 
 
