@@ -63,12 +63,43 @@ jobs:
           for name in ('TRADEMENTOR_ALLOW_LIVE','ASTER_LIVE_EXECUTION_ENABLED','ASTER_STRATEGY2_LIVE_ENABLED'):
               assert env.get(name)=='false',name
           PY
-      - name: Build isolated candidate image
+      - name: Verify existing Cloud Build or submit asynchronously
+        shell: bash
         run: |
-          gcloud builds submit cloud_api --project "$PROJECT" --region "$REGION" \
-            --gcs-source-staging-dir "gs://run-sources-$PROJECT-$REGION/spike766-source" \
-            --tag "$REGION-docker.pkg.dev/$PROJECT/tradementor/spike-staging:$GITHUB_SHA" \
-            --quiet
+          set -euo pipefail
+          # A previous staging attempt created this build but could not stream logs.
+          PREVIOUS_BUILD=6cf17786-3df1-47d8-a57b-77f55be4c6f4
+          BUILD_ID=""
+          if [ "$GITHUB_SHA" = "497bade7dd9fb81a77a611637f2a360c384634e7" ]; then
+            PRIOR_STATUS="$(gcloud builds describe "$PREVIOUS_BUILD" --project="$PROJECT" --region="$REGION" --format='value(status)' 2>/dev/null || true)"
+            if [ "$PRIOR_STATUS" = "SUCCESS" ]; then
+              BUILD_ID="$PREVIOUS_BUILD"
+              echo "Reusing already successful isolated Cloud Build $BUILD_ID"
+            elif [ "$PRIOR_STATUS" = "WORKING" ] || [ "$PRIOR_STATUS" = "QUEUED" ] || [ "$PRIOR_STATUS" = "PENDING" ]; then
+              BUILD_ID="$PREVIOUS_BUILD"
+              echo "Waiting for previously started isolated Cloud Build $BUILD_ID"
+            fi
+          fi
+          if [ -z "$BUILD_ID" ]; then
+            gcloud builds submit cloud_api --project="$PROJECT" --region="$REGION" \
+              --gcs-source-staging-dir "gs://run-sources-$PROJECT-$REGION/spike766-source" \
+              --tag "$REGION-docker.pkg.dev/$PROJECT/tradementor/spike-staging:$GITHUB_SHA" \
+              --async --format='value(id)' > /tmp/spike-build-id
+            BUILD_ID="$(tr -d '\r\n' < /tmp/spike-build-id)"
+            test -n "$BUILD_ID"
+            echo "Submitted new isolated Cloud Build $BUILD_ID"
+          fi
+          for n in $(seq 1 90); do
+            STATUS="$(gcloud builds describe "$BUILD_ID" --project="$PROJECT" --region="$REGION" --format='value(status)')"
+            case "$STATUS" in
+              SUCCESS) echo "Isolated Cloud Build succeeded: $BUILD_ID"; exit 0 ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Isolated Cloud Build ended with $STATUS: $BUILD_ID"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Isolated Cloud Build timed out waiting for completion: $BUILD_ID"
+          exit 1
       - name: Deploy zero-traffic candidate revision
         run: |
           gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" \
