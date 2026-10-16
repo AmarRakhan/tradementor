@@ -46,6 +46,13 @@ class SpikeTests(unittest.TestCase):
         c=Client()
         found=require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5-6",timeframe="1m",now_ms=21*60000+10)
         self.assertAlmostEqual(found.score,5.5)
+        # Scanner ticker is authoritative over the still-forming kline close.
+        with self.assertRaises(SpikeFilterRejected):
+            require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5-6",timeframe="1m",now_ms=21*60000+10,live_price=101)
+        fresh=require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5-6",timeframe="1m",now_ms=21*60000+10,live_price=95.5)
+        self.assertAlmostEqual(fresh.score,5.5)
+        with self.assertRaises(SpikeFilterRejected):
+            require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5-6",timeframe="1m",now_ms=21*60000+10,live_price=float("nan"))
         # The old completed candle did not spike. Current market price did.
         class Reversed(Client):
             def klines(self, **kwargs):
