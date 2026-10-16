@@ -79,6 +79,12 @@ export async function authenticatedRequest(path: string, init: RequestInit = {})
         response.status === 403 ? "Geen toegang tot accountgegevens." :
         `Accountgegevens niet beschikbaar (HTTP ${response.status}) bij ${method} ${path}.`);
     }
+    // A successful settings mutation invalidates the cached account snapshot,
+    // so subsequent GET/readback cannot reuse the pre-save 2-second value.
+    // Never invalidate on failure or assume a failed PUT was persisted.
+    if (method === "PUT" && path === "/api/exchanges/aster/strategy2/settings") {
+      clearSharedAsterRequest();
+    }
     return payload;
   };
   // GET requests for this exact endpoint share one per-user in-flight call and
