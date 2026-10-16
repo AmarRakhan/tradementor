@@ -84,3 +84,16 @@ test("persistently unavailable settings block TP update without any write",async
  assert.equal(result.response.status,409);
  assert.equal(result.writes,0);
 });
+
+test("one unavailable canonical read blocks TP, seats and Bollinger uniformly without writes",async()=>{
+ for(const incoming of [
+   {takeProfitLong:2,takeProfitShort:0.25},
+   {maximumPositions:20,longSlots:20},
+   {directionalBollingerEnabled:true,bollingerLongTimeframe:"15m",bollingerShortTimeframe:"1m"},
+ ]) {
+   const result=await executeRoute({incoming,current:base,fetchFails:true});
+   assert.equal(result.response.status,409);
+   assert.equal(result.writes,0);
+   assert.equal(result.reads,2);
+ }
+});
