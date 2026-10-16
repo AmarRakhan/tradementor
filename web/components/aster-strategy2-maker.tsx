@@ -330,7 +330,20 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
   async function action(kind: "save" | "simulate" | "start" | "stop") {
     setBusy(true); setMessage("");
     try {
-      const outgoingSettings = kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
+      // Only a provably isolated TP/seat edit may bypass the exchange-backed
+      // status pre-read. All other edits retain the original guarded flow.
+      const sparseKeys = new Set(["takeProfit", "takeProfitLong", "takeProfitShort",
+        "longTakeProfitValue", "shortTakeProfitValue", "maximumPositions",
+        "longSlots", "shortSlots"]);
+      const confirmedSettings = persisted;
+      const changedKeys = Object.keys(settings).filter((key) =>
+        JSON.stringify(settings[key]) !== JSON.stringify(confirmedSettings[key]));
+      const isolatedSave = kind === "save" && serverConfirmed && !sizingModeTouched &&
+        Object.keys(confirmedSettings).length > 0 && changedKeys.length > 0 &&
+        changedKeys.length <= 5 && changedKeys.every((key) => sparseKeys.has(key));
+      const sparseSettings = Object.fromEntries(changedKeys.map((key) => [key, settings[key]]));
+      const outgoingSettings = isolatedSave ? sparseSettings :
+        kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
       const outgoingSizingMode = String(outgoingSettings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
       const priceZoneSeatsActive = settings.priceZoneSeats?.enabled === true;
       const zoneLong = Number(settings.priceZoneSeats?.longSeatsPerZone ?? 0);
