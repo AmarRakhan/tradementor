@@ -252,23 +252,15 @@ export function AsterProfitLockLadderBridge() {
     bbReadEpoch.current += 1;
     setBbBusy(true); setBbMessage("Timeframe opslaan…");
     try {
-      // Merge with live exchange-backed settings so the other direction and
-      // unrelated trading configuration remain untouched.
-      const latestSnapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
-      const latestSettings = extract(latestSnapshot).settings;
-      const legacy = normalizeBollingerTimeframe(latestSettings.bollingerEntryFilterTimeframe);
-      const wasDirectional = latestSettings.directionalBollingerEnabled === true;
-      const currentLong = normalizeBollingerTimeframe(wasDirectional ? (latestSettings.bollingerLongTimeframe ?? legacy) : legacy);
-      const currentShort = normalizeBollingerTimeframe(wasDirectional ? (latestSettings.bollingerShortTimeframe ?? legacy) : legacy);
-      const long = side === "LONG" ? next : currentLong;
-      const short = side === "SHORT" ? next : currentShort;
+      // Use the already verified selection and send only this timeframe edit.
+      // The authenticated backend merges it with stored settings; never
+      // resubmit a potentially stale Spike/zone/TP configuration.
+      const long = side === "LONG" ? next : bbLongTimeframe;
+      const short = side === "SHORT" ? next : bbShortTimeframe;
       const nextSettings = {
-        ...latestSettings,
         directionalBollingerEnabled: true,
         bollingerLongTimeframe: long,
         bollingerShortTimeframe: short,
-        // Legacy compatibility field is an alias for LONG, never a second
-        // independent settings source in the directional scanner branch.
         bollingerEntryFilterTimeframe: long,
       };
       const response = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", {
