@@ -20,3 +20,8 @@ test("sparse route refuses unapproved keys and passes backend 409 and 422 unchan
  assert.match(route,/keys\.every\(\(key\) => isolatedEditKeys\.has\(key\)\)/);
  assert.match(route,/return proxyStrategy2Live\(request, "\/v1\/me\/aster\/strategy2\/settings", "PUT"\)/);
 });
+
+test("sparse confirmation checks effective sizing from full intended draft, not missing patch field",()=>{
+ assert.match(maker,/const outgoingSizingMode = String\(settings\.entrySizingMode \|\| "margin"\)/);
+ assert.doesNotMatch(maker,/const outgoingSizingMode = String\(outgoingSettings\.entrySizingMode/);
+});
