@@ -9,13 +9,14 @@ import ts from "typescript";
 const source=readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts",import.meta.url),"utf8");
 const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 
-async function executeRoute({incoming,current,fetchFails=false}){
- let writes=0,lastWrite=null;
- const mockFetch=async()=>fetchFails?new Response("unavailable",{status:503}):
-  Response.json({strategy2:{settings:current}});
+async function executeRoute({incoming,current,fetchFails=false,transientFailure=false,readFailureStatus=503,upstreamStatus=200}){
+ let writes=0,lastWrite=null,reads=0;
+ const mockFetch=async()=>{reads++;return (fetchFails || (transientFailure && reads===1))?new Response("unavailable",{status:readFailureStatus}):
+  Response.json({strategy2:{settings:current}});};
  const mockRequire=(name)=>{
   if(name==="@/lib/aster-strategy2-settings-guard")return {guardedAsterStrategy2Request:async request=>({request})};
   if(name==="@/lib/secure-strategy2-live")return {proxyStrategy2Live:async request=>{
+   if(upstreamStatus!==200)return Response.json({detail:"Backend-configuratieconflict"},{status:upstreamStatus});
    writes++;lastWrite=(await request.json()).settings;
    return Response.json({strategy2:{settings:lastWrite}});
   }};
@@ -29,7 +30,7 @@ async function executeRoute({incoming,current,fetchFails=false}){
    body:JSON.stringify({settings:incoming})
  });
  const response=await mod.exports.PUT(request);
- return {response,writes,lastWrite};
+ return {response,writes,lastWrite,reads};
 }
 
 const base={entryFilterMode:"EXTREME_SPIKE",bollingerEntryFilter15mEnabled:false,
@@ -66,4 +67,74 @@ test("explicit OFF and Bollinger modes are respected by actual API handler",asyn
   assert.equal(result.lastWrite.entryFilterMode,mode);
   assert.equal(result.lastWrite.bollingerEntryFilter15mEnabled,mode==="BOLLINGER");
  }
+});
+
+test("transient canonical settings read retries once and preserves Spike settings during TP update",async()=>{
+ const result=await executeRoute({incoming:{bollingerEntryFilter15mEnabled:true,takeProfitLong:1.25},current:base,transientFailure:true});
+ assert.equal(result.reads,2);
+ assert.equal(result.response.status,200);
+ assert.equal(result.writes,1);
+ assert.equal(result.lastWrite.takeProfitLong,1.25);
+ assert.equal(result.lastWrite.entryFilterMode,"EXTREME_SPIKE");
+ assert.equal(result.lastWrite.extremeSpikeLevel,"5-6");
+});
+
+test("persistently unavailable settings block TP update without any write",async()=>{
+ const result=await executeRoute({incoming:{bollingerEntryFilter15mEnabled:true,takeProfitLong:1.25},current:base,fetchFails:true});
+ assert.equal(result.reads,2);
+ assert.equal(result.response.status,409);
+ assert.equal(result.writes,0);
+});
+
+test("one unavailable canonical read blocks TP, seats and Bollinger uniformly without writes",async()=>{
+ for(const incoming of [
+   {takeProfitLong:2,takeProfitShort:0.25,bollingerEntryFilter15mEnabled:true},
+   {maximumPositions:20,longSlots:20,bollingerEntryFilter15mEnabled:true},
+   {directionalBollingerEnabled:true,bollingerLongTimeframe:"15m",bollingerShortTimeframe:"1m",bollingerEntryFilter15mEnabled:true},
+ ]) {
+   const result=await executeRoute({incoming,current:base,fetchFails:true});
+   assert.equal(result.response.status,409);
+   assert.equal(result.writes,0);
+   assert.equal(result.reads,2);
+ }
+});
+
+test("HTTP 409 from canonical GET blocks legacy TP, seats and Bollinger without sending PUT",async()=>{
+ for(const incoming of [
+  {takeProfitLong:2,takeProfitShort:0.25,bollingerEntryFilter15mEnabled:true},
+  {maximumPositions:60,longSlots:60,bollingerEntryFilter15mEnabled:true},
+  {directionalBollingerEnabled:true,bollingerLongTimeframe:"15m",bollingerShortTimeframe:"1m",bollingerEntryFilter15mEnabled:true}
+ ]) {
+  const result=await executeRoute({incoming,current:base,fetchFails:true,readFailureStatus:409});
+  assert.equal(result.response.status,409);
+  assert.equal(result.reads,1);
+  assert.equal(result.writes,0);
+ }
+});
+
+test("sparse TP, seat and Bollinger edits bypass the failing status read but keep only intended fields",async()=>{
+ for(const incoming of [
+  {takeProfitLong:2,takeProfitShort:0.25},
+  {maximumPositions:60,longSlots:60},
+  {directionalBollingerEnabled:true,bollingerLongTimeframe:"15m",bollingerShortTimeframe:"1m"},
+ ]) {
+  const result=await executeRoute({incoming,current:base,fetchFails:true,readFailureStatus:409});
+  assert.equal(result.response.status,200);
+  assert.equal(result.reads,0);
+  assert.equal(result.writes,1);
+  assert.deepEqual(result.lastWrite,incoming);
+ }
+});
+test("sparse edits propagate backend 409 and 422 without writes or retries",async()=>{
+ for(const upstreamStatus of [409,422]){
+  const result=await executeRoute({incoming:{takeProfitLong:2},current:base,upstreamStatus});
+  assert.equal(result.response.status,upstreamStatus);
+  assert.equal(result.reads,0);
+  assert.equal(result.writes,0);
+ }
+});
+test("legacy conflicting Spike switch still fails closed",async()=>{
+ const result=await executeRoute({incoming:{bollingerEntryFilter15mEnabled:true},current:base,fetchFails:true,readFailureStatus:409});
+ assert.equal(result.response.status,409);
+ assert.equal(result.writes,0);
 });

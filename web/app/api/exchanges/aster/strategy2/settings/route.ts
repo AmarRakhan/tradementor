@@ -66,11 +66,18 @@ async function preserveExistingPairOverrides(request: Request) {
   const authorization = request.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ")) return missingSpikeMode ? safeFailure() : request;
   try {
-    const status = await fetch(new URL("/api/exchanges/aster", request.url), {
+    const readCurrent = () => fetch(new URL("/api/exchanges/aster", request.url), {
       method: "GET",
       headers: { Authorization: authorization },
       cache: "no-store",
     });
+    let status = await readCurrent();
+    // A transient status failure must not strand an otherwise valid TP edit.
+    // Retry this READ once, never a settings PUT. Still fail closed if the
+    // canonical account settings cannot be verified after the second read.
+    if (!status.ok && missingSpikeMode && (status.status === 429 || status.status >= 500)) {
+      status = await readCurrent();
+    }
     if (!status.ok) return missingSpikeMode ? safeFailure() : request;
     const snapshot = await status.json() as Record<string, unknown>;
     const strategy2 = snapshot.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 as Record<string, unknown> : {};
@@ -101,7 +108,42 @@ async function preserveExistingPairOverrides(request: Request) {
   }
 }
 
+/**
+ * Narrow user edits are patches, not full legacy configuration rewrites.
+ * The authenticated backend already merges sparse settings with persisted
+ * account settings and validates mode/zone/slot constraints.
+ * No mode, Spike, legacy Bollinger switch, or zone policy is allowed here.
+ */
+const isolatedEditKeys = new Set([
+  "takeProfit", "takeProfitLong", "takeProfitShort",
+  "longTakeProfitValue", "shortTakeProfitValue",
+  "maximumPositions", "longSlots", "shortSlots",
+  "bollingerLongTimeframe", "bollingerShortTimeframe",
+  "bollingerEntryFilterTimeframe", "directionalBollingerEnabled",
+]);
+
+function isIsolatedEdit(payload: unknown): payload is { settings: Record<string, unknown> } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const envelope = payload as Record<string, unknown>;
+  if (Object.keys(envelope).some((key) => key !== "settings")) return false;
+  const settings = envelope.settings;
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) return false;
+  const keys = Object.keys(settings);
+  return keys.length > 0 && keys.length <= 5 && keys.every((key) => isolatedEditKeys.has(key));
+}
+
 export async function PUT(request: Request) {
+  // Forward sparse, allowlisted edits unchanged. The backend performs the
+  // authenticated merge and rejects conflicting stored configuration with 422.
+  // Do not pre-read the exchange-backed status for ordinary field edits.
+  try {
+    const payload = await request.clone().json();
+    if (isIsolatedEdit(payload)) {
+      return proxyStrategy2Live(request, "/v1/me/aster/strategy2/settings", "PUT");
+    }
+  } catch {
+    // Existing guarded validation handles malformed payloads.
+  }
   const guarded = await guardedAsterStrategy2Request(request);
   if ("response" in guarded) return guarded.response;
   const preserved = await preserveExistingPairOverrides(guarded.request);
