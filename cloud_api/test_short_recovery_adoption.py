@@ -5,7 +5,7 @@ from short_recovery_adoption import ExistingHedge,adoption_preview
 
 class AdoptionTests(unittest.TestCase):
     def setUp(self):
-        self.h=ExistingHedge("u","XRPUSDT","z1","c1",D(10),D(10),D(10),D(10),D(2),ownership_verified=True)
+        self.h=ExistingHedge("u","XRPUSDT","z1","c1",D(10),D(10),D(10),D(10),D(2),confirmed_hedge_entry_price=D(2),ownership_verified=True)
     def preview(self,h=None,**kwargs):
         return adoption_preview(h or self.h,user_enabled=True,steps=4,step_pct=5,**kwargs)
     def test_existing_hedge_can_join(self):
@@ -29,5 +29,18 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(p["next_trigger"],D("1.96"))
     def test_invalid_settings(self):
         self.assertEqual(adoption_preview(self.h,user_enabled=True,steps=20,step_pct=5)["status"],"BLOCKED_SETTINGS")
+    def test_historical_three_of_four_due(self):
+        h=replace(self.h,current_mark_price=D("1.80"))
+        p=adoption_preview(h,user_enabled=True,steps=4,step_pct=3)
+        self.assertEqual(p["reached_steps"],3)
+        self.assertEqual(p["planned_close_qty"],D("7.5"))
+        self.assertEqual(p["anchor_price"],D(2))
+    def test_all_four_due(self):
+        h=replace(self.h,current_mark_price=D("1.76"))
+        p=adoption_preview(h,user_enabled=True,steps=4,step_pct=3)
+        self.assertEqual(p["reached_steps"],4)
+        self.assertEqual(p["next_trigger"],None)
+    def test_missing_confirmed_anchor_blocked(self):
+        self.assertEqual(self.preview(replace(self.h,confirmed_hedge_entry_price=D(0)))["status"],"BLOCKED_QUANTITY_OR_PRICE")
     def test_no_short(self):
         self.assertEqual(self.preview(replace(self.h,short_qty=D(0)))["status"],"BLOCKED_QUANTITY_OR_PRICE")
