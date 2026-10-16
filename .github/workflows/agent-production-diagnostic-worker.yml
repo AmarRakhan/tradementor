@@ -299,6 +299,36 @@ jobs:
           )"
           if [ "$WEB_HTTP" != "200" ] || [ -z "$WEB_LIVE_REVISION" ] || [ -z "$WEB_BUILD" ]; then STATUS="DEGRADED"; fi
 
+          # Build 601 retained revisions — exact, sanitized, read-only; no traffic or config mutation.
+          {
+            echo "### Build 601 retained revision check (read-only)"
+            for entry in "WEB:amar-bot-v44-direct-install-v46-89ab74a0-1" "BACKEND:tradementor-api-src-f87d6b20-124369"; do
+              kind="${entry%%:*}"
+              revision="${entry#*:}"
+              raw_file="$RUNNER_TEMP/build601-${kind}.json"
+              if gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$raw_file" 2>/dev/null; then
+                python - "$raw_file" "$kind" "$revision" <<'PY_BUILD601'
+          import json,sys
+          try:
+              data=json.load(open(sys.argv[1],encoding="utf-8"))
+              kind,expected=sys.argv[2:]
+              found=(data.get("metadata") or {}).get("name")==expected
+              ready=any(x.get("type")=="Ready" and x.get("status") in ("True",True)
+                        for x in (data.get("status") or {}).get("conditions") or [])
+              image=bool(((data.get("spec") or {}).get("containers") or [{}])[0].get("image"))
+              print("- "+kind+" revision: "+("PASS" if found and ready and image else "NO_GO")+" (exists="+str(found).lower()+", ready="+str(ready).lower()+", image_present="+str(image).lower()+")")
+          except (OSError,ValueError,TypeError,IndexError):
+              print("- "+sys.argv[2]+" revision: READ_UNAVAILABLE")
+          PY_BUILD601
+              else
+                echo "- $kind revision: READ_UNAVAILABLE"
+              fi
+              rm -f "$raw_file"
+            done
+            echo "- Full rollback compatibility: NOT_PROVEN (requires independent source/schema/image checks)"
+            echo
+          } >> "$REPORT"
+
           FIRESTORE="$(gcloud firestore databases describe --database='(default)' --project "$GCP_PROJECT_ID" --format='value(name)' 2>/dev/null)"
           [ -z "$FIRESTORE" ] && STATUS="DEGRADED"
 
