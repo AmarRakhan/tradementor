@@ -53,7 +53,7 @@ class ExtremeSpikeConfigTests(unittest.TestCase):
         old.update(
             entryFilterMode="EXTREME_SPIKE", bollingerEntryFilter15mEnabled=False,
             extremeSpikeLevel="5-6", extremeSpikeLongTimeframe="1m",
-            extremeSpikeShortTimeframe="15m", takeProfitMode="TRADE",
+            extremeSpikeShortTimeframe="15m", takeProfitMode="PORTFOLIO",
             takeProfit=0.015, priceZoneSeats={"enabled": True, "longSeatsPerZone": 2, "shortSeatsPerZone": 0},
             directionalBollingerEnabled=True, bollingerLongTimeframe="1m",
             bollingerShortTimeframe="1m",
