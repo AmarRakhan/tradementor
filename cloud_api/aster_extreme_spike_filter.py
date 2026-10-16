@@ -1,8 +1,7 @@
 """Extreme Spike admission mathematics (read-only, no orders or API transport).
 
-Uses the previous 20 completed candle closes. A spike is the current
-candle's wick reaching the configured number of standard deviations.
-The open/in-progress candle must never be treated as complete here.
+Uses the previous 20 completed candle closes. The current in-progress candle's latest quoted close is checked against the
+previous 20 completed closes; never use a historical wick as live evidence.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -82,7 +81,7 @@ def evaluate_spike(*, side: str, level: str, timeframe: str,
 
 def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: str,
                                 timeframe: str, now_ms: int) -> SpikeSnapshot:
-    """Fail-closed read-only market adapter; only completed candles count.
+    """Fail-closed read-only adapter; current in-progress candle price is checked.
 
     The candidate gate and final pre-order gate must both call this same
     function. Transport uses the existing client, not another scanner.
