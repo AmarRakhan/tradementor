@@ -47,4 +47,36 @@ class ExtremeSpikeConfigTests(unittest.TestCase):
                           "takeProfitMode","portfolioTpValue","priceZoneSeats"):
                 self.assertEqual(previous.get(field),current.get(field),field)
 
+
+    def test_mock_backend_patch_preserves_unmentioned_settings(self):
+        old = self.base()
+        old.update(
+            entryFilterMode="EXTREME_SPIKE", bollingerEntryFilter15mEnabled=False,
+            extremeSpikeLevel="5-6", extremeSpikeLongTimeframe="1m",
+            extremeSpikeShortTimeframe="15m", takeProfitMode="TRADE",
+            takeProfit=0.015, priceZoneSeats={"enabled": True, "longSeatsPerZone": 2, "shortSeatsPerZone": 0},
+            directionalBollingerEnabled=True, bollingerLongTimeframe="1m",
+            bollingerShortTimeframe="1m",
+        )
+        for patch in (
+            {"takeProfit": 0.02},
+            {"maximumPositions": 130},
+            {"bollingerLongTimeframe": "15m"},
+        ):
+            candidate = MultiBbConfig.from_mapping({**old, **patch})
+            saved = candidate.public_dict()
+            assert saved["entryFilterMode"] == "EXTREME_SPIKE"
+            assert saved["bollingerEntryFilter15mEnabled"] is False
+            assert saved["priceZoneSeats"]["enabled"] is True
+            assert saved["priceZoneSeats"]["shortSeatsPerZone"] == 0
+            assert saved["extremeSpikeLevel"] == "5-6"
+            assert saved["takeProfit"] == patch.get("takeProfit", old["takeProfit"])
+            assert saved["bollingerLongTimeframe"] == patch.get("bollingerLongTimeframe", "1m")
+
+    def test_mock_backend_rejects_stale_bollinger_switch_during_spike(self):
+        old = self.base()
+        old.update(entryFilterMode="EXTREME_SPIKE", bollingerEntryFilter15mEnabled=False)
+        with self.assertRaises(ValueError):
+            MultiBbConfig.from_mapping({**old, "bollingerEntryFilter15mEnabled": True})
+
 if __name__=="__main__": unittest.main()
