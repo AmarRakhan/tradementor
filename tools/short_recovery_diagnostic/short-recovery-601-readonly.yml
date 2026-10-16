@@ -1,0 +1,49 @@
+name: Short Recovery Build 601 Read-only Rollback Probe
+
+# Deliberately no push/create/pull_request/schedule trigger.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Verify authorized branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'AmarRakhan/tradementor'
+          test "$GITHUB_REF" = 'refs/heads/amar-crypto-bot-2026-cloud'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate probe locally without Cloud access
+        shell: bash
+        run: python -m unittest discover -s tools/short_recovery_diagnostic -p 'test_*.py' -v
+      - name: Authenticate existing read-only observer
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+          service_account: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read exact retained revisions only
+        shell: bash
+        run: python tools/short_recovery_diagnostic/rollback_probe.py > "$RUNNER_TEMP/short-recovery-rollback.json"
+      - name: Publish sanitized report to step summary
+        shell: bash
+        run: |
+          python - "$RUNNER_TEMP/short-recovery-rollback.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json,sys
+          report=json.load(open(sys.argv[1],encoding='utf-8'))
+          print('## Build 601 rollback read-only check')
+          for key in ('web','backend','rollback'):
+              row=report.get(key,{})
+              print(f"- {key}: {row.get('outcome','NO_GO')} (revision check only)")
+          print('- No production rollback executed or declared safe.')
+          PY
