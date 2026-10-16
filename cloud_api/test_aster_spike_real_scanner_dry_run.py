@@ -30,9 +30,9 @@ class FakeClient:
         for i in range(21):
             price=100+(i%2)*2
             rows.append([i*step,price,102,100,price,0,(i+1)*step-1])
-        rows[20][3]=95.5 if interval=="1m" else 100
-        rows[20][2]=106.5 if interval=="15m" else 102
-        rows.append([21*step,101,102,90,101,0,22*step-1])
+        rows[20][3]=100
+        rows[20][2]=102
+        rows.append([21*step,101,110,90,95.5 if interval=="1m" else 106.5,0,22*step-1])
         return rows
     def __getattr__(self,name):
         raise AssertionError("Unexpected exchange interaction: "+name)
