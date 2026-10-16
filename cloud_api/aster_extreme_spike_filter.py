@@ -59,7 +59,7 @@ def evaluate_spike(*, side: str, level: str, timeframe: str,
         raise SpikeFilterRejected("SPIKE_INVALID_SETTINGS")
     if len(previous_closes) != 20:
         raise SpikeFilterRejected("SPIKE_INSUFFICIENT_CANDLES")
-    if candle_close_ms <= 0 or candle_close_ms > now_ms or now_ms - candle_close_ms > max_staleness_ms:
+    if candle_close_ms <= 0 or now_ms - candle_close_ms > max_staleness_ms or candle_close_ms - now_ms > max_staleness_ms:
         raise SpikeFilterRejected("SPIKE_STALE_OR_UNCLOSED")
     if not all(math.isfinite(v) and v > 0 for v in previous_closes):
         raise SpikeFilterRejected("SPIKE_BAD_CANDLES")
@@ -97,15 +97,22 @@ def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: s
             return int(row[6] if isinstance(row, (list, tuple)) else row["closeTime"])
         def value(row: Any, position: int, key: str) -> float:
             return float(row[position] if isinstance(row, (list, tuple)) else row[key])
+        # Reference is fixed to 20 completed candles. Evaluate the latest
+        # in-progress candle's CURRENT traded/last price, not its historical wick:
+        # a wick could have hit the level and already reversed before this scan.
         completed = [row for row in rows if close_ms(row) < now_ms]
-        if len(completed) < 21:
-            raise SpikeFilterRejected("SPIKE_INSUFFICIENT_COMPLETED_CANDLES")
-        prior = completed[-21:-1]
-        signal = completed[-1]
+        live = [row for row in rows if close_ms(row) >= now_ms]
+        if len(completed) < 20 or not live:
+            raise SpikeFilterRejected("SPIKE_INSUFFICIENT_LIVE_CANDLES")
+        signal = live[-1]
+        previous = completed[-20:]
+        current_price = value(signal, 4, "close")
         interval_ms={"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe]
+        if close_ms(signal) - now_ms > interval_ms:
+            raise SpikeFilterRejected("SPIKE_INVALID_LIVE_CANDLE")
         return evaluate_spike(side=side,level=level,timeframe=timeframe,
-            previous_closes=[value(row,4,"close") for row in prior],
-            candle_high=value(signal,2,"high"),candle_low=value(signal,3,"low"),
+            previous_closes=[value(row,4,"close") for row in previous],
+            candle_high=current_price,candle_low=current_price,
             candle_close_ms=close_ms(signal),now_ms=now_ms,
             max_staleness_ms=interval_ms+300000)
     except SpikeFilterRejected:
