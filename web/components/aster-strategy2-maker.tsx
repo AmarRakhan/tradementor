@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import { selectSparseBotEdit } from "@/lib/p0-sparse-bot-edit.mjs";
 import { strategy2ServerStatus } from "@/lib/aster-strategy2-server-status.mjs";
 import { PortfolioTpSeatResetTarget } from "@/components/portfolio-tp-seat-reset-target";
 import { MAX_SIDE_SLOTS, MAX_TOTAL_POSITIONS, applyLongSlots, applyShortSlots, splitTotalPositions } from "@/lib/position-slot-input";
@@ -332,17 +333,19 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
     try {
       // Only a provably isolated TP/seat edit may bypass the exchange-backed
       // status pre-read. All other edits retain the original guarded flow.
-      const sparseKeys = new Set(["takeProfit", "takeProfitLong", "takeProfitShort",
-        "longTakeProfitValue", "shortTakeProfitValue", "maximumPositions",
-        "longSlots", "shortSlots"]);
+      // P0-A: only a verified global seat-cap edit can use the sparse path.
+      // Reject every other dirty form field; no TP, Spike or zone edits here.
       const confirmedSettings = persisted;
-      const changedKeys = Object.keys(settings).filter((key) =>
+      const seatChanged = Number(settings.maximumPositions) !== Number(confirmedSettings.maximumPositions);
+      const otherChanged = Object.keys(settings).some((key) =>
+        key !== "maximumPositions" &&
         JSON.stringify(settings[key]) !== JSON.stringify(confirmedSettings[key]));
-      const isolatedSave = kind === "save" && serverConfirmed && !sizingModeTouched &&
-        Object.keys(confirmedSettings).length > 0 && changedKeys.length > 0 &&
-        changedKeys.length <= 5 && changedKeys.every((key) => sparseKeys.has(key));
-      const sparseSettings = Object.fromEntries(changedKeys.map((key) => [key, settings[key]]));
-      const outgoingSettings = isolatedSave ? sparseSettings :
+      const seatPatch = kind === "save" && serverConfirmed && !sizingModeTouched &&
+        seatChanged && !otherChanged && settings.priceZoneSeats?.enabled === true
+        ? selectSparseBotEdit(confirmedSettings, settings, ["maximumPositions"])
+        : null;
+      const isolatedSave = seatPatch !== null;
+      const outgoingSettings = isolatedSave ? seatPatch :
         kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
       const outgoingSizingMode = String(settings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
       const priceZoneSeatsActive = settings.priceZoneSeats?.enabled === true;
