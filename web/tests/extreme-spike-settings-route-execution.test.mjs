@@ -9,10 +9,10 @@ import ts from "typescript";
 const source=readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts",import.meta.url),"utf8");
 const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 
-async function executeRoute({incoming,current,fetchFails=false}){
- let writes=0,lastWrite=null;
- const mockFetch=async()=>fetchFails?new Response("unavailable",{status:503}):
-  Response.json({strategy2:{settings:current}});
+async function executeRoute({incoming,current,fetchFails=false,transientFailure=false}){
+ let writes=0,lastWrite=null,reads=0;
+ const mockFetch=async()=>{reads++;return (fetchFails || (transientFailure && reads===1))?new Response("unavailable",{status:503}):
+  Response.json({strategy2:{settings:current}});};
  const mockRequire=(name)=>{
   if(name==="@/lib/aster-strategy2-settings-guard")return {guardedAsterStrategy2Request:async request=>({request})};
   if(name==="@/lib/secure-strategy2-live")return {proxyStrategy2Live:async request=>{
@@ -29,7 +29,7 @@ async function executeRoute({incoming,current,fetchFails=false}){
    body:JSON.stringify({settings:incoming})
  });
  const response=await mod.exports.PUT(request);
- return {response,writes,lastWrite};
+ return {response,writes,lastWrite,reads};
 }
 
 const base={entryFilterMode:"EXTREME_SPIKE",bollingerEntryFilter15mEnabled:false,
@@ -66,4 +66,21 @@ test("explicit OFF and Bollinger modes are respected by actual API handler",asyn
   assert.equal(result.lastWrite.entryFilterMode,mode);
   assert.equal(result.lastWrite.bollingerEntryFilter15mEnabled,mode==="BOLLINGER");
  }
+});
+
+test("transient canonical settings read retries once and preserves Spike settings during TP update",async()=>{
+ const result=await executeRoute({incoming:{takeProfitLong:1.25},current:base,transientFailure:true});
+ assert.equal(result.reads,2);
+ assert.equal(result.response.status,200);
+ assert.equal(result.writes,1);
+ assert.equal(result.lastWrite.takeProfitLong,1.25);
+ assert.equal(result.lastWrite.entryFilterMode,"EXTREME_SPIKE");
+ assert.equal(result.lastWrite.extremeSpikeLevel,"5-6");
+});
+
+test("persistently unavailable settings block TP update without any write",async()=>{
+ const result=await executeRoute({incoming:{takeProfitLong:1.25},current:base,fetchFails:true});
+ assert.equal(result.reads,2);
+ assert.equal(result.response.status,409);
+ assert.equal(result.writes,0);
 });
