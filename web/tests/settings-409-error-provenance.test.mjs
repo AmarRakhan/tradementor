@@ -20,3 +20,9 @@ test("settings guard still rejects unverifiable legacy spike configuration", () 
   assert.match(settingsRoute, /missingSpikeMode \? safeFailure\(\) : request/);
   assert.match(settingsRoute, /if \(preserved instanceof Response\) return preserved/);
 });
+
+test("successful Strategy-2 settings PUT invalidates cached status before readback", () => {
+  assert.match(client, /if \(method === "PUT" && path === "\/api\/exchanges\/aster\/strategy2\/settings"\) \{/);
+  assert.match(client, /clearSharedAsterRequest\(\);/);
+  assert.match(client, /if \(!response\.ok\) \{/);
+});
