@@ -39,13 +39,21 @@ class SpikeTests(unittest.TestCase):
                 rows=[]
                 for i in range(21):
                     price=100+(i%2)*2
-                    lo=95.5 if i==20 else 100
+                    lo=100
                     rows.append([i*60000,price,102,lo,price,0,(i+1)*60000-1])
-                rows.append([21*60000,101,102,90,101,0,22*60000-1])
+                rows.append([21*60000,101,102,90,95.5,0,22*60000-1])
                 return rows
         c=Client()
         found=require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5-6",timeframe="1m",now_ms=21*60000+10)
         self.assertAlmostEqual(found.score,5.5)
+        # The old completed candle did not spike. Current market price did.
+        class Reversed(Client):
+            def klines(self, **kwargs):
+                rows=super().klines(**kwargs)
+                rows[-1][4]=101  # wick still says 90, but price already recovered
+                return rows
+        with self.assertRaises(SpikeFilterRejected):
+            require_extreme_spike_entry(Reversed(),symbol="BTCUSDT",side="LONG",level="5-6",timeframe="1m",now_ms=21*60000+10)
         with self.assertRaises(SpikeFilterRejected):
             require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="7+",timeframe="1m",now_ms=21*60000+10)
     def test_stable_spike_identity_across_scanner_ticks(self):
