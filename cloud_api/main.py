@@ -2081,7 +2081,8 @@ def _canonical_display_portfolio_zone_ladder(uid: str, cycle_start: float, equit
     if not observed and len(history) >= 7:
         observed = derive_equity_zones(history, cycle_start)
     return canonical_display_zone_ladder(
-        observed, equity, min_index=min_index, max_index=max_index, max_span=40
+        observed, equity, min_index=min_index, max_index=max_index,
+        max_span=max(40, max_index - min_index),
     ) if observed and equity > 0 else []
 
 
