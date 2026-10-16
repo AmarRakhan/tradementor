@@ -66,11 +66,18 @@ async function preserveExistingPairOverrides(request: Request) {
   const authorization = request.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ")) return missingSpikeMode ? safeFailure() : request;
   try {
-    const status = await fetch(new URL("/api/exchanges/aster", request.url), {
+    const readCurrent = () => fetch(new URL("/api/exchanges/aster", request.url), {
       method: "GET",
       headers: { Authorization: authorization },
       cache: "no-store",
     });
+    let status = await readCurrent();
+    // A transient status failure must not strand an otherwise valid TP edit.
+    // Retry this READ once, never a settings PUT. Still fail closed if the
+    // canonical account settings cannot be verified after the second read.
+    if (!status.ok && missingSpikeMode && (status.status === 429 || status.status >= 500)) {
+      status = await readCurrent();
+    }
     if (!status.ok) return missingSpikeMode ? safeFailure() : request;
     const snapshot = await status.json() as Record<string, unknown>;
     const strategy2 = snapshot.strategy2 && typeof snapshot.strategy2 === "object" ? snapshot.strategy2 as Record<string, unknown> : {};
