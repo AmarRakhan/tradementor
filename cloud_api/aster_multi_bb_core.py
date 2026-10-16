@@ -1703,7 +1703,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     spike_timeframe=(settings.extreme_spike_long_timeframe if candidate_side == "LONG" else settings.extreme_spike_short_timeframe)
                     spike_snapshot=require_extreme_spike_entry(
                         client, symbol=symbol, side=candidate_side, level=settings.extreme_spike_level,
-                        timeframe=spike_timeframe, now_ms=timestamp_ms)
+                        timeframe=spike_timeframe, now_ms=timestamp_ms, live_price=prices[symbol])
                     spike_candidates[candidate_side]=spike_event_key(
                         symbol=symbol, side=candidate_side, timeframe=spike_timeframe,
                         candle_close_ms=spike_snapshot.candle_close_ms)
@@ -2002,9 +2002,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 effective_timeframe=_effective_entry_timeframe(settings, side, exposure_refill)
                 if settings.entry_filter_mode == "EXTREME_SPIKE":
                     spike_timeframe=(settings.extreme_spike_long_timeframe if side == "LONG" else settings.extreme_spike_short_timeframe)
+                    # Refresh ticker at pre-mutation admission rather than reuse scan-time price.
+                    fresh_tickers={str(x.get("symbol","")).upper(): _f(x.get("price")) for x in client.ticker_prices()}
+                    final_live_price=fresh_tickers.get(symbol)
+                    if not final_live_price or final_live_price <= 0:
+                        raise SpikeFilterRejected("SPIKE_LIVE_PRICE_UNAVAILABLE")
                     final_spike=require_extreme_spike_entry(client, symbol=symbol, side=side,
                         level=settings.extreme_spike_level, timeframe=spike_timeframe,
-                        now_ms=int(time.time() * 1000))
+                        now_ms=int(time.time() * 1000), live_price=final_live_price)
                     final_event_key=spike_event_key(symbol=symbol,side=side,timeframe=spike_timeframe,
                         candle_close_ms=final_spike.candle_close_ms)
                     if spike_candidates.get(side) != final_event_key:
