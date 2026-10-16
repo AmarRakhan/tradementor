@@ -18,21 +18,18 @@ class ExistingHedge:
     exchange_long_qty: Decimal
     exchange_short_qty: Decimal
     current_mark_price: Decimal
+    confirmed_hedge_entry_price: Decimal = Decimal('0')
     pending_orders: bool = False
     ownership_verified: bool = False
 
 def adoption_preview(h: ExistingHedge, *, user_enabled: bool, steps: int, step_pct) -> dict:
-    """Never executes trades. Start from verified current mark, not historical triggers.
-
-    This avoids triggering all old steps on activation. No silent adoption when
-    multiple price-zone LONGs share an aggregate exchange hedge.
-    """
+    """Shadow-only preview. Use verified original SHORT fill price, never ROI."""
     if not user_enabled: return {"status":"OFF"}
     if not h.account or not h.symbol or not h.long_position_id or not h.hedge_cycle_id:
         return {"status":"BLOCKED_IDENTITY"}
     if not h.ownership_verified: return {"status":"BLOCKED_OWNERSHIP"}
     if h.pending_orders: return {"status":"BLOCKED_PENDING"}
-    if min(d(h.long_qty),d(h.short_qty),d(h.exchange_long_qty),d(h.exchange_short_qty),d(h.current_mark_price)) <= 0:
+    if min(d(h.long_qty),d(h.short_qty),d(h.exchange_long_qty),d(h.exchange_short_qty),d(h.current_mark_price),d(h.confirmed_hedge_entry_price)) <= 0:
         return {"status":"BLOCKED_QUANTITY_OR_PRICE"}
     if d(h.long_qty)!=d(h.exchange_long_qty) or d(h.short_qty)!=d(h.exchange_short_qty):
         return {"status":"BLOCKED_EXCHANGE_MISMATCH"}
@@ -42,7 +39,11 @@ def adoption_preview(h: ExistingHedge, *, user_enabled: bool, steps: int, step_p
         return {"status":"BLOCKED_SETTINGS"}
     rate=d(step_pct)
     if rate<=0 or rate*steps>=100: return {"status":"BLOCKED_SETTINGS"}
-    return {"status":"ELIGIBLE_PREVIEW_ONLY","anchor_price":d(h.current_mark_price),
+    anchor=d(h.confirmed_hedge_entry_price)
+    decline=max(Decimal(0),(anchor-d(h.current_mark_price))/anchor*Decimal(100))
+    reached=min(steps,int(decline//rate))
+    return {"status":"ELIGIBLE_PREVIEW_ONLY","anchor_price":anchor,
             "original_short_qty":d(h.short_qty),"completed_steps":0,
-            "next_trigger":d(h.current_mark_price)*(1-rate/d(100)),
+            "reached_steps":reached,"planned_close_qty":d(h.short_qty)*Decimal(reached)/Decimal(steps),
+            "next_trigger":anchor*(Decimal(1)-rate*Decimal(reached+1)/Decimal(100)) if reached<steps else None,
             "requires_explicit_atomic_activation":True}
