@@ -7,14 +7,13 @@ const route = readFileSync(new URL("../app/api/exchanges/aster/strategy2/setting
 
 test("main configurator may use sparse settings only against server-confirmed values",()=>{
  assert.match(maker,/const confirmedSettings = persisted/);
- assert.match(maker,/kind === "save" && serverConfirmed && !sizingModeTouched/);
- assert.match(maker,/changedKeys\.every\(\(key\) => sparseKeys\.has\(key\)\)/);
+ assert.match(maker,/seatChanged && !otherChanged/);
+ assert.match(maker,/selectSparseBotEdit\\(confirmedSettings, settings, \\["maximumPositions"\\]\\)/);
 });
 test("main configurator keeps guarded full-save for complex changes",()=>{
- assert.match(maker,/const outgoingSettings = isolatedSave \? sparseSettings/);
+ assert.match(maker,/const outgoingSettings = isolatedSave \\? seatPatch/);
  assert.match(maker,/await withLatestProfitLockSettings\(settings\)/);
- assert.doesNotMatch(maker,/sparseKeys = new Set\([^;]*entryFilterMode/);
- assert.doesNotMatch(maker,/sparseKeys = new Set\([^;]*priceZoneSeats/);
+ assert.doesNotMatch(maker,/selectSparseBotEdit\\(confirmedSettings, settings, \\["entryFilterMode"\\]/);
 });
 test("sparse route refuses unapproved keys and passes backend 409 and 422 unchanged",()=>{
  assert.match(route,/keys\.every\(\(key\) => isolatedEditKeys\.has\(key\)\)/);
