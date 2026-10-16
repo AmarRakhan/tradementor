@@ -9,9 +9,9 @@ import ts from "typescript";
 const source=readFileSync(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts",import.meta.url),"utf8");
 const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
 
-async function executeRoute({incoming,current,fetchFails=false,transientFailure=false}){
+async function executeRoute({incoming,current,fetchFails=false,transientFailure=false,readFailureStatus=503}){
  let writes=0,lastWrite=null,reads=0;
- const mockFetch=async()=>{reads++;return (fetchFails || (transientFailure && reads===1))?new Response("unavailable",{status:503}):
+ const mockFetch=async()=>{reads++;return (fetchFails || (transientFailure && reads===1))?new Response("unavailable",{status:readFailureStatus}):
   Response.json({strategy2:{settings:current}});};
  const mockRequire=(name)=>{
   if(name==="@/lib/aster-strategy2-settings-guard")return {guardedAsterStrategy2Request:async request=>({request})};
@@ -95,5 +95,18 @@ test("one unavailable canonical read blocks TP, seats and Bollinger uniformly wi
    assert.equal(result.response.status,409);
    assert.equal(result.writes,0);
    assert.equal(result.reads,2);
+ }
+});
+
+test("HTTP 409 from canonical GET blocks legacy TP, seats and Bollinger without sending PUT",async()=>{
+ for(const incoming of [
+  {takeProfitLong:2,takeProfitShort:0.25},
+  {maximumPositions:60,longSlots:60},
+  {directionalBollingerEnabled:true,bollingerLongTimeframe:"15m",bollingerShortTimeframe:"1m"}
+ ]) {
+  const result=await executeRoute({incoming,current:base,fetchFails:true,readFailureStatus:409});
+  assert.equal(result.response.status,409);
+  assert.equal(result.reads,1);
+  assert.equal(result.writes,0);
  }
 });
