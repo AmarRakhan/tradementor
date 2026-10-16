@@ -80,8 +80,8 @@ def evaluate_spike(*, side: str, level: str, timeframe: str,
     return SpikeSnapshot(side,level,timeframe,wick,band,score,100*overshoot,candle_close_ms)
 
 def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: str,
-                                timeframe: str, now_ms: int) -> SpikeSnapshot:
-    """Fail-closed read-only adapter; current in-progress candle price is checked.
+                                timeframe: str, now_ms: int, live_price: float | None = None) -> SpikeSnapshot:
+    """Fail-closed adapter: use fresh ticker price when supplied by scanner.
 
     The candidate gate and final pre-order gate must both call this same
     function. Transport uses the existing client, not another scanner.
@@ -105,7 +105,9 @@ def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: s
             raise SpikeFilterRejected("SPIKE_INSUFFICIENT_LIVE_CANDLES")
         signal = live[-1]
         previous = completed[-20:]
-        current_price = value(signal, 4, "close")
+        current_price = float(live_price) if live_price is not None else value(signal, 4, "close")
+        if not math.isfinite(current_price) or current_price <= 0:
+            raise SpikeFilterRejected("SPIKE_INVALID_LIVE_PRICE")
         interval_ms={"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe]
         if close_ms(signal) - now_ms > interval_ms:
             raise SpikeFilterRejected("SPIKE_INVALID_LIVE_CANDLE")
