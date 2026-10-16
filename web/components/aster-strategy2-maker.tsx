@@ -344,7 +344,7 @@ export function AsterStrategy2Maker({ snapshot, serverConfirmed, onConfirmed, on
       const sparseSettings = Object.fromEntries(changedKeys.map((key) => [key, settings[key]]));
       const outgoingSettings = isolatedSave ? sparseSettings :
         kind === "stop" ? settings : await withLatestProfitLockSettings(settings);
-      const outgoingSizingMode = String(outgoingSettings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
+      const outgoingSizingMode = String(settings.entrySizingMode || "margin").toLowerCase() === "notional" ? "notional" : "margin";
       const priceZoneSeatsActive = settings.priceZoneSeats?.enabled === true;
       const zoneLong = Number(settings.priceZoneSeats?.longSeatsPerZone ?? 0);
       const zoneShort = Number(settings.priceZoneSeats?.shortSeatsPerZone ?? 0);
