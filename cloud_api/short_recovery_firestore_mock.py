@@ -24,15 +24,20 @@ class MockFirestore:
         return clone
 
 def encode(ledger):
+    """Firestore-valid documents: arrays of maps, never nested arrays."""
     return {'account':ledger.account,'symbol':ledger.symbol,
-            'allocations':[(a.zone_id,a.cycle_id,str(a.remaining)) for a in ledger.allocations],
+            'allocations':[{'zoneId':a.zone_id,'cycleId':a.cycle_id,'remaining':str(a.remaining)} for a in ledger.allocations],
             'seen':sorted(ledger.seen),
-            'booked':[(z,c,str(q),str(p)) for z,c,q,p in ledger.booked]}
+            'booked':[{'zoneId':z,'cycleId':c,'quantity':str(q),'netPnl':str(p)} for z,c,q,p in ledger.booked]}
 
 def decode(doc):
     if doc is None:raise ValueError('ledger not initialized')
-    return Ledger(doc['account'],doc['symbol'],tuple(Allocation(z,c,Decimal(q)) for z,c,q in doc['allocations']),
-                  frozenset(doc['seen']),tuple((z,c,Decimal(q),Decimal(p)) for z,c,q,p in doc['booked']))
+    # Existing mock fixtures with legacy array records remain readable.
+    alloc=tuple(Allocation(row['zoneId'],row['cycleId'],Decimal(row['remaining'])) if isinstance(row,dict)
+                else Allocation(row[0],row[1],Decimal(row[2])) for row in doc['allocations'])
+    booked=tuple((row['zoneId'],row['cycleId'],Decimal(row['quantity']),Decimal(row['netPnl'])) if isinstance(row,dict)
+                 else (row[0],row[1],Decimal(row[2]),Decimal(row[3])) for row in doc['booked'])
+    return Ledger(doc['account'],doc['symbol'],alloc,frozenset(doc['seen']),booked)
 
 def record_fill(db,ledger_key,fill,splits,retries=16):
     if ledger_key!=(fill.account,fill.symbol):raise ValueError('wrong document ownership')
