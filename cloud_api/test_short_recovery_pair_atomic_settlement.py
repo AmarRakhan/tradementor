@@ -101,3 +101,15 @@ class OffsetEconomicsReplay(PairAtomic):
   replay['SHORT']['fills'][0].update(realizedPnl='1.3',commission='.4')
   self.assertEqual(self.run_pair(replay),'BLOCKED_FINANCIAL_REPLAY_PROVENANCE')
   self.assertEqual(self.snapshot('SHORTledger'),before)
+
+class LegacyPartialProvenanceCannotBeInvented(PairAtomic):
+ def test_old_partial_claim_lacking_execution_financials_blocks_new_fill(self):
+  rows={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='PARTIALLY_FILLED')}
+  self.assertEqual(self.run_pair(rows),'PAIR_RECONCILE_REQUIRED')
+  claim=self.snapshot('SHORTclaim');claim.pop('executionFinancials');self.put('SHORTclaim',claim)
+  new={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='PARTIALLY_FILLED')}
+  new['SHORT']['fills'].append({**new['SHORT']['fills'][0],'executionId':'SHORT-new','quantity':'10'})
+  new['SHORT']['executedQty']='35'
+  before=self.snapshot('SHORTledger')
+  self.assertEqual(self.run_pair(new),'BLOCKED_FINANCIAL_REPLAY_PROVENANCE')
+  self.assertEqual(self.snapshot('SHORTledger'),before)

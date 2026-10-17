@@ -150,7 +150,12 @@ def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_
                 if total!=expected or booked_qty!=expected:return 'BLOCKED_EXECUTION_INCOMPLETE'
                 if booked_net!=readback_net:return 'BLOCKED_FINANCIAL_REPLAY_MISMATCH'
                 known=claim.get('executionFinancials')
-                if known is not None and any(k in new.seen and known.get(k)!=v for k,v in replay_financials.items()):
+                # Every booked execution needs an individually persisted record.
+                # Otherwise a legacy claim can silently acquire invented replay
+                # provenance on the next partial fill.
+                if (known is None and ledger.seen) or (known is not None and (
+                        not isinstance(known,dict) or set(known)!=set(ledger.seen)
+                        or any(known.get(k)!=v for k,v in replay_financials.items() if k in ledger.seen))):
                     return 'BLOCKED_FINANCIAL_REPLAY_PROVENANCE'
             except (KeyError,TypeError,ValueError,InvalidOperation):return 'BLOCKED_FINANCIAL_EVIDENCE'
             remaining=[a.remaining for a in new.allocations if a.cycle_id==cycle]
