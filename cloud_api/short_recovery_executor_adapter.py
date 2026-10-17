@@ -51,3 +51,27 @@ def preview_canonical_executor(*, reconciled, symbol, long_qty, short_qty, net_e
         return {'status':'PREVIEW_REHEDGE_REQUIRES_FINAL_READBACK','ordersSent':0,
                 'intents':(AsterOrderIntent('shadow-rehedge',symbol,PositionSide.SHORT,long,'OPEN'),)}
     return blocked('HOLD_OR_PENDING')
+
+def verify_pair_exit_settlement(*, long_order, short_order, required_long, required_short):
+    """Fail-closed offline pair-exit readback gate; no order placement or state writes.
+
+    Both sides must be individually terminal, fully filled and have independently
+    confirmed costs. A partial/unknown side is NEVER a completed pair exit.
+    """
+    from short_recovery_mock import d
+    def blocked(reason):return {'status':reason,'pairClosed':False,'ordersSent':0}
+    if not isinstance(long_order,dict) or not isinstance(short_order,dict):return blocked('BLOCKED_MISSING_SIDE')
+    try:
+        required=(d(required_long),d(required_short))
+        actual=(d(long_order['executedQty']),d(short_order['executedQty']))
+    except (KeyError,TypeError,ValueError):return blocked('BLOCKED_QUANTITY_EVIDENCE')
+    if any(x<=0 for x in required) or any(x<0 for x in actual):return blocked('BLOCKED_QUANTITY_EVIDENCE')
+    for side,row,qty,filled in zip(('LONG','SHORT'),(long_order,short_order),required,actual):
+        if row.get('positionSide')!=side or row.get('action')!='CLOSE' or not row.get('orderId'):
+            return blocked('BLOCKED_SIDE_IDENTITY')
+        if row.get('status')!='FILLED' or row.get('terminalVerified') is not True:
+            return blocked('BLOCKED_NOT_TERMINAL')
+        if filled!=qty:return blocked('BLOCKED_PARTIAL_OR_MISMATCH')
+        if not all(row.get(k) is True for k in ('fillsComplete','financialVerified','fundingOwnershipVerified','incomeHistoryComplete')):
+            return blocked('BLOCKED_FINANCIAL_EVIDENCE')
+    return {'status':'PAIR_EXIT_SETTLED_SHADOW','pairClosed':True,'ordersSent':0}
