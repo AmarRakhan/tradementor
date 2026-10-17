@@ -136,3 +136,14 @@ def read_bounded_symbol_funding(client, *, symbol, account, start_ms, end_ms, li
     return {'account':account,'symbol':symbol,'startMs':start_ms,'endMs':end_ms,
             'rows':tuple(rows),'complete':False,'independentlyVerified':False,
             'reason':'NO_INDEPENDENT_EXCHANGE_COMPLETENESS_ATTESTATION'}
+
+def reconcile_bounded_income_snapshots(first, second):
+    """Detect unstable offline Aster snapshots; agreement is not completeness."""
+    def signature(snapshot):
+        if not isinstance(snapshot,dict) or snapshot.get('complete') is not False or snapshot.get('independentlyVerified') is not False:
+            raise ValueError('BLOCKED_INCOME_SNAPSHOT_SCOPE')
+        rows=snapshot.get('rows')
+        if not isinstance(rows,tuple):raise ValueError('BLOCKED_INCOME_SNAPSHOT_SCOPE')
+        return (snapshot.get('account'),snapshot.get('symbol'),snapshot.get('startMs'),snapshot.get('endMs'),tuple((r.get('tranId'),r.get('time'),r.get('income'),r.get('asset'),r.get('incomeType')) for r in rows if isinstance(r,dict)))
+    if signature(first)!=signature(second):raise ValueError('BLOCKED_INCOME_SNAPSHOT_DRIFT')
+    return {'stable':True,'complete':False,'independentlyVerified':False}

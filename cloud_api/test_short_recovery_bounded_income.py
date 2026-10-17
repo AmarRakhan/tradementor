@@ -31,3 +31,21 @@ class BoundedIncome(unittest.TestCase):
  def test_no_account_scope_is_rejected(self):
   with self.assertRaisesRegex(ValueError,'WINDOW'):
    read_bounded_symbol_funding(Mock([]),symbol='XRPUSDT',account='',start_ms=100,end_ms=200)
+
+class SnapshotAgreementCannotCertifyCompleteness(unittest.TestCase):
+ def setUp(self):
+  self.a={'account':'u','symbol':'XRPUSDT','startMs':100,'endMs':200,'rows':({'tranId':'1','time':101,'income':'-0.01','asset':'USDT','incomeType':'FUNDING_FEE'},),'complete':False,'independentlyVerified':False}
+ def test_identical_reads_remain_non_authorizing(self):
+  from short_recovery_funding_shadow import reconcile_bounded_income_snapshots
+  result=reconcile_bounded_income_snapshots(self.a,self.a.copy())
+  self.assertTrue(result['stable']);self.assertFalse(result['complete']);self.assertFalse(result['independentlyVerified'])
+ def test_time_equal_but_amount_changes_blocked(self):
+  from short_recovery_funding_shadow import reconcile_bounded_income_snapshots
+  with self.assertRaisesRegex(ValueError,'SNAPSHOT_DRIFT'):
+   reconcile_bounded_income_snapshots(self.a,self.a|{'rows':(self.a['rows'][0]|{'income':'-0.02'},)})
+ def test_other_account_and_untrusted_complete_flag_blocked(self):
+  from short_recovery_funding_shadow import reconcile_bounded_income_snapshots
+  with self.assertRaisesRegex(ValueError,'SNAPSHOT_DRIFT'):
+   reconcile_bounded_income_snapshots(self.a,self.a|{'account':'other'})
+  with self.assertRaisesRegex(ValueError,'SNAPSHOT_SCOPE'):
+   reconcile_bounded_income_snapshots(self.a,self.a|{'complete':True})
