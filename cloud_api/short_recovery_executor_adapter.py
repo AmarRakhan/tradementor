@@ -75,3 +75,21 @@ def verify_pair_exit_settlement(*, long_order, short_order, required_long, requi
         if not all(row.get(k) is True for k in ('fillsComplete','financialVerified','fundingOwnershipVerified','incomeHistoryComplete')):
             return blocked('BLOCKED_FINANCIAL_EVIDENCE')
     return {'status':'PAIR_EXIT_SETTLED_SHADOW','pairClosed':True,'ordersSent':0}
+
+def pair_exit_recovery_gate(*, long_order, short_order, required_long, required_short,
+                            claim_states, funding_proof=False, stop_active=False):
+    """Offline readback/claim resolution: hold uncertainty, never authorize a retry.
+
+    A stopped account may still reconcile existing claims, but it cannot issue
+    another close order from this helper. Funding proof is independent of fills.
+    """
+    gate=verify_pair_exit_settlement(long_order=long_order,short_order=short_order,
+                                     required_long=required_long,required_short=required_short)
+    if not isinstance(claim_states,dict) or set(claim_states)!={'LONG','SHORT'}:
+        return {'status':'BLOCKED_CLAIM_PROOF','pairClosed':False,'ordersSent':0,'retryAllowed':False}
+    if any(s not in ('CLOSED','UNKNOWN','PARTIAL','CANCEL_PENDING','ACKED') for s in claim_states.values()):
+        return {'status':'BLOCKED_CLAIM_STATE','pairClosed':False,'ordersSent':0,'retryAllowed':False}
+    if gate['pairClosed'] and not stop_active and funding_proof and all(s=='CLOSED' for s in claim_states.values()):
+        return {'status':'PAIR_CLOSED_VERIFIED_SHADOW','pairClosed':True,'ordersSent':0,'retryAllowed':False}
+    return {'status':'RECONCILE_ONLY_STOPPED' if stop_active else 'RECONCILE_ONLY_UNCERTAIN',
+            'pairClosed':False,'ordersSent':0,'retryAllowed':False}
