@@ -62,7 +62,7 @@ def paged_user_trades(client: Any, symbol: str, *, start_time: int | None = None
 
 def paged_income_history(client: Any, *, symbol: str, start_time: int | None = None,
                          page_size: int = 1000, maximum_pages: int = 100) -> list[dict[str, Any]]:
-    """Read complete symbol income, continuing full pages by event timestamp."""
+    """Read symbol income; fail closed when time-only pagination is ambiguous."""
     result: list[dict[str, Any]] = []
     seen: set[str] = set()
     cursor = start_time
@@ -77,14 +77,10 @@ def paged_income_history(client: Any, *, symbol: str, start_time: int | None = N
                 result.append(row)
         if len(page) < page_size:
             return result
-        times = [int(number(row.get("time", row.get("timestamp")))) for row in page]
-        times = [value for value in times if value > 0]
-        if not times:
-            raise ValueError(f"{symbol}: volle inkomstenpagina zonder veilige vervolgcursor")
-        next_cursor = max(times) + 1
-        if cursor is not None and next_cursor <= cursor:
-            raise ValueError(f"{symbol}: inkomstenpaginatie maakte geen voortgang")
-        cursor = next_cursor
+        # Aster income has no (time,tranId) cursor. Moving by max(time)+1
+        # can skip further events with exactly that timestamp. A full page
+        # is therefore NOT evidence of a complete range; never book costs.
+        raise ValueError(f"{symbol}: volle inkomstenpagina, tijdcursor kan gelijke timestamps overslaan")
     raise ValueError(f"{symbol}: inkomstenhistorie overschrijdt de veilige paginatiegrens")
 
 

@@ -43,7 +43,8 @@ def test_full_fill_and_income_pages_are_paginated():
                 else [{"tranId":3,"time":12}])
     client=Paged()
     assert [row["id"] for row in paged_user_trades(client,"BTCUSDT",start_time=1,page_size=2)]==[1,2,3]
-    assert [row["tranId"] for row in paged_income_history(client,symbol="BTCUSDT",start_time=1,page_size=2)]==[1,2,3]
+    with pytest.raises(ValueError,match="gelijke timestamps"):
+        paged_income_history(client,symbol="BTCUSDT",start_time=1,page_size=2)
 
 
 def test_full_page_without_cursor_fails_closed():
@@ -197,3 +198,15 @@ def test_fill_recovery_reads_complete_history_after_ownership_transfer():
         recover_fill_ids=True)
     assert not failures and recovered[0].fill_ids==("open","dca")
     assert client.trade_calls==[{"start_time":None,"limit":1000}]
+
+
+def test_income_same_timestamp_full_page_does_not_silently_drop_events():
+    class SameStamp:
+        def __init__(self):self.calls=[]
+        def income_history(self, **kwargs):
+            self.calls.append(kwargs)
+            return [{"tranId":1,"time":123},{"tranId":2,"time":123}][:kwargs["limit"]]
+    client=SameStamp()
+    with pytest.raises(ValueError,match="gelijke timestamps"):
+        paged_income_history(client,symbol="XRPUSDT",start_time=100,page_size=2)
+    assert len(client.calls)==1  # no unsafe +1 cursor
