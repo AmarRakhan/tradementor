@@ -96,3 +96,13 @@ class SymbolScopeCannotProveCycle(__import__('unittest').TestCase):
  def test_incomplete_income_page_never_authorizes_symbol_accounting(self):
   with self.assertRaisesRegex(ValueError,'BLOCKED_SAME_TIMESTAMP_PAGINATION'):
    income_pages(Mock([{'tranId':str(i),'time':101,'symbol':'XRPUSDT'} for i in (1,2,3)]),symbol='XRPUSDT',start_ms=100,end_ms=200,page_size=2)
+
+class ExclusiveIntervalIsNotTransactionOwnership(unittest.TestCase):
+ def test_exclusive_cycle_time_window_still_needs_transaction_proof(self):
+  row={'tranId':'fund-1','time':150,'symbol':'XRPUSDT','positionSide':'SHORT','incomeType':'FUNDING_FEE','income':'-0.04'}
+  with self.assertRaisesRegex(ValueError,'BLOCKED_FUNDING_ATTRIBUTION'):
+   funding_for_cycle([row],symbol='XRPUSDT',side='SHORT',cycle_id='sole-cycle',start_ms=100,end_ms=200,ownership_proof={})
+ def test_correct_transaction_proof_is_required_not_other_side(self):
+  row={'tranId':'fund-1','time':150,'symbol':'XRPUSDT','positionSide':'SHORT','incomeType':'FUNDING_FEE','income':'-0.04'}
+  with self.assertRaisesRegex(ValueError,'BLOCKED_FUNDING_ATTRIBUTION'):
+   funding_for_cycle([row],symbol='XRPUSDT',side='SHORT',cycle_id='sole-cycle',start_ms=100,end_ms=200,ownership_proof={'fund-1':('XRPUSDT','LONG','sole-cycle')})
