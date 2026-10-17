@@ -124,13 +124,21 @@ def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_
                 if claim.get('executedQty') is not None and expected<finite(claim['executedQty']):
                     return 'BLOCKED_EXECUTED_QTY_REGRESSION'
                 total=Decimal(0);readback_net=Decimal(0);seen_page=set()
+                replay_financials={}
                 for fill in fills:
                     if not isinstance(fill,dict) or not fill.get('executionId') or fill['executionId'] in seen_page or str(fill.get('orderId'))!=str(claim['orderId']):return 'BLOCKED_FILL_IDENTITY'
                     seen_page.add(fill['executionId']);qty=finite(fill['quantity']);pnl=finite(fill['realizedPnl']);fee=finite(fill['commission']);funding=finite(fill['funding'])
                     if qty<=0 or fee<0 or fill.get('financialVerified') is not True or fill.get('fundingOwnershipVerified') is not True:return 'BLOCKED_FINANCIAL_EVIDENCE'
                     total+=qty
                     readback_net+=pnl-fee+funding
-                    if fill['executionId'] in new.seen:continue
+                    if fill['executionId'] in new.seen:
+                        # The ledger stores net only; require persisted separate
+                        # execution economics before trusting any replay change.
+                        known=claim.get('executionFinancials')
+                        if not isinstance(known,dict):return 'BLOCKED_FINANCIAL_REPLAY_PROVENANCE'
+                        replay_financials[fill['executionId']]=[str(qty),str(pnl),str(fee),str(funding)]
+                        continue
+                    replay_financials[fill['executionId']]=[str(qty),str(pnl),str(fee),str(funding)]
                     owned=[a for a in new.allocations if a.cycle_id==cycle and a.remaining>0]
                     if len(owned)!=1:return 'BLOCKED_ALLOCATION'
                     item=owned[0]
@@ -141,12 +149,15 @@ def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_
                 booked_net=sum((net for _,c,_,net in new.booked if c==cycle),Decimal(0))
                 if total!=expected or booked_qty!=expected:return 'BLOCKED_EXECUTION_INCOMPLETE'
                 if booked_net!=readback_net:return 'BLOCKED_FINANCIAL_REPLAY_MISMATCH'
+                known=claim.get('executionFinancials')
+                if known is not None and any(k in new.seen and known.get(k)!=v for k,v in replay_financials.items()):
+                    return 'BLOCKED_FINANCIAL_REPLAY_PROVENANCE'
             except (KeyError,TypeError,ValueError,InvalidOperation):return 'BLOCKED_FINANCIAL_EVIDENCE'
             remaining=[a.remaining for a in new.allocations if a.cycle_id==cycle]
             if len(remaining)!=1:return 'BLOCKED_ALLOCATION'
             terminal=row.get('status')=='FILLED' and row.get('terminalVerified') is True and remaining[0]==0 and row.get('incomeHistoryComplete') is True
             updates[side]=new;trusted[side]=terminal
-            claimed[side]={**claim,'state':'CLOSED' if terminal else 'UNKNOWN','executedQty':str(expected)}
+            claimed[side]={**claim,'state':'CLOSED' if terminal else 'UNKNOWN','executedQty':str(expected),'executionFinancials':replay_financials}
         for side in sides:
             if encode(updates[side])!=raws[side]:tx.set(ledger_refs[side],encode(updates[side]))
             if claimed[side]!=claims[side]:tx.set(claim_refs[side],claimed[side])

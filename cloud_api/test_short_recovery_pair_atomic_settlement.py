@@ -90,3 +90,14 @@ class ReplayedFillFinancialConflict(PairAtomic):
   self.assertEqual(self.run_pair(replay),'BLOCKED_FINANCIAL_REPLAY_MISMATCH')
   self.assertEqual(self.snapshot('SHORTledger'),before)
   self.assertNotEqual(self.snapshot('pair')['state'],'CLOSED')
+
+class OffsetEconomicsReplay(PairAtomic):
+ def test_net_equal_but_fee_and_realized_changed_is_rejected(self):
+  rows={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='PARTIALLY_FILLED')}
+  self.assertEqual(self.run_pair(rows),'PAIR_RECONCILE_REQUIRED')
+  before=self.snapshot('SHORTledger')
+  self.db=self.db.restart();self.bind()
+  replay={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='PARTIALLY_FILLED')}
+  replay['SHORT']['fills'][0].update(realizedPnl='1.3',commission='.4')
+  self.assertEqual(self.run_pair(replay),'BLOCKED_FINANCIAL_REPLAY_PROVENANCE')
+  self.assertEqual(self.snapshot('SHORTledger'),before)
