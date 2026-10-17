@@ -30,11 +30,13 @@ class RunUidIntegration(unittest.TestCase):
    closed=D(100) if action_mode=='REHEDGE' else D(0)
    qty=D(0) if action_mode=='REHEDGE' else D(100)
    state=ReductionState(plan,closed,D('1.6' if action_mode=='REHEDGE' else '1.9'))
+   from short_recovery_order_claim_shadow import canonical_intent_id
+   ids={key:canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side=key.split('_')[0],action=key.split('_')[1],step=1) for key in ('LONG_CLOSE','SHORT_CLOSE','SHORT_OPEN')}
    ctx['recovery_action']={'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
-       'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':'SHORT-intent',
-       'account_close_guard':lambda:None,'intent_ids':{'LONG_CLOSE':'LONG-intent','SHORT_CLOSE':'SHORT-intent','SHORT_OPEN':'SHORT-intent'}}
-   h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':'RESERVED'})
+       'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':1,
+       'account_close_guard':lambda:None,'intent_ids':ids}
+   h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id']})
    if emergency_stop:h.fixture.put('control',{'account':'u','enabled':True,'emergencyStop':True,'closeAllActive':False})
   states={'XRPUSDT':{'ownerSide':'SHORT','cycleConfirmed':True,'ownershipVerified':ownership,'state':'PARTIAL'}}
   dummy=MagicMock();dummy.position_risk.return_value=[];dummy.open_orders.return_value=[]

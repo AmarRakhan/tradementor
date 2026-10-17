@@ -655,6 +655,24 @@ def _run_uid(
                         from short_recovery_order_claim_shadow import pre_submit_check
                         try:
                             symbol = ctx["symbol"]
+                            # Match the persistent claim's canonical identity, not a
+                            # caller-chosen ID, before the existing pre-submit guard.
+                            from short_recovery_order_claim_shadow import canonical_intent_id
+                            identifiers = action_ctx.get("intent_ids")
+                            scope_step = action_ctx.get("step")
+                            if (not isinstance(identifiers, dict) or
+                                    isinstance(scope_step, bool) or not isinstance(scope_step, int)):
+                                raise ValueError("BLOCKED_CANONICAL_SCOPE")
+                            for scope_key, scoped_id in identifiers.items():
+                                if scope_key not in ("LONG_CLOSE", "SHORT_CLOSE", "SHORT_OPEN"):
+                                    raise ValueError("BLOCKED_CANONICAL_SCOPE")
+                                side, act = scope_key.split("_")
+                                if scoped_id != canonical_intent_id(
+                                        account=uid,symbol=symbol,cycle=ctx["cycle"],
+                                        side=side,action=act,step=scope_step):
+                                    raise ValueError("BLOCKED_CANONICAL_SCOPE")
+                            if action_ctx["intent_id"] not in identifiers.values():
+                                raise ValueError("BLOCKED_CANONICAL_SCOPE")
                             state = action_ctx["state"]
                             bridge = preview_reconciliation(
                                 protected_sides={symbol:"LONG"}, existing_skip_symbols=set(),
