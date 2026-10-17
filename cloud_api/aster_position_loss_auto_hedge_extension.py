@@ -768,7 +768,10 @@ def _run_uid(
                                 for side in ("LONG", "SHORT")}
                     claim_status=_read_pair_claim_status(ctx["db"].transaction())
                     if any(not isinstance(claim_status[side],dict) or
-                           claim_status[side].get("state") != "ACKED" or
+                           # UNKNOWN/PARTIAL are reconcile-only, never submit rights.
+                           # An existing verified orderId may be read back again
+                           # after restart without creating a second exchange POST.
+                           claim_status[side].get("state") not in ("ACKED", "UNKNOWN", "PARTIAL", "PARTIAL_TERMINAL") or
                            claim_status[side].get("positionSide") != side or
                            (claim_status[side].get("account"),claim_status[side].get("symbol"),claim_status[side].get("cycle")) != (uid,ctx["symbol"],ctx["cycle"]) or
                            not claim_status[side].get("intentId") or

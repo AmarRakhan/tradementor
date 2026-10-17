@@ -19,7 +19,7 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None):
   h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
   ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None}
   if action_mode is not None:
@@ -63,6 +63,8 @@ class RunUidIntegration(unittest.TestCase):
     ctx['recovery_action']['long_claim_ref']=h.fixture.refs['LONGclaim']
     h.fixture.put('LONGclaim',{**h.fixture.snapshot('LONGclaim'),'state':'RESERVED','intentId':ids['LONG_CLOSE'],'side':'LONG','action':'CLOSE','step':1})
    if emergency_stop:h.fixture.put('control',{'account':'u','enabled':True,'emergencyStop':True,'closeAllActive':False})
+  if existing_short_state is not None:
+   h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':existing_short_state})
   states={'XRPUSDT':{'ownerSide':'SHORT','cycleConfirmed':True,'ownershipVerified':ownership,'state':'PARTIAL'}}
   dummy=MagicMock();dummy.position_risk.return_value=[];dummy.open_orders.return_value=[]
   doc=MagicMock();report={'mode':'SHADOW','ordersSent':0,'actions':[]}
@@ -207,4 +209,19 @@ class WholePairLifecycle(unittest.TestCase):
   outcome=submit_locked_pair_mock_offline(db=h.fixture.db,transactional=transactional,long_claim_ref=refs['LONGclaim'],short_claim_ref=refs['SHORTclaim'],control_ref=refs['control'],account='u',symbol='XRPUSDT',cycle='c',long_intent=intents['LONG'],short_intent=intents['SHORT'],account_close_guard=lambda:None,submit_mock=submit)
   self.assertEqual(outcome,('BLOCKED_PAIR_SIDE_CLAIMS',))
   self.assertEqual(len(calls),2)
+  self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+
+class RestartedPairReconciliation(unittest.TestCase):
+ def test_unknown_with_known_order_may_reconcile_terminal_without_resubmit(self):
+  r,_,h=RunUidIntegration().run_case(existing_short_state='UNKNOWN')
+  self.assertEqual(r['shortRecoveryPairSettlement'],'PAIR_CLOSED_VERIFIED')
+  self.assertEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+  self.assertNotIn('shortRecoverySubmit',r)
+ def test_unacknowledged_submitting_cannot_reconcile(self):
+  r,_,h=RunUidIntegration().run_case(existing_short_state='SUBMITTING')
+  self.assertEqual(r['shortRecoveryPairSettlement'],'PAIR_RECONCILE_REQUIRED_NO_TERMINAL_ACK')
+  self.assertEqual(h.fixture.snapshot('pair')['state'],'OPEN')
+ def test_unknown_with_missing_cycle_funding_proof_still_blocked(self):
+  r,_,h=RunUidIntegration().run_case(existing_short_state='UNKNOWN',proof=False)
+  self.assertEqual(r['shortRecoveryPairSettlement'],'BLOCKED_FUNDING_CYCLE_PROOF')
   self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
