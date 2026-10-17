@@ -190,6 +190,13 @@ def reconcile_pair_from_aster_mock(*, client, claim_refs, ledger_refs, control_r
         if set(verified)!=set(x['executionId'] for x in fills):return 'BLOCKED_FUNDING_CYCLE_PROOF'
         if proof.get('orderStatus')!=result['orderStatus'] or proof.get('executedQty') is None:
             return 'BLOCKED_TERMINAL_PROOF'
+        # A caller's asserted quantity is not exchange proof: reconcile all
+        # observed executions against the claimed terminal executed quantity.
+        try:
+            executed=Decimal(str(proof['executedQty']))
+            if not executed.is_finite() or executed<0 or executed!=sum((Decimal(str(x['quantity'])) for x in fills),Decimal(0)):
+                return 'BLOCKED_EXECUTION_INCOMPLETE'
+        except (InvalidOperation,ValueError,TypeError):return 'BLOCKED_EXECUTION_INCOMPLETE'
         evidence[side]={'symbol':symbol,'positionSide':side,'orderId':raw[side]['orderId'],
                         'readbackVerified':True,'fillsComplete':True,'incomeHistoryComplete':True,
                         'terminalVerified':proof.get('terminalVerified') is True and result['orderStatus']=='FILLED',

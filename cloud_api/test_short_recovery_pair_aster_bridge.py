@@ -45,3 +45,9 @@ class VerifiedAsterBridge(unittest.TestCase):
  def test_unowned_fill_blocks(self):
   self.proof['SHORT']['executions']={}
   self.assertEqual(self.run_bridge(),'BLOCKED_FUNDING_CYCLE_PROOF')
+
+class QuantityEvidenceConsistency(VerifiedAsterBridge):
+ def test_forged_executed_qty_is_blocked_before_write(self):
+  self.proof['SHORT']['executedQty']='1000'
+  self.assertEqual(self.run_bridge(),'BLOCKED_EXECUTION_INCOMPLETE')
+  self.assertEqual(self.fixture.snapshot('pair')['state'],'OPEN')
