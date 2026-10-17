@@ -18,7 +18,13 @@ def inspect(client, *, symbol, client_order_id):
         try:q=Decimal(str(x.get('qty')))
         except (InvalidOperation,ValueError,TypeError):return {'status':'BLOCKED_BAD_FILL'}
         if not execution or not q.is_finite() or q<=0:return {'status':'BLOCKED_BAD_FILL'}
+        money={}
+        for key,field in (('realizedPnl','realizedPnl'),('commission','fee'),('funding','funding')):
+            try: amount=Decimal(str(x.get(key,'0')))
+            except (InvalidOperation,ValueError,TypeError):return {'status':'BLOCKED_BAD_FILL'}
+            if not amount.is_finite() or (field=='fee' and amount<0):return {'status':'BLOCKED_BAD_FILL'}
+            money[field]=amount
         if execution in seen:continue
-        seen.add(execution);output.append({'executionId':execution,'quantity':q,'orderId':str(order['orderId'])})
+        seen.add(execution);output.append({'executionId':execution,'quantity':q,'orderId':str(order['orderId']),**money})
     return {'status':'READBACK_PREVIEW','orderStatus':order.get('status'),'fills':output,
             'terminalVerified':False,'ordersSent':0}
