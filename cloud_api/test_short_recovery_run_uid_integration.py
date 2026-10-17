@@ -188,3 +188,23 @@ class WholePairLifecycle(unittest.TestCase):
   self.assertEqual(h.fixture.snapshot('LONGclaim')['state'],'SUBMITTING')
   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
   self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+ def test_short_timeout_replay_after_restart_is_not_resent(self):
+  calls=[]
+  def submit(intent):
+   calls.append(intent.intent_id)
+   if intent.position_side.value=='SHORT':raise TimeoutError('uncertain')
+   return {'clientOrderId':intent.intent_id,'orderId':'LONG-order'}
+  r,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',mock_transport=submit)
+  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY','UNKNOWN_RECONCILE_ONLY'))
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+  from short_recovery_order_claim_shadow import submit_locked_pair_mock_offline,canonical_intent_id
+  from aster_gateway import AsterOrderIntent,PositionSide
+  from decimal import Decimal
+  from short_recovery_multidoc_mock import transactional
+  h.fixture.db=h.fixture.db.restart();h.fixture.bind();refs=h.fixture.refs
+  ids={s:canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side=s,action='CLOSE',step=1) for s in ('LONG','SHORT')}
+  intents={s:AsterOrderIntent(ids[s],'XRPUSDT',PositionSide(s),Decimal(100 if s=='LONG' else 75),'CLOSE') for s in ids}
+  outcome=submit_locked_pair_mock_offline(db=h.fixture.db,transactional=transactional,long_claim_ref=refs['LONGclaim'],short_claim_ref=refs['SHORTclaim'],control_ref=refs['control'],account='u',symbol='XRPUSDT',cycle='c',long_intent=intents['LONG'],short_intent=intents['SHORT'],account_close_guard=lambda:None,submit_mock=submit)
+  self.assertEqual(outcome,('BLOCKED_PAIR_SIDE_CLAIMS',))
+  self.assertEqual(len(calls),2)
+  self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
