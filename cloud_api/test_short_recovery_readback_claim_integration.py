@@ -18,8 +18,8 @@ class MockAster:
         self.calls=[]
     def query_order(self,symbol,client_order_id):
         self.calls.append('query_order');return dict(self.order)
-    def user_trades(self,symbol,limit=500):
-        self.calls.append('user_trades');return list(self.rows)
+    def user_trades(self,symbol,limit=500,from_id=None):
+        self.calls.append('user_trades');return [r for r in self.rows if from_id is None or int(r['id'])>=from_id][:limit]
     def submit_order(self,*args,**kwargs):raise AssertionError('no orders')
 
 class Integration(unittest.TestCase):
@@ -95,7 +95,7 @@ class PaginationAndFundingProof(unittest.TestCase):
         client=MockAster()
         client.rows=client.rows*500
         result=inspect(client,symbol='XRPUSDT',client_order_id='intent')
-        self.assertEqual(result['status'],'BLOCKED_INCOMPLETE_FILL_PAGE')
+        self.assertEqual(result['status'],'BLOCKED_DUPLICATE_EXECUTION')
         self.assertFalse(result['terminalVerified'])
     def test_conflicting_duplicate_execution_fails_closed(self):
         client=MockAster()
@@ -109,3 +109,19 @@ class PaginationAndFundingProof(unittest.TestCase):
         self.assertEqual(result['status'],'READBACK_PREVIEW')
         self.assertFalse(result['terminalVerified'])
         self.assertEqual(result['ordersSent'],0)
+
+class CursorPagination(unittest.TestCase):
+    def test_two_pages_with_unique_ids_and_exact_execution_total(self):
+        c=MockAster()
+        c.rows=[{'id':i,'orderId':'o','symbol':'XRPUSDT','qty':'1','realizedPnl':'0','commission':'0'} for i in range(11,16)]
+        c.order['executedQty']='5'
+        r=inspect(c,symbol='XRPUSDT',client_order_id='intent',page_size=2)
+        self.assertEqual(r['status'],'READBACK_PREVIEW')
+        self.assertEqual(len(r['fills']),5)
+        self.assertFalse(r['terminalVerified'])
+    def test_quantity_mismatch_blocks(self):
+        c=MockAster();c.order['executedQty']='26'
+        self.assertEqual(inspect(c,symbol='XRPUSDT',client_order_id='intent')['status'],'BLOCKED_EXECUTION_INCOMPLETE')
+    def test_bounded_pages_block(self):
+        c=MockAster();c.rows=[{'id':i,'orderId':'o','symbol':'XRPUSDT','qty':'1','realizedPnl':'0','commission':'0'} for i in range(11,16)]
+        self.assertEqual(inspect(c,symbol='XRPUSDT',client_order_id='intent',page_size=2,max_pages=2)['status'],'BLOCKED_INCOMPLETE_FILL_PAGE')

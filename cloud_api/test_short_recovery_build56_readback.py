@@ -9,9 +9,9 @@ class Client:
  def query_order(self,symbol,client_order_id):
   if self.error:raise TimeoutError('mock timeout')
   return self.order
- def user_trades(self,symbol,limit=500):
+ def user_trades(self,symbol,limit=500,from_id=None):
   if self.error:raise TimeoutError('mock timeout')
-  return self.fills
+  return [r for r in self.fills if from_id is None or int(r['id'])>=from_id][:limit]
  def submit_order(self,*a,**k):raise AssertionError('orders forbidden')
 class Tests(unittest.TestCase):
  def scan(self,client):return inspect(client,symbol='XRPUSDT',client_order_id='intent')

@@ -12,7 +12,7 @@ class Client:
   self.account=account
   self.rows=[{'symbol':'XRPUSDT','orderId':7,'id':'ex1','qty':'25','realizedPnl':'1.2','commission':'0.1','funding':'-0.05'}, {'symbol':'XRPUSDT','orderId':7,'id':'ex2','qty':'25','realizedPnl':'2.0','commission':'0.2','funding':'0.03'}]
  def query_order(self,symbol,client_order_id):return {'symbol':symbol,'clientOrderId':client_order_id,'orderId':7,'status':'PARTIALLY_FILLED'}
- def user_trades(self,symbol,limit=500):return self.rows
+ def user_trades(self,symbol,limit=500,from_id=None):return [r for r in self.rows if from_id is None or int(r['id'])>=from_id][:limit]
  def submit_order(self,*a,**kw):raise AssertionError('forbidden')
 class Tests(unittest.TestCase):
  def setUp(self):
