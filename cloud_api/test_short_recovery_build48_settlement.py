@@ -14,7 +14,10 @@ class Tests(unittest.TestCase):
   self.db.commit(self.keys['owner'],0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','ownershipVerified':True,'ownerSide':'SHORT','cycleConfirmed':True,'state':'PARTIAL'})
   self.assertEqual(reserve(db=self.db,transactional=transactional,marker_ref=self.refs['marker'],owner_ref=self.refs['owner'],ledger_ref=self.refs['ledger'],claim_ref=self.refs['claim'],account='u',symbol='XRPUSDT',cycle='c',intent_id='intent',now=1),'RESERVED_SHADOW')
  def bind(self):self.refs={k:Ref(self.db,v) for k,v in self.keys.items()}
- def event(self,name,**kw):return settle(db=self.db,transactional=transactional,claim_ref=self.refs['claim'],ledger_ref=self.refs['ledger'],owner_ref=self.refs['owner'],marker_ref=self.refs['marker'],account='u',symbol='XRPUSDT',cycle='c',intent_id='intent',event=name,**kw)
+ def event(self,name,**kw):
+  if name=='FILL' and isinstance(kw.get('evidence'),dict) and kw['evidence'].get('confirmed') and kw.get('execution_id'):
+   kw['evidence']={**kw['evidence'],'readbackVerified':True,'executionId':kw['execution_id'],'quantity':str(kw['qty']),'realizedPnl':'1.25','commission':'0.05','funding':'0'}
+  return settle(db=self.db,transactional=transactional,claim_ref=self.refs['claim'],ledger_ref=self.refs['ledger'],owner_ref=self.refs['owner'],marker_ref=self.refs['marker'],account='u',symbol='XRPUSDT',cycle='c',intent_id='intent',event=name,**kw)
  def test_ack_then_partial_and_duplicate(self):
   self.assertEqual(self.event('ACK',order_id='o',evidence={'confirmed':True,'orderId':'o'}),'ACKED')
   self.assertEqual(self.event('FILL',execution_id='x1',order_id='o',evidence={'confirmed':True,'orderId':'o'},qty=25),'FILL_APPLIED')

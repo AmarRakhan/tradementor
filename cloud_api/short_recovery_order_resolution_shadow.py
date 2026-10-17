@@ -1,5 +1,5 @@
 """Offline confirmed order-resolution seam. Evidence is supplied by a mock, not exchange."""
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from short_recovery_firestore_mock import decode, encode
 from short_recovery_ledger import Fill
 
@@ -38,9 +38,24 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
             if state in ('CANCELLED','NO_ORDER','CLOSED'):return 'BLOCKED_TERMINAL_CONFLICT'
             if claim.get('orderId') and claim['orderId']!=evidence['orderId']:return 'BLOCKED_ORDER_MISMATCH'
             if execution_id in ledger.seen:return 'ALREADY_APPLIED'
-            q=Decimal(str(quantity));allocation=ledger.allocations[0]
+            # Exchange-confirmed fill economics must be explicit and tied to this
+            # execution; absence is never implicitly treated as a zero cost.
+            if evidence.get('readbackVerified') is not True or str(evidence.get('executionId')) != str(execution_id) or str(evidence.get('orderId')) != str(claim.get('orderId', evidence['orderId'])):
+                return 'BLOCKED_FINANCIAL_EVIDENCE'
+            try:
+                if str(evidence.get('quantity')) != str(quantity):
+                    return 'BLOCKED_FINANCIAL_EVIDENCE'
+                pnl=Decimal(str(evidence['realizedPnl']))
+                fee=Decimal(str(evidence['commission']))
+                funding=Decimal(str(evidence['funding']))
+                q=Decimal(str(quantity))
+            except (KeyError, TypeError, ValueError, InvalidOperation):
+                return 'BLOCKED_FINANCIAL_EVIDENCE'
+            if any(not value.is_finite() for value in (pnl,fee,funding,q)) or fee<0:
+                return 'BLOCKED_FINANCIAL_EVIDENCE'
+            allocation=ledger.allocations[0]
             if not q.is_finite() or q<=0 or q>allocation.remaining or allocation.cycle_id!=cycle:return 'BLOCKED_QUANTITY'
-            updated=ledger.apply(Fill(account,symbol,execution_id,evidence['orderId'],q,Decimal(0),Decimal(0)),((allocation.zone_id,cycle,q),))
+            updated=ledger.apply(Fill(account,symbol,execution_id,evidence['orderId'],q,pnl,fee,funding),((allocation.zone_id,cycle,q),))
             tx.set(ledger_ref,encode(updated))
             tx.set(claim_ref,{**claim,'state':'CLOSED' if updated.allocations[0].remaining==0 else 'PARTIAL','orderId':evidence['orderId']})
             return 'FILL_APPLIED'

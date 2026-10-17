@@ -7,6 +7,8 @@ class Canonical(unittest.TestCase):
  def setUp(self):
   self.h=Fixture('test_ack_then_partial_and_duplicate');self.h.setUp()
  def call(self,event,**kwargs):
+  if event in ('FILL','LATE_FILL') and isinstance(kwargs.get('evidence'),dict) and kwargs['evidence'].get('confirmed') and kwargs.get('execution_id'):
+   kwargs['evidence']={**kwargs['evidence'],'readbackVerified':True,'executionId':kwargs['execution_id'],'quantity':str(kwargs['quantity']),'realizedPnl':'1.25','commission':'0.05','funding':'0'}
   h=self.h
   return resolve(db=h.db,transactional=transactional,claim_ref=h.refs['claim'],ledger_ref=h.refs['ledger'],marker_ref=h.refs['marker'],owner_ref=h.refs['owner'],account='u',symbol='XRPUSDT',cycle='c',intent_id='intent',event=event,**kwargs)
  def test_unknown_no_unverified_release(self):

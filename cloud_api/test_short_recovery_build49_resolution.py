@@ -8,6 +8,8 @@ class Resolution(unittest.TestCase):
  def setUp(self):
   helper=Base(methodName='test_no_order_reconciled_terminal');helper.setUp();self.helper=helper
  def run_event(self,event,**kw):
+  if event in ('FILL','LATE_FILL') and isinstance(kw.get('evidence'),dict) and kw['evidence'].get('confirmed') and kw.get('execution_id'):
+   kw['evidence']={**kw['evidence'],'readbackVerified':True,'executionId':kw['execution_id'],'quantity':str(kw['quantity']),'realizedPnl':'1.25','commission':'0.05','funding':'0'}
   h=self.helper
   return resolve(db=h.db,transactional=__import__('short_recovery_multidoc_mock').transactional,claim_ref=h.refs['claim'],ledger_ref=h.refs['ledger'],marker_ref=h.refs['marker'],owner_ref=h.refs['owner'],account='u',symbol='XRPUSDT',cycle='c',intent_id='intent',event=event,**kw)
  def test_unknown_late_ack_partial(self):

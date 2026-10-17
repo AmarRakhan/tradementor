@@ -19,6 +19,8 @@ class OfflineIntegration(unittest.TestCase):
         self.scope = {'account':'u','symbol':'XRPUSDT','intentId':'intent','orderId':'o',
                       'source':'ASTER_READBACK_VERIFIED_MOCK','confirmed':True}
     def resolve(self,event,**kwargs):
+        if event in ('FILL','LATE_FILL') and isinstance(kwargs.get('evidence'),dict) and kwargs['evidence'].get('confirmed') and kwargs.get('execution_id'):
+            kwargs['evidence']={**kwargs['evidence'],'readbackVerified':True,'executionId':kwargs['execution_id'],'quantity':str(kwargs['quantity']),'realizedPnl':'1.25','commission':'0.05','funding':'0'}
         f=self.fixture
         return resolve(db=f.db,transactional=transactional,claim_ref=f.refs['claim'],
                        ledger_ref=f.refs['ledger'],marker_ref=f.refs['marker'],owner_ref=f.refs['owner'],
