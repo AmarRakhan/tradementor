@@ -66,6 +66,8 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
                 return 'BLOCKED_NOT_TERMINAL'
             if state in ('CANCELLED','NO_ORDER','CLOSED','PARTIAL_TERMINAL'):return 'ALREADY_TERMINAL'
             if event=='NO_ORDER_TERMINAL' and (state not in ('RESERVED','UNKNOWN') or ledger.seen):return 'BLOCKED_NO_ORDER_CONFLICT'
+            # A bound Aster order ID is evidence of an order, never proof of no order.
+            if event=='NO_ORDER_TERMINAL' and claim.get('orderId'):return 'BLOCKED_KNOWN_ORDER_EXISTS'
             if event=='CANCEL_TERMINAL' and (state=='PARTIAL' or ledger.seen):
                 # Partial executions must not be finalized by an unrelated order's terminal readback.
                 if evidence.get('terminalReadbackVerified') is not True or not claim.get('orderId') or str(evidence.get('orderId'))!=str(claim['orderId']):

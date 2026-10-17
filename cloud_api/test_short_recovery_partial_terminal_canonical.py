@@ -52,3 +52,11 @@ class PartialTerminal(unittest.TestCase):
   self.assertEqual(self.h.db.snapshot(self.h.keys['claim'])[1]['orderId'],'original')
   self.assertEqual(self.h.db.snapshot(self.h.keys['claim'])[1]['state'],'UNKNOWN')
   self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
+
+ def test_unknown_bound_order_cannot_be_reconciled_as_no_order(self):
+  self.event('ACK',evidence={'confirmed':True,'orderId':'o'})
+  self.event('UNKNOWN')
+  result=self.event('NO_ORDER_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent'})
+  self.assertEqual(result,'BLOCKED_KNOWN_ORDER_EXISTS')
+  self.assertEqual(self.h.db.snapshot(self.h.keys['claim'])[1]['state'],'UNKNOWN')
+  self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
