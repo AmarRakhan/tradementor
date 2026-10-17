@@ -225,3 +225,18 @@ class RestartedPairReconciliation(unittest.TestCase):
   r,_,h=RunUidIntegration().run_case(existing_short_state='UNKNOWN',proof=False)
   self.assertEqual(r['shortRecoveryPairSettlement'],'BLOCKED_FUNDING_CYCLE_PROOF')
   self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+
+class ConservativeExitIsNotLiveAuthorization(unittest.TestCase):
+ def test_offline_pair_tp_without_independent_financial_proof_never_submits(self):
+  calls=[]
+  def submit(intent):calls.append(intent);raise AssertionError('unproven pair must not POST')
+  result,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',proof=False,mock_transport=submit)
+  self.assertNotEqual(result.get('shortRecoveryPairSettlement'),'PAIR_CLOSED_VERIFIED')
+  self.assertEqual(h.fixture.snapshot('pair')['state'],'OPEN')
+  self.assertEqual(calls,[])
+ def test_legacy_execution_flag_never_uses_offline_transport(self):
+  calls=[]
+  def submit(intent):calls.append(intent);raise AssertionError('offline transport called')
+  result,_,_=RunUidIntegration().run_case(action_mode='PAIR_EXIT',execution_enabled=True,force_shadow=False,mock_transport=submit)
+  self.assertNotIn('shortRecoverySubmit',result)
+  self.assertEqual(calls,[])
