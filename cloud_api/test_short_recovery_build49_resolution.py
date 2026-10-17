@@ -23,7 +23,7 @@ class Resolution(unittest.TestCase):
  def test_cancel_race_late_fill_then_terminal(self):
   self.assertEqual(self.run_event('CANCEL_REQUESTED'),'WAIT_TERMINAL')
   self.assertEqual(self.run_event('LATE_FILL',evidence={'confirmed':True,'orderId':'o'},execution_id='x',quantity=25),'FILL_APPLIED')
-  self.assertEqual(self.run_event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent'}),'TERMINAL_VERIFIED')
+  self.assertEqual(self.run_event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent'}),'PARTIAL_TERMINAL_RECONCILE_REQUIRED')
  def test_restart_and_duplicate_fill(self):
   self.run_event('UNKNOWN');self.helper.db=self.helper.db.restart();self.helper.bind()
   self.assertEqual(self.run_event('LATE_FILL',evidence={'confirmed':True,'orderId':'o'},execution_id='x',quantity=25),'FILL_APPLIED')
