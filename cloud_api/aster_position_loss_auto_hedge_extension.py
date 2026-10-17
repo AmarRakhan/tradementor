@@ -768,7 +768,10 @@ def _run_uid(
                                 for side in ("LONG", "SHORT")}
                     claim_status=_read_pair_claim_status(ctx["db"].transaction())
                     if any(not isinstance(claim_status[side],dict) or
-                           claim_status[side].get("state") in ("SUBMITTING", "RESERVED", "UNKNOWN") or
+                           claim_status[side].get("state") != "ACKED" or
+                           claim_status[side].get("positionSide") != side or
+                           (claim_status[side].get("account"),claim_status[side].get("symbol"),claim_status[side].get("cycle")) != (uid,ctx["symbol"],ctx["cycle"]) or
+                           not claim_status[side].get("intentId") or
                            not claim_status[side].get("orderId")
                            for side in ("LONG", "SHORT")):
                         report["shortRecoveryPairSettlement"]="PAIR_RECONCILE_REQUIRED_NO_TERMINAL_ACK"
