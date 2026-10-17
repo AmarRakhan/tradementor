@@ -65,6 +65,9 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
             if state in ('CANCELLED','NO_ORDER','CLOSED','PARTIAL_TERMINAL'):return 'ALREADY_TERMINAL'
             if event=='NO_ORDER_TERMINAL' and (state not in ('RESERVED','UNKNOWN') or ledger.seen):return 'BLOCKED_NO_ORDER_CONFLICT'
             if event=='CANCEL_TERMINAL' and (state=='PARTIAL' or ledger.seen):
+                # Partial executions must not be finalized by an unrelated order's terminal readback.
+                if evidence.get('terminalReadbackVerified') is not True or not claim.get('orderId') or str(evidence.get('orderId'))!=str(claim['orderId']):
+                    return 'BLOCKED_PARTIAL_TERMINAL_ORDER_PROOF'
                 tx.set(claim_ref,{**claim,'state':'PARTIAL_TERMINAL'})
                 return 'PARTIAL_TERMINAL_RECONCILE_REQUIRED'
             tx.set(claim_ref,{**claim,'state':'CANCELLED' if event=='CANCEL_TERMINAL' else 'NO_ORDER'})

@@ -18,7 +18,7 @@ class PartialTerminal(unittest.TestCase):
   self.assertEqual(self.event('ACK',evidence={'confirmed':True,'orderId':'o'}),'ACKED')
   e={'confirmed':True,'orderId':'o','executionId':'x','quantity':'25','readbackVerified':True,'realizedPnl':'1','commission':'.1','funding':'0'}
   self.assertEqual(self.event('FILL',evidence=e,execution_id='x',quantity=25),'FILL_APPLIED')
-  self.assertEqual(self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent'}),'PARTIAL_TERMINAL_RECONCILE_REQUIRED')
+  self.assertEqual(self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent','terminalReadbackVerified':True,'orderId':'o'}),'PARTIAL_TERMINAL_RECONCILE_REQUIRED')
   self.assertEqual(self.h.db.snapshot(self.h.keys['claim'])[1]['state'],'PARTIAL_TERMINAL')
   self.assertEqual(decode(self.h.db.snapshot(self.h.keys['ledger'])[1]).allocations[0].remaining,75)
   self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
@@ -30,6 +30,17 @@ class PartialTerminal(unittest.TestCase):
  def test_restart_keeps_terminal_claim(self):
   self.event('ACK',evidence={'confirmed':True,'orderId':'o'})
   self.event('FILL',evidence={'confirmed':True,'readbackVerified':True,'orderId':'o','executionId':'x','quantity':'25','realizedPnl':'1','commission':'.1','funding':'0'},execution_id='x',quantity=25)
-  self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent'})
+  self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent','terminalReadbackVerified':True,'orderId':'o'})
   self.h.db=self.h.db.restart();self.h.bind()
   self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
+
+ def test_partial_terminal_wrong_order_is_blocked(self):
+  self.event('ACK',evidence={'confirmed':True,'orderId':'o'})
+  self.event('FILL',evidence={'confirmed':True,'readbackVerified':True,'orderId':'o','executionId':'x','quantity':'25','realizedPnl':'1','commission':'.1','funding':'0'},execution_id='x',quantity=25)
+  evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent','terminalReadbackVerified':True,'orderId':'wrong'}
+  self.assertEqual(self.event('CANCEL_TERMINAL',evidence=evidence),'BLOCKED_PARTIAL_TERMINAL_ORDER_PROOF')
+  self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
+ def test_partial_terminal_requires_independent_readback(self):
+  self.event('ACK',evidence={'confirmed':True,'orderId':'o'})
+  self.event('FILL',evidence={'confirmed':True,'readbackVerified':True,'orderId':'o','executionId':'x','quantity':'25','realizedPnl':'1','commission':'.1','funding':'0'},execution_id='x',quantity=25)
+  self.assertEqual(self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent','orderId':'o'}),'BLOCKED_PARTIAL_TERMINAL_ORDER_PROOF')
