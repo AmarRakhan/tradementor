@@ -47,6 +47,8 @@ class PairTransportMock(PairLock):
   self.db=self.db.restart();self.refs={x:Ref(self.db,x) for x in self.refs}
   self.assertEqual(self.send(lambda i:(calls.append(i.intent_id) or {'clientOrderId':i.intent_id,'orderId':i.position_side.value+'-order'})),('BLOCKED_PAIR_SIDE_CLAIMS',))
   self.assertEqual(calls,[self.ids['LONG'],self.ids['SHORT']])
+  self.assertEqual(self.db.snapshot('LONG')[1]['positionSide'],'LONG')
+  self.assertEqual(self.db.snapshot('SHORT')[1]['positionSide'],'SHORT')
  def test_first_side_timeout_never_posts_second_or_retries(self):
   calls=[]
   def timeout(i):calls.append(i.intent_id);raise TimeoutError('mock')

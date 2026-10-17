@@ -165,7 +165,7 @@ def persist_mock_submit_ack(*,db,transactional,claim_ref,account,symbol,cycle,in
         if not isinstance(row,dict) or (row.get('account'),row.get('symbol'),row.get('cycle'),row.get('intentId'))!=(account,symbol,cycle,intent.intent_id) or row.get('state')!='SUBMITTING':
             return 'BLOCKED_ACK_CLAIM'
         if row.get('orderId') and str(row['orderId'])!=str(response['orderId']):return 'BLOCKED_ACK_ORDER_REBIND'
-        tx.set(claim_ref,{**row,'orderId':str(response['orderId']),'state':'ACKED'})
+        tx.set(claim_ref,{**row,'orderId':str(response['orderId']),'positionSide':intent.position_side.value,'state':'ACKED'})
         return 'ACKED_PERSISTED'
     return save(db.transaction())
 
