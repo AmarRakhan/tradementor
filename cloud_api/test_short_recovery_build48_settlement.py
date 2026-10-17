@@ -51,3 +51,17 @@ class Tests(unittest.TestCase):
   case=TestShadowReconciler();case.setUp();r=case.run_shadow({'XRPUSDT'})
   self.assertEqual(r['ordersSent'],0);self.assertEqual([a['symbol'] for a in r['actions']],['BTCUSDT'])
 if __name__=='__main__':unittest.main()
+
+class ClaimInventoryGuard(unittest.TestCase):
+ def test_wrong_cycle_inventory_never_reserves(self):
+  h=Tests('test_no_order_reconciled_terminal');h.setUp()
+  h.db.commit(h.keys['claim'],1,None)
+  from short_recovery_firestore_mock import encode
+  h.db.commit(h.keys['ledger'],1,encode(Ledger('u','XRPUSDT',(Allocation('z','different',D(100)),))))
+  self.assertEqual(reserve(db=h.db,transactional=transactional,marker_ref=h.refs['marker'],owner_ref=h.refs['owner'],ledger_ref=h.refs['ledger'],claim_ref=h.refs['claim'],account='u',symbol='XRPUSDT',cycle='c',intent_id='next',now=2),'BLOCKED_LEDGER')
+ def test_depleted_cycle_never_reserves(self):
+  h=Tests('test_no_order_reconciled_terminal');h.setUp()
+  h.db.commit(h.keys['claim'],1,None)
+  from short_recovery_firestore_mock import encode
+  h.db.commit(h.keys['ledger'],1,encode(Ledger('u','XRPUSDT',(Allocation('z','c',D(0)),))))
+  self.assertEqual(reserve(db=h.db,transactional=transactional,marker_ref=h.refs['marker'],owner_ref=h.refs['owner'],ledger_ref=h.refs['ledger'],claim_ref=h.refs['claim'],account='u',symbol='XRPUSDT',cycle='c',intent_id='next',now=2),'BLOCKED_LEDGER')
