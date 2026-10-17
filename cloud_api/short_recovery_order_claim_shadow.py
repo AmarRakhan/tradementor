@@ -19,7 +19,12 @@ def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account
             return 'BLOCKED_LEDGER'
         if claim is not None:
             if (claim.get('account'),claim.get('symbol'),claim.get('cycle'))!=(account,symbol,cycle):return 'BLOCKED_CLAIM_SCOPE'
-            if claim.get('intentId')==intent_id:return 'ALREADY_RESERVED'
+            if claim.get('intentId')==intent_id:
+                # Existing claims are evidence to reconcile, not new authorization.
+                # A disabled/stopped account must never receive a fresh GO.
+                if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
+                    return 'BLOCKED_RECOVERY_DISABLED_OR_STOPPED'
+                return 'ALREADY_RESERVED'
             # A stale lease is NOT proof an exchange submission did not happen.
             return 'BLOCKED_UNRESOLVED_CLAIM'
         if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
