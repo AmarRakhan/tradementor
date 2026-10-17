@@ -610,6 +610,17 @@ def _run_uid(
             positions=positions,
             open_orders=open_orders,
         )
+        # SHORT Recovery Plan 2.0: strictly read-only shadow instrumentation.
+        # NEVER change skip_symbols/protected_sides in the executable reconciler here.
+        # No plan execution, order placement, or setting persistence is enabled.
+        # An explicit future execution gate is required before intentional reductions
+        # may become the authoritative desired hedge amount.
+        if os.getenv("ASTER_SHORT_RECOVERY_SHADOW_ENABLED", "false").lower() == "true":
+            from short_recovery_runtime_shadow import preview_existing_pairs
+            report["shortRecoveryShadow"] = preview_existing_pairs(
+                settings=settings, pair_states=states, positions=positions,
+                open_orders=open_orders,
+            )
         report["createdCycles"] = [
             {"symbol": row.get("symbol"), "generationId": row.get("generationId")}
             for row in created
