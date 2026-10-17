@@ -44,6 +44,7 @@ class AutoHedgeSettingsRequest(BaseModel):
     confirmDisable: bool = False
     clientBuild: str = Field(default="", max_length=32)
     clientSource: str = Field(default="", max_length=64)
+    shortRecoveryPlan: dict[str, Any] | None = None
 
 
 class RehedgeRequest(BaseModel):
@@ -698,12 +699,20 @@ def put_position_loss_auto_hedge(
         threshold = normalize_threshold(request.thresholdUsd)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    now = datetime.now(timezone.utc)
-    _doc(uid).set({
-        "enabled": bool(request.enabled),
-        "thresholdUsd": threshold,
-        "updatedAt": now,
-    }, merge=True)
+    from short_recovery_gate import normalize_settings as normalize_recovery
+    payload = {"enabled": bool(request.enabled), "thresholdUsd": threshold,
+               "updatedAt": datetime.now(timezone.utc)}
+    if request.shortRecoveryPlan is not None:
+        try:
+            plan = normalize_recovery(request.shortRecoveryPlan)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        # This branch never enables trading for the new plan; preserve the user's
+        # requested enable state for future rollout behind independent execution gate.
+        payload["shortRecoveryPlan"] = {
+            "enabled": plan["enabled"], "steps": plan["steps"], "stepPct": plan["stepPct"]
+        }
+    _doc(uid).set(payload, merge=True)
     if previous_enabled != bool(request.enabled):
         _audit_global_setting_change(
             uid,
