@@ -79,3 +79,69 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
             tx.set(claim_ref,{**claim,'state':'CANCELLED' if event=='CANCEL_TERMINAL' else 'NO_ORDER'})
             return 'TERMINAL_VERIFIED'
     return step(db.transaction())
+
+def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_ref,
+                         account, symbol, cycle, readbacks, pair_ref):
+    """Offline atomic two-sided readback settlement; never submits replacement orders.
+
+    Side-scoped claim and ledger refs are persisted independently. The pair row
+    is a derived terminal gate, not a new runtime or order dispatcher.
+    Readbacks are injected exchange-shaped evidence, not trusted by default.
+    """
+    from short_recovery_ledger import d as finite, Fill
+    sides=('LONG','SHORT')
+    if set(claim_refs)!=set(sides) or set(ledger_refs)!=set(sides) or set(readbacks)!=set(sides):
+        return 'BLOCKED_PAIR_SCOPE'
+    @transactional
+    def settle(tx):
+        control=control_ref.get(transaction=tx).to_dict()
+        pair=pair_ref.get(transaction=tx).to_dict()
+        claims={side:claim_refs[side].get(transaction=tx).to_dict() for side in sides}
+        raws={side:ledger_refs[side].get(transaction=tx).to_dict() for side in sides}
+        if not isinstance(control,dict) or control.get('account')!=account or not isinstance(pair,dict) or (pair.get('account'),pair.get('symbol'),pair.get('cycle'))!=(account,symbol,cycle):
+            return 'BLOCKED_PAIR_CONTROL'
+        if pair.get('state')=='CLOSED':return 'ALREADY_PAIR_CLOSED'
+        for side in sides:
+            claim=claims[side];raw=raws[side]
+            if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('positionSide'))!=(account,symbol,cycle,side) or not claim.get('intentId') or not claim.get('orderId'):
+                return 'BLOCKED_SIDE_CLAIM'
+            if not isinstance(raw,dict) or (raw.get('account'),raw.get('symbol'))!=(account,symbol):return 'BLOCKED_SIDE_LEDGER'
+            if claim.get('state') not in ('ACKED','PARTIAL','UNKNOWN','PARTIAL_TERMINAL','CLOSED'):
+                return 'BLOCKED_SIDE_CLAIM'
+        updates={};claimed={};trusted={}
+        for side in sides:
+            row=readbacks[side];claim=claims[side];ledger=decode(raws[side]);new=ledger
+            if not isinstance(row,dict) or row.get('readbackVerified') is not True or row.get('positionSide')!=side or str(row.get('orderId'))!=str(claim['orderId']) or row.get('symbol')!=symbol:
+                return 'BLOCKED_SIDE_READBACK'
+            fills=row.get('fills')
+            if not isinstance(fills,list) or row.get('fillsComplete') is not True:
+                return 'BLOCKED_INCOMPLETE_FILLS'
+            try:
+                expected=finite(row['executedQty'])
+                if expected<0:return 'BLOCKED_EXECUTED_QTY'
+                total=Decimal(0);seen_page=set()
+                for fill in fills:
+                    if not isinstance(fill,dict) or not fill.get('executionId') or fill['executionId'] in seen_page or str(fill.get('orderId'))!=str(claim['orderId']):return 'BLOCKED_FILL_IDENTITY'
+                    seen_page.add(fill['executionId']);qty=finite(fill['quantity']);pnl=finite(fill['realizedPnl']);fee=finite(fill['commission']);funding=finite(fill['funding'])
+                    if qty<=0 or fee<0 or fill.get('financialVerified') is not True or fill.get('fundingOwnershipVerified') is not True:return 'BLOCKED_FINANCIAL_EVIDENCE'
+                    total+=qty
+                    if fill['executionId'] in new.seen:continue
+                    owned=[a for a in new.allocations if a.cycle_id==cycle and a.remaining>0]
+                    if len(owned)!=1:return 'BLOCKED_ALLOCATION'
+                    item=owned[0]
+                    new=new.apply(Fill(account,symbol,fill['executionId'],str(claim['orderId']),qty,pnl,fee,funding),((item.zone_id,cycle,qty),))
+                if total!=expected:return 'BLOCKED_EXECUTION_INCOMPLETE'
+            except (KeyError,TypeError,ValueError,InvalidOperation):return 'BLOCKED_FINANCIAL_EVIDENCE'
+            remaining=[a.remaining for a in new.allocations if a.cycle_id==cycle]
+            if len(remaining)!=1:return 'BLOCKED_ALLOCATION'
+            terminal=row.get('status')=='FILLED' and row.get('terminalVerified') is True and remaining[0]==0 and row.get('incomeHistoryComplete') is True
+            updates[side]=new;trusted[side]=terminal
+            claimed[side]={**claim,'state':'CLOSED' if terminal else 'UNKNOWN','executedQty':str(expected)}
+        for side in sides:
+            if encode(updates[side])!=raws[side]:tx.set(ledger_refs[side],encode(updates[side]))
+            if claimed[side]!=claims[side]:tx.set(claim_refs[side],claimed[side])
+        # A stop does not erase confirmed fills; it prevents terminal authorization.
+        done=all(trusted.values()) and control.get('enabled') is True and control.get('emergencyStop') is False and control.get('closeAllActive') is False and pair.get('fundingCycleVerified') is True
+        tx.set(pair_ref,{**pair,'state':'CLOSED' if done else 'RECONCILE_REQUIRED'})
+        return 'PAIR_CLOSED_VERIFIED' if done else 'PAIR_RECONCILE_REQUIRED'
+    return settle(db.transaction())

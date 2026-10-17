@@ -60,3 +60,29 @@ class EmulatorIntegration(unittest.TestCase):
    results=[f.result(timeout=15) for f in futures]
   self.assertEqual(results.count('RESERVED_SHADOW'),1)
   self.assertEqual(results.count('BLOCKED_UNRESOLVED_CLAIM'),3)
+
+@unittest.skipUnless(os.getenv('FIRESTORE_EMULATOR_HOST')=='127.0.0.1:18783' and os.getenv('GOOGLE_CLOUD_PROJECT')=='amar-short-recovery-offline-test', 'isolated emulator not explicitly configured')
+class PairCloseEmulator(unittest.TestCase):
+ def test_side_scoped_atomic_pair_and_partial_replay(self):
+  from google.cloud import firestore
+  from short_recovery_order_resolution_shadow import reconcile_pair_close
+  client=firestore.Client(project='amar-short-recovery-offline-test')
+  base=client.collection('offline_recovery_pair').document(uuid.uuid4().hex)
+  refs={k:base.collection('docs').document(k) for k in ('control','pair','LONGclaim','SHORTclaim','LONGledger','SHORTledger')}
+  refs['control'].set({'account':'u','enabled':True,'emergencyStop':False,'closeAllActive':False})
+  refs['pair'].set({'account':'u','symbol':'XRPUSDT','cycle':'c','state':'OPEN','fundingCycleVerified':True})
+  for side in ('LONG','SHORT'):
+   refs[side+'claim'].set({'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':side,'intentId':side+'-intent','orderId':side+'-order','state':'ACKED'})
+   refs[side+'ledger'].set(encode(Ledger('u','XRPUSDT',(Allocation(side,'c',D(100 if side=='LONG' else 75)),))))
+  def row(side,quantity,status):
+   return {'symbol':'XRPUSDT','positionSide':side,'orderId':side+'-order','readbackVerified':True,'fillsComplete':True,'incomeHistoryComplete':True,'terminalVerified':status=='FILLED','status':status,'executedQty':str(quantity),'fills':[{'orderId':side+'-order','executionId':side+'-ex','quantity':str(quantity),'realizedPnl':'1','commission':'.1','funding':'-.05','financialVerified':True,'fundingOwnershipVerified':True}]}
+  rows={'LONG':row('LONG',100,'FILLED'),'SHORT':row('SHORT',25,'UNKNOWN')}
+  def run():
+   return reconcile_pair_close(db=client,transactional=firestore.transactional,claim_refs={s:refs[s+'claim'] for s in ('LONG','SHORT')},ledger_refs={s:refs[s+'ledger'] for s in ('LONG','SHORT')},control_ref=refs['control'],pair_ref=refs['pair'],account='u',symbol='XRPUSDT',cycle='c',readbacks=rows)
+  self.assertEqual(run(),'PAIR_RECONCILE_REQUIRED')
+  self.assertEqual(run(),'PAIR_RECONCILE_REQUIRED')
+  self.assertEqual(refs['SHORTclaim'].get().to_dict()['state'],'UNKNOWN')
+  self.assertEqual(decode(refs['SHORTledger'].get().to_dict()).allocations[0].remaining,D(50))
+  refs['control'].update({'emergencyStop':True})
+  self.assertEqual(run(),'PAIR_RECONCILE_REQUIRED')
+  self.assertNotEqual(refs['pair'].get().to_dict()['state'],'CLOSED')
