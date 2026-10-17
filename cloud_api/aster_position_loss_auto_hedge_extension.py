@@ -678,6 +678,13 @@ def _run_uid(
                                     stop_clear=preflight=="PREFLIGHT_SHADOW_ONLY")
                                 if preflight=="PREFLIGHT_SHADOW_ONLY" else
                                 {"status":preflight,"ordersSent":0,"intents":()})
+                            proposed = report["shortRecoveryAction"]
+                            if proposed.get("intents") and any(
+                                    intent.intent_id != action_ctx["intent_id"]
+                                    for intent in proposed["intents"]):
+                                report["shortRecoveryAction"] = {
+                                    "status":"BLOCKED_INTENT_CLAIM_ID_MISMATCH",
+                                    "ordersSent":0,"intents":()}
                         except (KeyError,TypeError,ValueError):
                             report["shortRecoveryAction"] = {"status":"BLOCKED_ACTION_CONTEXT","ordersSent":0,"intents":()}
                     report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)

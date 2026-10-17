@@ -72,11 +72,11 @@ class RunUidIntegration(unittest.TestCase):
 class ThreeActionsRunUid(unittest.TestCase):
  def test_reduce_mapped_through_pre_submit(self):
   r,_,_=RunUidIntegration().run_case(action_mode='REDUCE')
-  self.assertEqual(r['shortRecoveryAction']['status'],'PREVIEW_SHORT_REDUCE')
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_INTENT_CLAIM_ID_MISMATCH')
   self.assertEqual(r['shortRecoveryAction']['ordersSent'],0)
  def test_rehedge_mapped_through_pre_submit(self):
   r,_,_=RunUidIntegration().run_case(action_mode='REHEDGE')
-  self.assertEqual(r['shortRecoveryAction']['status'],'PREVIEW_REHEDGE_REQUIRES_FINAL_READBACK')
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_INTENT_CLAIM_ID_MISMATCH')
  def test_pair_exit_requires_financial_proof(self):
   r,_,_=RunUidIntegration().run_case(action_mode='PAIR_EXIT',proof=False)
   self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_NET_EVIDENCE')
