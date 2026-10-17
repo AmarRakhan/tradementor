@@ -48,7 +48,7 @@ class Integration(unittest.TestCase):
     def test_missing_aster_funding_does_not_create_trusted_zero(self):
         self.c.rows[0].pop('funding')
         raw=inspect(self.c,symbol='XRPUSDT',client_order_id='intent')['fills'][0]
-        self.assertEqual(raw['funding'],Decimal(0))  # existing adapter fallback; NOT proof
+        self.assertIsNone(raw['funding'])  # never invent a zero funding amount
         self.run_event('ACK',{'confirmed':True,'orderId':'o'})
         self.assertEqual(self.run_event('FILL',{'confirmed':True,'orderId':'o',
             'executionId':raw['executionId'],'quantity':str(raw['quantity']),
@@ -72,3 +72,20 @@ class Integration(unittest.TestCase):
             self.assertFalse(t.is_alive())
         self.assertEqual(results,['BLOCKED_FINANCIAL_EVIDENCE']*4)
         self.assertEqual(self.ledger().allocations[0].remaining,Decimal(100))
+
+class ReadbackFinancialCompleteness(unittest.TestCase):
+    def test_missing_pnl_and_commission_fail_closed(self):
+        for field in ('realizedPnl', 'commission'):
+            client=MockAster()
+            client.rows[0].pop(field)
+            self.assertEqual(inspect(client,symbol='XRPUSDT',client_order_id='intent')['status'],'BLOCKED_MISSING_FINANCIAL_EVIDENCE')
+    def test_explicit_zero_is_not_missing(self):
+        client=MockAster()
+        client.rows[0]['realizedPnl']='0'
+        client.rows[0]['commission']='0'
+        self.assertEqual(inspect(client,symbol='XRPUSDT',client_order_id='intent')['status'],'READBACK_PREVIEW')
+    def test_missing_funding_is_unknown_not_zero(self):
+        client=MockAster();client.rows[0].pop('funding')
+        preview=inspect(client,symbol='XRPUSDT',client_order_id='intent')
+        self.assertIsNone(preview['fills'][0]['funding'])
+        self.assertFalse(preview['terminalVerified'])

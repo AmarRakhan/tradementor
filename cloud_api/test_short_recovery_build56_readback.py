@@ -4,7 +4,7 @@ from test_short_recovery_real_reconciler_shadow import TestShadowReconciler
 class Client:
  def __init__(self,order=None,fills=None,error=False):
   self.order=order if order is not None else {'symbol':'XRPUSDT','clientOrderId':'intent','orderId':11,'status':'PARTIALLY_FILLED'}
-  self.fills=fills if fills is not None else [{'symbol':'XRPUSDT','orderId':11,'id':77,'qty':'25'}]
+  self.fills=fills if fills is not None else [{'symbol':'XRPUSDT','orderId':11,'id':77,'qty':'25','realizedPnl':'0','commission':'0'}]
   self.error=error
  def query_order(self,symbol,client_order_id):
   if self.error:raise TimeoutError('mock timeout')

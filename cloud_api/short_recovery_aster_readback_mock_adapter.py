@@ -19,11 +19,18 @@ def inspect(client, *, symbol, client_order_id):
         except (InvalidOperation,ValueError,TypeError):return {'status':'BLOCKED_BAD_FILL'}
         if not execution or not q.is_finite() or q<=0:return {'status':'BLOCKED_BAD_FILL'}
         money={}
-        for key,field in (('realizedPnl','realizedPnl'),('commission','fee'),('funding','funding')):
-            try: amount=Decimal(str(x.get(key,'0')))
+        for key,field in (('realizedPnl','realizedPnl'),('commission','fee')):
+            if key not in x:return {'status':'BLOCKED_MISSING_FINANCIAL_EVIDENCE'}
+            try: amount=Decimal(str(x[key]))
             except (InvalidOperation,ValueError,TypeError):return {'status':'BLOCKED_BAD_FILL'}
             if not amount.is_finite() or (field=='fee' and amount<0):return {'status':'BLOCKED_BAD_FILL'}
             money[field]=amount
+        # Aster fill rows alone do not establish order/cycle funding.
+        if 'funding' in x:
+            try: money['funding']=Decimal(str(x['funding']))
+            except (InvalidOperation,ValueError,TypeError):return {'status':'BLOCKED_BAD_FILL'}
+            if not money['funding'].is_finite():return {'status':'BLOCKED_BAD_FILL'}
+        else: money['funding']=None
         if execution in seen:continue
         seen.add(execution);output.append({'executionId':execution,'quantity':q,'orderId':str(order['orderId']),**money})
     return {'status':'READBACK_PREVIEW','orderStatus':order.get('status'),'fills':output,
