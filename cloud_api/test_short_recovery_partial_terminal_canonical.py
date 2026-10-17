@@ -18,7 +18,7 @@ class PartialTerminal(unittest.TestCase):
   self.assertEqual(self.event('ACK',evidence={'confirmed':True,'orderId':'o'}),'ACKED')
   e={'confirmed':True,'orderId':'o','executionId':'x','quantity':'25','readbackVerified':True,'realizedPnl':'1','commission':'.1','funding':'0'}
   self.assertEqual(self.event('FILL',evidence=e,execution_id='x',quantity=25),'FILL_APPLIED')
-  self.assertEqual(self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent','terminalReadbackVerified':True,'orderId':'o'}),'PARTIAL_TERMINAL_RECONCILE_REQUIRED')
+  self.assertEqual(self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent','terminalReadbackVerified':True,'orderId':'o','orderStatus':'CANCELED'}),'PARTIAL_TERMINAL_RECONCILE_REQUIRED')
   self.assertEqual(self.h.db.snapshot(self.h.keys['claim'])[1]['state'],'PARTIAL_TERMINAL')
   self.assertEqual(decode(self.h.db.snapshot(self.h.keys['ledger'])[1]).allocations[0].remaining,75)
   self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
@@ -30,7 +30,7 @@ class PartialTerminal(unittest.TestCase):
  def test_restart_keeps_terminal_claim(self):
   self.event('ACK',evidence={'confirmed':True,'orderId':'o'})
   self.event('FILL',evidence={'confirmed':True,'readbackVerified':True,'orderId':'o','executionId':'x','quantity':'25','realizedPnl':'1','commission':'.1','funding':'0'},execution_id='x',quantity=25)
-  self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent','terminalReadbackVerified':True,'orderId':'o'})
+  self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent','terminalReadbackVerified':True,'orderId':'o','orderStatus':'CANCELED'})
   self.h.db=self.h.db.restart();self.h.bind()
   self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
 
@@ -60,3 +60,12 @@ class PartialTerminal(unittest.TestCase):
   self.assertEqual(result,'BLOCKED_KNOWN_ORDER_EXISTS')
   self.assertEqual(self.h.db.snapshot(self.h.keys['claim'])[1]['state'],'UNKNOWN')
   self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
+
+ def test_partial_fill_cannot_finalize_from_filled_or_unknown_status(self):
+  self.event('ACK',evidence={'confirmed':True,'orderId':'o'})
+  e={'confirmed':True,'orderId':'o','executionId':'x','quantity':'25','readbackVerified':True,'realizedPnl':'1','commission':'.1','funding':'0'}
+  self.event('FILL',evidence=e,execution_id='x',quantity=25)
+  for status in ('FILLED','NEW','REJECTED',None):
+   proof={'confirmed':True,'noMoreFills':True,'intentId':'intent','terminalReadbackVerified':True,'orderId':'o','orderStatus':status}
+   self.assertEqual(self.event('CANCEL_TERMINAL',evidence=proof),'BLOCKED_PARTIAL_NOT_CANCELLED')
+   self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
