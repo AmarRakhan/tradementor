@@ -1,8 +1,28 @@
 """Offline order-intent reservation; intentionally never sends orders."""
 from short_recovery_firestore_mock import decode
+import hashlib
+import re
 
-def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account,symbol,cycle,intent_id,now,lease_seconds=45,control_ref=None):
+def canonical_intent_id(*,account,symbol,cycle,side,action,step):
+    """Deterministic Aster-safe ID for an independently persisted claim scope.
+
+    The same action+step reuses one ID across retries/restarts; distinct steps
+    must never reuse it. Not authorization to submit.
+    """
+    if (not all(isinstance(x,str) and x for x in (account,symbol,cycle))
+            or side not in ("LONG","SHORT") or action not in ("OPEN","CLOSE")
+            or isinstance(step,bool) or not isinstance(step,int) or step<0):
+        raise ValueError("BLOCKED_INTENT_SCOPE")
+    key="\x1f".join((account,symbol,cycle,side,action,str(step)))
+    return "sr2-"+hashlib.sha256(key.encode()).hexdigest()[:30]
+
+
+def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account,symbol,cycle,intent_id,now,lease_seconds=45,control_ref=None,side=None,action=None,step=None):
     if not all((account,symbol,cycle,intent_id)) or lease_seconds<=0:return 'BLOCKED_INPUT'
+    if side is not None or action is not None or step is not None:
+        try: expected=canonical_intent_id(account=account,symbol=symbol,cycle=cycle,side=side,action=action,step=step)
+        except ValueError:return 'BLOCKED_INTENT_SCOPE'
+        if intent_id!=expected:return 'BLOCKED_INTENT_ID'
     if control_ref is None:return 'BLOCKED_CONTROL_UNAVAILABLE'
     @transactional
     def attempt(tx):
@@ -30,7 +50,8 @@ def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account
         if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
             return 'BLOCKED_RECOVERY_DISABLED_OR_STOPPED'
         tx.set(claim_ref,{'account':account,'symbol':symbol,'cycle':cycle,'intentId':intent_id,
-                          'state':'RESERVED','reservedAt':now,'leaseUntil':now+lease_seconds})
+                          'state':'RESERVED','reservedAt':now,'leaseUntil':now+lease_seconds,
+                          'side':side,'action':action,'step':step})
         return 'RESERVED_SHADOW'
     return attempt(db.transaction())
 
