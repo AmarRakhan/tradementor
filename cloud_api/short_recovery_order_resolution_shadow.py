@@ -145,3 +145,54 @@ def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_
         tx.set(pair_ref,{**pair,'state':'CLOSED' if done else 'RECONCILE_REQUIRED'})
         return 'PAIR_CLOSED_VERIFIED' if done else 'PAIR_RECONCILE_REQUIRED'
     return settle(db.transaction())
+
+def reconcile_pair_from_aster_mock(*, client, claim_refs, ledger_refs, control_ref, pair_ref,
+                                   db, transactional, account, symbol, cycle, financial_proof=None,
+                                   page_size=500):
+    """Inject Aster GETs into canonical atomic settlement only with independent evidence.
+
+    financial_proof is trusted only as an explicitly supplied, complete provenance
+    map from the caller's separately verified income/cycle ownership procedure.
+    Aster userTrades alone never certifies funding ownership.
+    """
+    from short_recovery_aster_readback_mock_adapter import inspect
+    sides=('LONG','SHORT')
+    @transactional
+    def read_claims(tx):
+        return {s:claim_refs[s].get(transaction=tx).to_dict() for s in sides}
+    raw=read_claims(db.transaction())
+    if any(not isinstance(raw[s],dict) or (raw[s].get('account'),raw[s].get('symbol'),raw[s].get('cycle'),raw[s].get('positionSide'))!=(account,symbol,cycle,s) or not raw[s].get('intentId') for s in sides):
+        return 'BLOCKED_SIDE_CLAIM'
+    if not isinstance(financial_proof,dict) or set(financial_proof)!=set(sides):
+        return 'BLOCKED_FUNDING_CYCLE_PROOF'
+    evidence={}
+    for side in sides:
+        proof=financial_proof[side]
+        if not isinstance(proof,dict) or proof.get('cycleId')!=cycle or proof.get('incomeHistoryComplete') is not True or proof.get('ownershipVerified') is not True:
+            return 'BLOCKED_FUNDING_CYCLE_PROOF'
+        result=inspect(client,symbol=symbol,client_order_id=raw[side]['intentId'],page_size=page_size)
+        if result.get('status')!='READBACK_PREVIEW':return result.get('status','BLOCKED_READBACK')
+        if str(proof.get('orderId'))!=str(raw[side].get('orderId')):
+            return 'BLOCKED_ORDER_MISMATCH'
+        fills=[]
+        verified=proof.get('executions')
+        if not isinstance(verified,dict):return 'BLOCKED_FUNDING_CYCLE_PROOF'
+        for fill in result['fills']:
+            owned=verified.get(fill['executionId'])
+            if not isinstance(owned,dict) or owned.get('fundingOwnershipVerified') is not True or owned.get('financialVerified') is not True:
+                return 'BLOCKED_FUNDING_CYCLE_PROOF'
+            try:funding=Decimal(str(owned['funding']))
+            except (KeyError,TypeError,InvalidOperation,ValueError):return 'BLOCKED_FUNDING_CYCLE_PROOF'
+            if not funding.is_finite():return 'BLOCKED_FUNDING_CYCLE_PROOF'
+            fills.append({'orderId':fill['orderId'],'executionId':fill['executionId'],'quantity':str(fill['quantity']),
+                          'realizedPnl':str(fill['realizedPnl']),'commission':str(fill['fee']),
+                          'funding':str(funding),'financialVerified':True,'fundingOwnershipVerified':True})
+        if set(verified)!=set(x['executionId'] for x in fills):return 'BLOCKED_FUNDING_CYCLE_PROOF'
+        if proof.get('orderStatus')!=result['orderStatus'] or proof.get('executedQty') is None:
+            return 'BLOCKED_TERMINAL_PROOF'
+        evidence[side]={'symbol':symbol,'positionSide':side,'orderId':raw[side]['orderId'],
+                        'readbackVerified':True,'fillsComplete':True,'incomeHistoryComplete':True,
+                        'terminalVerified':proof.get('terminalVerified') is True and result['orderStatus']=='FILLED',
+                        'status':result['orderStatus'],'executedQty':str(proof['executedQty']),'fills':fills}
+    return reconcile_pair_close(db=db,transactional=transactional,claim_refs=claim_refs,ledger_refs=ledger_refs,
+                                control_ref=control_ref,pair_ref=pair_ref,account=account,symbol=symbol,cycle=cycle,readbacks=evidence)
