@@ -622,12 +622,28 @@ def _run_uid(
         # No plan execution, order placement, or setting persistence is enabled.
         # An explicit future execution gate is required before intentional reductions
         # may become the authoritative desired hedge amount.
-        if os.getenv("ASTER_SHORT_RECOVERY_SHADOW_ENABLED", "false").lower() == "true":
+        if (not execute and
+                os.getenv("ASTER_SHORT_RECOVERY_SHADOW_ENABLED", "false").lower() == "true"):
             from short_recovery_runtime_shadow import preview_existing_pairs
+            from short_recovery_gate import partition_reconciliation
             report["shortRecoveryShadow"] = preview_existing_pairs(
                 settings=settings, pair_states=states, positions=positions,
                 open_orders=open_orders,
             )
+            # Simulated ownership only: original skip_symbols were already used.
+            shadow_plan = partition_reconciliation(
+                settings=settings.get("shortRecoveryPlan"),
+                protected_sides=protected_sides,
+                existing_skip_symbols=set(skip_symbols or ()),
+                recovery_cycles=states,
+            )
+            report["shortRecoveryOwnershipShadow"] = {
+                "status": shadow_plan["status"],
+                "suppressedTopupSymbols": sorted(
+                    shadow_plan["shadow_skip"] - shadow_plan["legacy_skip"]
+                ),
+                "ordersSent": 0,
+            }
         report["createdCycles"] = [
             {"symbol": row.get("symbol"), "generationId": row.get("generationId")}
             for row in created
