@@ -127,7 +127,13 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
     preview = []
     if report and str(report.get("mode", "")).upper() == "SHADOW":
         preview = [item for item in report.get("actions", []) if isinstance(item, dict)]
+    from short_recovery_gate import normalize_settings as _normalize_recovery_settings
+    try:
+        recovery_plan = _normalize_recovery_settings(row.get("shortRecoveryPlan"))
+    except ValueError:
+        recovery_plan = {"enabled": False, "status": "INVALID_SETTINGS"}
     return _serialize({
+        "shortRecoveryPlan": recovery_plan,
         "available": True,
         "ownerOnly": False,
         "releaseFeature": "auto_hedge_v2",
