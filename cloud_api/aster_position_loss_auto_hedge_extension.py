@@ -728,16 +728,17 @@ def _run_uid(
                                 elif len(proposed["intents"]) != 1:
                                     # Reserve both sideclaims atomically, but still
                                     # do not send either leg: exchange POSTs aren't atomic.
-                                    from short_recovery_order_claim_shadow import lock_pair_submit_offline
+                                    from short_recovery_order_claim_shadow import submit_locked_pair_mock_offline
                                     intents={i.position_side.value:i for i in proposed["intents"]}
-                                    report["shortRecoverySubmit"] = (lock_pair_submit_offline(
+                                    report["shortRecoverySubmit"] = submit_locked_pair_mock_offline(
                                         db=ctx["db"],transactional=ctx["transactional"],
                                         long_claim_ref=action_ctx.get("long_claim_ref"),
                                         short_claim_ref=action_ctx["claim_ref"],
                                         control_ref=ctx["control_ref"],account=uid,
                                         symbol=symbol,cycle=ctx["cycle"],
                                         long_intent=intents.get("LONG"),short_intent=intents.get("SHORT"),
-                                        account_close_guard=action_ctx["account_close_guard"]),)
+                                        account_close_guard=action_ctx["account_close_guard"],
+                                        submit_mock=mock_submit)
                                 else:
                                     from short_recovery_order_claim_shadow import submit_once_offline
                                     claim_refs = {"SHORT":action_ctx["claim_ref"],

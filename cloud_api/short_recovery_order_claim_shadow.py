@@ -154,3 +154,28 @@ def lock_pair_submit_offline(*, db, transactional, long_claim_ref, short_claim_r
         tx.set(short_claim_ref,{**short_claim,'state':'SUBMITTING'})
         return 'PAIR_SUBMITTING_LOCKED'
     return acquire(db.transaction())
+
+def submit_locked_pair_mock_offline(*, db, transactional, long_claim_ref, short_claim_ref,
+                                    control_ref, account, symbol, cycle, long_intent, short_intent,
+                                    account_close_guard, submit_mock):
+    """Mock-only two-leg transport after atomic pair lock. Never retries a leg.
+
+    If either POST outcome is uncertain, retains both SUBMITTING claims; only
+    authoritative per-side readback may resolve, never a blind second POST.
+    """
+    if not callable(submit_mock):return ('BLOCKED_MOCK_TRANSPORT',)
+    locked=lock_pair_submit_offline(db=db,transactional=transactional,
+        long_claim_ref=long_claim_ref,short_claim_ref=short_claim_ref,control_ref=control_ref,
+        account=account,symbol=symbol,cycle=cycle,long_intent=long_intent,
+        short_intent=short_intent,account_close_guard=account_close_guard)
+    if locked!='PAIR_SUBMITTING_LOCKED':return (locked,)
+    results=[]
+    for intent in (long_intent,short_intent):
+        try:
+            account_close_guard()
+            submit_mock(intent)
+        except Exception:
+            results.append('UNKNOWN_RECONCILE_ONLY')
+            break
+        results.append('SUBMITTED_RECONCILE_ONLY')
+    return tuple(results)
