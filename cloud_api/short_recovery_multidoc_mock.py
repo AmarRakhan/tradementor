@@ -34,6 +34,7 @@ class Snapshot:
 class Transaction:
     def __init__(self,db):self.db=db;self.reads={};self.writes={}
     def read(self,ref):
+        if self.writes:raise ValueError('Firestore transaction requires all reads before writes')
         version,data=self.db.snapshot(ref.key)
         if ref.key in self.reads:raise ValueError('duplicate read not supported')
         self.reads[ref.key]=version
