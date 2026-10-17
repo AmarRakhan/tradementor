@@ -17,14 +17,18 @@ def income_pages(client, *, symbol, start_ms, end_ms, page_size=500, max_pages=2
             # A time-only cursor cannot establish that no further transactions
             # share the timestamp of this page's last event.
             raise ValueError('BLOCKED_SAME_TIMESTAMP_PAGINATION')
+        previous_time = None
         for row in page:
             try:
                 time = int(row['time'])
                 identity = str(row['tranId'])
             except (KeyError, TypeError, ValueError):
                 raise ValueError('BLOCKED_INCOME_IDENTITY')
-            if not identity or not cursor <= time <= end_ms or identity in seen:
+            if not identity or not cursor <= time <= end_ms or identity in seen or row.get('symbol') != symbol:
                 raise ValueError('BLOCKED_INCOME_IDENTITY')
+            if previous_time is not None and time < previous_time:
+                raise ValueError('BLOCKED_INCOME_ORDER')
+            previous_time = time
             seen.add(identity)
             rows.append(row)
         return tuple(rows)

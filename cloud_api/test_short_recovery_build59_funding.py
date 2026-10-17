@@ -24,6 +24,12 @@ class Tests(unittest.TestCase):
         result=income_pages(c,symbol='XRPUSDT',start_ms=100,end_ms=200,page_size=3)
         self.assertEqual(len(result),2)
         self.assertEqual(list(c.calls[0]),['symbol','start_time','end_time','limit'])
+    def test_unsorted_income_rejected(self):
+        with self.assertRaisesRegex(ValueError,'BLOCKED_INCOME_ORDER'):
+            income_pages(Mock([self.event(1,time=150),self.event(2,time=110)]),symbol='XRPUSDT',start_ms=100,end_ms=200)
+    def test_wrong_symbol_income_rejected(self):
+        with self.assertRaisesRegex(ValueError,'BLOCKED_INCOME_IDENTITY'):
+            income_pages(Mock([self.event(1,symbol='BTCUSDT')]),symbol='XRPUSDT',start_ms=100,end_ms=200)
     def test_malformed_income_blocks(self):
         with self.assertRaisesRegex(ValueError,'IDENTITY'):
             income_pages(Mock([{'time':101}]),symbol='XRPUSDT',start_ms=100,end_ms=200)
