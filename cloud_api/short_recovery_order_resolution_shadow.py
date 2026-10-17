@@ -123,12 +123,13 @@ def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_
                 # executed quantity, even when it omits already-seen fills.
                 if claim.get('executedQty') is not None and expected<finite(claim['executedQty']):
                     return 'BLOCKED_EXECUTED_QTY_REGRESSION'
-                total=Decimal(0);seen_page=set()
+                total=Decimal(0);readback_net=Decimal(0);seen_page=set()
                 for fill in fills:
                     if not isinstance(fill,dict) or not fill.get('executionId') or fill['executionId'] in seen_page or str(fill.get('orderId'))!=str(claim['orderId']):return 'BLOCKED_FILL_IDENTITY'
                     seen_page.add(fill['executionId']);qty=finite(fill['quantity']);pnl=finite(fill['realizedPnl']);fee=finite(fill['commission']);funding=finite(fill['funding'])
                     if qty<=0 or fee<0 or fill.get('financialVerified') is not True or fill.get('fundingOwnershipVerified') is not True:return 'BLOCKED_FINANCIAL_EVIDENCE'
                     total+=qty
+                    readback_net+=pnl-fee+funding
                     if fill['executionId'] in new.seen:continue
                     owned=[a for a in new.allocations if a.cycle_id==cycle and a.remaining>0]
                     if len(owned)!=1:return 'BLOCKED_ALLOCATION'
@@ -137,7 +138,9 @@ def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_
                 # A replayed executionId is idempotent, but a modified quantity
                 # must not silently replace its previously booked amount.
                 booked_qty=sum((q for _,c,q,_ in new.booked if c==cycle),Decimal(0))
+                booked_net=sum((net for _,c,_,net in new.booked if c==cycle),Decimal(0))
                 if total!=expected or booked_qty!=expected:return 'BLOCKED_EXECUTION_INCOMPLETE'
+                if booked_net!=readback_net:return 'BLOCKED_FINANCIAL_REPLAY_MISMATCH'
             except (KeyError,TypeError,ValueError,InvalidOperation):return 'BLOCKED_FINANCIAL_EVIDENCE'
             remaining=[a.remaining for a in new.allocations if a.cycle_id==cycle]
             if len(remaining)!=1:return 'BLOCKED_ALLOCATION'

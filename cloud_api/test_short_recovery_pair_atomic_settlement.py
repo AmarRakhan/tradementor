@@ -78,3 +78,15 @@ class StaleExecutedQtyCannotRegress(PairAtomic):
   self.assertEqual(self.run_pair(stale),'BLOCKED_EXECUTED_QTY_REGRESSION')
   self.assertEqual(self.snapshot('SHORTledger'),before)
   self.assertEqual(self.snapshot('SHORTclaim'),claim)
+
+class ReplayedFillFinancialConflict(PairAtomic):
+ def test_same_execution_id_changed_fee_is_rejected_after_restart(self):
+  rows={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='PARTIALLY_FILLED')}
+  self.assertEqual(self.run_pair(rows),'PAIR_RECONCILE_REQUIRED')
+  before=self.snapshot('SHORTledger')
+  self.db=self.db.restart();self.bind()
+  replay={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='PARTIALLY_FILLED')}
+  replay['SHORT']['fills'][0]['commission']='0.4'
+  self.assertEqual(self.run_pair(replay),'BLOCKED_FINANCIAL_REPLAY_MISMATCH')
+  self.assertEqual(self.snapshot('SHORTledger'),before)
+  self.assertNotEqual(self.snapshot('pair')['state'],'CLOSED')
