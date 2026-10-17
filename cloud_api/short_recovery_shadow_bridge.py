@@ -22,6 +22,9 @@ def preview_reconciliation(*, protected_sides: dict[str, str],
             skip.add(symbol)
             continue
         skip.add(symbol)
+        if symbol in net_exits:
+            results[symbol] = {"status": "EXIT_PAIR_PRIORITY", "reduction": {"status": "BLOCKED_NET_EXIT"}, "rehedge": "EXIT_INSTEAD"}
+            continue
         reduction = plan_reduction(state)
         rehedge = rehedge_permission(
             state, remaining_exchange_short_qty=exchange_short_quantities.get(symbol, Decimal("-1")),
