@@ -87,3 +87,12 @@ class OverlappingCycleFundingCannotBeInferred(unittest.TestCase):
   rows=[{'tranId':str(k),'time':150,'symbol':'XRPUSDT','positionSide':'SHORT','incomeType':'FUNDING_FEE','income':'-0.03'} for k in (101,102)]
   with self.assertRaisesRegex(ValueError,'BLOCKED_FUNDING_ATTRIBUTION'):
    funding_for_cycle(rows,symbol='XRPUSDT',side='SHORT',cycle_id='zone-one',start_ms=100,end_ms=200,ownership_proof={'101':('XRPUSDT','SHORT','zone-one')})
+
+class SymbolScopeCannotProveCycle(__import__('unittest').TestCase):
+ def test_same_symbol_exclusive_symbol_rows_do_not_establish_cycle_owner(self):
+  rows=[{'tranId':'1','time':101,'symbol':'XRPUSDT','positionSide':'SHORT','incomeType':'FUNDING_FEE','income':'-0.02'}]
+  with self.assertRaisesRegex(ValueError,'BLOCKED_FUNDING_ATTRIBUTION'):
+   funding_for_cycle(rows,symbol='XRPUSDT',side='SHORT',cycle_id='c-one',start_ms=100,end_ms=200,ownership_proof={'1':('XRPUSDT','SHORT','c-two')})
+ def test_incomplete_income_page_never_authorizes_symbol_accounting(self):
+  with self.assertRaisesRegex(ValueError,'BLOCKED_SAME_TIMESTAMP_PAGINATION'):
+   income_pages(Mock([{'tranId':str(i),'time':101,'symbol':'XRPUSDT'} for i in (1,2,3)]),symbol='XRPUSDT',start_ms=100,end_ms=200,page_size=2)
