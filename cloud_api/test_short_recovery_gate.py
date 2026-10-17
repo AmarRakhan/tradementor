@@ -25,3 +25,11 @@ class Tests(unittest.TestCase):
         p=partition_reconciliation(settings={"enabled":True},protected_sides={"X":"LONG"},existing_skip_symbols=set(),
           recovery_cycles={"X":{"ownerSide":"SHORT","cycleConfirmed":True,"ownershipVerified":True,"state":"FINAL_PENDING"}})
         self.assertIn("X",p["shadow_skip"])
+
+class UserSelectableRecoveryLadder(__import__('unittest').TestCase):
+    def test_twenty_five_percent_steps_half_percent_spacing(self):
+        p=normalize_settings({'enabled':True,'steps':20,'stepPct':'0.5'})
+        self.assertEqual((p['steps'],p['reducePct'],p['lastLevelPct']),(20,'5','10.0'))
+    def test_four_quarter_steps_remain_available(self):
+        p=normalize_settings({'enabled':True,'steps':4,'stepPct':'5'})
+        self.assertEqual((p['steps'],p['reducePct'],p['lastLevelPct']),(4,'25','20'))
