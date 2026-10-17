@@ -32,11 +32,20 @@ class RunUidIntegration(unittest.TestCase):
    state=ReductionState(plan,closed,D('1.6' if action_mode=='REHEDGE' else '1.9'))
    from short_recovery_order_claim_shadow import canonical_intent_id
    ids={key:canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side=key.split('_')[0],action=key.split('_')[1],step=1) for key in ('LONG_CLOSE','SHORT_CLOSE','SHORT_OPEN')}
+   if action_mode=='PAIR_EXIT':
+    def canonical_query(symbol,cid):
+     side='LONG' if cid==ids['LONG_CLOSE'] else 'SHORT' if cid==ids['SHORT_CLOSE'] else 'INVALID'
+     return {'symbol':symbol,'clientOrderId':cid,'orderId':side+'-order',
+             'status':'FILLED','executedQty':'100' if side=='LONG' else '75'}
+    h.client.query_order=canonical_query
    ctx['recovery_action']={'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':1,
        'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None}
    h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':1})
+   if action_mode=='PAIR_EXIT':
+    ctx['recovery_action']['long_claim_ref']=h.fixture.refs['LONGclaim']
+    h.fixture.put('LONGclaim',{**h.fixture.snapshot('LONGclaim'),'state':'RESERVED','intentId':ids['LONG_CLOSE'],'side':'LONG','action':'CLOSE','step':1})
    if emergency_stop:h.fixture.put('control',{'account':'u','enabled':True,'emergencyStop':True,'closeAllActive':False})
   states={'XRPUSDT':{'ownerSide':'SHORT','cycleConfirmed':True,'ownershipVerified':ownership,'state':'PARTIAL'}}
   dummy=MagicMock();dummy.position_risk.return_value=[];dummy.open_orders.return_value=[]
@@ -117,3 +126,27 @@ class SubmittedRunUid(unittest.TestCase):
   r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',execution_enabled=True,force_shadow=False,mock_transport=mock)
   self.assertNotIn('shortRecoverySubmit',r)
   mock.assert_not_called()
+
+class WholePairLifecycle(unittest.TestCase):
+ def test_atomic_submit_then_readback_settlement_with_injected_cycle_proof(self):
+  h=RunUidIntegration()
+  calls=[]
+  def submit(intent):
+   calls.append(intent.intent_id)
+   return {'clientOrderId':intent.intent_id,'orderId':intent.position_side.value+'-order'}
+  result,_,fixture=h.run_case(action_mode='PAIR_EXIT',mock_transport=submit)
+  self.assertEqual(result['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY','SUBMITTED_RECONCILE_ONLY'))
+  self.assertEqual(result['shortRecoveryPairSettlement'],'PAIR_CLOSED_VERIFIED')
+  self.assertEqual(fixture.fixture.snapshot('pair')['state'],'CLOSED')
+  self.assertEqual(len(calls),2)
+ def test_unknown_short_no_second_post_or_pair_close(self):
+  def submit(intent):
+   if intent.position_side.value=='SHORT':raise TimeoutError('mock short uncertain')
+   return {'clientOrderId':intent.intent_id,'orderId':'LONG-order'}
+  result,_,fixture=RunUidIntegration().run_case(action_mode='PAIR_EXIT',mock_transport=submit)
+  self.assertEqual(result['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY','UNKNOWN_RECONCILE_ONLY'))
+  self.assertEqual(result['shortRecoveryPairSettlement'],'PAIR_RECONCILE_REQUIRED_NO_TERMINAL_ACK')
+  self.assertNotEqual(fixture.fixture.snapshot('pair')['state'],'CLOSED')
+ def test_no_income_proof_prevents_pair_closing(self):
+  r,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',proof=False)
+  self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
