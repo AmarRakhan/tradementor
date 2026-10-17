@@ -19,10 +19,10 @@ const amount = (value: unknown) => {
 };
 
 export function localDayKey(value: Date) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  // Explicit exchange reporting timezone: independent of the user device or server locale.
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Amsterdam", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(value);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 export function realizedCalendar(trades: RealizedTrade[], now = new Date()): { today: RealizedDay; days: RealizedDay[] } {
