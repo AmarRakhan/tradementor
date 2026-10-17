@@ -16,6 +16,10 @@ export function ShortRecoveryPlanPreview() {
       <div style={{position:"relative",transformStyle:"preserve-3d",transform:flipped?"rotateY(180deg)":"rotateY(0)",transition:"transform .65s ease"}}>
         <div style={{backfaceVisibility:"hidden",padding:18,border:"1px solid #b89343",borderRadius:20,background:"#111b18",color:"#e8dfc7",minHeight:245}}>
           <strong style={{color:"#d6b75c"}}>SHORT RECOVERY PLAN</strong>
+          <label style={{display:"flex",alignItems:"center",gap:8,marginTop:12,fontSize:13}}>
+            <input type="checkbox" checked={false} disabled aria-label="SHORT Recovery activeren (nog niet beschikbaar)" />
+            <span>SHORT Recovery activeren — UIT (veiligheidstests nog bezig)</span>
+          </label>
           <p style={{fontSize:12,opacity:.8}}>Extra afbouwfunctie · voorlopig alleen voorbeeld, geen orders</p>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <label>Koersdaling per stap (%)<input aria-label="Koersdaling per stap" type="number" min=".01" step=".1" value={distance} onChange={e=>setDistance(e.target.value)} style={{width:"100%",padding:8,borderRadius:8,color:"white",background:"#25332d"}} /></label>
