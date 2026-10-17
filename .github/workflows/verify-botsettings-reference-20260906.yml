@@ -4,12 +4,23 @@ on:
   push:
     branches:
       - feature/botsettings-reference-20260906
+    paths:
+      - "web/**"
+      - "cloud_api/**"
+      - "package.json"
+      - ".github/workflows/verify-botsettings-reference-20260906.yml"
   pull_request:
     branches:
       - amar-crypto-bot-2026-cloud
+    paths:
+      - "web/**"
+      - "cloud_api/**"
+      - "package.json"
+      - ".github/workflows/verify-botsettings-reference-20260906.yml"
 
 jobs:
   verify:
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
