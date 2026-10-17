@@ -524,6 +524,7 @@ def _run_uid(
     *,
     force_shadow: bool = False,
     allow_new_triggers: bool | None = None,
+    offline_pair_settlement: dict | None = None,
 ) -> dict[str, Any]:
     if not uid:
         return {"mode": "OFF", "ordersSent": 0, "status": "BLOCKED", "reason": "MISSING_UID", "actions": []}
@@ -627,6 +628,23 @@ def _run_uid(
             positions=positions,
             open_orders=open_orders,
         )
+        # Offline-only injection into the existing reconciliation lifecycle.
+        # No production or live mode can invoke this: an explicit force_shadow
+        # invocation and a caller-provided isolated mock transaction are required.
+        if offline_pair_settlement is not None:
+            if execute or not force_shadow or not recovery_offline_partition:
+                report["shortRecoveryPairSettlement"] = "BLOCKED_OFFLINE_ONLY"
+            elif not settings.get("shortRecoveryPlan", {}).get("enabled"):
+                report["shortRecoveryPairSettlement"] = "BLOCKED_RECOVERY_DISABLED"
+            else:
+                from short_recovery_order_resolution_shadow import reconcile_pair_from_aster_mock
+                ctx = dict(offline_pair_settlement)
+                if ctx.get("account") != uid or not ctx.get("mock_only"):
+                    report["shortRecoveryPairSettlement"] = "BLOCKED_MOCK_SCOPE"
+                else:
+                    ctx.pop("mock_only")
+                    ctx["account"] = uid
+                    report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
         # SHORT Recovery Plan 2.0: strictly read-only shadow instrumentation.
         # NEVER change skip_symbols/protected_sides in the executable reconciler here.
         # No plan execution, order placement, or setting persistence is enabled.
