@@ -385,6 +385,7 @@ def reconcile_auto_hedge(
     protected_sides: Mapping[str, str] | None = None,
     skip_symbols: set[str] | None = None,
     intent_context: Mapping[str, Mapping[str, Any]] | None = None,
+    recovery_shadow_skip_symbols: set[str] | None = None,
     positions: list[dict[str, Any]] | None = None,
     open_orders: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -392,9 +393,14 @@ def reconcile_auto_hedge(
     threshold = normalize_threshold(threshold_usd)
     positions = list(client.position_risk() or []) if positions is None else list(positions)
     open_orders = list(client.open_orders() or []) if open_orders is None else list(open_orders)
+    # An intentional SHORT reduction may suppress a legacy top-up ONLY during
+    # explicit order-free shadow evaluation. Never modify a live decision here.
+    shadow_skips = set(skip_symbols or set())
+    if not execute:
+        shadow_skips.update(recovery_shadow_skip_symbols or set())
     actions = evaluate_auto_hedge(
         positions, threshold, open_orders=open_orders,
-        protected_sides=protected_sides, skip_symbols=skip_symbols,
+        protected_sides=protected_sides, skip_symbols=shadow_skips,
     )
     public_actions: list[dict[str, Any]] = []
     orders_sent = 0
