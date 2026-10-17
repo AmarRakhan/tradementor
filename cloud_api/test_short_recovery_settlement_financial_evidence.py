@@ -38,3 +38,15 @@ class FinancialEvidence(unittest.TestCase):
         self.h.db=self.h.db.restart();self.h.bind()
         self.assertEqual(self.event(self.proof()),'ALREADY_APPLIED')
         self.assertEqual(self.ledger().cycle_realized('c'),Decimal('2.30'))
+
+    def test_owner_side_change_blocks_settlement(self):
+        owner={**self.h.db.snapshot(self.h.keys['owner'])[1], 'ownerSide':'LONG'}
+        self.h.db.commit(self.h.keys['owner'],1,owner)
+        self.assertEqual(self.event(self.proof()),'BLOCKED_OWNER')
+        self.assertEqual(self.ledger().allocations[0].remaining,Decimal(100))
+    def test_unconfirmed_cycle_after_restart_blocks_settlement(self):
+        self.h.db=self.h.db.restart();self.h.bind()
+        owner={**self.h.db.snapshot(self.h.keys['owner'])[1], 'cycleConfirmed':False}
+        self.h.db.commit(self.h.keys['owner'],1,owner)
+        self.assertEqual(self.event(self.proof()),'BLOCKED_OWNER')
+        self.assertEqual(self.ledger().cycle_realized('c'),Decimal(0))

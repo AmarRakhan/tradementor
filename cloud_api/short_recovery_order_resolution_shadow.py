@@ -14,7 +14,7 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
         raw=ledger_ref.get(transaction=tx).to_dict()
         if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('intentId'))!=(account,symbol,cycle,intent_id):return 'BLOCKED_CLAIM'
         if not isinstance(marker,dict) or (marker.get('account'),marker.get('symbol'),marker.get('cycleId'),marker.get('state'))!=(account,symbol,cycle,'SUSPECT'):return 'BLOCKED_MARKER'
-        if not isinstance(owner,dict) or (owner.get('account'),owner.get('symbol'),owner.get('cycleId'),owner.get('ownershipVerified'))!=(account,symbol,cycle,True):return 'BLOCKED_OWNER'
+        if not isinstance(owner,dict) or (owner.get('account'),owner.get('symbol'),owner.get('cycleId'),owner.get('ownershipVerified'))!=(account,symbol,cycle,True) or owner.get('ownerSide')!='SHORT' or owner.get('cycleConfirmed') is not True or owner.get('state') not in ('PARTIAL','FINAL_PENDING'):return 'BLOCKED_OWNER'
         if not isinstance(raw,dict) or (raw.get('account'),raw.get('symbol'))!=(account,symbol):return 'BLOCKED_LEDGER'
         state=claim.get('state','RESERVED'); ledger=decode(raw)
         if event=='UNKNOWN':
