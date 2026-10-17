@@ -130,7 +130,10 @@ def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_
                     if len(owned)!=1:return 'BLOCKED_ALLOCATION'
                     item=owned[0]
                     new=new.apply(Fill(account,symbol,fill['executionId'],str(claim['orderId']),qty,pnl,fee,funding),((item.zone_id,cycle,qty),))
-                if total!=expected:return 'BLOCKED_EXECUTION_INCOMPLETE'
+                # A replayed executionId is idempotent, but a modified quantity
+                # must not silently replace its previously booked amount.
+                booked_qty=sum((q for _,c,q,_ in new.booked if c==cycle),Decimal(0))
+                if total!=expected or booked_qty!=expected:return 'BLOCKED_EXECUTION_INCOMPLETE'
             except (KeyError,TypeError,ValueError,InvalidOperation):return 'BLOCKED_FINANCIAL_EVIDENCE'
             remaining=[a.remaining for a in new.allocations if a.cycle_id==cycle]
             if len(remaining)!=1:return 'BLOCKED_ALLOCATION'

@@ -57,3 +57,13 @@ class PairAtomic(unittest.TestCase):
   p=self.snapshot('pair');p['fundingCycleVerified']=False;self.put('pair',p)
   self.assertEqual(self.run_pair(),'PAIR_RECONCILE_REQUIRED')
   self.assertEqual(self.snapshot('pair')['state'],'RECONCILE_REQUIRED')
+
+class ReplayedFillQuantityConflict(PairAtomic):
+ def test_modified_same_execution_id_cannot_inflate_confirmed_qty(self):
+  rows={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='PARTIALLY_FILLED')}
+  self.assertEqual(self.run_pair(rows),'PAIR_RECONCILE_REQUIRED')
+  before=self.snapshot('SHORTledger')
+  replay={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',50,status='PARTIALLY_FILLED')}
+  self.assertEqual(self.run_pair(replay),'BLOCKED_EXECUTION_INCOMPLETE')
+  self.assertEqual(self.snapshot('SHORTledger'),before)
+  self.assertNotEqual(self.snapshot('pair')['state'],'CLOSED')
