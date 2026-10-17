@@ -58,3 +58,12 @@ class Tests(unittest.TestCase):
             funding_for_cycle([self.event(1,time=200)],symbol='XRPUSDT',side='SHORT',cycle_id='c1',start_ms=100,end_ms=200,ownership_proof={'1':('XRPUSDT','SHORT','c1')})
 
 if __name__=='__main__': unittest.main()
+
+class EmptyIncomeCannotProveZero(__import__('unittest').TestCase):
+ def test_empty_income_does_not_infer_zero_funding(self):
+  with self.assertRaisesRegex(ValueError,'BLOCKED_ZERO_FUNDING_NOT_PROVEN'):
+   funding_for_cycle([],symbol='XRPUSDT',side='SHORT',cycle_id='c1',start_ms=100,end_ms=200,ownership_proof={})
+ def test_non_funding_income_does_not_infer_zero(self):
+  row={'symbol':'XRPUSDT','incomeType':'COMMISSION','time':110,'tranId':'1','income':'-0.02'}
+  with self.assertRaisesRegex(ValueError,'BLOCKED_ZERO_FUNDING_NOT_PROVEN'):
+   funding_for_cycle([row],symbol='XRPUSDT',side='SHORT',cycle_id='c1',start_ms=100,end_ms=200,ownership_proof={})

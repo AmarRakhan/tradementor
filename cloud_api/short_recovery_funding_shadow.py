@@ -64,4 +64,9 @@ def funding_for_cycle(rows, *, symbol, side, cycle_id, start_ms, end_ms, ownersh
         if row.get('positionSide') != side or ownership_proof.get(identity) != (symbol, side, cycle_id):
             raise ValueError('BLOCKED_FUNDING_ATTRIBUTION')
         total += value
+    # An empty result cannot establish that funding was zero: a missing or
+    # incomplete income window is observationally identical. Only a separate
+    # completeness/ownership attestation could authorize zero funding.
+    if not seen:
+        raise ValueError('BLOCKED_ZERO_FUNDING_NOT_PROVEN')
     return total
