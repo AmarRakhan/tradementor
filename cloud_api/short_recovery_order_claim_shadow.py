@@ -155,6 +155,20 @@ def lock_pair_submit_offline(*, db, transactional, long_claim_ref, short_claim_r
         return 'PAIR_SUBMITTING_LOCKED'
     return acquire(db.transaction())
 
+def persist_mock_submit_ack(*,db,transactional,claim_ref,account,symbol,cycle,intent,response):
+    """Persist a matching mock Aster ACK once; uncertainty stays SUBMITTING."""
+    if not isinstance(response,dict) or str(response.get('clientOrderId',''))!=intent.intent_id or not response.get('orderId'):
+        return 'BLOCKED_ACK_MISMATCH'
+    @transactional
+    def save(tx):
+        row=claim_ref.get(transaction=tx).to_dict()
+        if not isinstance(row,dict) or (row.get('account'),row.get('symbol'),row.get('cycle'),row.get('intentId'))!=(account,symbol,cycle,intent.intent_id) or row.get('state')!='SUBMITTING':
+            return 'BLOCKED_ACK_CLAIM'
+        if row.get('orderId') and str(row['orderId'])!=str(response['orderId']):return 'BLOCKED_ACK_ORDER_REBIND'
+        tx.set(claim_ref,{**row,'orderId':str(response['orderId']),'state':'ACKED'})
+        return 'ACKED_PERSISTED'
+    return save(db.transaction())
+
 def submit_locked_pair_mock_offline(*, db, transactional, long_claim_ref, short_claim_ref,
                                     control_ref, account, symbol, cycle, long_intent, short_intent,
                                     account_close_guard, submit_mock):
@@ -173,7 +187,13 @@ def submit_locked_pair_mock_offline(*, db, transactional, long_claim_ref, short_
     for intent in (long_intent,short_intent):
         try:
             account_close_guard()
-            submit_mock(intent)
+            response=submit_mock(intent)
+            ref=long_claim_ref if intent.position_side.value=='LONG' else short_claim_ref
+            ack=persist_mock_submit_ack(db=db,transactional=transactional,claim_ref=ref,
+                account=account,symbol=symbol,cycle=cycle,intent=intent,response=response)
+            if ack!='ACKED_PERSISTED':
+                results.append(ack)
+                break
         except Exception:
             results.append('UNKNOWN_RECONCILE_ONLY')
             break

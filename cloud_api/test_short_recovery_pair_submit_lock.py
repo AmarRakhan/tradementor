@@ -43,9 +43,9 @@ class PairTransportMock(PairLock):
      account_close_guard=lambda:None,submit_mock=submit)
  def test_two_mock_posts_only_once_even_after_restart(self):
   calls=[]
-  self.assertEqual(self.send(lambda i:calls.append(i.intent_id)),('SUBMITTED_RECONCILE_ONLY','SUBMITTED_RECONCILE_ONLY'))
+  self.assertEqual(self.send(lambda i:(calls.append(i.intent_id) or {'clientOrderId':i.intent_id,'orderId':i.position_side.value+'-order'})),('SUBMITTED_RECONCILE_ONLY','SUBMITTED_RECONCILE_ONLY'))
   self.db=self.db.restart();self.refs={x:Ref(self.db,x) for x in self.refs}
-  self.assertEqual(self.send(lambda i:calls.append(i.intent_id)),('BLOCKED_PAIR_SIDE_CLAIMS',))
+  self.assertEqual(self.send(lambda i:(calls.append(i.intent_id) or {'clientOrderId':i.intent_id,'orderId':i.position_side.value+'-order'})),('BLOCKED_PAIR_SIDE_CLAIMS',))
   self.assertEqual(calls,[self.ids['LONG'],self.ids['SHORT']])
  def test_first_side_timeout_never_posts_second_or_retries(self):
   calls=[]
@@ -59,6 +59,19 @@ class PairTransportMock(PairLock):
   def timeout_second(i):
    calls.append(i.intent_id)
    if i.position_side is PositionSide.SHORT:raise TimeoutError('mock')
+   return {'clientOrderId':i.intent_id,'orderId':'LONG-order'}
   self.assertEqual(self.send(timeout_second),('SUBMITTED_RECONCILE_ONLY','UNKNOWN_RECONCILE_ONLY'))
   self.assertEqual(self.send(timeout_second),('BLOCKED_PAIR_SIDE_CLAIMS',))
   self.assertEqual(len(calls),2)
+
+class BadAckIsNotSettlement(PairTransportMock):
+ def test_wrong_client_order_id_does_not_ack_or_retry(self):
+  calls=[]
+  def wrong_ack(intent):
+   calls.append(intent.intent_id)
+   return {'clientOrderId':'someone-else','orderId':'order-x'}
+  self.assertEqual(self.send(wrong_ack),('BLOCKED_ACK_MISMATCH',))
+  self.assertEqual(self.db.snapshot('LONG')[1]['state'],'SUBMITTING')
+  self.assertEqual(self.db.snapshot('SHORT')[1]['state'],'SUBMITTING')
+  self.assertEqual(self.send(wrong_ack),('BLOCKED_PAIR_SIDE_CLAIMS',))
+  self.assertEqual(len(calls),1)
