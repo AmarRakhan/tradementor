@@ -21,7 +21,7 @@ def income_pages(client, *, symbol, start_ms, end_ms, page_size=500, max_pages=2
         for row in page:
             try:
                 time = int(row['time'])
-                identity = str(row['tranId'])
+                identity = str(row['tranId']) if row.get('tranId') is not None else ''
             except (KeyError, TypeError, ValueError):
                 raise ValueError('BLOCKED_INCOME_IDENTITY')
             if not identity or not cursor <= time <= end_ms or identity in seen or row.get('symbol') != symbol:
@@ -51,7 +51,7 @@ def funding_for_cycle(rows, *, symbol, side, cycle_id, start_ms, end_ms, ownersh
         if row.get('incomeType') != 'FUNDING_FEE':
             continue
         try:
-            identity = str(row['tranId'])
+            identity = str(row['tranId']) if row.get('tranId') is not None else ''
             timestamp = int(row['time'])
             value = Decimal(str(row['income']))
         except (KeyError, TypeError, ValueError, InvalidOperation):

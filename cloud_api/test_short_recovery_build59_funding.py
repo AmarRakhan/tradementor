@@ -67,3 +67,13 @@ class EmptyIncomeCannotProveZero(__import__('unittest').TestCase):
   row={'symbol':'XRPUSDT','incomeType':'COMMISSION','time':110,'tranId':'1','income':'-0.02'}
   with self.assertRaisesRegex(ValueError,'BLOCKED_ZERO_FUNDING_NOT_PROVEN'):
    funding_for_cycle([row],symbol='XRPUSDT',side='SHORT',cycle_id='c1',start_ms=100,end_ms=200,ownership_proof={})
+
+class IncomeIdentityHardening(unittest.TestCase):
+ def test_null_transaction_id_rejected_by_income_pages(self):
+  row={'tranId':None,'time':101,'symbol':'XRPUSDT','incomeType':'FUNDING_FEE','income':'-0.03','positionSide':'SHORT'}
+  with self.assertRaisesRegex(ValueError,'BLOCKED_INCOME_IDENTITY'):
+   income_pages(Mock([row]),symbol='XRPUSDT',start_ms=100,end_ms=200)
+ def test_null_transaction_id_rejected_by_funding_attribution(self):
+  row={'tranId':None,'time':101,'symbol':'XRPUSDT','incomeType':'FUNDING_FEE','income':'-0.03','positionSide':'SHORT'}
+  with self.assertRaisesRegex(ValueError,'BLOCKED_FUNDING_EVIDENCE'):
+   funding_for_cycle([row],symbol='XRPUSDT',side='SHORT',cycle_id='c1',start_ms=100,end_ms=200,ownership_proof={'None':('XRPUSDT','SHORT','c1')})
