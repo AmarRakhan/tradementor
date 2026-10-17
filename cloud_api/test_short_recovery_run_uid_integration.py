@@ -19,7 +19,7 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None):
   h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
   ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None}
   if action_mode is not None:
@@ -38,6 +38,22 @@ class RunUidIntegration(unittest.TestCase):
      return {'symbol':symbol,'clientOrderId':cid,'orderId':side+'-order',
              'status':'FILLED','executedQty':'100' if side=='LONG' else '75'}
     h.client.query_order=canonical_query
+   if action_mode=='PAIR_EXIT' and readback_mode:
+    original=h.client.user_trades
+    def trades(symbol,limit=500,from_id=None):
+     rows=original(symbol,limit=limit,from_id=from_id)
+     if readback_mode=='DUPLICATE':return rows+[dict(rows[-1])]
+     if readback_mode=='PARTIAL':
+      return [{**row,'qty':'25'} if row['orderId']=='SHORT-order' else row for row in rows]
+     return rows
+    h.client.user_trades=trades
+    if readback_mode=='PARTIAL':
+     previous=h.client.query_order
+     def partial_query(symbol,cid):
+      row=previous(symbol,cid)
+      if row['orderId']=='SHORT-order':row={**row,'status':'PARTIALLY_FILLED','executedQty':'25'}
+      return row
+     h.client.query_order=partial_query
    ctx['recovery_action']={'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':1,
@@ -149,4 +165,15 @@ class WholePairLifecycle(unittest.TestCase):
   self.assertNotEqual(fixture.fixture.snapshot('pair')['state'],'CLOSED')
  def test_no_income_proof_prevents_pair_closing(self):
   r,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',proof=False)
+  self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+
+ def test_partial_readback_never_closes_pair(self):
+  def submit(intent):return {'clientOrderId':intent.intent_id,'orderId':intent.position_side.value+'-order'}
+  r,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',mock_transport=submit,readback_mode='PARTIAL')
+  self.assertNotEqual(r['shortRecoveryPairSettlement'],'PAIR_CLOSED_VERIFIED')
+  self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+ def test_duplicate_execution_never_closes_pair(self):
+  def submit(intent):return {'clientOrderId':intent.intent_id,'orderId':intent.position_side.value+'-order'}
+  r,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',mock_transport=submit,readback_mode='DUPLICATE')
+  self.assertNotEqual(r['shortRecoveryPairSettlement'],'PAIR_CLOSED_VERIFIED')
   self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
