@@ -605,6 +605,15 @@ def _run_uid(
                 "revision": int(float(state.get("intentRevision") or 0)),
             }
 
+        # Evaluate Recovery ownership BEFORE the existing reconciliation in offline
+        # mode, so an intentional partial SHORT never appears as a legacy top-up.
+        recovery_offline_partition = None
+        if (not execute and os.getenv("ASTER_SHORT_RECOVERY_SHADOW_ENABLED", "false").lower() == "true"):
+            from short_recovery_gate import partition_reconciliation
+            recovery_offline_partition = partition_reconciliation(
+                settings=settings.get("shortRecoveryPlan"), protected_sides=protected_sides,
+                existing_skip_symbols=set(skip_symbols or ()), recovery_cycles=states)
+
         report = reconcile_auto_hedge(
             client=client,
             uid=uid,
@@ -613,6 +622,7 @@ def _run_uid(
             audit=(lambda payload: _audit(uid, payload)),
             protected_sides=protected_sides or None,
             skip_symbols=skip_symbols,
+            recovery_shadow_skip_symbols=(recovery_offline_partition["shadow_skip"] - recovery_offline_partition["legacy_skip"] if recovery_offline_partition else None),
             intent_context=contexts,
             positions=positions,
             open_orders=open_orders,
@@ -625,18 +635,12 @@ def _run_uid(
         if (not execute and
                 os.getenv("ASTER_SHORT_RECOVERY_SHADOW_ENABLED", "false").lower() == "true"):
             from short_recovery_runtime_shadow import preview_existing_pairs
-            from short_recovery_gate import partition_reconciliation
             report["shortRecoveryShadow"] = preview_existing_pairs(
                 settings=settings, pair_states=states, positions=positions,
                 open_orders=open_orders,
             )
             # Simulated ownership only: original skip_symbols were already used.
-            shadow_plan = partition_reconciliation(
-                settings=settings.get("shortRecoveryPlan"),
-                protected_sides=protected_sides,
-                existing_skip_symbols=set(skip_symbols or ()),
-                recovery_cycles=states,
-            )
+            shadow_plan = recovery_offline_partition
             report["shortRecoveryOwnershipShadow"] = {
                 "status": shadow_plan["status"],
                 "suppressedTopupSymbols": sorted(
