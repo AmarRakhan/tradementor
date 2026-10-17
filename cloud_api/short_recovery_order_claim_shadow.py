@@ -1,14 +1,16 @@
 """Offline order-intent reservation; intentionally never sends orders."""
 from short_recovery_firestore_mock import decode
 
-def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account,symbol,cycle,intent_id,now,lease_seconds=45):
+def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account,symbol,cycle,intent_id,now,lease_seconds=45,control_ref=None):
     if not all((account,symbol,cycle,intent_id)) or lease_seconds<=0:return 'BLOCKED_INPUT'
+    if control_ref is None:return 'BLOCKED_CONTROL_UNAVAILABLE'
     @transactional
     def attempt(tx):
         marker=marker_ref.get(transaction=tx).to_dict()
         owner=owner_ref.get(transaction=tx).to_dict()
         stock=ledger_ref.get(transaction=tx).to_dict()
         claim=claim_ref.get(transaction=tx).to_dict()
+        control=control_ref.get(transaction=tx).to_dict()
         if not isinstance(marker,dict) or (marker.get('account'),marker.get('symbol'),marker.get('cycleId'),marker.get('state'))!=(account,symbol,cycle,'SUSPECT'):
             return 'BLOCKED_MARKER'
         if not isinstance(owner,dict) or (owner.get('account'),owner.get('symbol'),owner.get('cycleId'))!=(account,symbol,cycle) or owner.get('ownerSide')!='SHORT' or owner.get('ownershipVerified') is not True or owner.get('cycleConfirmed') is not True or owner.get('state') not in ('PARTIAL','FINAL_PENDING'):
@@ -20,6 +22,8 @@ def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account
             if claim.get('intentId')==intent_id:return 'ALREADY_RESERVED'
             # A stale lease is NOT proof an exchange submission did not happen.
             return 'BLOCKED_UNRESOLVED_CLAIM'
+        if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
+            return 'BLOCKED_RECOVERY_DISABLED_OR_STOPPED'
         tx.set(claim_ref,{'account':account,'symbol':symbol,'cycle':cycle,'intentId':intent_id,
                           'state':'RESERVED','reservedAt':now,'leaseUntil':now+lease_seconds})
         return 'RESERVED_SHADOW'

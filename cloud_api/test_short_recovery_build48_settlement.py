@@ -8,11 +8,12 @@ from short_recovery_order_settlement_shadow import settle
 from test_short_recovery_real_reconciler_shadow import TestShadowReconciler
 class Tests(unittest.TestCase):
  def setUp(self):
-  self.db=MultiDocDB();self.keys={k:('u','XRPUSDT',k) for k in ('claim','ledger','marker','owner')};self.bind()
+  self.db=MultiDocDB();self.keys={k:('u','XRPUSDT',k) for k in ('claim','ledger','marker','owner','control')};self.bind()
   self.db.commit(self.keys['ledger'],0,encode(Ledger('u','XRPUSDT',(Allocation('z','c',D(100)),))))
+  self.db.commit(self.keys['control'],0,{'account':'u','enabled':True,'emergencyStop':False,'closeAllActive':False})
   self.db.commit(self.keys['marker'],0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','state':'SUSPECT'})
   self.db.commit(self.keys['owner'],0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','ownershipVerified':True,'ownerSide':'SHORT','cycleConfirmed':True,'state':'PARTIAL'})
-  self.assertEqual(reserve(db=self.db,transactional=transactional,marker_ref=self.refs['marker'],owner_ref=self.refs['owner'],ledger_ref=self.refs['ledger'],claim_ref=self.refs['claim'],account='u',symbol='XRPUSDT',cycle='c',intent_id='intent',now=1),'RESERVED_SHADOW')
+  self.assertEqual(reserve(db=self.db,transactional=transactional,marker_ref=self.refs['marker'],owner_ref=self.refs['owner'],ledger_ref=self.refs['ledger'],claim_ref=self.refs['claim'],control_ref=self.refs['control'],account='u',symbol='XRPUSDT',cycle='c',intent_id='intent',now=1),'RESERVED_SHADOW')
  def bind(self):self.refs={k:Ref(self.db,v) for k,v in self.keys.items()}
  def event(self,name,**kw):
   if name=='FILL' and isinstance(kw.get('evidence'),dict) and kw['evidence'].get('confirmed') and kw.get('execution_id'):
@@ -58,10 +59,10 @@ class ClaimInventoryGuard(unittest.TestCase):
   h.db.commit(h.keys['claim'],1,None)
   from short_recovery_firestore_mock import encode
   h.db.commit(h.keys['ledger'],1,encode(Ledger('u','XRPUSDT',(Allocation('z','different',D(100)),))))
-  self.assertEqual(reserve(db=h.db,transactional=transactional,marker_ref=h.refs['marker'],owner_ref=h.refs['owner'],ledger_ref=h.refs['ledger'],claim_ref=h.refs['claim'],account='u',symbol='XRPUSDT',cycle='c',intent_id='next',now=2),'BLOCKED_LEDGER')
+  self.assertEqual(reserve(db=h.db,transactional=transactional,marker_ref=h.refs['marker'],owner_ref=h.refs['owner'],ledger_ref=h.refs['ledger'],claim_ref=h.refs['claim'],control_ref=h.refs['control'],account='u',symbol='XRPUSDT',cycle='c',intent_id='next',now=2),'BLOCKED_LEDGER')
  def test_depleted_cycle_never_reserves(self):
   h=Tests('test_no_order_reconciled_terminal');h.setUp()
   h.db.commit(h.keys['claim'],1,None)
   from short_recovery_firestore_mock import encode
   h.db.commit(h.keys['ledger'],1,encode(Ledger('u','XRPUSDT',(Allocation('z','c',D(0)),))))
-  self.assertEqual(reserve(db=h.db,transactional=transactional,marker_ref=h.refs['marker'],owner_ref=h.refs['owner'],ledger_ref=h.refs['ledger'],claim_ref=h.refs['claim'],account='u',symbol='XRPUSDT',cycle='c',intent_id='next',now=2),'BLOCKED_LEDGER')
+  self.assertEqual(reserve(db=h.db,transactional=transactional,marker_ref=h.refs['marker'],owner_ref=h.refs['owner'],ledger_ref=h.refs['ledger'],claim_ref=h.refs['claim'],control_ref=h.refs['control'],account='u',symbol='XRPUSDT',cycle='c',intent_id='next',now=2),'BLOCKED_LEDGER')

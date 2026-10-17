@@ -7,12 +7,13 @@ from short_recovery_order_claim_shadow import reserve
 from test_short_recovery_real_reconciler_shadow import TestShadowReconciler
 class Tests(unittest.TestCase):
  def setUp(self):
-  self.db=MultiDocDB();self.keys={k:('u','XRPUSDT',k) for k in ('marker','owner','ledger','claim')};self.bind()
+  self.db=MultiDocDB();self.keys={k:('u','XRPUSDT',k) for k in ('marker','owner','ledger','claim','control')};self.bind()
   self.db.commit(self.keys['marker'],0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','state':'SUSPECT'})
   self.db.commit(self.keys['owner'],0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','ownerSide':'SHORT','ownershipVerified':True,'cycleConfirmed':True,'state':'PARTIAL'})
   self.db.commit(self.keys['ledger'],0,encode(Ledger('u','XRPUSDT',(Allocation('z','c',D(100)),))))
+  self.db.commit(self.keys['control'],0,{'account':'u','enabled':True,'emergencyStop':False,'closeAllActive':False})
  def bind(self):self.refs={k:Ref(self.db,v) for k,v in self.keys.items()}
- def reserve(self,intent='id1',now=100):return reserve(db=self.db,transactional=transactional,marker_ref=self.refs['marker'],owner_ref=self.refs['owner'],ledger_ref=self.refs['ledger'],claim_ref=self.refs['claim'],account='u',symbol='XRPUSDT',cycle='c',intent_id=intent,now=now)
+ def reserve(self,intent='id1',now=100):return reserve(db=self.db,transactional=transactional,marker_ref=self.refs['marker'],owner_ref=self.refs['owner'],ledger_ref=self.refs['ledger'],claim_ref=self.refs['claim'],control_ref=self.refs['control'],account='u',symbol='XRPUSDT',cycle='c',intent_id=intent,now=now)
  def test_same_intent_idempotent(self):
   self.assertEqual(self.reserve(),'RESERVED_SHADOW');self.assertEqual(self.reserve(),'ALREADY_RESERVED')
  def test_different_intent_and_expired_lease_block(self):
