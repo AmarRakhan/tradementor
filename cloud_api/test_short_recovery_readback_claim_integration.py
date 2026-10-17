@@ -125,3 +125,19 @@ class CursorPagination(unittest.TestCase):
     def test_bounded_pages_block(self):
         c=MockAster();c.rows=[{'id':i,'orderId':'o','symbol':'XRPUSDT','qty':'1','realizedPnl':'0','commission':'0'} for i in range(11,16)]
         self.assertEqual(inspect(c,symbol='XRPUSDT',client_order_id='intent',page_size=2,max_pages=2)['status'],'BLOCKED_INCOMPLETE_FILL_PAGE')
+
+class MalformedPagination(unittest.TestCase):
+ def scan(self,rows):
+  class Client(MockAster):
+   def user_trades(self,symbol,limit=500,from_id=None):
+    return rows if from_id is None else []
+  return inspect(Client(),symbol='XRPUSDT',client_order_id='intent',page_size=2)
+ def test_unsorted_full_page(self):
+  rows=[{'id':12,'orderId':'o','symbol':'XRPUSDT','qty':'1','realizedPnl':'0','commission':'0'},{'id':11,'orderId':'o','symbol':'XRPUSDT','qty':'1','realizedPnl':'0','commission':'0'}]
+  self.assertEqual(self.scan(rows)['status'],'BLOCKED_FILL_CURSOR')
+ def test_repeated_id_in_full_page(self):
+  rows=[{'id':11,'orderId':'o','symbol':'XRPUSDT','qty':'1','realizedPnl':'0','commission':'0'}]*2
+  self.assertEqual(self.scan(rows)['status'],'BLOCKED_DUPLICATE_EXECUTION')
+ def test_unknown_order_status(self):
+  c=MockAster();c.order['status']='MYSTERY'
+  self.assertEqual(inspect(c,symbol='XRPUSDT',client_order_id='intent')['status'],'BLOCKED_ORDER_STATUS')

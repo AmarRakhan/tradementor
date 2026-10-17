@@ -13,12 +13,15 @@ def inspect(client, *, symbol, client_order_id, page_size=500, max_pages=20):
             if not isinstance(page,list) or any(not isinstance(x,dict) for x in page):return {'status':'BLOCKED_FILLS_UNPROVEN'}
             if len(page)>page_size:return {'status':'BLOCKED_FILL_PAGE_OVERFLOW'}
             ids=[]
-            for row in page if len(page)==page_size else []:
+            for row in page:
                 try:
                     identity=int(row['id'])
                     if identity<0 or (cursor is not None and identity<cursor):raise ValueError()
-                except (KeyError,ValueError,TypeError):return {'status':'BLOCKED_FILL_CURSOR'}
+                except (KeyError,ValueError,TypeError):
+                    if len(page)==page_size or cursor is not None:return {'status':'BLOCKED_FILL_CURSOR'}
+                    ids=[];break
                 ids.append(identity)
+            if ids and len(ids)!=len(set(ids)):return {'status':'BLOCKED_DUPLICATE_EXECUTION','terminalVerified':False,'ordersSent':0}
             if ids and ids!=sorted(ids):return {'status':'BLOCKED_FILL_CURSOR'}
             fills.extend(page)
             if len(page)<page_size:break
@@ -55,5 +58,6 @@ def inspect(client, *, symbol, client_order_id, page_size=500, max_pages=20):
     try:executed=Decimal(str(order['executedQty'])) if 'executedQty' in order else None
     except (InvalidOperation,ValueError,TypeError):return {'status':'BLOCKED_EXECUTED_QUANTITY'}
     if executed is not None and (not executed.is_finite() or executed<0 or sum((r['quantity'] for r in output),Decimal(0))!=executed):return {'status':'BLOCKED_EXECUTION_INCOMPLETE'}
+    if order.get('status') not in ('FILLED','CANCELED','EXPIRED','REJECTED','PARTIALLY_FILLED','NEW'):return {'status':'BLOCKED_ORDER_STATUS','terminalVerified':False,'ordersSent':0}
     return {'status':'READBACK_PREVIEW','orderStatus':order.get('status'),'fills':output,
             'terminalVerified':False,'ordersSent':0}
