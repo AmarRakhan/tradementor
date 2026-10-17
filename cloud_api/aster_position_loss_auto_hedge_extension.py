@@ -646,6 +646,40 @@ def _run_uid(
                 else:
                     ctx.pop("mock_only")
                     ctx["account"] = uid
+                    # One offline lifecycle: decide the three Recovery actions
+                    # before settling the pair; neither path can submit orders.
+                    action_ctx = ctx.pop("recovery_action", None)
+                    if action_ctx is not None:
+                        from short_recovery_shadow_bridge import preview_reconciliation
+                        from short_recovery_executor_adapter import preview_canonical_executor
+                        from short_recovery_order_claim_shadow import pre_submit_check
+                        try:
+                            symbol = ctx["symbol"]
+                            state = action_ctx["state"]
+                            bridge = preview_reconciliation(
+                                protected_sides={symbol:"LONG"}, existing_skip_symbols=set(),
+                                recovery_states={symbol:state},
+                                exchange_short_quantities={symbol:action_ctx["short_qty"]},
+                                long_quantities={symbol:action_ctx["long_qty"]},
+                                net_exits={symbol} if action_ctx.get("net_exit_due") else set())
+                            preflight = pre_submit_check(
+                                db=ctx["db"], transactional=ctx["transactional"],
+                                claim_ref=action_ctx["claim_ref"], control_ref=ctx["control_ref"],
+                                account=uid, symbol=symbol, cycle=ctx["cycle"],
+                                intent_id=action_ctx["intent_id"],
+                                account_close_guard=action_ctx["account_close_guard"])
+                            report["shortRecoveryAction"] = (
+                                preview_canonical_executor(
+                                    reconciled=bridge, symbol=symbol,
+                                    long_qty=action_ctx["long_qty"], short_qty=action_ctx["short_qty"],
+                                    net_evidence_verified=action_ctx.get("net_evidence_verified") is True,
+                                    ownership_verified=True,
+                                    claim_reserved=preflight=="PREFLIGHT_SHADOW_ONLY",
+                                    stop_clear=preflight=="PREFLIGHT_SHADOW_ONLY")
+                                if preflight=="PREFLIGHT_SHADOW_ONLY" else
+                                {"status":preflight,"ordersSent":0,"intents":()})
+                        except (KeyError,TypeError,ValueError):
+                            report["shortRecoveryAction"] = {"status":"BLOCKED_ACTION_CONTEXT","ordersSent":0,"intents":()}
                     report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
         # SHORT Recovery Plan 2.0: strictly read-only shadow instrumentation.
         # NEVER change skip_symbols/protected_sides in the executable reconciler here.

@@ -19,9 +19,23 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False):
   h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
   ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None}
+  if action_mode is not None:
+   from decimal import Decimal as D
+   from short_recovery_contract import Plan
+   from short_recovery_reduction import ReductionState
+   plan=Plan(D(2),D(100),D(5),4)
+   closed=D(100) if action_mode=='REHEDGE' else D(0)
+   qty=D(0) if action_mode=='REHEDGE' else D(100)
+   state=ReductionState(plan,closed,D('1.6' if action_mode=='REHEDGE' else '1.9'))
+   ctx['recovery_action']={'state':state,'short_qty':qty,'long_qty':D(100),
+       'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
+       'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':'SHORT-intent',
+       'account_close_guard':lambda:None}
+   h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':'RESERVED'})
+   if emergency_stop:h.fixture.put('control',{'account':'u','enabled':True,'emergencyStop':True,'closeAllActive':False})
   states={'XRPUSDT':{'ownerSide':'SHORT','cycleConfirmed':True,'ownershipVerified':ownership,'state':'PARTIAL'}}
   dummy=MagicMock();dummy.position_risk.return_value=[];dummy.open_orders.return_value=[]
   doc=MagicMock();report={'mode':'SHADOW','ordersSent':0,'actions':[]}
@@ -54,3 +68,21 @@ class RunUidIntegration(unittest.TestCase):
   self.assertEqual(recon.call_args.kwargs['recovery_shadow_skip_symbols'],set())
   self.assertEqual(r['shortRecoveryPairSettlement'],'BLOCKED_RECOVERY_OWNERSHIP')
   self.assertEqual(h.fixture.snapshot('pair')['state'],'OPEN')
+
+class ThreeActionsRunUid(unittest.TestCase):
+ def test_reduce_mapped_through_pre_submit(self):
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE')
+  self.assertEqual(r['shortRecoveryAction']['status'],'PREVIEW_SHORT_REDUCE')
+  self.assertEqual(r['shortRecoveryAction']['ordersSent'],0)
+ def test_rehedge_mapped_through_pre_submit(self):
+  r,_,_=RunUidIntegration().run_case(action_mode='REHEDGE')
+  self.assertEqual(r['shortRecoveryAction']['status'],'PREVIEW_REHEDGE_REQUIRES_FINAL_READBACK')
+ def test_pair_exit_requires_financial_proof(self):
+  r,_,_=RunUidIntegration().run_case(action_mode='PAIR_EXIT',proof=False)
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_NET_EVIDENCE')
+ def test_stop_blocks_all_action_intents(self):
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',emergency_stop=True)
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_RECOVERY_DISABLED_OR_STOPPED')
+ def test_execute_true_does_not_prepare_action(self):
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',execution_enabled=True,force_shadow=False)
+  self.assertNotIn('shortRecoveryAction',r)
