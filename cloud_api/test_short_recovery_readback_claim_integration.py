@@ -89,3 +89,23 @@ class ReadbackFinancialCompleteness(unittest.TestCase):
         preview=inspect(client,symbol='XRPUSDT',client_order_id='intent')
         self.assertIsNone(preview['fills'][0]['funding'])
         self.assertFalse(preview['terminalVerified'])
+
+class PaginationAndFundingProof(unittest.TestCase):
+    def test_full_fill_page_never_claims_complete(self):
+        client=MockAster()
+        client.rows=client.rows*500
+        result=inspect(client,symbol='XRPUSDT',client_order_id='intent')
+        self.assertEqual(result['status'],'BLOCKED_INCOMPLETE_FILL_PAGE')
+        self.assertFalse(result['terminalVerified'])
+    def test_conflicting_duplicate_execution_fails_closed(self):
+        client=MockAster()
+        duplicate={**client.rows[0],'realizedPnl':'999'}
+        client.rows.append(duplicate)
+        result=inspect(client,symbol='XRPUSDT',client_order_id='intent')
+        self.assertEqual(result['status'],'BLOCKED_DUPLICATE_EXECUTION')
+    def test_readback_preview_cannot_establish_funding_cycle(self):
+        client=MockAster()
+        result=inspect(client,symbol='XRPUSDT',client_order_id='intent')
+        self.assertEqual(result['status'],'READBACK_PREVIEW')
+        self.assertFalse(result['terminalVerified'])
+        self.assertEqual(result['ordersSent'],0)

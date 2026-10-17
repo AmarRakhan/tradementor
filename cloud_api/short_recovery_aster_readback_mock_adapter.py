@@ -11,6 +11,7 @@ def inspect(client, *, symbol, client_order_id):
     if order.get('symbol')!=symbol or order.get('clientOrderId')!=client_order_id or not order.get('orderId'):
         return {'status':'BLOCKED_ORDER_MISMATCH'}
     if not isinstance(fills,list) or any(not isinstance(x,dict) for x in fills):return {'status':'BLOCKED_FILLS_UNPROVEN'}
+    if len(fills)>=500:return {'status':'BLOCKED_INCOMPLETE_FILL_PAGE','terminalVerified':False,'ordersSent':0}
     matched=[x for x in fills if str(x.get('orderId'))==str(order['orderId']) and x.get('symbol')==symbol]
     seen=set();output=[]
     for x in matched:
@@ -31,7 +32,7 @@ def inspect(client, *, symbol, client_order_id):
             except (InvalidOperation,ValueError,TypeError):return {'status':'BLOCKED_BAD_FILL'}
             if not money['funding'].is_finite():return {'status':'BLOCKED_BAD_FILL'}
         else: money['funding']=None
-        if execution in seen:continue
+        if execution in seen:return {'status':'BLOCKED_DUPLICATE_EXECUTION','terminalVerified':False,'ordersSent':0}
         seen.add(execution);output.append({'executionId':execution,'quantity':q,'orderId':str(order['orderId']),**money})
     return {'status':'READBACK_PREVIEW','orderStatus':order.get('status'),'fills':output,
             'terminalVerified':False,'ordersSent':0}

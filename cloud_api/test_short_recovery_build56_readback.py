@@ -25,7 +25,7 @@ class Tests(unittest.TestCase):
   r=self.scan(Client(fills=[]));self.assertEqual(r['fills'],[]);self.assertFalse(r['terminalVerified'])
  def test_bad_fill_fails_closed(self):self.assertEqual(self.scan(Client(fills=[{'symbol':'XRPUSDT','orderId':11,'id':77,'qty':'NaN'}]))['status'],'BLOCKED_BAD_FILL')
  def test_duplicate_execution_ids(self):
-  c=Client();c.fills=c.fills*2;self.assertEqual(len(self.scan(c)['fills']),1)
+  c=Client();c.fills=c.fills*2;self.assertEqual(self.scan(c)['status'],'BLOCKED_DUPLICATE_EXECUTION')
  def test_concurrent_readback_preview(self):
   gate=threading.Barrier(6);results=[];lock=threading.Lock()
   def worker():
