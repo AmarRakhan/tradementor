@@ -113,3 +113,18 @@ class LegacyPartialProvenanceCannotBeInvented(PairAtomic):
   before=self.snapshot('SHORTledger')
   self.assertEqual(self.run_pair(new),'BLOCKED_FINANCIAL_REPLAY_PROVENANCE')
   self.assertEqual(self.snapshot('SHORTledger'),before)
+
+class PartialThenTerminalProvenance(PairAtomic):
+ def test_partial_then_terminal_preserves_both_execution_economics(self):
+  first={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='PARTIALLY_FILLED')}
+  self.assertEqual(self.run_pair(first),'PAIR_RECONCILE_REQUIRED')
+  earlier=self.snapshot('SHORTclaim')['executionFinancials']['SHORT-exec']
+  self.db=self.db.restart();self.bind()
+  last={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='FILLED')}
+  last['SHORT']['fills'].append({**last['SHORT']['fills'][0],'executionId':'SHORT-exec-2','quantity':'50','realizedPnl':'2','commission':'.2'})
+  last['SHORT']['executedQty']='75'
+  self.assertEqual(self.run_pair(last),'PAIR_CLOSED_VERIFIED')
+  claim=self.snapshot('SHORTclaim')
+  self.assertEqual(claim['executionFinancials']['SHORT-exec'],earlier)
+  self.assertEqual(len(claim['executionFinancials']),2)
+  self.assertEqual(decode(self.snapshot('SHORTledger')).allocations[0].remaining,D(0))
