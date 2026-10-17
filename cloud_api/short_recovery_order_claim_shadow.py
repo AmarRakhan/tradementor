@@ -79,3 +79,43 @@ def pre_submit_check(*, db, transactional, claim_ref, control_ref, account, symb
     except Exception:
         return 'BLOCKED_ACCOUNT_PRE_SUBMIT_GUARD'
     return 'PREFLIGHT_SHADOW_ONLY'
+
+def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, symbol, cycle,
+                        intent, account_close_guard, submit_mock):
+    """Atomic single submit right; only caller-supplied mock transport is permitted.
+
+    A crash after SUBMITTING is UNKNOWN, never an entitlement to retry. This
+    function is deliberately not wired into live Auto Hedge or network clients.
+    """
+    if not callable(submit_mock) or not callable(account_close_guard) or control_ref is None:
+        return 'BLOCKED_GUARD_UNAVAILABLE'
+    if not getattr(intent, 'intent_id', None) or intent.symbol != symbol:
+        return 'BLOCKED_INTENT_SCOPE'
+    try:
+        account_close_guard()
+    except Exception:
+        return 'BLOCKED_ACCOUNT_PRE_SUBMIT_GUARD'
+    @transactional
+    def acquire(tx):
+        claim=claim_ref.get(transaction=tx).to_dict()
+        control=control_ref.get(transaction=tx).to_dict()
+        if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('intentId'))!=(account,symbol,cycle,intent.intent_id) or claim.get('state')!='RESERVED':
+            return 'BLOCKED_CLAIM_NOT_RESERVED'
+        if claim.get('side') not in ('LONG','SHORT') or claim.get('action') not in ('OPEN','CLOSE') or not isinstance(claim.get('step'),int):
+            return 'BLOCKED_CANONICAL_CLAIM'
+        if canonical_intent_id(account=account,symbol=symbol,cycle=cycle,side=claim['side'],action=claim['action'],step=claim['step'])!=intent.intent_id:
+            return 'BLOCKED_CANONICAL_CLAIM'
+        if getattr(intent.position_side,'value',None)!=claim['side'] or intent.action!=claim['action']:
+            return 'BLOCKED_SIDE_ACTION'
+        if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
+            return 'BLOCKED_RECOVERY_DISABLED_OR_STOPPED'
+        tx.set(claim_ref,{**claim,'state':'SUBMITTING'})
+        return 'SUBMITTING_LOCKED'
+    outcome=acquire(db.transaction())
+    if outcome!='SUBMITTING_LOCKED':return outcome
+    # Once the transaction commits, failure/timeout must never unlock the claim.
+    try:
+        submit_mock(intent)
+    except Exception:
+        return 'UNKNOWN_RECONCILE_ONLY'
+    return 'SUBMITTED_RECONCILE_ONLY'
