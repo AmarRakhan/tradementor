@@ -86,3 +86,27 @@ class PairCloseEmulator(unittest.TestCase):
   refs['control'].update({'emergencyStop':True})
   self.assertEqual(run(),'PAIR_RECONCILE_REQUIRED')
   self.assertNotEqual(refs['pair'].get().to_dict()['state'],'CLOSED')
+
+@unittest.skipUnless(os.getenv('FIRESTORE_EMULATOR_HOST')=='127.0.0.1:18783' and os.getenv('GOOGLE_CLOUD_PROJECT')=='amar-short-recovery-offline-test', 'isolated emulator not explicitly configured')
+class PairSubmitLockEmulator(unittest.TestCase):
+ def test_pair_submit_lock_is_atomic_replay_safe(self):
+  from google.cloud import firestore
+  from aster_gateway import AsterOrderIntent,PositionSide
+  from short_recovery_order_claim_shadow import canonical_intent_id,lock_pair_submit_offline
+  client=firestore.Client(project='amar-short-recovery-offline-test')
+  base=client.collection('offline_pair_submit').document(uuid.uuid4().hex)
+  refs={key:base.collection('docs').document(key) for key in ('LONG','SHORT','control')}
+  refs['control'].set({'account':'u','enabled':True,'emergencyStop':False,'closeAllActive':False})
+  intents={}
+  for side in ('LONG','SHORT'):
+   intent_id=canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side=side,action='CLOSE',step=1)
+   refs[side].set({'account':'u','symbol':'XRPUSDT','cycle':'c','side':side,'action':'CLOSE','step':1,'intentId':intent_id,'state':'RESERVED'})
+   intents[side]=AsterOrderIntent(intent_id,'XRPUSDT',PositionSide(side),D(10),'CLOSE')
+  def lock():
+   return lock_pair_submit_offline(db=client,transactional=firestore.transactional,long_claim_ref=refs['LONG'],short_claim_ref=refs['SHORT'],control_ref=refs['control'],account='u',symbol='XRPUSDT',cycle='c',long_intent=intents['LONG'],short_intent=intents['SHORT'],account_close_guard=lambda:None)
+  self.assertEqual(lock(),'PAIR_SUBMITTING_LOCKED')
+  self.assertEqual(refs['LONG'].get().to_dict()['state'],'SUBMITTING')
+  self.assertEqual(refs['SHORT'].get().to_dict()['state'],'SUBMITTING')
+  self.assertEqual(lock(),'BLOCKED_PAIR_SIDE_CLAIMS')
+  client=firestore.Client(project='amar-short-recovery-offline-test')
+  self.assertEqual(lock(),'BLOCKED_PAIR_SIDE_CLAIMS')
