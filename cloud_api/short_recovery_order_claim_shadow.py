@@ -119,3 +119,38 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
     except Exception:
         return 'UNKNOWN_RECONCILE_ONLY'
     return 'SUBMITTED_RECONCILE_ONLY'
+
+def lock_pair_submit_offline(*, db, transactional, long_claim_ref, short_claim_ref, control_ref,
+                             account, symbol, cycle, long_intent, short_intent, account_close_guard):
+    """Atomically take both pair-close submit rights, without sending orders.
+
+    Crash after the lock is UNKNOWN for *both* sides; replay cannot reacquire.
+    This is not an atomic exchange fill nor proof of net profit.
+    """
+    if not callable(account_close_guard) or long_claim_ref is None or short_claim_ref is None or long_claim_ref is short_claim_ref:
+        return 'BLOCKED_PAIR_CLAIM_SCOPE'
+    try:
+        account_close_guard()
+    except Exception:
+        return 'BLOCKED_ACCOUNT_PRE_SUBMIT_GUARD'
+    @transactional
+    def acquire(tx):
+        long_claim=long_claim_ref.get(transaction=tx).to_dict()
+        short_claim=short_claim_ref.get(transaction=tx).to_dict()
+        control=control_ref.get(transaction=tx).to_dict()
+        if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
+            return 'BLOCKED_RECOVERY_DISABLED_OR_STOPPED'
+        for side,claim,intent in [('LONG',long_claim,long_intent),('SHORT',short_claim,short_intent)]:
+            if (not isinstance(claim,dict) or claim.get('state')!='RESERVED'
+                or (claim.get('account'),claim.get('symbol'),claim.get('cycle'))!=(account,symbol,cycle)
+                or claim.get('side')!=side or claim.get('action')!='CLOSE'
+                or isinstance(claim.get('step'),bool) or not isinstance(claim.get('step'),int)
+                or claim.get('intentId')!=getattr(intent,'intent_id',None)
+                or getattr(intent,'symbol',None)!=symbol or getattr(intent,'action',None)!='CLOSE'
+                or getattr(getattr(intent,'position_side',None),'value',None)!=side
+                or claim.get('intentId')!=canonical_intent_id(account=account,symbol=symbol,cycle=cycle,side=side,action='CLOSE',step=claim['step'])):
+                return 'BLOCKED_PAIR_SIDE_CLAIMS'
+        tx.set(long_claim_ref,{**long_claim,'state':'SUBMITTING'})
+        tx.set(short_claim_ref,{**short_claim,'state':'SUBMITTING'})
+        return 'PAIR_SUBMITTING_LOCKED'
+    return acquire(db.transaction())

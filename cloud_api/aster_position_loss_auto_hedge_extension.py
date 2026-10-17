@@ -726,9 +726,18 @@ def _run_uid(
                                 if not action_ctx.get("offline_mock_confirmed") or not callable(mock_submit):
                                     report["shortRecoverySubmit"] = ("BLOCKED_MOCK_TRANSPORT",)
                                 elif len(proposed["intents"]) != 1:
-                                    # Two independent POSTs cannot be atomic: don't
-                                    # submit one leg of a pair before the other is locked.
-                                    report["shortRecoverySubmit"] = ("BLOCKED_PAIR_ATOMIC_SUBMIT",)
+                                    # Reserve both sideclaims atomically, but still
+                                    # do not send either leg: exchange POSTs aren't atomic.
+                                    from short_recovery_order_claim_shadow import lock_pair_submit_offline
+                                    intents={i.position_side.value:i for i in proposed["intents"]}
+                                    report["shortRecoverySubmit"] = (lock_pair_submit_offline(
+                                        db=ctx["db"],transactional=ctx["transactional"],
+                                        long_claim_ref=action_ctx.get("long_claim_ref"),
+                                        short_claim_ref=action_ctx["claim_ref"],
+                                        control_ref=ctx["control_ref"],account=uid,
+                                        symbol=symbol,cycle=ctx["cycle"],
+                                        long_intent=intents.get("LONG"),short_intent=intents.get("SHORT"),
+                                        account_close_guard=action_ctx["account_close_guard"]),)
                                 else:
                                     from short_recovery_order_claim_shadow import submit_once_offline
                                     claim_refs = {"SHORT":action_ctx["claim_ref"],
