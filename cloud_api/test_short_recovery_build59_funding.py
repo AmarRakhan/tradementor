@@ -77,3 +77,13 @@ class IncomeIdentityHardening(unittest.TestCase):
   row={'tranId':None,'time':101,'symbol':'XRPUSDT','incomeType':'FUNDING_FEE','income':'-0.03','positionSide':'SHORT'}
   with self.assertRaisesRegex(ValueError,'BLOCKED_FUNDING_EVIDENCE'):
    funding_for_cycle([row],symbol='XRPUSDT',side='SHORT',cycle_id='c1',start_ms=100,end_ms=200,ownership_proof={'None':('XRPUSDT','SHORT','c1')})
+
+class OverlappingCycleFundingCannotBeInferred(unittest.TestCase):
+ def test_same_symbol_side_and_timestamp_do_not_prove_cycle(self):
+  event={'tranId':'101','time':150,'symbol':'XRPUSDT','positionSide':'SHORT','incomeType':'FUNDING_FEE','income':'-0.03'}
+  with self.assertRaisesRegex(ValueError,'BLOCKED_FUNDING_ATTRIBUTION'):
+   funding_for_cycle([event],symbol='XRPUSDT',side='SHORT',cycle_id='zone-one',start_ms=100,end_ms=200,ownership_proof={'101':('XRPUSDT','SHORT','zone-two')})
+ def test_missing_event_ownership_never_reuses_other_cycles_total(self):
+  rows=[{'tranId':str(k),'time':150,'symbol':'XRPUSDT','positionSide':'SHORT','incomeType':'FUNDING_FEE','income':'-0.03'} for k in (101,102)]
+  with self.assertRaisesRegex(ValueError,'BLOCKED_FUNDING_ATTRIBUTION'):
+   funding_for_cycle(rows,symbol='XRPUSDT',side='SHORT',cycle_id='zone-one',start_ms=100,end_ms=200,ownership_proof={'101':('XRPUSDT','SHORT','zone-one')})
