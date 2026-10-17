@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
+import { ShortRecoveryPlanPreview } from "./short-recovery-plan-preview";
 
 const TILE_HOST_ID = "aster-position-loss-auto-hedge-host";
 const SCREEN_HOST_ID = "aster-position-loss-auto-hedge-back-host";
@@ -930,6 +931,8 @@ export function AsterPositionLossAutoHedgeBridge() {
           <div className="plah-range-labels" aria-hidden="true"><span>$0,01</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
           <p className="plah-info"><span>i</span> Bij -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager wordt de tegengestelde zijde aangepast tot exact 1:1 coin quantity.</p>
         </section>
+
+        <ShortRecoveryPlanPreview />
 
         <div className="plah-scope-grid">
           <article><span>{layersIcon()}</span><div><small>Bestaande posities</small><strong>Inbegrepen</strong></div><b>✓</b></article>
