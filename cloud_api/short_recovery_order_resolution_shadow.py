@@ -4,7 +4,7 @@ from short_recovery_firestore_mock import decode, encode
 from short_recovery_ledger import Fill
 
 def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, account, symbol, cycle, intent_id, event, evidence=None, execution_id=None, quantity=None):
-    allowed={'UNKNOWN','LATE_ACK','LATE_FILL','CANCEL_REQUESTED','CANCEL_TERMINAL','NO_ORDER_TERMINAL'}
+    allowed={'UNKNOWN','LATE_ACK','LATE_FILL','CANCEL_REQUESTED','CANCEL_TERMINAL','NO_ORDER_TERMINAL','ACK','FILL'}
     if event not in allowed:return 'BLOCKED_EVENT'
     @transactional
     def step(tx):
@@ -23,11 +23,17 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
         if event=='CANCEL_REQUESTED':
             if state in ('CANCELLED','NO_ORDER','CLOSED'):return 'ALREADY_TERMINAL'
             tx.set(claim_ref,{**claim,'state':'CANCEL_PENDING'});return 'WAIT_TERMINAL'
+        if event=='ACK':
+            if state in ('UNKNOWN','CANCEL_PENDING','CANCELLED','NO_ORDER','CLOSED'):return 'BLOCKED_UNKNOWN'
+            if not isinstance(evidence,dict) or evidence.get('confirmed') is not True or not evidence.get('orderId'):return 'BLOCKED_NO_EVIDENCE'
+            tx.set(claim_ref,{**claim,'state':'ACKED','orderId':evidence['orderId']});return 'ACKED'
         if event=='LATE_ACK':
             if not isinstance(evidence,dict) or evidence.get('confirmed') is not True or not evidence.get('orderId'):return 'BLOCKED_NO_EVIDENCE'
             if state in ('CANCELLED','NO_ORDER','CLOSED'):return 'BLOCKED_TERMINAL_CONFLICT'
             tx.set(claim_ref,{**claim,'state':'ACKED','orderId':evidence['orderId']});return 'ACKED_RECOVERED'
-        if event=='LATE_FILL':
+        if event=='FILL' and state in ('CLOSED','CANCELLED','NO_ORDER'):return 'ALREADY_TERMINAL'
+        if event=='FILL' and state not in ('ACKED','PARTIAL'):return 'BLOCKED_UNCONFIRMED'
+        if event in ('LATE_FILL','FILL'):
             if not isinstance(evidence,dict) or evidence.get('confirmed') is not True or not evidence.get('orderId') or not execution_id or quantity is None:return 'BLOCKED_NO_EVIDENCE'
             if state in ('CANCELLED','NO_ORDER','CLOSED'):return 'BLOCKED_TERMINAL_CONFLICT'
             if execution_id in ledger.seen:return 'ALREADY_APPLIED'
