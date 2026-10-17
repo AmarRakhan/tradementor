@@ -30,6 +30,8 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
         if event=='LATE_ACK':
             if not isinstance(evidence,dict) or evidence.get('confirmed') is not True or not evidence.get('orderId'):return 'BLOCKED_NO_EVIDENCE'
             if state in ('CANCELLED','NO_ORDER','CLOSED','PARTIAL_TERMINAL'):return 'BLOCKED_TERMINAL_CONFLICT'
+            # A delayed readback cannot replace the bound exchange order while an earlier side is unresolved.
+            if claim.get('orderId') and str(claim['orderId'])!=str(evidence['orderId']):return 'BLOCKED_ORDER_MISMATCH'
             tx.set(claim_ref,{**claim,'state':'ACKED','orderId':evidence['orderId']});return 'ACKED_RECOVERED'
         if event=='FILL' and state in ('CLOSED','CANCELLED','NO_ORDER','PARTIAL_TERMINAL'):return 'ALREADY_TERMINAL'
         if event=='FILL' and state not in ('ACKED','PARTIAL'):return 'BLOCKED_UNCONFIRMED'

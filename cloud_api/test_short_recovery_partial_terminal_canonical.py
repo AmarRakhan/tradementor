@@ -44,3 +44,11 @@ class PartialTerminal(unittest.TestCase):
   self.event('ACK',evidence={'confirmed':True,'orderId':'o'})
   self.event('FILL',evidence={'confirmed':True,'readbackVerified':True,'orderId':'o','executionId':'x','quantity':'25','realizedPnl':'1','commission':'.1','funding':'0'},execution_id='x',quantity=25)
   self.assertEqual(self.event('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent','orderId':'o'}),'BLOCKED_PARTIAL_TERMINAL_ORDER_PROOF')
+
+ def test_unknown_late_ack_cannot_rebind_original_order(self):
+  self.event('ACK',evidence={'confirmed':True,'orderId':'original'})
+  self.event('UNKNOWN')
+  self.assertEqual(self.event('LATE_ACK',evidence={'confirmed':True,'orderId':'different'}),'BLOCKED_ORDER_MISMATCH')
+  self.assertEqual(self.h.db.snapshot(self.h.keys['claim'])[1]['orderId'],'original')
+  self.assertEqual(self.h.db.snapshot(self.h.keys['claim'])[1]['state'],'UNKNOWN')
+  self.assertEqual(self.reserve_again(),'BLOCKED_UNRESOLVED_CLAIM')
