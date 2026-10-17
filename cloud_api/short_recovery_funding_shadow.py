@@ -102,3 +102,37 @@ def conservative_symbol_funding_floor(rows, *, symbol, start_ms, end_ms, coverag
     # An independently complete attestation, not the absence of rows, is the
     # precondition for admitting a zero charge on an empty exchange window.
     return charge
+
+def read_bounded_symbol_funding(client, *, symbol, account, start_ms, end_ms, limit=1000):
+    """Read-only bounded extraction; never certify independent completeness.
+
+    Aster income start/end are inclusive. Split into <=1-day blocks and use
+    FUNDING_FEE filter so unrelated income cannot exhaust a page. All full
+    pages fail closed: there is no documented income cursor for tied times.
+    """
+    if (not isinstance(symbol,str) or not symbol or not isinstance(account,str) or not account
+            or isinstance(start_ms,bool) or isinstance(end_ms,bool)
+            or not isinstance(start_ms,int) or not isinstance(end_ms,int)
+            or start_ms>=end_ms or not isinstance(limit,int) or isinstance(limit,bool)
+            or not 1<=limit<=1000):raise ValueError('BLOCKED_FUNDING_WINDOW')
+    rows=[]; seen=set();cursor=start_ms
+    while cursor<end_ms:
+        last=min(end_ms-1,cursor+86_400_000-1)
+        page=client.income_history(symbol=symbol,income_type='FUNDING_FEE',start_time=cursor,end_time=last,limit=limit)
+        if not isinstance(page,list) or len(page)>=limit or any(not isinstance(row,dict) for row in page):
+            raise ValueError('BLOCKED_FUNDING_PAGE_COMPLETENESS')
+        for row in page:
+            try:
+                tid=str(row['tranId']) if row.get('tranId') is not None else ''
+                timestamp=row['time']
+                amount=Decimal(str(row['income']))
+            except (ValueError,TypeError,KeyError,InvalidOperation):raise ValueError('BLOCKED_FUNDING_ROW')
+            if (not tid or tid in seen or type(timestamp)!=int or not cursor<=timestamp<=last
+                    or row.get('symbol')!=symbol or row.get('incomeType')!='FUNDING_FEE'
+                    or not amount.is_finite()):raise ValueError('BLOCKED_FUNDING_ROW')
+            seen.add(tid);rows.append(row)
+        cursor=last+1
+    # Explicitly NOT certified: caller cannot use these rows to bypass gate.
+    return {'account':account,'symbol':symbol,'startMs':start_ms,'endMs':end_ms,
+            'rows':tuple(rows),'complete':False,'independentlyVerified':False,
+            'reason':'NO_INDEPENDENT_EXCHANGE_COMPLETENESS_ATTESTATION'}
