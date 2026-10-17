@@ -28,3 +28,28 @@ def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account
                           'state':'RESERVED','reservedAt':now,'leaseUntil':now+lease_seconds})
         return 'RESERVED_SHADOW'
     return attempt(db.transaction())
+
+def pre_submit_check(*, db, transactional, claim_ref, control_ref, account, symbol, cycle, intent_id, account_close_guard):
+    """Offline pre-submit revalidation; never sends an order.
+
+    The caller-supplied guard must be the established account pre-submit guard.
+    This check does not constitute an atomic guarantee across check -> submit.
+    """
+    if not callable(account_close_guard) or control_ref is None:
+        return 'BLOCKED_GUARD_UNAVAILABLE'
+    @transactional
+    def check(tx):
+        claim=claim_ref.get(transaction=tx).to_dict()
+        control=control_ref.get(transaction=tx).to_dict()
+        if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('intentId'))!=(account,symbol,cycle,intent_id) or claim.get('state')!='RESERVED':
+            return 'BLOCKED_CLAIM_NOT_RESERVED'
+        if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
+            return 'BLOCKED_RECOVERY_DISABLED_OR_STOPPED'
+        return 'PREFLIGHT_SHADOW_ONLY'
+    result=check(db.transaction())
+    if result!='PREFLIGHT_SHADOW_ONLY':return result
+    try:
+        account_close_guard()
+    except Exception:
+        return 'BLOCKED_ACCOUNT_PRE_SUBMIT_GUARD'
+    return 'PREFLIGHT_SHADOW_ONLY'
