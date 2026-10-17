@@ -19,7 +19,7 @@ class CanonicalChain(unittest.TestCase):
  def proposal(self,closed,price,short,exit_due=False,financial=False):
   state=ReductionState(Plan(D(2),D(100),D(5),4),D(closed),D(price))
   bridge=preview_reconciliation(protected_sides={'XRPUSDT':'LONG'},existing_skip_symbols=set(),recovery_states={'XRPUSDT':state},exchange_short_quantities={'XRPUSDT':D(short)},long_quantities={'XRPUSDT':D(100)},net_exits={'XRPUSDT'} if exit_due else set())
-  return preview_canonical_executor(reconciled=bridge,symbol='XRPUSDT',long_qty=100,short_qty=short,ownership_verified=True,claim_reserved=True,stop_clear=True,net_evidence_verified=financial)
+  return preview_canonical_executor(reconciled=bridge,symbol='XRPUSDT',long_qty=100,short_qty=short,ownership_verified=True,claim_reserved=True,stop_clear=True,intent_ids={'LONG_CLOSE':'LONG-intent','SHORT_CLOSE':'SHORT-intent','SHORT_OPEN':'SHORT-open-intent'},net_evidence_verified=financial)
  def presubmit(self):
   h=self.h
   return pre_submit_check(db=h.db,transactional=transactional,claim_ref=h.refs['claim'],control_ref=h.refs['control'],account='u',symbol='XRPUSDT',cycle='c',intent_id='intent',account_close_guard=lambda:None)

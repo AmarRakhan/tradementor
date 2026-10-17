@@ -670,7 +670,7 @@ def _run_uid(
                                 account_close_guard=action_ctx["account_close_guard"])
                             report["shortRecoveryAction"] = (
                                 preview_canonical_executor(
-                                    reconciled=bridge, symbol=symbol,
+                                    reconciled=bridge, symbol=symbol, intent_ids=action_ctx.get("intent_ids"),
                                     long_qty=action_ctx["long_qty"], short_qty=action_ctx["short_qty"],
                                     net_evidence_verified=action_ctx.get("net_evidence_verified") is True,
                                     ownership_verified=True,
@@ -679,6 +679,22 @@ def _run_uid(
                                 if preflight=="PREFLIGHT_SHADOW_ONLY" else
                                 {"status":preflight,"ordersSent":0,"intents":()})
                             proposed = report["shortRecoveryAction"]
+                            if proposed.get("status")=="PREVIEW_PAIR_CLOSE_REQUIRES_ATOMIC_CLAIMS":
+                                # A SHORT claim cannot authorize closing the LONG side.
+                                # Require independent LONG preflight before showing either intent.
+                                long_ref=action_ctx.get("long_claim_ref")
+                                long_id=(action_ctx.get("intent_ids") or {}).get("LONG_CLOSE")
+                                if long_ref is None or not long_id:
+                                    proposed={"status":"BLOCKED_PAIR_SIDE_CLAIMS","ordersSent":0,"intents":()}
+                                else:
+                                    long_check=pre_submit_check(
+                                        db=ctx["db"],transactional=ctx["transactional"],
+                                        claim_ref=long_ref,control_ref=ctx["control_ref"],
+                                        account=uid,symbol=symbol,cycle=ctx["cycle"],
+                                        intent_id=long_id,account_close_guard=action_ctx["account_close_guard"])
+                                    if long_check!="PREFLIGHT_SHADOW_ONLY":
+                                        proposed={"status":"BLOCKED_PAIR_SIDE_CLAIMS","ordersSent":0,"intents":()}
+                                report["shortRecoveryAction"]=proposed
                             if proposed.get("intents") and any(
                                     intent.intent_id != action_ctx["intent_id"]
                                     for intent in proposed["intents"]):

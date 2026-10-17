@@ -10,7 +10,7 @@ class CanonicalExecutor(unittest.TestCase):
   bridge=preview_reconciliation(protected_sides={'XRPUSDT':'LONG'},existing_skip_symbols=set(),recovery_states={'XRPUSDT':state},exchange_short_quantities={'XRPUSDT':D(short)},long_quantities={'XRPUSDT':D(100)},net_exits={'XRPUSDT'} if exit else set())
   return bridge
  def route(self,bridge,short,**flags):
-  return preview_canonical_executor(reconciled=bridge,symbol='XRPUSDT',long_qty=100,short_qty=short,ownership_verified=True,claim_reserved=True,stop_clear=True,**flags)
+  return preview_canonical_executor(reconciled=bridge,symbol='XRPUSDT',long_qty=100,short_qty=short,ownership_verified=True,claim_reserved=True,stop_clear=True,intent_ids={'LONG_CLOSE':'LONG-intent','SHORT_CLOSE':'SHORT-intent','SHORT_OPEN':'SHORT-open-intent'},**flags)
  def test_25_percent_reduction_is_only_short_close(self):
   r=self.route(self.preview(0,'1.9',100),100)
   self.assertEqual(r['status'],'PREVIEW_SHORT_REDUCE');self.assertEqual(len(r['intents']),1)

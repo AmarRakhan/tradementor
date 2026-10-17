@@ -33,7 +33,7 @@ class RunUidIntegration(unittest.TestCase):
    ctx['recovery_action']={'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':'SHORT-intent',
-       'account_close_guard':lambda:None}
+       'account_close_guard':lambda:None,'intent_ids':{'LONG_CLOSE':'LONG-intent','SHORT_CLOSE':'SHORT-intent','SHORT_OPEN':'SHORT-intent'}}
    h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':'RESERVED'})
    if emergency_stop:h.fixture.put('control',{'account':'u','enabled':True,'emergencyStop':True,'closeAllActive':False})
   states={'XRPUSDT':{'ownerSide':'SHORT','cycleConfirmed':True,'ownershipVerified':ownership,'state':'PARTIAL'}}
@@ -72,11 +72,11 @@ class RunUidIntegration(unittest.TestCase):
 class ThreeActionsRunUid(unittest.TestCase):
  def test_reduce_mapped_through_pre_submit(self):
   r,_,_=RunUidIntegration().run_case(action_mode='REDUCE')
-  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_INTENT_CLAIM_ID_MISMATCH')
+  self.assertEqual(r['shortRecoveryAction']['status'],'PREVIEW_SHORT_REDUCE')
   self.assertEqual(r['shortRecoveryAction']['ordersSent'],0)
  def test_rehedge_mapped_through_pre_submit(self):
   r,_,_=RunUidIntegration().run_case(action_mode='REHEDGE')
-  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_INTENT_CLAIM_ID_MISMATCH')
+  self.assertEqual(r['shortRecoveryAction']['status'],'PREVIEW_REHEDGE_REQUIRES_FINAL_READBACK')
  def test_pair_exit_requires_financial_proof(self):
   r,_,_=RunUidIntegration().run_case(action_mode='PAIR_EXIT',proof=False)
   self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_NET_EVIDENCE')
