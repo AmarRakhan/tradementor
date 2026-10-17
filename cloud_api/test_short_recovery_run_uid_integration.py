@@ -96,6 +96,7 @@ class SubmittedRunUid(unittest.TestCase):
   self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',))
   self.assertEqual(mock.call_count,1)
   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+  self.assertEqual(r['shortRecoveryPairSettlement'],'PAIR_RECONCILE_REQUIRED_NO_TERMINAL_ACK')
  def test_rehedge_atomic_submit_and_mock_transport(self):
   mock=MagicMock(return_value=({'orderId':123},False))
   r,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',mock_transport=mock)

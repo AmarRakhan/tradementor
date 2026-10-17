@@ -759,7 +759,21 @@ def _run_uid(
                                     report["shortRecoverySubmit"] = tuple(results)
                         except (KeyError,TypeError,ValueError):
                             report["shortRecoveryAction"] = {"status":"BLOCKED_ACTION_CONTEXT","ordersSent":0,"intents":()}
-                    report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
+                    # A mock POST return is not an Aster order acknowledgement.
+                    # Until side-scoped ACK/readback has persisted matching orderIds,
+                    # do not interpret SUBMITTING/UNKNOWN as financial settlement.
+                    @ctx["transactional"]
+                    def _read_pair_claim_status(tx):
+                        return {side:ctx["claim_refs"][side].get(transaction=tx).to_dict()
+                                for side in ("LONG", "SHORT")}
+                    claim_status=_read_pair_claim_status(ctx["db"].transaction())
+                    if any(not isinstance(claim_status[side],dict) or
+                           claim_status[side].get("state") in ("SUBMITTING", "RESERVED", "UNKNOWN") or
+                           not claim_status[side].get("orderId")
+                           for side in ("LONG", "SHORT")):
+                        report["shortRecoveryPairSettlement"]="PAIR_RECONCILE_REQUIRED_NO_TERMINAL_ACK"
+                    else:
+                        report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
         # SHORT Recovery Plan 2.0: strictly read-only shadow instrumentation.
         # NEVER change skip_symbols/protected_sides in the executable reconciler here.
         # No plan execution, order placement, or setting persistence is enabled.
