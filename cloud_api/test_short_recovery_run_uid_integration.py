@@ -177,3 +177,14 @@ class WholePairLifecycle(unittest.TestCase):
   r,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',mock_transport=submit,readback_mode='DUPLICATE')
   self.assertNotEqual(r['shortRecoveryPairSettlement'],'PAIR_CLOSED_VERIFIED')
   self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+ def test_long_timeout_blocks_short_and_pair_close(self):
+  calls=[]
+  def submit(intent):
+   calls.append(intent.intent_id)
+   raise TimeoutError('mock LONG timeout')
+  r,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',mock_transport=submit)
+  self.assertEqual(r['shortRecoverySubmit'],('UNKNOWN_RECONCILE_ONLY',))
+  self.assertEqual(len(calls),1)
+  self.assertEqual(h.fixture.snapshot('LONGclaim')['state'],'SUBMITTING')
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+  self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')

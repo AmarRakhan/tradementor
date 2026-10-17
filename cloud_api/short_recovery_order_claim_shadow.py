@@ -185,6 +185,13 @@ def submit_locked_pair_mock_offline(*, db, transactional, long_claim_ref, short_
     if locked!='PAIR_SUBMITTING_LOCKED':return (locked,)
     results=[]
     for intent in (long_intent,short_intent):
+        @transactional
+        def check_current_stop(tx):
+            row=control_ref.get(transaction=tx).to_dict()
+            return isinstance(row,dict) and row.get('account')==account and row.get('enabled') is True and row.get('emergencyStop') is False and row.get('closeAllActive') is False
+        if not check_current_stop(db.transaction()):
+            results.append('BLOCKED_RECOVERY_DISABLED_OR_STOPPED')
+            break
         try:
             account_close_guard()
             response=submit_mock(intent)

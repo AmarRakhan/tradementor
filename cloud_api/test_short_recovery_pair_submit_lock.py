@@ -77,3 +77,16 @@ class BadAckIsNotSettlement(PairTransportMock):
   self.assertEqual(self.db.snapshot('SHORT')[1]['state'],'SUBMITTING')
   self.assertEqual(self.send(wrong_ack),('BLOCKED_PAIR_SIDE_CLAIMS',))
   self.assertEqual(len(calls),1)
+
+class MidPairStop(PairTransportMock):
+ def test_stop_after_long_ack_blocks_short(self):
+  sent=[]
+  def submit(intent):
+   sent.append(intent.position_side.value)
+   if intent.position_side is PositionSide.LONG:
+    self.db.commit('control',1,dict(account='u',enabled=True,emergencyStop=True,closeAllActive=False))
+   return {'clientOrderId':intent.intent_id,'orderId':intent.position_side.value+'-order'}
+  self.assertEqual(self.send(submit),('SUBMITTED_RECONCILE_ONLY','BLOCKED_RECOVERY_DISABLED_OR_STOPPED'))
+  self.assertEqual(sent,['LONG'])
+  self.assertEqual(self.db.snapshot('SHORT')[1]['state'],'SUBMITTING')
+  self.assertEqual(self.send(submit),('BLOCKED_RECOVERY_DISABLED_OR_STOPPED',))
