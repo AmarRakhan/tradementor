@@ -70,3 +70,35 @@ def funding_for_cycle(rows, *, symbol, side, cycle_id, start_ms, end_ms, ownersh
     if not seen:
         raise ValueError('BLOCKED_ZERO_FUNDING_NOT_PROVEN')
     return total
+
+def conservative_symbol_funding_floor(rows, *, symbol, start_ms, end_ms, coverage):
+    """Offline lower bound: charge every negative symbol funding event to a cycle.
+
+    No event is allocated to any cycle; positive funding is ignored. This is
+    eligible for profit lower-bound calculations only with independently
+    attested complete symbol income coverage for the *entire* exposure window.
+    Caller-provided coverage is NOT itself exchange proof or live permission.
+    """
+    if (not isinstance(coverage, dict) or coverage.get('independentlyVerified') is not True
+            or coverage.get('complete') is not True or coverage.get('symbol') != symbol
+            or coverage.get('startMs') != start_ms or coverage.get('endMs') != end_ms
+            or not isinstance(start_ms,int) or not isinstance(end_ms,int) or start_ms>=end_ms
+            or not isinstance(rows,(tuple,list))):
+        raise ValueError('BLOCKED_SYMBOL_COVERAGE_PROOF')
+    seen=set();charge=Decimal('0')
+    for row in rows:
+        if not isinstance(row,dict):raise ValueError('BLOCKED_INCOME_FORMAT')
+        if row.get('incomeType') != 'FUNDING_FEE':continue
+        try:
+            tid=str(row['tranId']) if row.get('tranId') is not None else ''
+            ts=int(row['time']);amount=Decimal(str(row['income']))
+        except (KeyError,TypeError,ValueError,InvalidOperation):
+            raise ValueError('BLOCKED_SYMBOL_INCOME')
+        if (not tid or tid in seen or row.get('symbol')!=symbol
+                or not start_ms<=ts<end_ms or not amount.is_finite()):
+            raise ValueError('BLOCKED_SYMBOL_INCOME')
+        seen.add(tid)
+        if amount<0:charge+=amount
+    # An independently complete attestation, not the absence of rows, is the
+    # precondition for admitting a zero charge on an empty exchange window.
+    return charge
