@@ -34,8 +34,7 @@ def settle(*,db,transactional,claim_ref,ledger_ref,owner_ref,marker_ref,account,
             tx.set(ledger_ref,encode(updated));tx.set(claim_ref,{**claim,'state':next_state,'orderId':order_id})
             return 'FILL_APPLIED'
         if event in ('CANCEL_CONFIRMED','RECONCILED_NO_ORDER'):
-            if state=='UNKNOWN' and event=='CANCEL_CONFIRMED':return 'BLOCKED_UNKNOWN'
-            tx.set(claim_ref,{**claim,'state':'CANCELLED' if event=='CANCEL_CONFIRMED' else 'NO_ORDER'})
-            return 'TERMINAL_VERIFIED'
+            # These legacy event types carry no independently validated terminal evidence.
+            return 'BLOCKED_TERMINAL_EVIDENCE_REQUIRED'
         return 'BLOCKED'
     return apply(db.transaction())

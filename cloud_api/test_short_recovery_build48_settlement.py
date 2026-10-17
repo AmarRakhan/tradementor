@@ -25,9 +25,9 @@ class Tests(unittest.TestCase):
   self.assertEqual(self.event('FILL',execution_id='y',order_id='o',qty=1),'ALREADY_TERMINAL')
  def test_unknown_never_release(self):
   self.assertEqual(self.event('UNKNOWN'),'BLOCKED_UNKNOWN')
-  self.assertEqual(self.event('CANCEL_CONFIRMED'),'BLOCKED_UNKNOWN')
+  self.assertEqual(self.event('CANCEL_CONFIRMED'),'BLOCKED_TERMINAL_EVIDENCE_REQUIRED')
  def test_no_order_reconciled_terminal(self):
-  self.assertEqual(self.event('RECONCILED_NO_ORDER'),'TERMINAL_VERIFIED')
+  self.assertEqual(self.event('RECONCILED_NO_ORDER'),'BLOCKED_TERMINAL_EVIDENCE_REQUIRED')
  def test_crash_restart_duplicate(self):
   self.event('ACK');self.event('FILL',execution_id='x',order_id='o',qty=25)
   self.db=self.db.restart();self.bind()
