@@ -714,11 +714,39 @@ def _run_uid(
                                         proposed={"status":"BLOCKED_PAIR_SIDE_CLAIMS","ordersSent":0,"intents":()}
                                 report["shortRecoveryAction"]=proposed
                             if proposed.get("intents") and any(
-                                    intent.intent_id != action_ctx["intent_id"]
+                                    intent.intent_id not in identifiers.values()
                                     for intent in proposed["intents"]):
                                 report["shortRecoveryAction"] = {
                                     "status":"BLOCKED_INTENT_CLAIM_ID_MISMATCH",
                                     "ordersSent":0,"intents":()}
+                            elif proposed.get("intents") and action_ctx.get("submit_mock") is not None:
+                                # The transport must be an explicitly provided offline mock;
+                                # never use the live _client or an authenticated Aster client.
+                                mock_submit = action_ctx["submit_mock"]
+                                if not action_ctx.get("offline_mock_confirmed") or not callable(mock_submit):
+                                    report["shortRecoverySubmit"] = ("BLOCKED_MOCK_TRANSPORT",)
+                                elif len(proposed["intents"]) != 1:
+                                    # Two independent POSTs cannot be atomic: don't
+                                    # submit one leg of a pair before the other is locked.
+                                    report["shortRecoverySubmit"] = ("BLOCKED_PAIR_ATOMIC_SUBMIT",)
+                                else:
+                                    from short_recovery_order_claim_shadow import submit_once_offline
+                                    claim_refs = {"SHORT":action_ctx["claim_ref"],
+                                                  "LONG":action_ctx.get("long_claim_ref")}
+                                    results=[]
+                                    for intent in proposed["intents"]:
+                                        ref=claim_refs.get(intent.position_side.value)
+                                        if ref is None:
+                                            results.append("BLOCKED_SIDE_CLAIM")
+                                            break
+                                        results.append(submit_once_offline(
+                                            db=ctx["db"],transactional=ctx["transactional"],
+                                            claim_ref=ref,control_ref=ctx["control_ref"],
+                                            account=uid,symbol=symbol,cycle=ctx["cycle"],intent=intent,
+                                            account_close_guard=action_ctx["account_close_guard"],
+                                            submit_mock=mock_submit))
+                                        if results[-1]!="SUBMITTED_RECONCILE_ONLY":break
+                                    report["shortRecoverySubmit"] = tuple(results)
                         except (KeyError,TypeError,ValueError):
                             report["shortRecoveryAction"] = {"status":"BLOCKED_ACTION_CONTEXT","ordersSent":0,"intents":()}
                     report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)

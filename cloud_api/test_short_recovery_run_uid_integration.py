@@ -19,7 +19,7 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None):
   h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
   ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None}
   if action_mode is not None:
@@ -35,8 +35,8 @@ class RunUidIntegration(unittest.TestCase):
    ctx['recovery_action']={'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':1,
-       'account_close_guard':lambda:None,'intent_ids':ids}
-   h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id']})
+       'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None}
+   h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':1})
    if emergency_stop:h.fixture.put('control',{'account':'u','enabled':True,'emergencyStop':True,'closeAllActive':False})
   states={'XRPUSDT':{'ownerSide':'SHORT','cycleConfirmed':True,'ownershipVerified':ownership,'state':'PARTIAL'}}
   dummy=MagicMock();dummy.position_risk.return_value=[];dummy.open_orders.return_value=[]
@@ -88,3 +88,31 @@ class ThreeActionsRunUid(unittest.TestCase):
  def test_execute_true_does_not_prepare_action(self):
   r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',execution_enabled=True,force_shadow=False)
   self.assertNotIn('shortRecoveryAction',r)
+
+class SubmittedRunUid(unittest.TestCase):
+ def test_short_reduction_atomic_submit_and_mock_transport(self):
+  mock=MagicMock(return_value=({'orderId':123},False))
+  r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=mock)
+  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',))
+  self.assertEqual(mock.call_count,1)
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+ def test_rehedge_atomic_submit_and_mock_transport(self):
+  mock=MagicMock(return_value=({'orderId':123},False))
+  r,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',mock_transport=mock)
+  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',))
+  self.assertEqual(mock.call_count,1)
+ def test_timeout_retains_submitting(self):
+  mock=MagicMock(side_effect=TimeoutError('mock timeout'))
+  r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=mock)
+  self.assertEqual(r['shortRecoverySubmit'],('UNKNOWN_RECONCILE_ONLY',))
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+ def test_emergency_stop_sends_no_transport(self):
+  mock=MagicMock()
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',emergency_stop=True,mock_transport=mock)
+  self.assertNotIn('shortRecoverySubmit',r)
+  mock.assert_not_called()
+ def test_live_execution_never_calls_offline_submit(self):
+  mock=MagicMock()
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',execution_enabled=True,force_shadow=False,mock_transport=mock)
+  self.assertNotIn('shortRecoverySubmit',r)
+  mock.assert_not_called()
