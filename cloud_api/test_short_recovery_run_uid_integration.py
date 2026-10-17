@@ -50,5 +50,7 @@ class RunUidIntegration(unittest.TestCase):
   self.assertIsNone(recon.call_args.kwargs['recovery_shadow_skip_symbols'])
   self.assertEqual(h.fixture.snapshot('pair')['state'],'OPEN')
  def test_unverified_ownership_not_suppressed(self):
-  r,recon,_=self.run_case(ownership=False)
+  r,recon,h=self.run_case(ownership=False)
   self.assertEqual(recon.call_args.kwargs['recovery_shadow_skip_symbols'],set())
+  self.assertEqual(r['shortRecoveryPairSettlement'],'BLOCKED_RECOVERY_OWNERSHIP')
+  self.assertEqual(h.fixture.snapshot('pair')['state'],'OPEN')

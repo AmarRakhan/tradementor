@@ -636,6 +636,8 @@ def _run_uid(
                 report["shortRecoveryPairSettlement"] = "BLOCKED_OFFLINE_ONLY"
             elif not settings.get("shortRecoveryPlan", {}).get("enabled"):
                 report["shortRecoveryPairSettlement"] = "BLOCKED_RECOVERY_DISABLED"
+            elif offline_pair_settlement.get("symbol") not in (recovery_offline_partition["shadow_skip"] - recovery_offline_partition["legacy_skip"]):
+                report["shortRecoveryPairSettlement"] = "BLOCKED_RECOVERY_OWNERSHIP"
             else:
                 from short_recovery_order_resolution_shadow import reconcile_pair_from_aster_mock
                 ctx = dict(offline_pair_settlement)
