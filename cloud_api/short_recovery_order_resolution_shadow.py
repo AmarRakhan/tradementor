@@ -119,6 +119,10 @@ def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_
             try:
                 expected=finite(row['executedQty'])
                 if expected<0:return 'BLOCKED_EXECUTED_QTY'
+                # A late/stale readback must never regress the persisted
+                # executed quantity, even when it omits already-seen fills.
+                if claim.get('executedQty') is not None and expected<finite(claim['executedQty']):
+                    return 'BLOCKED_EXECUTED_QTY_REGRESSION'
                 total=Decimal(0);seen_page=set()
                 for fill in fills:
                     if not isinstance(fill,dict) or not fill.get('executionId') or fill['executionId'] in seen_page or str(fill.get('orderId'))!=str(claim['orderId']):return 'BLOCKED_FILL_IDENTITY'

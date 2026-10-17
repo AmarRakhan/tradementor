@@ -67,3 +67,14 @@ class ReplayedFillQuantityConflict(PairAtomic):
   self.assertEqual(self.run_pair(replay),'BLOCKED_EXECUTION_INCOMPLETE')
   self.assertEqual(self.snapshot('SHORTledger'),before)
   self.assertNotEqual(self.snapshot('pair')['state'],'CLOSED')
+
+class StaleExecutedQtyCannotRegress(PairAtomic):
+ def test_stale_short_partial_after_restart_is_rejected_without_mutation(self):
+  first={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',25,status='PARTIALLY_FILLED')}
+  self.assertEqual(self.run_pair(first),'PAIR_RECONCILE_REQUIRED')
+  before=self.snapshot('SHORTledger');claim=self.snapshot('SHORTclaim')
+  self.db=self.db.restart();self.bind()
+  stale={'LONG':self.row('LONG'),'SHORT':self.row('SHORT',20,status='PARTIALLY_FILLED')}
+  self.assertEqual(self.run_pair(stale),'BLOCKED_EXECUTED_QTY_REGRESSION')
+  self.assertEqual(self.snapshot('SHORTledger'),before)
+  self.assertEqual(self.snapshot('SHORTclaim'),claim)
