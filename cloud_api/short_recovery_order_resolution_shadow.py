@@ -36,6 +36,7 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
         if event in ('LATE_FILL','FILL'):
             if not isinstance(evidence,dict) or evidence.get('confirmed') is not True or not evidence.get('orderId') or not execution_id or quantity is None:return 'BLOCKED_NO_EVIDENCE'
             if state in ('CANCELLED','NO_ORDER','CLOSED'):return 'BLOCKED_TERMINAL_CONFLICT'
+            if claim.get('orderId') and claim['orderId']!=evidence['orderId']:return 'BLOCKED_ORDER_MISMATCH'
             if execution_id in ledger.seen:return 'ALREADY_APPLIED'
             q=Decimal(str(quantity));allocation=ledger.allocations[0]
             if not q.is_finite() or q<=0 or q>allocation.remaining or allocation.cycle_id!=cycle:return 'BLOCKED_QUANTITY'

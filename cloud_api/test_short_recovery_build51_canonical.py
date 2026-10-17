@@ -21,6 +21,9 @@ class Canonical(unittest.TestCase):
   self.assertEqual(self.call('CANCEL_REQUESTED'),'WAIT_TERMINAL')
   self.assertEqual(self.call('CANCEL_TERMINAL',evidence={'confirmed':True,'intentId':'intent'}),'BLOCKED_NOT_TERMINAL')
   self.assertEqual(self.call('CANCEL_TERMINAL',evidence={'confirmed':True,'noMoreFills':True,'intentId':'intent'}),'TERMINAL_VERIFIED')
+ def test_wrong_order_evidence_blocked(self):
+  self.assertEqual(self.call('ACK',evidence={'confirmed':True,'orderId':'order-A'}),'ACKED')
+  self.assertEqual(self.call('FILL',evidence={'confirmed':True,'orderId':'order-B'},execution_id='mismatch',quantity=25),'BLOCKED_ORDER_MISMATCH')
  def test_invalid_ack_without_evidence(self):
   self.assertEqual(self.call('ACK'),'BLOCKED_NO_EVIDENCE')
 if __name__=='__main__':unittest.main()
