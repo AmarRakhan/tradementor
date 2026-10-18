@@ -29,8 +29,8 @@ class ProductionImportBoundary(unittest.TestCase):
     elif isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='import_module':
      if node.args and isinstance(node.args[0],ast.Constant) and isinstance(node.args[0].value,str) and node.args[0].value.split('.')[0] in FINANCIAL:
       findings.append((node.lineno,node.args[0].value))
-   expected=[] if filename=='main.py' else [(642,'short_recovery_order_resolution_shadow')]
-   self.assertEqual(findings,expected,filename)
+   expected=[] if filename=='main.py' else ['short_recovery_order_resolution_shadow']
+   self.assertEqual([module for _,module in findings],expected,filename)
    if filename.endswith('extension.py'):
     self.assertIn('if execute or not force_shadow or not recovery_offline_partition:',source)
     self.assertIn('if ctx.get("account") != uid or not ctx.get("mock_only"):',source)

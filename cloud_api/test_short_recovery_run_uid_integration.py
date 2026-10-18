@@ -19,12 +19,21 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, require_independent_funding_mock=False, funding_window_mock=None, authorization_mode="LEGACY_MOCK_TEST", reduction_step=1, reduction_mark=None, confirmed_closed=None, initialize_action_claim=True):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, require_independent_funding_mock=False, funding_window_mock=None, authorization_mode="LEGACY_MOCK_TEST", reduction_step=1, reduction_mark=None, confirmed_closed=None, initialize_action_claim=True, shared_fence=False, fence_intent_override=None, require_shared_fence=False):
   h=existing_harness or VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement')
   if existing_harness is None:h.setUp()
   if inventory_readback=='fixture':
    inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':9999,'LONG':'100','SHORT':'0' if action_mode=='REHEDGE' else '100'}
   ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None,'restart_readback_mock_client':restart_readback_mock_client,'authorization_mode':authorization_mode,'require_independent_funding_mock':require_independent_funding_mock,'funding_window_mock':funding_window_mock}
+  if shared_fence:
+   from short_recovery_multidoc_mock import Ref
+   from short_recovery_order_claim_shadow import canonical_intent_id
+   coordination=Ref(h.fixture.db,('u','XRPUSDT','coordination'))
+   ctx['coordination_ref']=coordination
+   h.fixture.db.commit(coordination.key,0,{'recoveryFenceReservation':{
+    'account':'u','symbol':'XRPUSDT','cycle':'c',
+    'intentId':fence_intent_override or canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side='SHORT',action='CLOSE',step=reduction_step),
+    'state':'RECOVERY_CLAIM_RESERVED'}})
   if action_mode is not None:
    from decimal import Decimal as D
    from short_recovery_contract import Plan
@@ -62,7 +71,7 @@ class RunUidIntegration(unittest.TestCase):
    ctx['recovery_action']={'final_short_close_claim_ref':final_short_close_claim_ref,'rehedge_final_readback':rehedge_final_readback,'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':reduction_step,
-       'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback,'inventory_mock_client':inventory_mock_client}
+       'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'require_shared_fence':require_shared_fence, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback,'inventory_mock_client':inventory_mock_client}
    if initialize_action_claim:h.fixture.put('SHORTclaim',{**(h.fixture.snapshot('SHORTclaim') or {'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':'SHORT'}),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':reduction_step})
    if action_mode=='PAIR_EXIT':
     ctx['recovery_action']['long_claim_ref']=h.fixture.refs['LONGclaim']
@@ -528,6 +537,29 @@ class FourStepRunUidCycle(unittest.TestCase):
   self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',))
   self.assertEqual(posts[-1],('open',D(100),'OPEN'))
   self.assertEqual(len(posts),5)
+  # Finality of the SAME four-step CLOSED claim grants one isolated mock
+  # rehedge cycle reservation, never a repeat authorization.
+  from datetime import datetime,timedelta,timezone
+  from short_recovery_lease_fence_offline import reserve_verified_rehedge_mock_only
+  from short_recovery_order_claim_shadow import canonical_intent_id
+  now=datetime.now(timezone.utc)
+  coordination_ref=Ref(h.fixture.db,('u','XRPUSDT','coordination'))
+  h.fixture.db.commit(coordination_ref.key,0,{'lease':{'token':'mock-rehedge-token','until':now+timedelta(seconds=45)}})
+  next_id=canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c2',side='SHORT',action='OPEN',step=0)
+  def reserve_next():
+   return reserve_verified_rehedge_mock_only(mock_only=True,db=h.fixture.db,
+       transactional=transactional,coordination_ref=coordination_ref,
+       owner_ref=owner_ref,final_claim_ref=last_close_ref,
+       control_ref=h.fixture.refs['control'],account='u',symbol='XRPUSDT',
+       old_cycle='c',new_cycle='c2',lease_token='mock-rehedge-token',
+       intent_id=next_id,now=now,client=exchange,long_qty=D(100),now_ms=10000)
+  saved_query=exchange.query_order
+  exchange.query_order=lambda symbol,cid:None
+  self.assertEqual(reserve_next(),'BLOCKED_REHEDGE_FINAL_READBACK')
+  exchange.query_order=saved_query
+  self.assertEqual(reserve_next(),'RESERVED_REHEDGE_MOCK_ONLY')
+  self.assertEqual(reserve_next(),'BLOCKED_FENCE_ALREADY_RESERVED')
+  self.assertEqual(h.fixture.db.snapshot(coordination_ref.key)[1]['recoveryFenceReservation']['state'],'REHEDGE_MOCK_SUBMITTING')
   # Restart after the OPEN submit: the persisted canonical claim has no
   # replacement submit right, while the final CLOSE claim stays CLOSED.
   open_claim_key=h.fixture.refs['SHORTclaim'].key
@@ -634,3 +666,27 @@ class Build68ConcurrentRunUid(unittest.TestCase):
   self.assertTrue(all(x in (('SUBMITTED_RECONCILE_ONLY',),('BLOCKED_CLAIM_NOT_RESERVED',),None) for x in output))
   self.assertEqual(len(calls),1)
   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+
+class SharedFenceRunUid(unittest.TestCase):
+ def test_recovery_action_uses_canonical_shared_fence(self):
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',shared_fence=True)
+  self.assertEqual(r['shortRecoveryAction']['status'],'PREVIEW_SHORT_REDUCE')
+ def test_wrong_shared_fence_blocks_recovery_action(self):
+  r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',shared_fence=True,fence_intent_override='wrong-intent')
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_COORDINATION_CLAIM_MISMATCH')
+  self.assertEqual(r['shortRecoveryAction']['ordersSent'],0)
+
+class StrictSharedFenceMockSubmit(unittest.TestCase):
+ def test_mock_post_denied_without_shared_fence(self):
+  from unittest.mock import Mock
+  transport=Mock(return_value={'status':'ACKED'})
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',shared_fence=False,
+    require_shared_fence=True,mock_transport=transport)
+  self.assertEqual(r.get('shortRecoverySubmit'),('BLOCKED_SHARED_FENCE_REQUIRED',),r)
+  transport.assert_not_called()
+ def test_mock_post_allowed_only_through_existing_claim_with_fence(self):
+  from unittest.mock import Mock
+  transport=Mock(return_value={'status':'ACKED'})
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',shared_fence=True,
+    require_shared_fence=True,mock_transport=transport)
+  self.assertNotEqual(r.get('shortRecoverySubmit'),('BLOCKED_SHARED_FENCE_REQUIRED',),r)

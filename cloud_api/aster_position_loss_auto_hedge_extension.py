@@ -624,6 +624,16 @@ def _run_uid(
             protected_sides=protected_sides or None,
             skip_symbols=skip_symbols,
             recovery_shadow_skip_symbols=(recovery_offline_partition["shadow_skip"] - recovery_offline_partition["legacy_skip"] if recovery_offline_partition else None),
+            # Offline-owned Recovery symbols cannot acquire an unfenced topup.
+            # This is a deny-only gate; it does not authorize live execution.
+            recovery_fence_required_symbols=(recovery_offline_partition["shadow_skip"] - recovery_offline_partition["legacy_skip"] if recovery_offline_partition else None),
+            # The canonical offline reconciler fence never grants exchange rights.
+            # Only a caller-provided mock transaction bridge may be injected.
+            pre_order_fence=(offline_pair_settlement.get("autohedge_pre_order_fence")
+                             if (not execute and isinstance(offline_pair_settlement,dict)
+                                 and offline_pair_settlement.get("mock_only") is True
+                                 and callable(offline_pair_settlement.get("autohedge_pre_order_fence")))
+                             else None),
             intent_context=contexts,
             positions=positions,
             open_orders=open_orders,
@@ -685,7 +695,8 @@ def _run_uid(
                                 claim_ref=action_ctx["claim_ref"], control_ref=ctx["control_ref"],
                                 account=uid, symbol=symbol, cycle=ctx["cycle"],
                                 intent_id=action_ctx["intent_id"],
-                                account_close_guard=action_ctx["account_close_guard"])
+                                account_close_guard=action_ctx["account_close_guard"],
+                                coordination_ref=ctx.get("coordination_ref"))
                             report["shortRecoveryAction"] = (
                                 preview_canonical_executor(
                                     reconciled=bridge, symbol=symbol, intent_ids=action_ctx.get("intent_ids"),
@@ -729,6 +740,24 @@ def _run_uid(
                                         long_qty=action_ctx["long_qty"],now_ms=action_ctx.get("inventory_now_ms")):
                                     report["shortRecoveryAction"]={"status":"BLOCKED_REHEDGE_FINAL_READBACK","ordersSent":0,"intents":()}
                                     proposed=report["shortRecoveryAction"]
+                                elif action_ctx.get("require_shared_fence") is True:
+                                    from short_recovery_lease_fence_offline import reserve_verified_rehedge_mock_only
+                                    rehedge_status=reserve_verified_rehedge_mock_only(
+                                        mock_only=True,db=ctx["db"],transactional=ctx["transactional"],
+                                        coordination_ref=ctx.get("coordination_ref"),
+                                        owner_ref=ctx.get("owner_ref"),
+                                        final_claim_ref=action_ctx.get("final_short_close_claim_ref"),
+                                        control_ref=ctx["control_ref"],account=uid,symbol=symbol,
+                                        old_cycle=ctx["cycle"],new_cycle=action_ctx.get("new_cycle"),
+                                        lease_token=action_ctx.get("lease_token"),
+                                        intent_id=action_ctx["intent_id"],
+                                        now=datetime.now(timezone.utc),
+                                        client=action_ctx.get("inventory_mock_client"),
+                                        long_qty=action_ctx["long_qty"],
+                                        now_ms=action_ctx.get("inventory_now_ms"))
+                                    if rehedge_status!="RESERVED_REHEDGE_MOCK_ONLY":
+                                        report["shortRecoveryAction"]={"status":rehedge_status,"ordersSent":0,"intents":()}
+                                        proposed=report["shortRecoveryAction"]
                             elif proposed.get("intents") and action_ctx.get("submit_mock") is not None:
                                 # Offline-only real-cycle seam: independently refresh
                                 # the exchange-shaped side inventory before any mock POST.
@@ -741,6 +770,28 @@ def _run_uid(
                                 if result!="INVENTORY_VERIFIED":
                                     report["shortRecoveryAction"]={"status":result,"ordersSent":0,"intents":()}
                                     proposed=report["shortRecoveryAction"]
+                            if proposed.get("intents") and action_ctx.get("submit_mock") is not None:
+                                # Opt-in strict mock transport contract. Legacy replay tests
+                                # remain available until every caller provides canonical refs.
+                                if action_ctx.get("require_shared_fence") is True:
+                                    # New mock submissions require a durable, matching
+                                    # reservation. Readback/restart uses the separate
+                                    # reconciliation path and is never authorized here.
+                                    if ctx.get("coordination_ref") is None:
+                                        fence_status="BLOCKED_SHARED_FENCE_REQUIRED"
+                                    else:
+                                        from short_recovery_order_claim_shadow import pre_submit_check
+                                        fence_status=pre_submit_check(
+                                            db=ctx["db"],transactional=ctx["transactional"],
+                                            claim_ref=action_ctx["claim_ref"],control_ref=ctx["control_ref"],
+                                            coordination_ref=ctx["coordination_ref"],
+                                            account=uid,symbol=symbol,cycle=ctx["cycle"],
+                                            intent_id=action_ctx["intent_id"],
+                                            account_close_guard=action_ctx["account_close_guard"])
+                                    if fence_status!="PREFLIGHT_SHADOW_ONLY":
+                                        report["shortRecoverySubmit"] = (fence_status,)
+                                        proposed={"status":fence_status,"ordersSent":0,"intents":()}
+                                        report["shortRecoveryAction"]=proposed
                             if proposed.get("intents") and action_ctx.get("submit_mock") is not None:
                                 # The transport must be an explicitly provided offline mock;
                                 # never use the live _client or an authenticated Aster client.
@@ -791,7 +842,9 @@ def _run_uid(
                                             claim_ref=ref,control_ref=ctx["control_ref"],
                                             account=uid,symbol=symbol,cycle=ctx["cycle"],intent=intent,
                                             account_close_guard=action_ctx["account_close_guard"],
-                                            submit_mock=mock_submit))
+                                            submit_mock=mock_submit,
+                                            coordination_ref=ctx.get("coordination_ref") if action_ctx.get("require_shared_fence") is True else None,
+                                            require_shared_fence=action_ctx.get("require_shared_fence") is True))
                                         if results[-1]!="SUBMITTED_RECONCILE_ONLY":break
                                     report["shortRecoverySubmit"] = tuple(results)
                         except (KeyError,TypeError,ValueError):

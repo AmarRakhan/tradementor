@@ -2,6 +2,7 @@
 from short_recovery_firestore_mock import decode
 import hashlib
 import re
+from datetime import datetime, timezone
 
 def canonical_intent_id(*,account,symbol,cycle,side,action,step):
     """Deterministic Aster-safe ID for an independently persisted claim scope.
@@ -17,7 +18,7 @@ def canonical_intent_id(*,account,symbol,cycle,side,action,step):
     return "sr2-"+hashlib.sha256(key.encode()).hexdigest()[:30]
 
 
-def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account,symbol,cycle,intent_id,now,lease_seconds=45,control_ref=None,side=None,action=None,step=None):
+def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account,symbol,cycle,intent_id,now,lease_seconds=45,control_ref=None,side=None,action=None,step=None,coordination_ref=None):
     if not all((account,symbol,cycle,intent_id)) or lease_seconds<=0:return 'BLOCKED_INPUT'
     if side is not None or action is not None or step is not None:
         try: expected=canonical_intent_id(account=account,symbol=symbol,cycle=cycle,side=side,action=action,step=step)
@@ -31,6 +32,21 @@ def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account
         stock=ledger_ref.get(transaction=tx).to_dict()
         claim=claim_ref.get(transaction=tx).to_dict()
         control=control_ref.get(transaction=tx).to_dict()
+        coordination=coordination_ref.get(transaction=tx).to_dict() if coordination_ref is not None else None
+        if coordination_ref is not None:
+            if not isinstance(coordination,dict) or isinstance(coordination.get('recoveryFenceReservation'),dict):
+                return 'BLOCKED_ACCOUNT_FENCE_RESERVED'
+            lease=coordination.get('lease')
+            if isinstance(lease,dict) and lease.get('token'):
+                until=lease.get('until')
+                # Missing, malformed or naive expiry never authorizes a claim.
+                if not isinstance(until,datetime) or until.tzinfo is None:
+                    return 'BLOCKED_ACCOUNT_LEASE_UNVERIFIED'
+                current=datetime.now(timezone.utc)
+                if until.astimezone(timezone.utc)>current:
+                    return 'BLOCKED_ACCOUNT_COORDINATION_BUSY'
+                # An expired lease does not prove no in-flight exchange POST.
+                return 'BLOCKED_ACCOUNT_LEASE_STALE_RECONCILE'
         if not isinstance(marker,dict) or (marker.get('account'),marker.get('symbol'),marker.get('cycleId'),marker.get('state'))!=(account,symbol,cycle,'SUSPECT'):
             return 'BLOCKED_MARKER'
         if not isinstance(owner,dict) or (owner.get('account'),owner.get('symbol'),owner.get('cycleId'))!=(account,symbol,cycle) or owner.get('ownerSide')!='SHORT' or owner.get('ownershipVerified') is not True or owner.get('cycleConfirmed') is not True or owner.get('state') not in ('PARTIAL','FINAL_PENDING'):
@@ -52,10 +68,17 @@ def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account
         tx.set(claim_ref,{'account':account,'symbol':symbol,'cycle':cycle,'intentId':intent_id,
                           'state':'RESERVED','reservedAt':now,'leaseUntil':now+lease_seconds,
                           'side':side,'action':action,'step':step})
+        if coordination_ref is not None:
+            # Same transaction and document as the Auto Hedge fence. A competing
+            # hedge reservation must fail its read-set CAS and subsequently see
+            # this durable claim marker. Never auto-clear after a timeout.
+            tx.set(coordination_ref,{**coordination,'recoveryFenceReservation':{
+                'account':account,'symbol':symbol,'cycle':cycle,'intentId':intent_id,
+                'state':'RECOVERY_CLAIM_RESERVED','reservedAt':now}})
         return 'RESERVED_SHADOW'
     return attempt(db.transaction())
 
-def pre_submit_check(*, db, transactional, claim_ref, control_ref, account, symbol, cycle, intent_id, account_close_guard):
+def pre_submit_check(*, db, transactional, claim_ref, control_ref, account, symbol, cycle, intent_id, account_close_guard, coordination_ref=None):
     """Offline pre-submit revalidation; never sends an order.
 
     The caller-supplied guard must be the established account pre-submit guard.
@@ -67,6 +90,13 @@ def pre_submit_check(*, db, transactional, claim_ref, control_ref, account, symb
     def check(tx):
         claim=claim_ref.get(transaction=tx).to_dict()
         control=control_ref.get(transaction=tx).to_dict()
+        if coordination_ref is not None:
+            coordination=coordination_ref.get(transaction=tx).to_dict()
+            fence=coordination.get('recoveryFenceReservation') if isinstance(coordination,dict) else None
+            if not isinstance(fence,dict) or (fence.get('account'),fence.get('symbol'),fence.get('cycle'),fence.get('intentId'),fence.get('state')) != (account,symbol,cycle,intent_id,'RECOVERY_CLAIM_RESERVED'):
+                return 'BLOCKED_COORDINATION_CLAIM_MISMATCH'
+            if isinstance(coordination.get('lease'),dict) and coordination['lease'].get('token'):
+                return 'BLOCKED_COORDINATION_LEASE_UNRESOLVED'
         if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('intentId'))!=(account,symbol,cycle,intent_id) or claim.get('state')!='RESERVED':
             return 'BLOCKED_CLAIM_NOT_RESERVED'
         if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
@@ -96,12 +126,14 @@ def record_mock_transport_origin(*,db,transactional,claim_ref,account,symbol,cyc
     return save(db.transaction())
 
 def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, symbol, cycle,
-                        intent, account_close_guard, submit_mock):
+                        intent, account_close_guard, submit_mock, coordination_ref=None, require_shared_fence=False):
     """Atomic single submit right; only caller-supplied mock transport is permitted.
 
     A crash after SUBMITTING is UNKNOWN, never an entitlement to retry. This
     function is deliberately not wired into live Auto Hedge or network clients.
     """
+    if require_shared_fence is True and coordination_ref is None:
+        return 'BLOCKED_SHARED_FENCE_REQUIRED'
     if not callable(submit_mock) or not callable(account_close_guard) or control_ref is None:
         return 'BLOCKED_GUARD_UNAVAILABLE'
     if not getattr(intent, 'intent_id', None) or intent.symbol != symbol:
@@ -114,6 +146,13 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
     def acquire(tx):
         claim=claim_ref.get(transaction=tx).to_dict()
         control=control_ref.get(transaction=tx).to_dict()
+        if coordination_ref is not None:
+            coordination=coordination_ref.get(transaction=tx).to_dict()
+            fence=coordination.get('recoveryFenceReservation') if isinstance(coordination,dict) else None
+            if not isinstance(fence,dict) or (fence.get('account'),fence.get('symbol'),fence.get('cycle'),fence.get('intentId'),fence.get('state'))!=(account,symbol,cycle,intent.intent_id,'RECOVERY_CLAIM_RESERVED'):
+                return 'BLOCKED_COORDINATION_CLAIM_MISMATCH'
+            if isinstance(coordination.get('lease'),dict) and coordination['lease'].get('token'):
+                return 'BLOCKED_COORDINATION_LEASE_UNRESOLVED'
         if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('intentId'))!=(account,symbol,cycle,intent.intent_id) or claim.get('state')!='RESERVED':
             return 'BLOCKED_CLAIM_NOT_RESERVED'
         if claim.get('side') not in ('LONG','SHORT') or claim.get('action') not in ('OPEN','CLOSE') or not isinstance(claim.get('step'),int):
@@ -125,6 +164,9 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
         if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
             return 'BLOCKED_RECOVERY_DISABLED_OR_STOPPED'
         tx.set(claim_ref,{**claim,'state':'SUBMITTING'})
+        if coordination_ref is not None:
+            tx.set(coordination_ref,{**coordination,'recoveryFenceReservation':{
+                **fence,'state':'RECOVERY_SUBMITTING_RECONCILE_ONLY'}})
         return 'SUBMITTING_LOCKED'
     outcome=acquire(db.transaction())
     if outcome!='SUBMITTING_LOCKED':return outcome

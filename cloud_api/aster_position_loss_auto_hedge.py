@@ -386,6 +386,8 @@ def reconcile_auto_hedge(
     skip_symbols: set[str] | None = None,
     intent_context: Mapping[str, Mapping[str, Any]] | None = None,
     recovery_shadow_skip_symbols: set[str] | None = None,
+    pre_order_fence: Callable[[str, str, str], bool] | None = None,
+    recovery_fence_required_symbols: set[str] | None = None,
     positions: list[dict[str, Any]] | None = None,
     open_orders: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -487,13 +489,50 @@ def reconcile_auto_hedge(
             action="OPEN" if action.operation == "OPEN" else "CLOSE",
         )
 
+        # Recovery-owned symbols may never fall back to the legacy unfenced
+        # submit path, even when a caller accidentally omits the callback.
+        if action.symbol in (recovery_fence_required_symbols or set()) and pre_order_fence is None:
+            row.update({'status':'BLOCKED','reason':'RECOVERY_SHARED_FENCE_REQUIRED',
+                        'clientOrderId':intent_id,'filledQty':0.0})
+            public_actions.append(row)
+            if audit: audit({**row,'result':'BLOCKED'})
+            continue
         try:
-            existing = _query_existing(client, action.symbol, intent_id)
+            if pre_order_fence is not None:
+                query = getattr(client, "query_order", None)
+                if not callable(query):
+                    raise RuntimeError("FENCED_QUERY_ORDER_UNAVAILABLE")
+                try:
+                    prior = query(action.symbol, intent_id)
+                except Exception as exc:
+                    raise RuntimeError("FENCED_QUERY_ORDER_UNKNOWN") from exc
+                if prior is not None and not isinstance(prior, dict):
+                    raise RuntimeError("FENCED_QUERY_ORDER_INVALID")
+                if isinstance(prior, dict) and prior and prior.get("orderId") is None:
+                    raise RuntimeError("FENCED_QUERY_ORDER_INCOMPLETE")
+                existing = prior if isinstance(prior, dict) and prior.get("orderId") else None
+            else:
+                existing = _query_existing(client, action.symbol, intent_id)
             recovered = existing is not None
             submitted_now = False
             if existing is not None:
                 result = existing
             else:
+                # Final caller-provided safety fence: failures must never submit.
+                # The caller is responsible for atomic ownership/lease fencing;
+                # this callback alone is not an exchange/Firestore transaction.
+                if pre_order_fence is not None:
+                    try:
+                        permitted = pre_order_fence(action.symbol, action.operation, intent_id) is True
+                    except Exception:
+                        permitted = False
+                    if not permitted:
+                        row.update({'status': 'BLOCKED', 'reason': 'PRE_ORDER_FENCE_DENIED',
+                                    'clientOrderId': intent_id, 'filledQty': 0.0})
+                        public_actions.append(row)
+                        if audit:
+                            audit({**row, 'result': 'BLOCKED'})
+                        continue
                 result, recovered_from_uncertain = client.submit_order_once(
                     intent,
                     config=AsterAutomationConfig(enabled=True, mode="live"),
