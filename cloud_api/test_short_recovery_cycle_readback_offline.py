@@ -25,3 +25,10 @@ class CycleExchangeBridge(unittest.TestCase):
    self.assertEqual(call('CONFIRM_REDUCTION',i),'REDUCTION_CONFIRMED');db=db.restart()
   self.assertEqual(call('CONFIRM_REHEDGE'),'BLOCKED_NEW_ANCHOR_EXECUTION_PROVENANCE')
   self.assertIsNone(db.snapshot(nk)[1]);self.assertEqual(db.snapshot(ck)[1]['anchor'],'2')
+  original_trades=ex.user_trades
+  def priced(symbol,**kw):
+   return [{**r,'price':('1.60' if r['id']!=5 else '1.62')} for r in original_trades(symbol,**kw)]
+  ex.user_trades=priced
+  self.assertEqual(call('CONFIRM_REHEDGE'),'NEW_CYCLE_ATOMICALLY_CREATED')
+  self.assertEqual(db.snapshot(nk)[1]['anchor'],'1.62')
+  self.assertEqual(call('CONFIRM_REHEDGE'),'BLOCKED_REHEDGE_NOT_FINAL')

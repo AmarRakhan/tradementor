@@ -33,9 +33,15 @@ def advance_verified(*,db,transactional,cycle_ref,claim_refs,next_ref,client,nex
             expected=initial if i==4 else initial/4
             if any(not x.is_finite() for x in (qty,actual,order_qty)) or actual!=qty or qty!=order_qty or qty!=expected:
                 return 'BLOCKED_EXECUTION_QUANTITY'
-        # No exchange-proven fill price is available in this adapter contract.
-        # An externally supplied next_anchor must never mint a new cycle.
-        if event=='CONFIRM_REHEDGE':return 'BLOCKED_NEW_ANCHOR_EXECUTION_PROVENANCE'
+        if event=='CONFIRM_REHEDGE':
+            from short_recovery_open_price_provenance_offline import weighted_open_price
+            op=claims[4]
+            price=weighted_open_price(client,symbol=cycle['symbol'],intent_id=op['intentId'],
+                                      order_id=op['orderId'],executed_qty=op['executedQty'])
+            if price is None:return 'BLOCKED_NEW_ANCHOR_EXECUTION_PROVENANCE'
+            return advance(db=db,transactional=transactional,cycle_ref=cycle_ref,
+                           claim_refs=claim_refs,next_ref=next_ref,event=event,
+                           next_cycle=next_cycle,next_anchor=price)
         return advance(db=db,transactional=transactional,cycle_ref=cycle_ref,claim_refs=claim_refs,
                        next_ref=next_ref,event=event,step=step,next_cycle=next_cycle)
     except (KeyError,TypeError,ValueError,InvalidOperation,AttributeError):
