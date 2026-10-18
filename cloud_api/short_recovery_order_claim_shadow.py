@@ -80,6 +80,9 @@ def pre_submit_check(*, db, transactional, claim_ref, control_ref, account, symb
         return 'BLOCKED_ACCOUNT_PRE_SUBMIT_GUARD'
     return 'PREFLIGHT_SHADOW_ONLY'
 
+class OfflinePreTransportBlocked(Exception):
+    """Mock inventory failed before exchange transport; claim remains locked."""
+
 def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, symbol, cycle,
                         intent, account_close_guard, submit_mock):
     """Atomic single submit right; only caller-supplied mock transport is permitted.
@@ -116,6 +119,8 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
     # Once the transaction commits, failure/timeout must never unlock the claim.
     try:
         submit_mock(intent)
+    except OfflinePreTransportBlocked:
+        return 'BLOCKED_BEFORE_TRANSPORT_RECONCILE_ONLY'
     except Exception:
         return 'UNKNOWN_RECONCILE_ONLY'
     return 'SUBMITTED_RECONCILE_ONLY'
@@ -201,6 +206,9 @@ def submit_locked_pair_mock_offline(*, db, transactional, long_claim_ref, short_
             if ack!='ACKED_PERSISTED':
                 results.append(ack)
                 break
+        except OfflinePreTransportBlocked:
+            results.append('BLOCKED_BEFORE_TRANSPORT_RECONCILE_ONLY')
+            break
         except Exception:
             results.append('UNKNOWN_RECONCILE_ONLY')
             break

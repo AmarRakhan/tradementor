@@ -270,6 +270,6 @@ class TwoLegFreshInventory(unittest.TestCase):
    return {'clientOrderId':intent.intent_id,'orderId':intent.position_side.value+'-order'}
   r,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',mock_transport=submit,inventory_mock_client=c)
   self.assertEqual(calls,['LONG'])
-  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY','UNKNOWN_RECONCILE_ONLY'))
+  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY','BLOCKED_BEFORE_TRANSPORT_RECONCILE_ONLY'))
   self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')

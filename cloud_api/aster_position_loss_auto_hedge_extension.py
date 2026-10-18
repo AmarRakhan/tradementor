@@ -747,7 +747,8 @@ def _run_uid(
                                             readback=latest,account=uid,
                                             now_ms=action_ctx.get("inventory_now_ms"))
                                         if status!="INVENTORY_VERIFIED":
-                                            raise ValueError(status)
+                                            from short_recovery_order_claim_shadow import OfflinePreTransportBlocked
+                                            raise OfflinePreTransportBlocked(status)
                                         return original_submit(intent)
                                 if not action_ctx.get("offline_mock_confirmed") or not callable(mock_submit):
                                     report["shortRecoverySubmit"] = ("BLOCKED_MOCK_TRANSPORT",)
