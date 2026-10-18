@@ -19,7 +19,7 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture"):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None):
   h=existing_harness or VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement')
   if existing_harness is None:h.setUp()
   if inventory_readback=='fixture':
@@ -59,7 +59,7 @@ class RunUidIntegration(unittest.TestCase):
      h.client.query_order=partial_query
    if rehedge_final_readback=='fixture' and action_mode=='REHEDGE':
     rehedge_final_readback={'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':'SHORT','action':'CLOSE','orderStatus':'FILLED','terminalVerified':True,'fillsComplete':True,'shortInventoryZeroVerified':True,'orderId':'previous-short-close','intentId':'previous-short-close-id'}
-   ctx['recovery_action']={'rehedge_final_readback':rehedge_final_readback,'state':state,'short_qty':qty,'long_qty':D(100),
+   ctx['recovery_action']={'final_short_close_claim_ref':final_short_close_claim_ref,'rehedge_final_readback':rehedge_final_readback,'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':1,
        'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback,'inventory_mock_client':inventory_mock_client}
@@ -414,3 +414,29 @@ class RehedgeFinalityGate(unittest.TestCase):
   self.assertNotIn('shortRecoverySubmit',r)
   mock.assert_not_called()
   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'RESERVED')
+
+class PositiveCanonicalRehedge(unittest.TestCase):
+ def test_separate_final_close_claim_and_fresh_mock_aster_inventory(self):
+  from test_short_recovery_rehedge_readback_offline import RehedgeReadback
+  from unittest.mock import MagicMock
+  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+  class Client:
+   offline_mock_only=True
+   def account_information(self):return {'account':'u','hedgeMode':True}
+   def position_risk(self,s):return [{'symbol':s,'positionSide':'LONG','positionAmt':'100'},{'symbol':s,'positionSide':'SHORT','positionAmt':'0'}]
+   def open_orders(self,s):return []
+   def query_order(self,s,c):return {'symbol':s,'clientOrderId':c,'orderId':'SHORT-order','status':'FILLED','executedQty':'75'}
+   def user_trades(self,s,**kw):return [{'symbol':s,'orderId':'SHORT-order','id':12,'qty':'75','realizedPnl':'1','commission':'.1'}]
+  final_ref=h.fixture.refs['SHORTclaim']
+  final=h.fixture.snapshot('SHORTclaim');final.update(side='SHORT',action='CLOSE',state='CLOSED',executedQty='75')
+  h.fixture.put('SHORTclaim',final)
+  # Distinct canonical claim: the new OPEN must not overwrite the prior CLOSE.
+  from short_recovery_multidoc_mock import Ref
+  open_ref=Ref(h.fixture.db,'SHORT_OPEN_claim')
+  h.fixture.refs['SHORTclaim']=open_ref
+  h.fixture.put('SHORTclaim',dict(final,state='RESERVED',action='OPEN',intentId='placeholder'))
+  transport=MagicMock(return_value={'orderId':'mock-open'})
+  r,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',existing_harness=h,
+      final_short_close_claim_ref=final_ref,inventory_mock_client=Client(),mock_transport=transport)
+  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',),repr((transport.call_args_list,h.fixture.snapshot('SHORTclaim'),r.get('shortRecoveryAction'))))
+  transport.assert_called_once()

@@ -747,7 +747,7 @@ def _run_uid(
                                 mock_submit = action_ctx["submit_mock"]
                                 refresh_client=action_ctx.get("inventory_mock_client")
                                 if refresh_client is not None:
-                                    from short_recovery_inventory_preflight import refresh_mock_aster_inventory
+                                    from short_recovery_inventory_preflight import refresh_mock_aster_inventory, check_inventory
                                     original_submit=mock_submit
                                     def mock_submit(intent):
                                         latest=refresh_mock_aster_inventory(
