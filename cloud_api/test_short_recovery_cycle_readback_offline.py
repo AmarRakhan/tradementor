@@ -10,6 +10,9 @@ class CycleExchangeBridge(unittest.TestCase):
   class Exchange:
    offline_mock_only=True
    partial=False
+   def account_information(self):return {'account':'u','hedgeMode':True}
+   def position_risk(self,s):return [{'symbol':s,'positionSide':'LONG','positionAmt':'100'},{'symbol':s,'positionSide':'SHORT','positionAmt':'100'}]
+   def open_orders(self,s):return []
    def query_order(self,s,c):
     i=int(c.rsplit('-',1)[1]);return {'symbol':s,'clientOrderId':c,'orderId':f'order-{i}','status':'PARTIALLY_FILLED' if self.partial else 'FILLED','executedQty':'100' if i==5 else '25'}
    def user_trades(self,s,**kw):return [{'symbol':s,'orderId':f'order-{i}','id':i,'qty':'100' if i==5 else '25','realizedPnl':'0','commission':'0'} for i in range(1,6)]
@@ -29,6 +32,15 @@ class CycleExchangeBridge(unittest.TestCase):
   def priced(symbol,**kw):
    return [{**r,'price':('1.60' if r['id']!=5 else '1.62')} for r in original_trades(symbol,**kw)]
   ex.user_trades=priced
+  ex.open_orders=lambda symbol:[{'orderId':'pending'}]
+  self.assertEqual(call('CONFIRM_REHEDGE'),'BLOCKED_REHEDGE_INVENTORY_UNVERIFIED')
+  self.assertIsNone(db.snapshot(nk)[1])
+  ex.open_orders=lambda symbol:[]
+  original_position=ex.position_risk
+  ex.position_risk=lambda symbol:[{'symbol':symbol,'positionSide':'LONG','positionAmt':'100'},{'symbol':symbol,'positionSide':'SHORT','positionAmt':'99'}]
+  self.assertEqual(call('CONFIRM_REHEDGE'),'BLOCKED_REHEDGE_INVENTORY_MISMATCH')
+  self.assertIsNone(db.snapshot(nk)[1])
+  ex.position_risk=original_position
   self.assertEqual(call('CONFIRM_REHEDGE'),'NEW_CYCLE_ATOMICALLY_CREATED')
   self.assertEqual(db.snapshot(nk)[1]['anchor'],'1.62')
   self.assertEqual(call('CONFIRM_REHEDGE'),'BLOCKED_REHEDGE_NOT_FINAL')

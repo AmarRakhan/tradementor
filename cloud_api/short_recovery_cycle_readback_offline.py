@@ -1,5 +1,6 @@
 """Read-only offline bridge: only complete mock executions may advance cycle."""
 from decimal import Decimal,InvalidOperation
+from short_recovery_inventory_preflight import refresh_mock_aster_inventory
 from short_recovery_aster_readback_mock_adapter import inspect
 from short_recovery_cycle_contract_offline import advance
 from short_recovery_multidoc_mock import MultiDocDB
@@ -39,6 +40,17 @@ def advance_verified(*,db,transactional,cycle_ref,claim_refs,next_ref,client,nex
             price=weighted_open_price(client,symbol=cycle['symbol'],intent_id=op['intentId'],
                                       order_id=op['orderId'],executed_qty=op['executedQty'])
             if price is None:return 'BLOCKED_NEW_ANCHOR_EXECUTION_PROVENANCE'
+            inventory=refresh_mock_aster_inventory(client=client,account=cycle['account'],symbol=cycle['symbol'],now_ms=10000)
+            if inventory is None or inventory.get('openOrders')!=[]:
+                return 'BLOCKED_REHEDGE_INVENTORY_UNVERIFIED'
+            if Decimal(str(inventory['LONG']))!=initial or Decimal(str(inventory['SHORT']))!=initial:
+                return 'BLOCKED_REHEDGE_INVENTORY_MISMATCH'
+            # Optimistic readback is never an authorization: require unchanged
+            # canonical state across the external GETs before transactional write.
+            check=db.transaction()
+            current=cycle_ref.get(transaction=check).to_dict()
+            fresh=[ref.get(transaction=check).to_dict() for ref in claim_refs]
+            if current!=cycle or fresh!=claims:return 'BLOCKED_READBACK_TOCTOU'
             return advance(db=db,transactional=transactional,cycle_ref=cycle_ref,
                            claim_refs=claim_refs,next_ref=next_ref,event=event,
                            next_cycle=next_cycle,next_anchor=price)
