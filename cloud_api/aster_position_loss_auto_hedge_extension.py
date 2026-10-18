@@ -826,11 +826,19 @@ def _run_uid(
                         # resolver may book it; explicit incomplete proof stays locked.
                         proof=ctx.get("financial_proof")
                         restart_status=report.get("shortRecoveryRestartReadback")
-                        if (restart_status in ("PARTIAL_FILLS_NEED_FINANCIAL_PROOF",
+                        if restart_status in ("PARTIAL_FILLS_NEED_FINANCIAL_PROOF",
                                 "TERMINAL_FILLS_NEED_FINANCIAL_PROOF",
-                                "UNRESOLVED_FILLS_NEED_FINANCIAL_PROOF")
-                                and not isinstance(proof,dict)):
-                            report["shortRecoveryPairSettlement"]="BLOCKED_RECOVERED_FILL_FINANCIAL_PROOF"
+                                "UNRESOLVED_FILLS_NEED_FINANCIAL_PROOF"):
+                            if (not isinstance(proof,dict) or set(proof)!={"LONG","SHORT"}
+                                    or any(not isinstance(proof.get(side),dict) or
+                                        proof[side].get("incomeHistoryComplete") is not True or
+                                        proof[side].get("ownershipVerified") is not True
+                                        for side in ("LONG","SHORT"))):
+                                report["shortRecoveryPairSettlement"]="BLOCKED_RECOVERED_FILL_FINANCIAL_PROOF"
+                            else:
+                                # The existing resolver validates each exchange-shaped
+                                # execution, funding ownership, and atomic pair close.
+                                report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
                         else:
                             report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
         # SHORT Recovery Plan 2.0: strictly read-only shadow instrumentation.
