@@ -5,7 +5,7 @@ from short_recovery_aster_readback_mock_adapter import inspect
 from short_recovery_cycle_contract_offline import advance
 from short_recovery_multidoc_mock import MultiDocDB
 
-def advance_verified(*,db,transactional,cycle_ref,claim_refs,next_ref,client,next_cycle,event,step=0):
+def advance_verified(*,db,transactional,cycle_ref,claim_refs,next_ref,client,next_cycle,event,step=0,control_ref=None):
     if type(db) is not MultiDocDB or getattr(client,'offline_mock_only',False) is not True:
         return 'BLOCKED_OFFLINE_READBACK_SCOPE'
     try:
@@ -53,7 +53,8 @@ def advance_verified(*,db,transactional,cycle_ref,claim_refs,next_ref,client,nex
             if current!=cycle or fresh!=claims:return 'BLOCKED_READBACK_TOCTOU'
             return advance(db=db,transactional=transactional,cycle_ref=cycle_ref,
                            claim_refs=claim_refs,next_ref=next_ref,event=event,
-                           next_cycle=next_cycle,next_anchor=price)
+                           next_cycle=next_cycle,next_anchor=price,control_ref=control_ref,
+                           validated_cycle=cycle,validated_claims=claims)
         return advance(db=db,transactional=transactional,cycle_ref=cycle_ref,claim_refs=claim_refs,
                        next_ref=next_ref,event=event,step=step,next_cycle=next_cycle)
     except (KeyError,TypeError,ValueError,InvalidOperation,AttributeError):

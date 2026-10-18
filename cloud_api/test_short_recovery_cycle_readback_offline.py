@@ -7,6 +7,8 @@ class CycleExchangeBridge(unittest.TestCase):
   db.commit(ck,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','anchor':'2','initialQty':'100','confirmedSteps':0,'state':'ACTIVE'})
   keys=[root+('claim',i) for i in range(1,6)]
   for i,k in enumerate(keys,1):db.commit(k,0,{'account':'u','symbol':'XRPUSDT','cycle':'c','side':'SHORT','action':'OPEN' if i==5 else 'CLOSE','step':i,'state':'CLOSED','intentId':f'canonical-{i}','orderId':f'order-{i}','executedQty':'100' if i==5 else '25'})
+  control_key=root+('control',)
+  db.commit(control_key,0,{'account':'u','enabled':True,'emergencyStop':False,'closeAllActive':False})
   class Exchange:
    offline_mock_only=True
    partial=False
@@ -17,7 +19,7 @@ class CycleExchangeBridge(unittest.TestCase):
     i=int(c.rsplit('-',1)[1]);return {'symbol':s,'clientOrderId':c,'orderId':f'order-{i}','status':'PARTIALLY_FILLED' if self.partial else 'FILLED','executedQty':'100' if i==5 else '25'}
    def user_trades(self,s,**kw):return [{'symbol':s,'orderId':f'order-{i}','id':i,'qty':'100' if i==5 else '25','realizedPnl':'0','commission':'0'} for i in range(1,6)]
   ex=Exchange()
-  def call(event,step=0):return advance_verified(db=db,transactional=transactional,cycle_ref=Ref(db,ck),claim_refs=[Ref(db,k) for k in keys],next_ref=Ref(db,nk),client=ex,next_cycle='c2',event=event,step=step)
+  def call(event,step=0):return advance_verified(db=db,transactional=transactional,cycle_ref=Ref(db,ck),claim_refs=[Ref(db,k) for k in keys],next_ref=Ref(db,nk),client=ex,next_cycle='c2',event=event,step=step,control_ref=Ref(db,control_key))
   ex.partial=True;self.assertEqual(call('CONFIRM_REDUCTION',1),'BLOCKED_UNVERIFIED_EXECUTIONS')
   ex.partial=False
   original=ex.query_order
@@ -41,6 +43,9 @@ class CycleExchangeBridge(unittest.TestCase):
   self.assertEqual(call('CONFIRM_REHEDGE'),'BLOCKED_REHEDGE_INVENTORY_MISMATCH')
   self.assertIsNone(db.snapshot(nk)[1])
   ex.position_risk=original_position
+  version,control=db.snapshot(control_key);db.commit(control_key,version,{**control,'emergencyStop':True})
+  self.assertEqual(call('CONFIRM_REHEDGE'),'BLOCKED_CYCLE_EMERGENCY_STOP')
+  version,control=db.snapshot(control_key);db.commit(control_key,version,{**control,'emergencyStop':False})
   self.assertEqual(call('CONFIRM_REHEDGE'),'NEW_CYCLE_ATOMICALLY_CREATED')
   self.assertEqual(db.snapshot(nk)[1]['anchor'],'1.62')
   self.assertEqual(call('CONFIRM_REHEDGE'),'BLOCKED_REHEDGE_NOT_FINAL')

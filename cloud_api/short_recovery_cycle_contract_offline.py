@@ -2,7 +2,7 @@
 from decimal import Decimal, InvalidOperation
 from short_recovery_multidoc_mock import MultiDocDB
 
-def advance(*, db, transactional, cycle_ref, claim_refs, next_ref=None, event, step=0, next_cycle=None, next_anchor=None):
+def advance(*, db, transactional, cycle_ref, claim_refs, next_ref=None, event, step=0, next_cycle=None, next_anchor=None, control_ref=None, validated_cycle=None, validated_claims=None):
     if type(db) is not MultiDocDB or event not in ('CONFIRM_REDUCTION','CONFIRM_REHEDGE'):
         return 'BLOCKED_OFFLINE_CYCLE_SCOPE'
     @transactional
@@ -10,6 +10,9 @@ def advance(*, db, transactional, cycle_ref, claim_refs, next_ref=None, event, s
         cycle=cycle_ref.get(transaction=tx).to_dict()
         claims=[ref.get(transaction=tx).to_dict() for ref in claim_refs]
         nxt=next_ref.get(transaction=tx).to_dict() if next_ref is not None else None
+        control=control_ref.get(transaction=tx).to_dict() if control_ref is not None else None
+        if validated_cycle is not None and (cycle!=validated_cycle or claims!=validated_claims):return 'BLOCKED_READBACK_TOCTOU'
+        if validated_cycle is not None and (not isinstance(control,dict) or control.get('account')!=cycle.get('account') or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False or control.get('enabled') is not True):return 'BLOCKED_CYCLE_EMERGENCY_STOP'
         if not isinstance(cycle,dict) or len(claims)!=5 or any(not isinstance(c,dict) for c in claims):return 'BLOCKED_CYCLE_CLAIMS'
         try:
             anchor=Decimal(str(cycle['anchor']));initial=Decimal(str(cycle['initialQty']))
