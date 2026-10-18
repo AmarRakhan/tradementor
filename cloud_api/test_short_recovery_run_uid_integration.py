@@ -273,3 +273,24 @@ class TwoLegFreshInventory(unittest.TestCase):
   self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY','BLOCKED_BEFORE_TRANSPORT_RECONCILE_ONLY'))
   self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+
+class PersistedTransportOrigin(unittest.TestCase):
+ def test_midpair_pretransport_block_is_persisted_without_retry(self):
+  from test_short_recovery_mock_aster_inventory import Client
+  c=Client();calls=[]
+  def submit(intent):
+   calls.append(intent.position_side.value)
+   if intent.position_side.value=='LONG':c.qty='0'
+   return {'clientOrderId':intent.intent_id,'orderId':intent.position_side.value+'-order'}
+  result,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',mock_transport=submit,inventory_mock_client=c)
+  self.assertEqual(calls,['LONG'])
+  self.assertEqual(result['shortRecoverySubmit'][1],'BLOCKED_BEFORE_TRANSPORT_RECONCILE_ONLY')
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['offlineTransportOrigin'],'BEFORE_TRANSPORT_BLOCKED')
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+  h.fixture.db=h.fixture.db.restart();h.fixture.bind()
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['offlineTransportOrigin'],'BEFORE_TRANSPORT_BLOCKED')
+ def test_true_timeout_persists_different_origin(self):
+  m=MagicMock(side_effect=TimeoutError('uncertain mock network'))
+  r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=m)
+  self.assertEqual(r['shortRecoverySubmit'],('UNKNOWN_RECONCILE_ONLY',))
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['offlineTransportOrigin'],'TRANSPORT_OUTCOME_UNKNOWN')

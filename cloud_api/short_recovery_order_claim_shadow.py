@@ -83,6 +83,18 @@ def pre_submit_check(*, db, transactional, claim_ref, control_ref, account, symb
 class OfflinePreTransportBlocked(Exception):
     """Mock inventory failed before exchange transport; claim remains locked."""
 
+def record_mock_transport_origin(*,db,transactional,claim_ref,account,symbol,cycle,intent,origin):
+    """Persist evidence only; SUBMITTING remains locked and never retryable."""
+    @transactional
+    def save(tx):
+        row=claim_ref.get(transaction=tx).to_dict()
+        if not isinstance(row,dict) or row.get('state')!='SUBMITTING' or (
+                row.get('account'),row.get('symbol'),row.get('cycle'),row.get('intentId'))!=(account,symbol,cycle,intent.intent_id):
+            return 'BLOCKED_ORIGIN_SCOPE'
+        tx.set(claim_ref,{**row,'offlineTransportOrigin':origin})
+        return 'ORIGIN_PERSISTED'
+    return save(db.transaction())
+
 def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, symbol, cycle,
                         intent, account_close_guard, submit_mock):
     """Atomic single submit right; only caller-supplied mock transport is permitted.
@@ -120,8 +132,10 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
     try:
         submit_mock(intent)
     except OfflinePreTransportBlocked:
+        record_mock_transport_origin(db=db,transactional=transactional,claim_ref=claim_ref,account=account,symbol=symbol,cycle=cycle,intent=intent,origin='BEFORE_TRANSPORT_BLOCKED')
         return 'BLOCKED_BEFORE_TRANSPORT_RECONCILE_ONLY'
     except Exception:
+        record_mock_transport_origin(db=db,transactional=transactional,claim_ref=claim_ref,account=account,symbol=symbol,cycle=cycle,intent=intent,origin='TRANSPORT_OUTCOME_UNKNOWN')
         return 'UNKNOWN_RECONCILE_ONLY'
     return 'SUBMITTED_RECONCILE_ONLY'
 
@@ -207,9 +221,13 @@ def submit_locked_pair_mock_offline(*, db, transactional, long_claim_ref, short_
                 results.append(ack)
                 break
         except OfflinePreTransportBlocked:
+            ref=long_claim_ref if intent.position_side.value=='LONG' else short_claim_ref
+            record_mock_transport_origin(db=db,transactional=transactional,claim_ref=ref,account=account,symbol=symbol,cycle=cycle,intent=intent,origin='BEFORE_TRANSPORT_BLOCKED')
             results.append('BLOCKED_BEFORE_TRANSPORT_RECONCILE_ONLY')
             break
         except Exception:
+            ref=long_claim_ref if intent.position_side.value=='LONG' else short_claim_ref
+            record_mock_transport_origin(db=db,transactional=transactional,claim_ref=ref,account=account,symbol=symbol,cycle=cycle,intent=intent,origin='TRANSPORT_OUTCOME_UNKNOWN')
             results.append('UNKNOWN_RECONCILE_ONLY')
             break
         results.append('SUBMITTED_RECONCILE_ONLY')
