@@ -19,7 +19,7 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture"):
   h=existing_harness or VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement')
   if existing_harness is None:h.setUp()
   if inventory_readback=='fixture':
@@ -57,7 +57,9 @@ class RunUidIntegration(unittest.TestCase):
       if row['orderId']=='SHORT-order':row={**row,'status':'PARTIALLY_FILLED','executedQty':'25'}
       return row
      h.client.query_order=partial_query
-   ctx['recovery_action']={'state':state,'short_qty':qty,'long_qty':D(100),
+   if rehedge_final_readback=='fixture' and action_mode=='REHEDGE':
+    rehedge_final_readback={'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':'SHORT','action':'CLOSE','orderStatus':'FILLED','terminalVerified':True,'fillsComplete':True,'shortInventoryZeroVerified':True,'orderId':'previous-short-close','intentId':'previous-short-close-id'}
+   ctx['recovery_action']={'rehedge_final_readback':rehedge_final_readback,'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':1,
        'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback,'inventory_mock_client':inventory_mock_client}
@@ -403,3 +405,12 @@ class PhasedRecoveredPairLifecycle(unittest.TestCase):
   replay,_,h=RunUidIntegration().run_case(existing_harness=h)
   self.assertEqual(replay['shortRecoveryPairSettlement'],'ALREADY_PAIR_CLOSED')
   self.assertEqual((h.fixture.snapshot('SHORTclaim'),h.fixture.snapshot('SHORTledger'),h.fixture.snapshot('pair')),closed_snapshot)
+
+class RehedgeFinalityGate(unittest.TestCase):
+ def test_zero_short_without_proven_terminal_order_never_submits(self):
+  mock=MagicMock()
+  r,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',mock_transport=mock,rehedge_final_readback=None)
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_REHEDGE_FINAL_READBACK')
+  self.assertNotIn('shortRecoverySubmit',r)
+  mock.assert_not_called()
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'RESERVED')
