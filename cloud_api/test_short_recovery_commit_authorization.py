@@ -22,3 +22,13 @@ class CommitAuthorizationBoundary(unittest.TestCase):
   self.assertEqual(result,'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
   self.assertEqual(h.snapshot('SHORTledger'),prior)
   self.assertEqual(h.snapshot('SHORTclaim'),claim)
+
+class LegacyStorageIsolation(unittest.TestCase):
+ def test_caller_selected_legacy_mode_rejects_unknown_storage_before_any_write(self):
+  from short_recovery_mock_storage_boundary import isolated_storage_only
+  from unittest.mock import MagicMock
+  fake=MagicMock()
+  self.assertFalse(isolated_storage_only(fake))
+  result=reconcile_pair_close(db=fake,transactional=transactional,claim_refs={'LONG':fake,'SHORT':fake},ledger_refs={'LONG':fake,'SHORT':fake},control_ref=fake,pair_ref=fake,account='u',symbol='XRPUSDT',cycle='c',readbacks={'LONG':{},'SHORT':{}},authorization_mode='LEGACY_MOCK_TEST')
+  self.assertEqual(result,'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
+  fake.transaction.assert_not_called()
