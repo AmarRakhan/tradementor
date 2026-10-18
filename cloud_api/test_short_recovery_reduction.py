@@ -21,3 +21,18 @@ class ReductionTests(unittest.TestCase):
     def test_net_exit_first(self):self.assertEqual(rehedge_permission(self.state(closed=100),remaining_exchange_short_qty=0,long_qty=100,net_exit_due=True),'EXIT_INSTEAD')
     def test_pending(self):self.assertEqual(plan_reduction(self.state(pending=True))['status'],'WAIT_PENDING')
 if __name__=='__main__':unittest.main()
+
+class AnchoredFullCycle(unittest.TestCase):
+ def test_all_steps_from_fixed_anchor_and_confirmed_fills_only(self):
+  p=Plan(D(2),D(100),D(5),4)
+  state=ReductionState(p,D(0),D(2))
+  for step,mark in enumerate(('1.90','1.80','1.70','1.60'),1):
+   state=ReductionState(p,state.confirmed_closed,D(mark))
+   due=plan_reduction(state)
+   self.assertEqual(due['reached_steps'],step)
+   self.assertEqual(due['due_qty'],D(25))
+   self.assertEqual(rehedge_permission(state,remaining_exchange_short_qty=D(100)-state.confirmed_closed,long_qty=D(100)),'BLOCKED_NOT_FINAL')
+   state=preview_after_fill(state,D(25))
+  self.assertEqual(state.confirmed_closed,D(100))
+  self.assertEqual(rehedge_permission(state,remaining_exchange_short_qty=D(0),long_qty=D(100)),'PREVIEW_REHEDGE_1_TO_1')
+  self.assertEqual(plan_reduction(state)['due_qty'],D(0))
