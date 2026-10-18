@@ -386,8 +386,20 @@ class PhasedRecoveredPairLifecycle(unittest.TestCase):
   h.proof['SHORT'].update(orderStatus='FILLED',executedQty='75',terminalVerified=True)
   h.proof['SHORT']['executions']['13']={'funding':'-.02','fundingOwnershipVerified':True,'financialVerified':True}
   h.fixture.db=h.fixture.db.restart();h.fixture.bind()
+  partial_claim=h.fixture.snapshot('SHORTclaim');partial_ledger=h.fixture.snapshot('SHORTledger')
+  h.proof['SHORT']['executions']['12']['funding']='-.99'
+  tampered,_,h=RunUidIntegration().run_case(existing_harness=h)
+  self.assertIn(tampered['shortRecoveryPairSettlement'],('BLOCKED_FINANCIAL_REPLAY_PROVENANCE','BLOCKED_FINANCIAL_REPLAY_MISMATCH'))
+  self.assertEqual(h.fixture.snapshot('SHORTclaim'),partial_claim)
+  self.assertEqual(h.fixture.snapshot('SHORTledger'),partial_ledger)
+  h.proof['SHORT']['executions']['12']['funding']='-.05'
   second,_,h=RunUidIntegration().run_case(existing_harness=h)
   self.assertEqual(second['shortRecoveryPairSettlement'],'PAIR_CLOSED_VERIFIED',repr((h.fixture.snapshot('SHORTclaim'),h.fixture.snapshot('LONGclaim'))))
   self.assertEqual(decode(h.fixture.snapshot('SHORTledger')).allocations[0].remaining,0)
   self.assertEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
   self.assertNotIn('shortRecoverySubmit',second)
+  closed_snapshot=(h.fixture.snapshot('SHORTclaim'),h.fixture.snapshot('SHORTledger'),h.fixture.snapshot('pair'))
+  h.fixture.db=h.fixture.db.restart();h.fixture.bind()
+  replay,_,h=RunUidIntegration().run_case(existing_harness=h)
+  self.assertEqual(replay['shortRecoveryPairSettlement'],'ALREADY_PAIR_CLOSED')
+  self.assertEqual((h.fixture.snapshot('SHORTclaim'),h.fixture.snapshot('SHORTledger'),h.fixture.snapshot('pair')),closed_snapshot)
