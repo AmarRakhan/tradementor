@@ -249,3 +249,32 @@ def classify_locked_mock_claim(*,db,transactional,claim_ref,account,symbol,cycle
         if kind=='TRANSPORT_OUTCOME_UNKNOWN':return 'UNKNOWN_EXCHANGE_READBACK_REQUIRED'
         return 'UNKNOWN_ORIGIN_READBACK_REQUIRED'
     return read(db.transaction())
+
+def reconcile_locked_mock_order_readback(*, db, transactional, claim_ref, account, symbol, cycle, intent_id, client):
+    """Offline-only restart readback. Never releases a claim or submits an order."""
+    classification=classify_locked_mock_claim(db=db,transactional=transactional,
+        claim_ref=claim_ref,account=account,symbol=symbol,cycle=cycle,intent_id=intent_id)
+    if classification not in ('PRETRANSPORT_BLOCKED_NO_RETRY','UNKNOWN_EXCHANGE_READBACK_REQUIRED','UNKNOWN_ORIGIN_READBACK_REQUIRED'):
+        return classification
+    if getattr(client,'offline_mock_only',False) is not True:return 'BLOCKED_MOCK_CLIENT_REQUIRED'
+    try:
+        order=client.query_order(symbol,intent_id)
+    except Exception:return 'UNKNOWN_EXCHANGE_READBACK_REQUIRED'
+    if not isinstance(order,dict) or not order:
+        return 'NO_ORDER_UNPROVEN_CLAIM_LOCKED'
+    if order.get('symbol')!=symbol or order.get('clientOrderId')!=intent_id or not order.get('orderId'):
+        return 'BLOCKED_ORDER_IDENTITY'
+    from short_recovery_aster_readback_mock_adapter import inspect
+    result=inspect(client,symbol=symbol,client_order_id=intent_id)
+    if result.get('status')!='READBACK_PREVIEW':return result.get('status','BLOCKED_READBACK')
+    @transactional
+    def save(tx):
+        row=claim_ref.get(transaction=tx).to_dict()
+        if (not isinstance(row,dict) or row.get('state')!='SUBMITTING' or
+            (row.get('account'),row.get('symbol'),row.get('cycle'),row.get('intentId'))!=(account,symbol,cycle,intent_id)):
+            return 'BLOCKED_CLAIM_CHANGED'
+        if row.get('orderId') and str(row['orderId'])!=str(order['orderId']):return 'BLOCKED_ORDER_REBIND'
+        tx.set(claim_ref,{**row,'orderId':str(order['orderId']),
+            'state':'ACKED','offlineReadbackStatus':result['orderStatus']})
+        return 'LATE_ACK_READBACK_ONLY' if not result['fills'] else 'PARTIAL_OR_TERMINAL_FILLS_NEED_FINANCIAL_PROOF'
+    return save(db.transaction())
