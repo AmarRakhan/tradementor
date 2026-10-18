@@ -3,7 +3,8 @@ from decimal import Decimal, InvalidOperation
 from short_recovery_firestore_mock import decode, encode
 from short_recovery_ledger import Fill
 
-def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, account, symbol, cycle, intent_id, event, evidence=None, execution_id=None, quantity=None):
+def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, account, symbol, cycle, intent_id, event, evidence=None, execution_id=None, quantity=None, authorization_mode="LEGACY_MOCK_TEST"):
+    if authorization_mode != 'LEGACY_MOCK_TEST':return 'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION'
     allowed={'UNKNOWN','LATE_ACK','LATE_FILL','CANCEL_REQUESTED','CANCEL_TERMINAL','NO_ORDER_TERMINAL','ACK','FILL'}
     if event not in allowed:return 'BLOCKED_EVENT'
     @transactional
@@ -85,13 +86,14 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
     return step(db.transaction())
 
 def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_ref,
-                         account, symbol, cycle, readbacks, pair_ref):
+                         account, symbol, cycle, readbacks, pair_ref, authorization_mode="LEGACY_MOCK_TEST"):
     """Offline atomic two-sided readback settlement; never submits replacement orders.
 
     Side-scoped claim and ledger refs are persisted independently. The pair row
     is a derived terminal gate, not a new runtime or order dispatcher.
     Readbacks are injected exchange-shaped evidence, not trusted by default.
     """
+    if authorization_mode != 'LEGACY_MOCK_TEST':return 'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION'
     from short_recovery_ledger import d as finite, Fill
     sides=('LONG','SHORT')
     if set(claim_refs)!=set(sides) or set(ledger_refs)!=set(sides) or set(readbacks)!=set(sides):
