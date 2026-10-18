@@ -40,6 +40,10 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
             if state in ('CANCELLED','NO_ORDER','CLOSED','PARTIAL_TERMINAL'):return 'BLOCKED_TERMINAL_CONFLICT'
             if claim.get('orderId') and claim['orderId']!=evidence['orderId']:return 'BLOCKED_ORDER_MISMATCH'
             if execution_id in ledger.seen:return 'ALREADY_APPLIED'
+            # A legacy claim with booked fills but no cumulative amount cannot
+            # safely infer the next total from zero. Require readback recovery.
+            if state=='PARTIAL' and claim.get('executedQty') is None:
+                return 'BLOCKED_LEGACY_EXECUTED_QTY_UNVERIFIED'
             # Exchange-confirmed fill economics must be explicit and tied to this
             # execution; absence is never implicitly treated as a zero cost.
             if evidence.get('readbackVerified') is not True or str(evidence.get('executionId')) != str(execution_id) or str(evidence.get('orderId')) != str(claim.get('orderId', evidence['orderId'])):

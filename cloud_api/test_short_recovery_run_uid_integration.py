@@ -576,3 +576,21 @@ class Build66RecoverySafety(unittest.TestCase):
   self.assertEqual(apply('ex2',10,follow),'FILL_APPLIED')
   self.assertEqual(f.snapshot('SHORTclaim')['executedQty'],'35')
   self.assertEqual(decode(f.snapshot('SHORTledger')).allocations[0].remaining,D(65))
+
+class Build67LegacyPartialGuard(unittest.TestCase):
+ def test_legacy_partial_claim_without_cumulative_qty_blocks_new_fill(self):
+  from short_recovery_order_resolution_shadow import resolve
+  from short_recovery_multidoc_mock import Ref,transactional
+  from short_recovery_ledger import Ledger,Allocation
+  from short_recovery_firestore_mock import encode
+  from decimal import Decimal as D
+  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp();f=h.fixture
+  claim=f.snapshot('SHORTclaim');claim.update(state='PARTIAL');claim.pop('executedQty',None);f.put('SHORTclaim',claim)
+  marker=Ref(f.db,'build67-marker');owner=Ref(f.db,'build67-owner')
+  f.db.commit(marker.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','state':'SUSPECT'})
+  f.db.commit(owner.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','ownerSide':'SHORT','ownershipVerified':True,'cycleConfirmed':True,'state':'PARTIAL'})
+  evidence={'confirmed':True,'readbackVerified':True,'orderId':'SHORT-order','executionId':'new','quantity':'10','realizedPnl':'1','commission':'.1','funding':'-.05'}
+  before=f.snapshot('SHORTledger')
+  outcome=resolve(db=f.db,transactional=transactional,claim_ref=f.refs['SHORTclaim'],ledger_ref=f.refs['SHORTledger'],marker_ref=marker,owner_ref=owner,account='u',symbol='XRPUSDT',cycle='c',intent_id=claim['intentId'],event='FILL',evidence=evidence,execution_id='new',quantity=D(10))
+  self.assertEqual(outcome,'BLOCKED_LEGACY_EXECUTED_QTY_UNVERIFIED')
+  self.assertEqual(f.snapshot('SHORTledger'),before)
