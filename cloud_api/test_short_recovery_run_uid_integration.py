@@ -19,7 +19,7 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture'):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None):
   h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
   if inventory_readback=='fixture':
    inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':9999,'LONG':'100','SHORT':'0' if action_mode=='REHEDGE' else '100'}
@@ -59,7 +59,7 @@ class RunUidIntegration(unittest.TestCase):
    ctx['recovery_action']={'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':1,
-       'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback}
+       'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback,'inventory_mock_client':inventory_mock_client}
    h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':1})
    if action_mode=='PAIR_EXIT':
     ctx['recovery_action']['long_claim_ref']=h.fixture.refs['LONGclaim']
@@ -259,3 +259,17 @@ class MandatoryOfflineInventory(unittest.TestCase):
   inventory={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':1,'LONG':'100','SHORT':'100'}
   r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=m,inventory_readback=inventory)
   self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_INVENTORY_STALE_OR_SCOPE');m.assert_not_called()
+
+class TwoLegFreshInventory(unittest.TestCase):
+ def test_short_second_leg_blocks_after_inventory_changes(self):
+  from test_short_recovery_mock_aster_inventory import Client
+  c=Client();c.qty='75';calls=[]
+  def submit(intent):
+   calls.append(intent.position_side.value)
+   if intent.position_side.value=='LONG':c.qty='0'
+   return {'clientOrderId':intent.intent_id,'orderId':intent.position_side.value+'-order'}
+  r,_,h=RunUidIntegration().run_case(action_mode='PAIR_EXIT',mock_transport=submit,inventory_mock_client=c)
+  self.assertEqual(calls,['LONG'])
+  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY','UNKNOWN_RECONCILE_ONLY'))
+  self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')

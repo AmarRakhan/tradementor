@@ -735,6 +735,20 @@ def _run_uid(
                                 # The transport must be an explicitly provided offline mock;
                                 # never use the live _client or an authenticated Aster client.
                                 mock_submit = action_ctx["submit_mock"]
+                                refresh_client=action_ctx.get("inventory_mock_client")
+                                if refresh_client is not None:
+                                    from short_recovery_inventory_preflight import refresh_mock_aster_inventory
+                                    original_submit=mock_submit
+                                    def mock_submit(intent):
+                                        latest=refresh_mock_aster_inventory(
+                                            client=refresh_client,account=uid,symbol=symbol,
+                                            now_ms=action_ctx.get("inventory_now_ms"))
+                                        status=check_inventory(intents=(intent,),symbol=symbol,
+                                            readback=latest,account=uid,
+                                            now_ms=action_ctx.get("inventory_now_ms"))
+                                        if status!="INVENTORY_VERIFIED":
+                                            raise ValueError(status)
+                                        return original_submit(intent)
                                 if not action_ctx.get("offline_mock_confirmed") or not callable(mock_submit):
                                     report["shortRecoverySubmit"] = ("BLOCKED_MOCK_TRANSPORT",)
                                 elif len(proposed["intents"]) != 1:

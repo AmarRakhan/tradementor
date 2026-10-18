@@ -28,3 +28,29 @@ def check_inventory(*, intents, symbol, readback, account=None, now_ms=None):
     except (TypeError,ValueError,KeyError,InvalidOperation,AttributeError):
         return 'BLOCKED_INVENTORY_INVALID'
     return 'INVENTORY_VERIFIED'
+
+def refresh_mock_aster_inventory(*, client, account, symbol, now_ms):
+    """Offline only: obtain a fresh, scoped side inventory from an injected mock client."""
+    if getattr(client,'offline_mock_only',False) is not True:
+        return None
+    try:
+        identity=client.account_information()
+        rows=client.position_risk(symbol)
+        orders=client.open_orders(symbol)
+        if (not isinstance(identity,dict) or identity.get('account')!=account
+                or identity.get('hedgeMode') is not True or not isinstance(rows,list)
+                or not isinstance(orders,list)):
+            return None
+        result={'LONG':None,'SHORT':None}
+        for row in rows:
+            if not isinstance(row,dict) or row.get('symbol')!=symbol:
+                return None
+            side=row.get('positionSide')
+            if side not in result or result[side] is not None:
+                return None
+            result[side]=row.get('positionAmt')
+        if None in result.values():return None
+        return dict(result,account=account,symbol=symbol,verified=True,hedgeMode=True,
+                    openOrders=orders,timestampMs=now_ms)
+    except Exception:
+        return None
