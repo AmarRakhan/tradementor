@@ -819,6 +819,8 @@ def _run_uid(
                         return {side:ctx["claim_refs"][side].get(transaction=tx).to_dict()
                                 for side in ("LONG", "SHORT")}
                     claim_status=_read_pair_claim_status(ctx["db"].transaction())
+                    require_independent_funding_mock=ctx.pop("require_independent_funding_mock",False)
+                    funding_window_mock=ctx.pop("funding_window_mock",None)
                     if any(not isinstance(claim_status[side],dict) or
                            # UNKNOWN/PARTIAL are reconcile-only, never submit rights.
                            # An existing verified orderId may be read back again
@@ -830,6 +832,16 @@ def _run_uid(
                            not claim_status[side].get("orderId")
                            for side in ("LONG", "SHORT")):
                         report["shortRecoveryPairSettlement"]="PAIR_RECONCILE_REQUIRED_NO_TERMINAL_ACK"
+                    elif require_independent_funding_mock:
+                        from short_recovery_independent_funding_gate import inspect_mock_coverage
+                        window=funding_window_mock
+                        if not isinstance(window,dict):
+                            report["shortRecoveryPairSettlement"]="BLOCKED_INDEPENDENT_FUNDING_WINDOW"
+                        else:
+                            report["shortRecoveryPairSettlement"]=inspect_mock_coverage(
+                                client=ctx["client"], account=uid, symbol=ctx["symbol"],
+                                cycle=ctx["cycle"], start_ms=window.get("startMs"),
+                                end_ms=window.get("endMs"))
                     else:
                         # A recovered SHORT fill is not independently financial
                         # evidence. Only the existing two-sided proof-gated atomic
