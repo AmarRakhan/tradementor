@@ -113,6 +113,7 @@ jobs:
               reason_classes=Counter()
               latest_status=""
               latest_created=None
+              pump_sweeps=[]
               for snap in user.reference.collection("asterProfitSweeps").stream():
                   row=snap.to_dict() or {}
                   created=as_utc(row.get("createdAt"))
@@ -125,6 +126,20 @@ jobs:
                   if latest_created is None or created>latest_created:
                       latest_created=created
                       latest_status=status
+                  if str(row.get("symbol","")).upper()=="PUMPUSDT":
+                      calc=row.get("calculation") if isinstance(row.get("calculation"),dict) else {}
+                      pump_sweeps.append({
+                          "status":status,
+                          "positionSide":str(row.get("positionSide","")).upper(),
+                          "exchangeOrderId":str(row.get("exchangeOrderId","")),
+                          "openQuantityBeforeClose":str(row.get("openQuantityBeforeClose","")),
+                          "closedQuantity":str(calc.get("closedQuantity","")),
+                          "realizedPnl":str(calc.get("realizedPnl","")),
+                          "netRealizedProfit":str(row.get("netRealizedProfit","")),
+                          "sweepContribution":str(row.get("sweepContribution","")),
+                          "reason":str(row.get("reason",""))[:160],
+                          "createdAt":created.isoformat() if created else "",
+                      })
                   reason=str(row.get("reason","")).lower()
                   if "inventory" in reason or "sluitfill" in reason or "fillhistorie" in reason or "cyclus" in reason:
                       reason_classes["EVIDENCE_OR_INVENTORY"]+=1
@@ -146,6 +161,7 @@ jobs:
                   "reasonClasses":dict(reason_classes),
                   "bulkProfitCloseActionsToday":count_today(user.reference.collection("asterBulkProfitCloseIntents"),"createdAt"),
                   "snapshotProfitCloseActionsToday":count_today(user.reference.collection("asterSnapshotProfitCloseIntents"),"createdAt"),
+                  "pumpProfitSweeps":sorted(pump_sweeps,key=lambda x:x.get("createdAt","")),
               })
 
           report=json.dumps({
@@ -182,3 +198,5 @@ jobs:
           gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$IMAGE" --service-account "$RUNTIME_SA" --max-retries 0 --task-timeout 300s --set-env-vars "DIAG_REPO=$GITHUB_REPOSITORY,DIAG_GH_TOKEN=${{ github.token }}" --quiet
           EXECUTION="$(gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait --format='value(metadata.name)')"
           test -n "$EXECUTION"
+
+# include sanitized PUMP Profit Sweep evidence 2026-10-04
