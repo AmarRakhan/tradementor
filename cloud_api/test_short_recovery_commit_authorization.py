@@ -32,3 +32,19 @@ class LegacyStorageIsolation(unittest.TestCase):
   result=reconcile_pair_close(db=fake,transactional=transactional,claim_refs={'LONG':fake,'SHORT':fake},ledger_refs={'LONG':fake,'SHORT':fake},control_ref=fake,pair_ref=fake,account='u',symbol='XRPUSDT',cycle='c',readbacks={'LONG':{},'SHORT':{}},authorization_mode='LEGACY_MOCK_TEST')
   self.assertEqual(result,'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
   fake.transaction.assert_not_called()
+
+class MarkerLedgerCommitBoundary(unittest.TestCase):
+ def test_direct_marker_book_cannot_accept_authorized_mode_or_unknown_db(self):
+  from short_recovery_marker_lifecycle_shadow import book_mock_fill
+  from short_recovery_ledger import Fill
+  from short_recovery_multidoc_mock import MultiDocDB, Ref
+  from unittest.mock import MagicMock
+  from short_recovery_mock_storage_boundary import isolated_storage_only
+  constructed=MultiDocDB()
+  self.assertTrue(isolated_storage_only(constructed))  # Not a security credential.
+  fill=Fill('u','XRPUSDT','e','order',Decimal(1),Decimal(1),Decimal('.1'),Decimal('-.01'))
+  fake=MagicMock()
+  for db,mode in ((constructed,'AUTHORIZED_EXECUTOR'),(fake,'LEGACY_MOCK_TEST')):
+   outcome=book_mock_fill(db=db,transactional=transactional,marker_ref=fake,ledger_ref=fake,owner_ref=fake,fill=fill,splits=(('z','c',Decimal(1)),),account='u',symbol='XRPUSDT',cycle='c',authorization_mode=mode)
+   self.assertEqual(outcome,'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
+  fake.transaction.assert_not_called()

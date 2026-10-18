@@ -20,8 +20,11 @@ def prepare(*, db, transactional, marker_ref, ledger_ref, owner_ref, account, sy
         return 'SHADOW_READY'
     return {'status':verify(db.transaction()),'ordersSent':0}
 
-def book_mock_fill(*,db,transactional,marker_ref,ledger_ref,owner_ref,fill,splits,account,symbol,cycle):
+def book_mock_fill(*,db,transactional,marker_ref,ledger_ref,owner_ref,fill,splits,account,symbol,cycle,authorization_mode="LEGACY_MOCK_TEST"):
     """Validate marker, owner and ledger in one multi-document mock transaction."""
+    from short_recovery_mock_storage_boundary import isolated_storage_only
+    if authorization_mode != 'LEGACY_MOCK_TEST' or not isolated_storage_only(db):
+        return 'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION'
     if (fill.account,fill.symbol)!=(account,symbol):return 'BLOCKED_SCOPE'
     @transactional
     def apply(tx):
