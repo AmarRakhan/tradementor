@@ -132,8 +132,8 @@ class SubmittedRunUid(unittest.TestCase):
  def test_rehedge_atomic_submit_and_mock_transport(self):
   mock=MagicMock(return_value=({'orderId':123},False))
   r,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',mock_transport=mock)
-  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',))
-  self.assertEqual(mock.call_count,1)
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_REHEDGE_FINAL_READBACK')
+  mock.assert_not_called()
  def test_timeout_retains_submitting(self):
   mock=MagicMock(side_effect=TimeoutError('mock timeout'))
   r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=mock)

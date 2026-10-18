@@ -720,21 +720,15 @@ def _run_uid(
                                     "status":"BLOCKED_INTENT_CLAIM_ID_MISMATCH",
                                     "ordersSent":0,"intents":()}
                             elif (proposed.get("status")=="PREVIEW_REHEDGE_REQUIRES_FINAL_READBACK"
-                                    and action_ctx.get("submit_mock") is not None
-                                    and not (isinstance(action_ctx.get("rehedge_final_readback"),dict)
-                                        and action_ctx["rehedge_final_readback"].get("account")==uid
-                                        and action_ctx["rehedge_final_readback"].get("symbol")==symbol
-                                        and action_ctx["rehedge_final_readback"].get("cycle")==ctx["cycle"]
-                                        and action_ctx["rehedge_final_readback"].get("positionSide")=="SHORT"
-                                        and action_ctx["rehedge_final_readback"].get("action")=="CLOSE"
-                                        and action_ctx["rehedge_final_readback"].get("orderStatus")=="FILLED"
-                                        and action_ctx["rehedge_final_readback"].get("terminalVerified") is True
-                                        and action_ctx["rehedge_final_readback"].get("fillsComplete") is True
-                                        and action_ctx["rehedge_final_readback"].get("shortInventoryZeroVerified") is True
-                                        and action_ctx["rehedge_final_readback"].get("orderId")
-                                        and action_ctx["rehedge_final_readback"].get("intentId"))):
-                                report["shortRecoveryAction"]={"status":"BLOCKED_REHEDGE_FINAL_READBACK","ordersSent":0,"intents":()}
-                                proposed=report["shortRecoveryAction"]
+                                    and action_ctx.get("submit_mock") is not None):
+                                from short_recovery_rehedge_readback_offline import verify
+                                if not verify(db=ctx["db"],transactional=ctx["transactional"],
+                                        claim_ref=action_ctx.get("final_short_close_claim_ref"),
+                                        client=action_ctx.get("inventory_mock_client"),
+                                        account=uid,symbol=symbol,cycle=ctx["cycle"],
+                                        long_qty=action_ctx["long_qty"],now_ms=action_ctx.get("inventory_now_ms")):
+                                    report["shortRecoveryAction"]={"status":"BLOCKED_REHEDGE_FINAL_READBACK","ordersSent":0,"intents":()}
+                                    proposed=report["shortRecoveryAction"]
                             elif proposed.get("intents") and action_ctx.get("submit_mock") is not None:
                                 # Offline-only real-cycle seam: independently refresh
                                 # the exchange-shaped side inventory before any mock POST.
