@@ -821,6 +821,10 @@ def _run_uid(
                     claim_status=_read_pair_claim_status(ctx["db"].transaction())
                     require_independent_funding_mock=ctx.pop("require_independent_funding_mock",False)
                     funding_window_mock=ctx.pop("funding_window_mock",None)
+                    # Supplying a funding window activates the strict contract even
+                    # if a caller omits or explicitly disables the opt-in flag.
+                    require_independent_funding_mock = (require_independent_funding_mock is True
+                                                        or funding_window_mock is not None)
                     if any(not isinstance(claim_status[side],dict) or
                            # UNKNOWN/PARTIAL are reconcile-only, never submit rights.
                            # An existing verified orderId may be read back again

@@ -29,3 +29,25 @@ class IndependentFundingGate(unittest.TestCase):
   self.assertEqual(h.fixture.snapshot('pair'),previous_pair)
   self.assertEqual(h.fixture.snapshot('SHORTledger'),previous_ledger)
   self.assertEqual(inspect_mock_coverage(client=object(),account='u',symbol='XRPUSDT',cycle='c',start_ms=1000,end_ms=2000),'BLOCKED_INDEPENDENT_FUNDING_CLIENT_OR_CYCLE')
+
+ def test_forged_financial_proof_and_disabled_flag_do_not_bypass_strict_window(self):
+  from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
+  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+  class Client:
+   offline_mock_only=True
+   def income_history(self,**kwargs):return []
+  h.client.offline_mock_only=True
+  h.client.income_history=Client().income_history
+  pair=h.fixture.snapshot('pair');long_ledger=h.fixture.snapshot('LONGledger');short_ledger=h.fixture.snapshot('SHORTledger')
+  # The legacy financial_proof fixture reports all flags True. It cannot
+  # override a strict income window, including on restart and late ACK paths.
+  for state in ('ACKED','UNKNOWN'):
+   row=h.fixture.snapshot('SHORTclaim');row['state']=state;h.fixture.put('SHORTclaim',row)
+   r,_,_=RunUidIntegration().run_case(existing_harness=h,
+     require_independent_funding_mock=False,
+     funding_window_mock={'startMs':1000,'endMs':2000})
+   self.assertEqual(r['shortRecoveryPairSettlement'],'BLOCKED_INDEPENDENT_FUNDING_COMPLETENESS')
+   self.assertEqual(h.fixture.snapshot('pair'),pair)
+   self.assertEqual(h.fixture.snapshot('LONGledger'),long_ledger)
+   self.assertEqual(h.fixture.snapshot('SHORTledger'),short_ledger)
+   self.assertNotIn('shortRecoverySubmit',r)
