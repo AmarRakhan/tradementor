@@ -279,5 +279,9 @@ def reconcile_locked_mock_order_readback(*, db, transactional, claim_ref, accoun
             return 'BLOCKED_SIDE_IDENTITY'
         tx.set(claim_ref,{**row,'orderId':str(order['orderId']),
             'positionSide':side,'state':'ACKED','offlineReadbackStatus':result['orderStatus']})
-        return 'LATE_ACK_READBACK_ONLY' if not result['fills'] else 'PARTIAL_OR_TERMINAL_FILLS_NEED_FINANCIAL_PROOF'
+        if result['fills']:
+            return ('PARTIAL_FILLS_NEED_FINANCIAL_PROOF' if result['orderStatus']=='PARTIALLY_FILLED'
+                    else 'TERMINAL_FILLS_NEED_FINANCIAL_PROOF' if result['orderStatus']=='FILLED'
+                    else 'UNRESOLVED_FILLS_NEED_FINANCIAL_PROOF')
+        return 'LATE_ACK_READBACK_ONLY'
     return save(db.transaction())

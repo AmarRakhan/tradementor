@@ -45,3 +45,23 @@ class SideIdentityRestored(Readback):
    def user_trades(self,*args,**kwargs):return []
   self.assertEqual(self.read(x,C()),'BLOCKED_SIDE_IDENTITY')
   self.assertEqual(x.snapshot('SHORTclaim'),before)
+
+class PartialTerminalRestartReadback(Readback):
+ def test_partial_fill_is_recognized_without_booking(self):
+  x=self.fixture();before=x.snapshot('SHORTledger')
+  class C:
+   offline_mock_only=True
+   def query_order(self,*args):return {'symbol':'XRPUSDT','clientOrderId':'SHORT-intent','orderId':'SHORT-order','status':'PARTIALLY_FILLED','executedQty':'25'}
+   def user_trades(self,*args,**kw):return [{'id':1,'symbol':'XRPUSDT','orderId':'SHORT-order','qty':'25','realizedPnl':'1','commission':'.1'}]
+  self.assertEqual(self.read(x,C()),'PARTIAL_FILLS_NEED_FINANCIAL_PROOF')
+  self.assertEqual(x.snapshot('SHORTledger'),before)
+  self.assertEqual(x.snapshot('SHORTclaim')['state'],'ACKED')
+ def test_terminal_fill_also_needs_financial_proof(self):
+  x=self.fixture();before=x.snapshot('SHORTledger')
+  class C:
+   offline_mock_only=True
+   def query_order(self,*args):return {'symbol':'XRPUSDT','clientOrderId':'SHORT-intent','orderId':'SHORT-order','status':'FILLED','executedQty':'75'}
+   def user_trades(self,*args,**kw):return [{'id':1,'symbol':'XRPUSDT','orderId':'SHORT-order','qty':'75','realizedPnl':'2','commission':'.1'}]
+  self.assertEqual(self.read(x,C()),'TERMINAL_FILLS_NEED_FINANCIAL_PROOF')
+  self.assertEqual(x.snapshot('SHORTledger'),before)
+  self.assertNotEqual(x.snapshot('pair')['state'],'CLOSED')
