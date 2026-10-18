@@ -19,11 +19,11 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None):
   h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
   if inventory_readback=='fixture':
    inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':9999,'LONG':'100','SHORT':'0' if action_mode=='REHEDGE' else '100'}
-  ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None}
+  ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None,'restart_readback_mock_client':restart_readback_mock_client}
   if action_mode is not None:
    from decimal import Decimal as D
    from short_recovery_contract import Plan
@@ -317,3 +317,28 @@ class RestartOriginClassification(unittest.TestCase):
    self.assertEqual(outcome,'UNKNOWN_EXCHANGE_READBACK_REQUIRED' if timeout else 'PRETRANSPORT_BLOCKED_NO_RETRY')
    self.assertEqual(len(calls),before)
    self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+
+class InRunUidRestartReadback(unittest.TestCase):
+ def test_locked_short_no_order_remains_unresolved_and_no_post(self):
+  class Client:
+   offline_mock_only=True
+   def query_order(self,*args):return None
+  m=MagicMock()
+  result,_,h=RunUidIntegration().run_case(action_mode='REDUCE',existing_short_state='SUBMITTING',mock_transport=m,restart_readback_mock_client=Client())
+  self.assertEqual(result['shortRecoveryRestartReadback'],'NO_ORDER_UNPROVEN_CLAIM_LOCKED')
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+  m.assert_not_called()
+
+class InRunUidLateAck(unittest.TestCase):
+ def test_late_ack_only_after_restart_no_second_post(self):
+  class MockExchange:
+   offline_mock_only=True
+   def query_order(self,symbol,cid):
+    return {'symbol':symbol,'clientOrderId':cid,'orderId':'SHORT-order','status':'NEW','executedQty':'0'}
+   def user_trades(self,symbol,**kwargs):return []
+  submit=MagicMock()
+  r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',existing_short_state='SUBMITTING',mock_transport=submit,restart_readback_mock_client=MockExchange())
+  self.assertEqual(r['shortRecoveryRestartReadback'],'LATE_ACK_READBACK_ONLY')
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'ACKED')
+  self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+  submit.assert_not_called()

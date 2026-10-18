@@ -786,6 +786,21 @@ def _run_uid(
                                     report["shortRecoverySubmit"] = tuple(results)
                         except (KeyError,TypeError,ValueError):
                             report["shortRecoveryAction"] = {"status":"BLOCKED_ACTION_CONTEXT","ordersSent":0,"intents":()}
+                    # Offline restart recovery of the canonical locked SHORT claim.
+                    # Explicit mock-only client; this never invokes a submit.
+                    restart_client=ctx.pop("restart_readback_mock_client",None)
+                    if restart_client is not None:
+                        from short_recovery_order_claim_shadow import reconcile_locked_mock_order_readback
+                        @ctx["transactional"]
+                        def _restart_short_claim(tx):
+                            return ctx["claim_refs"]["SHORT"].get(transaction=tx).to_dict()
+                        locked_short=_restart_short_claim(ctx["db"].transaction())
+                        if isinstance(locked_short,dict) and locked_short.get("state")=="SUBMITTING":
+                            report["shortRecoveryRestartReadback"]=reconcile_locked_mock_order_readback(
+                                db=ctx["db"],transactional=ctx["transactional"],
+                                claim_ref=ctx["claim_refs"]["SHORT"],account=uid,
+                                symbol=ctx["symbol"],cycle=ctx["cycle"],
+                                intent_id=locked_short.get("intentId"),client=restart_client)
                     # A mock POST return is not an Aster order acknowledgement.
                     # Until side-scoped ACK/readback has persisted matching orderIds,
                     # do not interpret SUBMITTING/UNKNOWN as financial settlement.
