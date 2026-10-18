@@ -232,3 +232,20 @@ def submit_locked_pair_mock_offline(*, db, transactional, long_claim_ref, short_
             break
         results.append('SUBMITTED_RECONCILE_ONLY')
     return tuple(results)
+
+def classify_locked_mock_claim(*,db,transactional,claim_ref,account,symbol,cycle,intent_id):
+    """Offline restart readback classification; never unlocks or resubmits."""
+    @transactional
+    def read(tx):
+        row=claim_ref.get(transaction=tx).to_dict()
+        if not isinstance(row,dict) or (row.get('account'),row.get('symbol'),row.get('cycle'),row.get('intentId'))!=(account,symbol,cycle,intent_id):
+            return 'BLOCKED_CLAIM_SCOPE'
+        if row.get('state')=='ACKED' and row.get('orderId'):
+            return 'ACKED_READBACK_ONLY'
+        if row.get('state')!='SUBMITTING':
+            return 'BLOCKED_NOT_LOCKED'
+        kind=row.get('offlineTransportOrigin')
+        if kind=='BEFORE_TRANSPORT_BLOCKED':return 'PRETRANSPORT_BLOCKED_NO_RETRY'
+        if kind=='TRANSPORT_OUTCOME_UNKNOWN':return 'UNKNOWN_EXCHANGE_READBACK_REQUIRED'
+        return 'UNKNOWN_ORIGIN_READBACK_REQUIRED'
+    return read(db.transaction())

@@ -294,3 +294,26 @@ class PersistedTransportOrigin(unittest.TestCase):
   r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=m)
   self.assertEqual(r['shortRecoverySubmit'],('UNKNOWN_RECONCILE_ONLY',))
   self.assertEqual(h.fixture.snapshot('SHORTclaim')['offlineTransportOrigin'],'TRANSPORT_OUTCOME_UNKNOWN')
+
+class RestartOriginClassification(unittest.TestCase):
+ def test_blocked_and_unknown_classified_after_restart_without_post(self):
+  from short_recovery_order_claim_shadow import classify_locked_mock_claim
+  for timeout in (False,True):
+   calls=[]
+   def submit(intent):
+    calls.append(intent.intent_id)
+    if timeout:raise TimeoutError('uncertain')
+    return {'orderId':'mock'}
+   if timeout:
+    _,_,h=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=submit)
+   else:
+    from test_short_recovery_mock_aster_inventory import Client
+    c=Client();c.qty='0'
+    _,_,h=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=submit,inventory_mock_client=c)
+   before=len(calls)
+   h.fixture.db=h.fixture.db.restart();h.fixture.bind()
+   row=h.fixture.snapshot('SHORTclaim')
+   outcome=classify_locked_mock_claim(db=h.fixture.db,transactional=__import__('short_recovery_multidoc_mock').transactional,claim_ref=h.fixture.refs['SHORTclaim'],account='u',symbol='XRPUSDT',cycle='c',intent_id=row['intentId'])
+   self.assertEqual(outcome,'UNKNOWN_EXCHANGE_READBACK_REQUIRED' if timeout else 'PRETRANSPORT_BLOCKED_NO_RETRY')
+   self.assertEqual(len(calls),before)
+   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
