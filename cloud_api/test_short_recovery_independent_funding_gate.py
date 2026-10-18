@@ -62,3 +62,29 @@ class IndependentFundingGate(unittest.TestCase):
   self.assertEqual(h.fixture.snapshot('pair'),pair)
   self.assertEqual(h.fixture.snapshot('SHORTledger'),ledger)
   self.assertNotIn('shortRecoverySubmit',report)
+
+class Build77UnstableFundingReadback(unittest.TestCase):
+ def test_partial_restart_income_drift_cannot_authorize_pair(self):
+  from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
+  from short_recovery_funding_shadow import read_bounded_symbol_funding,reconcile_bounded_income_snapshots
+  from short_recovery_firestore_mock import decode
+  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+  claim=h.fixture.snapshot('SHORTclaim');claim['state']='UNKNOWN';h.fixture.put('SHORTclaim',claim)
+  before=h.fixture.snapshot('SHORTledger');pair=h.fixture.snapshot('pair')
+  class Exchange:
+   offline_mock_only=True
+   def __init__(self):self.amount='-.1'
+   def income_history(self,**kw):return [{'symbol':'XRPUSDT','incomeType':'FUNDING_FEE','time':1000,'tranId':'t1','income':self.amount}]
+  exchange=Exchange();h.client.offline_mock_only=True;h.client.income_history=exchange.income_history
+  initial=read_bounded_symbol_funding(exchange,symbol='XRPUSDT',account='u',start_ms=1000,end_ms=2000)
+  exchange.amount='-.2'
+  changed=read_bounded_symbol_funding(exchange,symbol='XRPUSDT',account='u',start_ms=1000,end_ms=2000)
+  with self.assertRaisesRegex(ValueError,'BLOCKED_INCOME_SNAPSHOT_DRIFT'):
+   reconcile_bounded_income_snapshots(initial,changed)
+  h.fixture.db=h.fixture.db.restart();h.fixture.bind()
+  result,_,_=RunUidIntegration().run_case(existing_harness=h,
+    funding_window_mock={'startMs':1000,'endMs':2000})
+  self.assertEqual(result['shortRecoveryPairSettlement'],'BLOCKED_INDEPENDENT_FUNDING_COMPLETENESS')
+  self.assertEqual(h.fixture.snapshot('pair'),pair)
+  self.assertEqual(h.fixture.snapshot('SHORTledger'),before)
+  self.assertNotIn('shortRecoverySubmit',result)
