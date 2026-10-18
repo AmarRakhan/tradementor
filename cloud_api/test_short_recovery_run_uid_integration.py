@@ -528,3 +528,51 @@ class FourStepRunUidCycle(unittest.TestCase):
   self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',))
   self.assertEqual(posts[-1],('open',D(100),'OPEN'))
   self.assertEqual(len(posts),5)
+
+class Build66RecoverySafety(unittest.TestCase):
+ def test_two_workers_one_canonical_mock_post_and_stop(self):
+  import concurrent.futures,threading
+  from decimal import Decimal as D
+  from short_recovery_order_claim_shadow import submit_once_offline,canonical_intent_id
+  from short_recovery_multidoc_mock import transactional
+  from aster_gateway import AsterOrderIntent,PositionSide
+  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+  ref=h.fixture.refs['SHORTclaim'];ident=canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side='SHORT',action='CLOSE',step=1)
+  claim=h.fixture.snapshot('SHORTclaim');claim.update(intentId=ident,state='RESERVED',side='SHORT',action='CLOSE',step=1);h.fixture.put('SHORTclaim',claim)
+  intent=AsterOrderIntent(ident,'XRPUSDT',PositionSide.SHORT,D(25),'CLOSE')
+  barrier=threading.Barrier(2);sent=[];guard=threading.Lock()
+  def transport(i):
+   with guard:sent.append(i.intent_id)
+  def work():
+   barrier.wait(timeout=10)
+   return submit_once_offline(db=h.fixture.db,transactional=transactional,claim_ref=ref,control_ref=h.fixture.refs['control'],account='u',symbol='XRPUSDT',cycle='c',intent=intent,account_close_guard=lambda:None,submit_mock=transport)
+  with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+   results=[f.result(timeout=20) for f in [pool.submit(work) for _ in range(2)]]
+  self.assertCountEqual(results,['SUBMITTED_RECONCILE_ONLY','BLOCKED_CLAIM_NOT_RESERVED'])
+  self.assertEqual(sent,[ident])
+  h.fixture.put('control',{'account':'u','enabled':True,'emergencyStop':True,'closeAllActive':False})
+  self.assertEqual(submit_once_offline(db=h.fixture.db,transactional=transactional,claim_ref=ref,control_ref=h.fixture.refs['control'],account='u',symbol='XRPUSDT',cycle='c',intent=intent,account_close_guard=lambda:None,submit_mock=transport),'BLOCKED_CLAIM_NOT_RESERVED')
+  self.assertEqual(len(sent),1)
+ def test_partial_funding_and_legacy_claim_guard(self):
+  from decimal import Decimal as D
+  from short_recovery_multidoc_mock import Ref,transactional
+  from short_recovery_order_resolution_shadow import resolve
+  from short_recovery_ledger import Ledger,Allocation
+  from short_recovery_firestore_mock import encode,decode
+  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+  f=h.fixture;f.put('SHORTledger',encode(Ledger('u','XRPUSDT',(Allocation('SHORT','c',D(100)),))))
+  marker=Ref(f.db,'build66-marker');owner=Ref(f.db,'build66-owner')
+  f.db.commit(marker.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','state':'SUSPECT'})
+  f.db.commit(owner.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','ownerSide':'SHORT','ownershipVerified':True,'cycleConfirmed':True,'state':'PARTIAL'})
+  claim=f.snapshot('SHORTclaim');claim.update(state='ACKED',side='SHORT',action='CLOSE');f.put('SHORTclaim',claim)
+  def apply(execution,qty,evidence):
+   return resolve(db=f.db,transactional=transactional,claim_ref=f.refs['SHORTclaim'],ledger_ref=f.refs['SHORTledger'],marker_ref=marker,owner_ref=owner,account='u',symbol='XRPUSDT',cycle='c',intent_id=claim['intentId'],event='FILL',execution_id=execution,quantity=qty,evidence=evidence)
+  evidence={'confirmed':True,'readbackVerified':True,'orderId':'SHORT-order','executionId':'ex1','quantity':'25','realizedPnl':'1','commission':'.1','funding':'-.05'}
+  self.assertEqual(apply('ex1',25,{k:v for k,v in evidence.items() if k!='funding'}),'BLOCKED_FINANCIAL_EVIDENCE')
+  self.assertEqual(apply('ex1',25,evidence),'FILL_APPLIED')
+  self.assertEqual(f.snapshot('SHORTclaim')['executedQty'],'25')
+  self.assertEqual(apply('ex1',25,evidence),'ALREADY_APPLIED')
+  follow={**evidence,'executionId':'ex2','quantity':'10'}
+  self.assertEqual(apply('ex2',10,follow),'FILL_APPLIED')
+  self.assertEqual(f.snapshot('SHORTclaim')['executedQty'],'35')
+  self.assertEqual(decode(f.snapshot('SHORTledger')).allocations[0].remaining,D(65))
