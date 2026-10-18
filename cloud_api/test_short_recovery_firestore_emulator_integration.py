@@ -79,7 +79,16 @@ class PairCloseEmulator(unittest.TestCase):
   rows={'LONG':row('LONG',100,'FILLED'),'SHORT':row('SHORT',25,'UNKNOWN')}
   def run():
    return reconcile_pair_close(db=client,transactional=firestore.transactional,claim_refs={s:refs[s+'claim'] for s in ('LONG','SHORT')},ledger_refs={s:refs[s+'ledger'] for s in ('LONG','SHORT')},control_ref=refs['control'],pair_ref=refs['pair'],account='u',symbol='XRPUSDT',cycle='c',readbacks=rows)
-  self.assertEqual(run(),'PAIR_RECONCILE_REQUIRED')
+  # Two genuinely concurrent SDK transactions race on the same canonical refs.
+  import concurrent.futures,threading
+  barrier=threading.Barrier(2)
+  def raced():
+   barrier.wait(timeout=10)
+   return run()
+  with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+   futures=[executor.submit(raced) for _ in range(2)]
+   outcomes=[f.result(timeout=30) for f in futures]
+  self.assertEqual(outcomes,['PAIR_RECONCILE_REQUIRED']*2)
   self.assertEqual(run(),'PAIR_RECONCILE_REQUIRED')
   self.assertEqual(refs['SHORTclaim'].get().to_dict()['state'],'UNKNOWN')
   self.assertEqual(decode(refs['SHORTledger'].get().to_dict()).allocations[0].remaining,D(50))
