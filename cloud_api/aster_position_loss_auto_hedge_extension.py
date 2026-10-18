@@ -819,6 +819,12 @@ def _run_uid(
                         return {side:ctx["claim_refs"][side].get(transaction=tx).to_dict()
                                 for side in ("LONG", "SHORT")}
                     claim_status=_read_pair_claim_status(ctx["db"].transaction())
+                    from short_recovery_authorization_contract import classify as classify_recovery_authorization
+                    authorization_mode=ctx.pop("authorization_mode", "LEGACY_MOCK_TEST")
+                    authorization_status=classify_recovery_authorization(
+                        mode=authorization_mode,account=uid,symbol=ctx["symbol"],
+                        cycle=ctx["cycle"],evidence=ctx.get("financial_proof"))
+                    report["shortRecoveryAuthorization"]=authorization_status
                     require_independent_funding_mock=ctx.pop("require_independent_funding_mock",False)
                     funding_window_mock=ctx.pop("funding_window_mock",None)
                     # Supplying a funding window activates the strict contract even
@@ -836,6 +842,8 @@ def _run_uid(
                            not claim_status[side].get("orderId")
                            for side in ("LONG", "SHORT")):
                         report["shortRecoveryPairSettlement"]="PAIR_RECONCILE_REQUIRED_NO_TERMINAL_ACK"
+                    elif authorization_mode != "LEGACY_MOCK_TEST":
+                        report["shortRecoveryPairSettlement"]="BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION"
                     elif require_independent_funding_mock:
                         from short_recovery_independent_funding_gate import inspect_mock_coverage
                         window=funding_window_mock

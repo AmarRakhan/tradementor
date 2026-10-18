@@ -51,3 +51,14 @@ class IndependentFundingGate(unittest.TestCase):
    self.assertEqual(h.fixture.snapshot('LONGledger'),long_ledger)
    self.assertEqual(h.fixture.snapshot('SHORTledger'),short_ledger)
    self.assertNotIn('shortRecoverySubmit',r)
+
+ def test_future_authorization_cannot_use_legacy_forged_proof(self):
+  from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
+  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+  pair=h.fixture.snapshot('pair');ledger=h.fixture.snapshot('SHORTledger')
+  report,_,_=RunUidIntegration().run_case(existing_harness=h,authorization_mode='AUTHORIZED_EXECUTOR')
+  self.assertEqual(report['shortRecoveryAuthorization'],'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
+  self.assertEqual(report['shortRecoveryPairSettlement'],'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
+  self.assertEqual(h.fixture.snapshot('pair'),pair)
+  self.assertEqual(h.fixture.snapshot('SHORTledger'),ledger)
+  self.assertNotIn('shortRecoverySubmit',report)
