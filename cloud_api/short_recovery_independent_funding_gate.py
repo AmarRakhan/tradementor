@@ -23,4 +23,5 @@ def inspect_mock_coverage(*, client, account, symbol, cycle, start_ms, end_ms):
         return 'BLOCKED_INDEPENDENT_FUNDING_COMPLETENESS'
     # Even an independently complete symbol-wide window cannot prove how
     # individual funding events belong to this hedge cycle or each side.
-    return 'BLOCKED_INDEPENDENT_FUNDING_CYCLE_OWNERSHIP'
+    from short_recovery_funding_provenance_decision import decide
+    return decide(account=account, symbol=symbol, cycle=cycle, income_rows=snapshot.get('rows'))
