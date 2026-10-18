@@ -39,7 +39,8 @@ def decode(doc):
                  else (row[0],row[1],Decimal(row[2]),Decimal(row[3])) for row in doc['booked'])
     return Ledger(doc['account'],doc['symbol'],alloc,frozenset(doc['seen']),booked)
 
-def record_fill(db,ledger_key,fill,splits,retries=16):
+def record_fill(db,ledger_key,fill,splits,retries=16,*,authorization_mode="LEGACY_MOCK_TEST"):
+    if authorization_mode != 'LEGACY_MOCK_TEST':return 'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION'
     if ledger_key!=(fill.account,fill.symbol):raise ValueError('wrong document ownership')
     for _ in range(retries):
         version,doc=db.snapshot(ledger_key)

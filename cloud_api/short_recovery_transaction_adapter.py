@@ -8,7 +8,8 @@ from short_recovery_firestore_mock import encode, decode
 
 
 def record_confirmed_fill(*, db, transactional, ref, fill: Fill, splits, verified_owner: bool,
-                          account: str, symbol: str):
+                          account: str, symbol: str, authorization_mode="LEGACY_MOCK_TEST"):
+    if authorization_mode != 'LEGACY_MOCK_TEST':return 'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION'
     if not verified_owner or (fill.account, fill.symbol) != (account, symbol):
         return 'BLOCKED_OWNERSHIP'
     transaction = db.transaction()
@@ -28,12 +29,13 @@ def record_confirmed_fill(*, db, transactional, ref, fill: Fill, splits, verifie
 
 
 def record_confirmed_fill_owned(*, db, transactional, ledger_ref, ownership_ref,
-                                fill: Fill, splits, account: str, symbol: str, cycle_id: str):
+                                fill: Fill, splits, account: str, symbol: str, cycle_id: str, authorization_mode="LEGACY_MOCK_TEST"):
     """Fail-closed mock seam: reread ownership and inventory in one transaction.
 
     Not connected to production. Caller must supply true serializable Firestore
     transactions for multi-document read/write atomicity; mock tests are not proof.
     """
+    if authorization_mode != 'LEGACY_MOCK_TEST':return 'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION'
     if not account or not symbol or not cycle_id or (fill.account,fill.symbol)!=(account,symbol):
         return 'BLOCKED_SCOPE'
     transaction=db.transaction()

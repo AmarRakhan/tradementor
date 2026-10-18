@@ -48,3 +48,16 @@ class MarkerLedgerCommitBoundary(unittest.TestCase):
    outcome=book_mock_fill(db=db,transactional=transactional,marker_ref=fake,ledger_ref=fake,owner_ref=fake,fill=fill,splits=(('z','c',Decimal(1)),),account='u',symbol='XRPUSDT',cycle='c',authorization_mode=mode)
    self.assertEqual(outcome,'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
   fake.transaction.assert_not_called()
+
+class RemainingLegacyLedgerSeams(unittest.TestCase):
+ def test_every_direct_ledger_seam_blocks_authorized_executor(self):
+  from short_recovery_transaction_adapter import record_confirmed_fill,record_confirmed_fill_owned
+  from short_recovery_firestore_mock import record_fill
+  from short_recovery_ledger import Fill
+  from unittest.mock import MagicMock
+  f=Fill('u','XRPUSDT','ex','order',Decimal(1),Decimal(0),Decimal(0))
+  db=MagicMock()
+  self.assertEqual(record_confirmed_fill(db=db,transactional=transactional,ref=db,fill=f,splits=(('z','c',Decimal(1)),),verified_owner=True,account='u',symbol='XRPUSDT',authorization_mode='AUTHORIZED_EXECUTOR'),'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
+  self.assertEqual(record_confirmed_fill_owned(db=db,transactional=transactional,ledger_ref=db,ownership_ref=db,fill=f,splits=(('z','c',Decimal(1)),),account='u',symbol='XRPUSDT',cycle_id='c',authorization_mode='AUTHORIZED_EXECUTOR'),'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
+  self.assertEqual(record_fill(db,('u','XRPUSDT'),f,(('z','c',Decimal(1)),),authorization_mode='AUTHORIZED_EXECUTOR'),'BLOCKED_INDEPENDENT_EXECUTION_AUTHORIZATION')
+  db.transaction.assert_not_called()
