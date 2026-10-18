@@ -19,7 +19,7 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, reduction_step=1, reduction_mark=None, confirmed_closed=None):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, reduction_step=1, reduction_mark=None, confirmed_closed=None, initialize_action_claim=True):
   h=existing_harness or VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement')
   if existing_harness is None:h.setUp()
   if inventory_readback=='fixture':
@@ -63,7 +63,7 @@ class RunUidIntegration(unittest.TestCase):
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':reduction_step,
        'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback,'inventory_mock_client':inventory_mock_client}
-   h.fixture.put('SHORTclaim',{**(h.fixture.snapshot('SHORTclaim') or {'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':'SHORT'}),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':reduction_step})
+   if initialize_action_claim:h.fixture.put('SHORTclaim',{**(h.fixture.snapshot('SHORTclaim') or {'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':'SHORT'}),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':reduction_step})
    if action_mode=='PAIR_EXIT':
     ctx['recovery_action']['long_claim_ref']=h.fixture.refs['LONGclaim']
     h.fixture.put('LONGclaim',{**h.fixture.snapshot('LONGclaim'),'state':'RESERVED','intentId':ids['LONG_CLOSE'],'side':'LONG','action':'CLOSE','step':1})
@@ -594,3 +594,24 @@ class Build67LegacyPartialGuard(unittest.TestCase):
   outcome=resolve(db=f.db,transactional=transactional,claim_ref=f.refs['SHORTclaim'],ledger_ref=f.refs['SHORTledger'],marker_ref=marker,owner_ref=owner,account='u',symbol='XRPUSDT',cycle='c',intent_id=claim['intentId'],event='FILL',evidence=evidence,execution_id='new',quantity=D(10))
   self.assertEqual(outcome,'BLOCKED_LEGACY_EXECUTED_QTY_UNVERIFIED')
   self.assertEqual(f.snapshot('SHORTledger'),before)
+
+class Build68ConcurrentRunUid(unittest.TestCase):
+ def test_two_complete_offline_run_uid_calls_share_one_submit_right(self):
+  import concurrent.futures,threading
+  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+  RunUidIntegration().run_case(action_mode='REDUCE',existing_harness=h)
+  barrier=threading.Barrier(2);calls=[];lock=threading.Lock()
+  def submit(intent):
+   with lock:calls.append(intent.intent_id)
+   return {'orderId':'mock-short-close'}
+  def worker():
+   barrier.wait(timeout=10)
+   result,_,_=RunUidIntegration().run_case(action_mode='REDUCE',existing_harness=h,
+       initialize_action_claim=False,mock_transport=submit)
+   return result.get('shortRecoverySubmit')
+  with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+   output=[f.result(timeout=20) for f in [pool.submit(worker) for _ in range(2)]]
+  self.assertEqual(output.count(('SUBMITTED_RECONCILE_ONLY',)),1)
+  self.assertTrue(all(x in (('SUBMITTED_RECONCILE_ONLY',),('BLOCKED_CLAIM_NOT_RESERVED',),None) for x in output))
+  self.assertEqual(len(calls),1)
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
