@@ -25,3 +25,23 @@ class Readback(unittest.TestCase):
   self.assertEqual(x.snapshot('SHORTclaim')['state'],'ACKED')
  def test_no_mock_client_blocked(self):
   x=self.fixture();self.assertEqual(self.read(x,object()),'BLOCKED_MOCK_CLIENT_REQUIRED')
+
+class SideIdentityRestored(Readback):
+ def test_late_ack_persists_canonical_position_side(self):
+  x=self.fixture()
+  row=x.snapshot('SHORTclaim');row.pop('positionSide',None);row['side']='SHORT';x.put('SHORTclaim',row)
+  class C:
+   offline_mock_only=True
+   def query_order(self,*args):return {'symbol':'XRPUSDT','clientOrderId':'SHORT-intent','orderId':'SHORT-order','status':'NEW','executedQty':'0'}
+   def user_trades(self,*args,**kwargs):return []
+  self.assertEqual(self.read(x,C()),'LATE_ACK_READBACK_ONLY')
+  self.assertEqual(x.snapshot('SHORTclaim')['positionSide'],'SHORT')
+ def test_conflicting_side_identity_blocks_without_mutation(self):
+  x=self.fixture();row=x.snapshot('SHORTclaim');row['positionSide']='LONG';row['side']='SHORT';x.put('SHORTclaim',row)
+  before=x.snapshot('SHORTclaim')
+  class C:
+   offline_mock_only=True
+   def query_order(self,*args):return {'symbol':'XRPUSDT','clientOrderId':'SHORT-intent','orderId':'SHORT-order','status':'NEW','executedQty':'0'}
+   def user_trades(self,*args,**kwargs):return []
+  self.assertEqual(self.read(x,C()),'BLOCKED_SIDE_IDENTITY')
+  self.assertEqual(x.snapshot('SHORTclaim'),before)

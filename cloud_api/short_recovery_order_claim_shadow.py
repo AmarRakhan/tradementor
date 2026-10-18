@@ -274,7 +274,10 @@ def reconcile_locked_mock_order_readback(*, db, transactional, claim_ref, accoun
             (row.get('account'),row.get('symbol'),row.get('cycle'),row.get('intentId'))!=(account,symbol,cycle,intent_id)):
             return 'BLOCKED_CLAIM_CHANGED'
         if row.get('orderId') and str(row['orderId'])!=str(order['orderId']):return 'BLOCKED_ORDER_REBIND'
+        side=row.get('positionSide') or row.get('side')
+        if side not in ('LONG','SHORT') or row.get('side',side)!=side:
+            return 'BLOCKED_SIDE_IDENTITY'
         tx.set(claim_ref,{**row,'orderId':str(order['orderId']),
-            'state':'ACKED','offlineReadbackStatus':result['orderStatus']})
+            'positionSide':side,'state':'ACKED','offlineReadbackStatus':result['orderStatus']})
         return 'LATE_ACK_READBACK_ONLY' if not result['fills'] else 'PARTIAL_OR_TERMINAL_FILLS_NEED_FINANCIAL_PROOF'
     return save(db.transaction())
