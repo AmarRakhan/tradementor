@@ -821,7 +821,18 @@ def _run_uid(
                            for side in ("LONG", "SHORT")):
                         report["shortRecoveryPairSettlement"]="PAIR_RECONCILE_REQUIRED_NO_TERMINAL_ACK"
                     else:
-                        report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
+                        # A recovered SHORT fill is not independently financial
+                        # evidence. Only the existing two-sided proof-gated atomic
+                        # resolver may book it; explicit incomplete proof stays locked.
+                        proof=ctx.get("financial_proof")
+                        restart_status=report.get("shortRecoveryRestartReadback")
+                        if (restart_status in ("PARTIAL_FILLS_NEED_FINANCIAL_PROOF",
+                                "TERMINAL_FILLS_NEED_FINANCIAL_PROOF",
+                                "UNRESOLVED_FILLS_NEED_FINANCIAL_PROOF")
+                                and not isinstance(proof,dict)):
+                            report["shortRecoveryPairSettlement"]="BLOCKED_RECOVERED_FILL_FINANCIAL_PROOF"
+                        else:
+                            report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
         # SHORT Recovery Plan 2.0: strictly read-only shadow instrumentation.
         # NEVER change skip_symbols/protected_sides in the executable reconciler here.
         # No plan execution, order placement, or setting persistence is enabled.

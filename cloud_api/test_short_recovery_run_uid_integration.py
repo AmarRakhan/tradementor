@@ -342,3 +342,18 @@ class InRunUidLateAck(unittest.TestCase):
   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'ACKED')
   self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
   submit.assert_not_called()
+
+class RecoveredFinancialEvidenceGate(unittest.TestCase):
+ def test_recovered_partial_readback_cannot_settle_without_funding_evidence(self):
+  class Client:
+   offline_mock_only=True
+   def query_order(self,symbol,cid):
+    return {'symbol':symbol,'clientOrderId':cid,'orderId':'SHORT-order','status':'PARTIALLY_FILLED','executedQty':'25'}
+   def user_trades(self,symbol,**kw):
+    return [{'id':1,'symbol':symbol,'orderId':'SHORT-order','qty':'25','realizedPnl':'1','commission':'.1'}]
+  mock=MagicMock()
+  r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',existing_short_state='SUBMITTING',mock_transport=mock,proof=False,restart_readback_mock_client=Client())
+  self.assertEqual(r['shortRecoveryRestartReadback'],'PARTIAL_FILLS_NEED_FINANCIAL_PROOF')
+  self.assertEqual(r['shortRecoveryPairSettlement'],'BLOCKED_RECOVERED_FILL_FINANCIAL_PROOF')
+  self.assertEqual(h.fixture.snapshot('pair')['state'],'OPEN')
+  mock.assert_not_called()
