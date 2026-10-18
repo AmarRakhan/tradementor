@@ -528,6 +528,12 @@ class FourStepRunUidCycle(unittest.TestCase):
   self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',))
   self.assertEqual(posts[-1],('open',D(100),'OPEN'))
   self.assertEqual(len(posts),5)
+  # Four canonical mock CLOSE claims and the separate OPEN claim do not
+  # establish exchange funding provenance or authorize pair net TP.
+  from short_recovery_funding_provenance_decision import decide, NO_GO
+  self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',
+      financial_proof={'incomeHistoryComplete':True,'ownershipVerified':True}),NO_GO)
+  self.assertNotEqual(r.get('shortRecoveryPairSettlement'),'PAIR_CLOSED_VERIFIED')
 
 class Build66RecoverySafety(unittest.TestCase):
  def test_two_workers_one_canonical_mock_post_and_stop(self):
