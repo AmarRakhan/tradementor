@@ -528,6 +528,19 @@ class FourStepRunUidCycle(unittest.TestCase):
   self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',))
   self.assertEqual(posts[-1],('open',D(100),'OPEN'))
   self.assertEqual(len(posts),5)
+  # Restart after the OPEN submit: the persisted canonical claim has no
+  # replacement submit right, while the final CLOSE claim stays CLOSED.
+  open_claim_key=h.fixture.refs['SHORTclaim'].key
+  h.fixture.db=h.fixture.db.restart();h.fixture.bind()
+  h.fixture.refs['SHORTclaim']=Ref(h.fixture.db,open_claim_key)
+  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
+  self.assertEqual(Ref(h.fixture.db,last_close_ref.key).get(transaction=h.fixture.db.transaction()).to_dict()['state'],'CLOSED')
+  rerun,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',existing_harness=h,
+      initialize_action_claim=False,final_short_close_claim_ref=Ref(h.fixture.db,last_close_ref.key),
+      inventory_mock_client=exchange,mock_transport=open_post)
+  self.assertNotIn(('SUBMITTED_RECONCILE_ONLY',),[rerun.get('shortRecoverySubmit')])
+  self.assertEqual(len(posts),5)
+
   # Four canonical mock CLOSE claims and the separate OPEN claim do not
   # establish exchange funding provenance or authorize pair net TP.
   from short_recovery_funding_provenance_decision import decide, NO_GO
