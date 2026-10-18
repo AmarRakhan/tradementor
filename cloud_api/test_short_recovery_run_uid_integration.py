@@ -458,6 +458,11 @@ class FourStepRunUidCycle(unittest.TestCase):
    def query_order(self,s,c):return {'symbol':s,'clientOrderId':c,'orderId':'close-final','status':'FILLED','executedQty':'25'}
    def user_trades(self,s,**kw):return [{'symbol':s,'orderId':'close-final','id':4,'qty':'25','realizedPnl':'1','commission':'.1'}]
   exchange=Exchange();posts=[];last_close_ref=None
+  from short_recovery_multidoc_mock import Ref
+  marker_ref=Ref(h.fixture.db,('u','XRPUSDT','marker'))
+  owner_ref=Ref(h.fixture.db,('u','XRPUSDT','owner'))
+  h.fixture.db.commit(marker_ref.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','state':'SUSPECT'})
+  h.fixture.db.commit(owner_ref.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','ownerSide':'SHORT','ownershipVerified':True,'cycleConfirmed':True,'state':'PARTIAL'})
   for step,mark in enumerate(('1.90','1.80','1.70','1.60'),1):
    ref=Ref(h.fixture.db,('u','XRPUSDT','short-close-'+str(step)))
    h.fixture.refs['SHORTclaim']=ref
@@ -480,13 +485,36 @@ class FourStepRunUidCycle(unittest.TestCase):
       account_close_guard=lambda:None,submit_mock=post)
    self.assertEqual(replay,'BLOCKED_CLAIM_NOT_RESERVED')
    self.assertEqual(len(posts),step)
-   ledger=decode(h.fixture.snapshot('SHORTledger'))
-   ledger=ledger.apply(Fill('u','XRPUSDT','fill-'+str(step),'close-'+str(step),D(25),D(1),D('.1'),D('-.05')),(('SHORT','c',D(25)),))
-   h.fixture.put('SHORTledger',encode(ledger))
+   # Independent mock exchange GETs feed the existing transactional resolver.
+   from short_recovery_aster_readback_mock_adapter import inspect
+   from short_recovery_order_resolution_shadow import resolve
+   from short_recovery_multidoc_mock import transactional
+   order_id='close-'+str(step)
+   exchange.query_order=lambda symbol,cid:{'symbol':symbol,'clientOrderId':cid,'orderId':order_id,'status':'FILLED','executedQty':'25'}
+   exchange.user_trades=lambda symbol,**kw:[{'symbol':symbol,'orderId':order_id,'id':step,'qty':'25','realizedPnl':'1','commission':'.1'}]
+   readback=inspect(exchange,symbol='XRPUSDT',client_order_id=claim['intentId'])
+   self.assertEqual(readback['status'],'READBACK_PREVIEW')
+   self.assertEqual(readback['orderStatus'],'FILLED')
+   self.assertEqual(len(readback['fills']),1)
+   f=readback['fills'][0]
+   self.assertEqual(f['quantity'],D(25))
+   def settle(event,evidence=None,execution_id=None,quantity=None):
+    return resolve(db=h.fixture.db,transactional=transactional,
+       claim_ref=ref,ledger_ref=h.fixture.refs['SHORTledger'],
+       marker_ref=marker_ref,owner_ref=owner_ref,account='u',symbol='XRPUSDT',cycle='c',
+       intent_id=claim['intentId'],event=event,evidence=evidence,
+       execution_id=execution_id,quantity=quantity)
+   self.assertEqual(settle('LATE_ACK',{'confirmed':True,'orderId':order_id}),'ACKED_RECOVERED')
+   proof={'confirmed':True,'readbackVerified':True,'orderId':order_id,
+       'executionId':f['executionId'],'quantity':str(f['quantity']),
+       'realizedPnl':str(f['realizedPnl']),'commission':str(f['fee']),'funding':'-.05',
+       'fundingOwnershipVerified':True,'financialVerified':True}
+   self.assertEqual(settle('FILL',proof,f['executionId'],f['quantity']),'FILL_APPLIED')
+   self.assertEqual(settle('FILL',proof,f['executionId'],f['quantity']),'ALREADY_APPLIED' if step<4 else 'ALREADY_TERMINAL')
    exchange.short-=D(25)
-   claim.update(state='CLOSED',orderId='close-'+str(step),executedQty='25')
-   h.fixture.put('SHORTclaim',claim)
    self.assertEqual(decode(h.fixture.snapshot('SHORTledger')).allocations[0].remaining,exchange.short)
+   self.assertEqual(h.fixture.snapshot('SHORTclaim')['executedQty'],'25')
+   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'CLOSED' if step==4 else 'PARTIAL')
    last_close_ref=ref
   self.assertEqual(exchange.short,D(0))
   # The new 1:1 opening is distinct from all four prior close claims.

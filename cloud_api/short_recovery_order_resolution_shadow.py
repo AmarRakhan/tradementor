@@ -59,7 +59,7 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
             if not q.is_finite() or q<=0 or q>allocation.remaining or allocation.cycle_id!=cycle:return 'BLOCKED_QUANTITY'
             updated=ledger.apply(Fill(account,symbol,execution_id,evidence['orderId'],q,pnl,fee,funding),((allocation.zone_id,cycle,q),))
             tx.set(ledger_ref,encode(updated))
-            tx.set(claim_ref,{**claim,'state':'CLOSED' if updated.allocations[0].remaining==0 else 'PARTIAL','orderId':evidence['orderId']})
+            tx.set(claim_ref,{**claim,'state':'CLOSED' if updated.allocations[0].remaining==0 else 'PARTIAL','orderId':evidence['orderId'],'executedQty':str(Decimal(str(claim.get('executedQty','0')))+q)})
             return 'FILL_APPLIED'
         if event in ('CANCEL_TERMINAL','NO_ORDER_TERMINAL'):
             if not isinstance(evidence,dict) or evidence.get('confirmed') is not True or evidence.get('noMoreFills') is not True or evidence.get('intentId')!=intent_id:
