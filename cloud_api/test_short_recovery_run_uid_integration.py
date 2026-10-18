@@ -19,8 +19,10 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture'):
   h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+  if inventory_readback=='fixture':
+   inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':9999,'LONG':'100','SHORT':'0' if action_mode=='REHEDGE' else '100'}
   ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None}
   if action_mode is not None:
    from decimal import Decimal as D
@@ -57,7 +59,7 @@ class RunUidIntegration(unittest.TestCase):
    ctx['recovery_action']={'state':state,'short_qty':qty,'long_qty':D(100),
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':1,
-       'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None}
+       'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback}
    h.fixture.put('SHORTclaim',{**h.fixture.snapshot('SHORTclaim'),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':1})
    if action_mode=='PAIR_EXIT':
     ctx['recovery_action']['long_claim_ref']=h.fixture.refs['LONGclaim']
@@ -240,3 +242,20 @@ class ConservativeExitIsNotLiveAuthorization(unittest.TestCase):
   result,_,_=RunUidIntegration().run_case(action_mode='PAIR_EXIT',execution_enabled=True,force_shadow=False,mock_transport=submit)
   self.assertNotIn('shortRecoverySubmit',result)
   self.assertEqual(calls,[])
+
+class MandatoryOfflineInventory(unittest.TestCase):
+ def test_missing_fresh_inventory_blocks_mock_short_reduction(self):
+  m=MagicMock()
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=m,inventory_readback=None)
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_INVENTORY_UNVERIFIED')
+  m.assert_not_called()
+ def test_verified_exchange_shaped_inventory_allows_mock_reduction(self):
+  m=MagicMock(return_value=({'orderId':123},False))
+  inventory={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':9999,'LONG':'100','SHORT':'100'}
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=m,inventory_readback=inventory)
+  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',));m.assert_called_once()
+ def test_stale_inventory_blocks_mock_reduction(self):
+  m=MagicMock()
+  inventory={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':1,'LONG':'100','SHORT':'100'}
+  r,_,_=RunUidIntegration().run_case(action_mode='REDUCE',mock_transport=m,inventory_readback=inventory)
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_INVENTORY_STALE_OR_SCOPE');m.assert_not_called()

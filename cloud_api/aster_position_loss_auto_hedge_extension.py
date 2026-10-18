@@ -719,14 +719,15 @@ def _run_uid(
                                 report["shortRecoveryAction"] = {
                                     "status":"BLOCKED_INTENT_CLAIM_ID_MISMATCH",
                                     "ordersSent":0,"intents":()}
-                            elif proposed.get("intents") and action_ctx.get("inventory_readback") is not None:
+                            elif proposed.get("intents") and action_ctx.get("submit_mock") is not None:
                                 # Offline-only real-cycle seam: independently refresh
                                 # the exchange-shaped side inventory before any mock POST.
                                 # A live executor must repeat this check itself.
                                 from short_recovery_inventory_preflight import check_inventory
                                 result=check_inventory(
                                     intents=proposed["intents"], symbol=symbol,
-                                    readback=action_ctx["inventory_readback"])
+                                    readback=action_ctx.get("inventory_readback"),
+                                    account=uid, now_ms=action_ctx.get("inventory_now_ms"))
                                 if result!="INVENTORY_VERIFIED":
                                     report["shortRecoveryAction"]={"status":result,"ordersSent":0,"intents":()}
                                     proposed=report["shortRecoveryAction"]
