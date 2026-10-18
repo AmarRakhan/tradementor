@@ -19,8 +19,9 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None):
-  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None):
+  h=existing_harness or VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement')
+  if existing_harness is None:h.setUp()
   if inventory_readback=='fixture':
    inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':9999,'LONG':'100','SHORT':'0' if action_mode=='REHEDGE' else '100'}
   ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None,'restart_readback_mock_client':restart_readback_mock_client}
@@ -357,3 +358,36 @@ class RecoveredFinancialEvidenceGate(unittest.TestCase):
   self.assertEqual(r['shortRecoveryPairSettlement'],'BLOCKED_RECOVERED_FILL_FINANCIAL_PROOF')
   self.assertEqual(h.fixture.snapshot('pair')['state'],'OPEN')
   mock.assert_not_called()
+
+class PhasedRecoveredPairLifecycle(unittest.TestCase):
+ def test_partial_then_terminal_using_same_firestore_ledger_and_run_uid(self):
+  h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
+  short=h.fixture.snapshot('SHORTclaim');short.update(state='SUBMITTING',offlineTransportOrigin='TRANSPORT_OUTCOME_UNKNOWN',positionSide='SHORT');h.fixture.put('SHORTclaim',short)
+  class RestartClient:
+   offline_mock_only=True
+   def __init__(self):self.status='PARTIALLY_FILLED';self.qty='25'
+   def query_order(self,symbol,cid):return {'symbol':symbol,'clientOrderId':cid,'orderId':'SHORT-order','status':self.status,'executedQty':self.qty}
+   def user_trades(self,symbol,**kw):
+    rows=[{'id':12,'symbol':symbol,'orderId':'SHORT-order','qty':'25','realizedPnl':'1','commission':'.1'}]
+    if self.status=='FILLED':rows.append({'id':13,'symbol':symbol,'orderId':'SHORT-order','qty':'50','realizedPnl':'2','commission':'.2'})
+    return rows
+  exchange=RestartClient()
+  h.client.query_order=lambda sym,cid: exchange.query_order(sym,cid) if cid==short['intentId'] else {'symbol':sym,'clientOrderId':cid,'orderId':'LONG-order','status':'FILLED','executedQty':'100'}
+  h.client.user_trades=lambda sym,**kw: [{'id':11,'symbol':sym,'orderId':'LONG-order','qty':'100','realizedPnl':'1','commission':'.1'}]+exchange.user_trades(sym,**kw)
+  h.proof['SHORT']['orderStatus']='PARTIALLY_FILLED';h.proof['SHORT']['executedQty']='25';h.proof['SHORT']['terminalVerified']=False
+  h.fixture.db=h.fixture.db.restart();h.fixture.bind()
+  first,_,h=RunUidIntegration().run_case(existing_harness=h,restart_readback_mock_client=exchange)
+  self.assertEqual(first['shortRecoveryRestartReadback'],'PARTIAL_FILLS_NEED_FINANCIAL_PROOF')
+  self.assertEqual(first['shortRecoveryPairSettlement'],'PAIR_RECONCILE_REQUIRED')
+  from short_recovery_firestore_mock import decode
+  self.assertEqual(decode(h.fixture.snapshot('SHORTledger')).allocations[0].remaining,50)
+  self.assertNotEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+  exchange.status='FILLED';exchange.qty='75'
+  h.proof['SHORT'].update(orderStatus='FILLED',executedQty='75',terminalVerified=True)
+  h.proof['SHORT']['executions']['13']={'funding':'-.02','fundingOwnershipVerified':True,'financialVerified':True}
+  h.fixture.db=h.fixture.db.restart();h.fixture.bind()
+  second,_,h=RunUidIntegration().run_case(existing_harness=h)
+  self.assertEqual(second['shortRecoveryPairSettlement'],'PAIR_CLOSED_VERIFIED',repr((h.fixture.snapshot('SHORTclaim'),h.fixture.snapshot('LONGclaim'))))
+  self.assertEqual(decode(h.fixture.snapshot('SHORTledger')).allocations[0].remaining,0)
+  self.assertEqual(h.fixture.snapshot('pair')['state'],'CLOSED')
+  self.assertNotIn('shortRecoverySubmit',second)
