@@ -21,3 +21,25 @@ class RehedgeReadback(unittest.TestCase):
   client.open_orders=lambda s:[]
   client.position_risk=lambda s:[{'symbol':s,'positionSide':'LONG','positionAmt':'99'},{'symbol':s,'positionSide':'SHORT','positionAmt':'0'}]
   self.assertFalse(check())
+
+class FinalPartialRestartGate(unittest.TestCase):
+ def test_last_short_close_partial_unknown_late_ack_and_restart_never_unlock_rehedge(self):
+  f=PairAtomic('test_complete_two_sided_atomic_settlement');f.setUp()
+  claim=f.snapshot('SHORTclaim');claim.update(side='SHORT',action='CLOSE',state='PARTIAL',executedQty='10')
+  f.put('SHORTclaim',claim)
+  class Mock:
+   offline_mock_only=True
+   def account_information(self):return {'account':'u','hedgeMode':True}
+   def position_risk(self,s):return [{'symbol':s,'positionSide':'LONG','positionAmt':'100'},{'symbol':s,'positionSide':'SHORT','positionAmt':'15'}]
+   def open_orders(self,s):return []
+   def query_order(self,s,cid):return {'symbol':s,'clientOrderId':cid,'orderId':'SHORT-order','status':'PARTIALLY_FILLED','executedQty':'10'}
+   def user_trades(self,s,**kw):return [{'symbol':s,'orderId':'SHORT-order','id':12,'qty':'10','realizedPnl':'1','commission':'.1'}]
+  c=Mock()
+  for state in ('PARTIAL','UNKNOWN','ACKED','PARTIAL_TERMINAL'):
+   row=f.snapshot('SHORTclaim');row['state']=state;f.put('SHORTclaim',row)
+   f.db=f.db.restart();f.bind()
+   self.assertFalse(verify(db=f.db,transactional=transactional,claim_ref=f.refs['SHORTclaim'],client=c,account='u',symbol='XRPUSDT',cycle='c',long_qty='100',now_ms=10000),state)
+  # Even a caller-forged CLOSED claim cannot override partial order evidence.
+  row=f.snapshot('SHORTclaim');row.update(state='CLOSED',executedQty='10');f.put('SHORTclaim',row)
+  c.position_risk=lambda s:[{'symbol':s,'positionSide':'LONG','positionAmt':'100'},{'symbol':s,'positionSide':'SHORT','positionAmt':'0'}]
+  self.assertFalse(verify(db=f.db,transactional=transactional,claim_ref=f.refs['SHORTclaim'],client=c,account='u',symbol='XRPUSDT',cycle='c',long_qty='100',now_ms=10000))
