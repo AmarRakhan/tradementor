@@ -37,7 +37,7 @@ class CarryClaim(unittest.TestCase):
   self.assertEqual(self.reserve(mark='95'),'WAIT_MINIMUM_CARRY_FORWARD')
   self.assertIsNone(self.db.snapshot('claim')[1])
   self.assertEqual(self.reserve(),'MINIMUM_CARRY_RESERVED_OFFLINE')
-  self.assertEqual(self.db.snapshot('claim')[1]['minimumCarryQuantity'],'0.50')
+  self.assertEqual(self.db.snapshot('claim')[1]['minimumCarryQuantity'],'0.5')
   sent=[]
   self.assertEqual(self.submit('.25',lambda intent:sent.append(intent)),
     'BLOCKED_MINIMUM_CARRY_QUANTITY')
@@ -71,5 +71,5 @@ class CarryClaim(unittest.TestCase):
   self.assertEqual(self.reserve(mark='95'),'WAIT_MINIMUM_CARRY_FORWARD')
   self.assertEqual(self.reserve(mark='90'),'WAIT_MINIMUM_CARRY_FORWARD')
   self.assertEqual(self.reserve(mark='85'),'MINIMUM_CARRY_RESERVED_OFFLINE')
-  self.assertEqual(self.db.snapshot('claim')[1]['minimumCarryQuantity'],'0.30')
+  self.assertEqual(self.db.snapshot('claim')[1]['minimumCarryQuantity'],'0.3')
 if __name__=='__main__':unittest.main()
