@@ -73,6 +73,15 @@ def finalize_short_quantity_cycle_offline(*,mock_only,db,transactional,client,
         if (pos.get('account'),pos.get('symbol'),pos.get('cycle'),
             pos.get('pending'),pos.get('offlineOnly'))!=(account,symbol,cycle,True,True):
             return 'BLOCKED_POSITION'
+        # A reserved or UNKNOWN claim can never be promoted to CLOSED solely
+        # because an injected client reports a terminal-looking order.
+        if claim.get('state') not in ('SUBMITTING','ACKED','PARTIAL'):
+            return 'BLOCKED_UNRESOLVED_CLAIM_STATE'
+        if (claim.get('account'),claim.get('symbol'),claim.get('cycle'),
+            claim.get('side'),claim.get('action'),claim.get('step'),
+            claim.get('intentId')) != (account,symbol,cycle,'SHORT','CLOSE',step,
+            evidence['intentId']):
+            return 'BLOCKED_FINAL_CLAIM_SCOPE'
         if (claim.get('offlineOrderTerminalVerified') is not True or
             claim.get('offlineFundingStatus')!='UNRECONCILED' or
             claim.get('offlineFinancialSettlement')!='PENDING' or
