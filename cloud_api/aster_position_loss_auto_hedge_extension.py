@@ -692,6 +692,32 @@ def _run_uid(
                                 exchange_short_quantities={symbol:action_ctx["short_qty"]},
                                 long_quantities={symbol:action_ctx["long_qty"]},
                                 net_exits={symbol} if action_ctx.get("net_exit_due") else set())
+                            # Opt-in OFFLINE minimum-carry: reserve the canonical
+                            # cumulative claim only when independent inventory and
+                            # exchange filter inputs pass. Zero order rights below min.
+                            minimum_scope=action_ctx.get('minimum_carry_scope')
+                            if minimum_scope is not None:
+                                if (not isinstance(minimum_scope,dict) or
+                                        action_ctx.get('minimum_carry_mock_only') is not True or
+                                        ctx.get('coordination_ref') is None or
+                                        not all(minimum_scope.get(key) is not None for key in
+                                            ('selector_ref','position_ref','mark','exchange_short_qty',
+                                             'minimum_qty','quantity_step','minimum_notional',
+                                             'executable_price'))):
+                                    report['shortRecoveryMinimumCarry']='BLOCKED_MINIMUM_CARRY_SCOPE'
+                                else:
+                                    from short_recovery_minimum_carry_claim_offline import reserve_minimum_carry_offline
+                                    report['shortRecoveryMinimumCarry']=reserve_minimum_carry_offline(
+                                        db=ctx['db'],transactional=ctx['transactional'],
+                                        selector_ref=minimum_scope['selector_ref'],
+                                        position_ref=minimum_scope['position_ref'],
+                                        control_ref=ctx['control_ref'],
+                                        coordination_ref=ctx['coordination_ref'],
+                                        claim_ref=action_ctx['claim_ref'],
+                                        account=uid,symbol=symbol,cycle=ctx['cycle'],
+                                        **{key:minimum_scope[key] for key in
+                                            ('mark','exchange_short_qty','minimum_qty',
+                                             'quantity_step','minimum_notional','executable_price')})
                             # Existing canonical cycle: an explicitly verified terminal
                             # previous claim can atomically reserve the next SHORT step.
                             if action_ctx.get('previous_claim_ref') is not None and isinstance(scope_step,int) and 2 <= scope_step <= 10:
@@ -747,6 +773,9 @@ def _run_uid(
                             rehedge_cycle=action_ctx.get('new_cycle')
                             is_new_rehedge=(bool(rehedge_cycle) and action_ctx.get('new_short_open_claim_ref') is not None)
                             prior_handoff=report.get('shortRecoveryStepHandoff')
+                            if minimum_scope is not None and report.get('shortRecoveryMinimumCarry')!='MINIMUM_CARRY_RESERVED_OFFLINE':
+                                report['shortRecoveryStepHandoff']=report.get('shortRecoveryMinimumCarry','BLOCKED_MINIMUM_CARRY_SCOPE')
+                                prior_handoff=report['shortRecoveryStepHandoff']
                             preflight=(prior_handoff if prior_handoff is not None and prior_handoff not in ('HANDOFF_VERIFIED_OFFLINE','QUANTITY_HANDOFF_RESERVED_OFFLINE')
                                 else 'PREFLIGHT_SHADOW_ONLY' if is_new_rehedge else pre_submit_check(
                                 db=ctx["db"], transactional=ctx["transactional"],
