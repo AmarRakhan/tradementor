@@ -591,6 +591,7 @@ class FourStepRunUidCycle(unittest.TestCase):
   from short_recovery_funding_provenance_decision import decide, NO_GO
   self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',
     financial_proof={'incomeHistoryComplete':True,'ownershipVerified':True}),NO_GO)
+  return h,exchange,previous_ref,selector,position
 
 class Build66RecoverySafety(unittest.TestCase):
  def test_two_workers_one_canonical_mock_post_and_stop(self):
