@@ -55,7 +55,7 @@ class FinalQuantity(unittest.TestCase):
   self.assertFalse(claim['offlineNextClaimAuthorized'])
   self.assertIsNotNone(self.db.snapshot('coord')[1]['recoveryFenceReservation'])
   self.assertEqual(self.db.snapshot('position')[1]['state'],'FINAL_SHORT_FILLED_OFFLINE')
-  self.assertEqual(self.finalize(),'BLOCKED_POSITION')
+  self.assertEqual(self.finalize(),'BLOCKED_CLAIM_SCOPE')
  def test_no_residual_short_or_unknown_open_orders(self):
   self.client.short='1'
   self.assertEqual(self.finalize(),'BLOCKED_FINAL_INVENTORY')
@@ -75,7 +75,7 @@ class FinalQuantity(unittest.TestCase):
   with ThreadPoolExecutor(max_workers=2) as pool:
    results=list(pool.map(lambda _:self.finalize(),range(2)))
   self.assertEqual(results.count('QUANTITY_CYCLE_TERMINAL_UNSETTLED_FENCE_LOCKED'),1)
-  self.assertEqual(results.count('BLOCKED_CONCURRENT_CHANGE')+results.count('BLOCKED_POSITION'),1)
+  self.assertEqual(results.count('BLOCKED_CONCURRENT_CHANGE')+results.count('BLOCKED_POSITION')+results.count('BLOCKED_CLAIM_SCOPE'),1)
   self.db=self.db.restart();self.refs={k:Ref(self.db,k) for k in self.refs}
-  self.assertEqual(self.finalize(),'BLOCKED_POSITION')
+  self.assertEqual(self.finalize(),'BLOCKED_CLAIM_SCOPE')
 if __name__=='__main__':unittest.main()
