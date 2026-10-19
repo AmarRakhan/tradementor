@@ -146,7 +146,7 @@ def record_mock_transport_origin(*,db,transactional,claim_ref,account,symbol,cyc
 
 def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, symbol, cycle,
                         intent, account_close_guard, submit_mock, coordination_ref=None, require_shared_fence=False,
-                        standalone_selector_ref=None):
+                        standalone_selector_ref=None, pre_transport_check=None):
     """Atomic single submit right; only caller-supplied mock transport is permitted.
 
     A crash after SUBMITTING is UNKNOWN, never an entitlement to retry. This
@@ -227,6 +227,17 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
         return 'SUBMITTING_LOCKED'
     outcome=acquire(db.transaction())
     if outcome!='SUBMITTING_LOCKED':return outcome
+    # Revalidate immediately before offline transport. Any uncertainty leaves
+    # SUBMITTING fenced for explicit readback/reconciliation, never retry.
+    if pre_transport_check is not None:
+        try:
+            if not callable(pre_transport_check) or pre_transport_check(intent) is not True:
+                raise OfflinePreTransportBlocked()
+        except Exception:
+            record_mock_transport_origin(db=db,transactional=transactional,claim_ref=claim_ref,
+                account=account,symbol=symbol,cycle=cycle,intent=intent,
+                origin='BEFORE_TRANSPORT_BLOCKED')
+            return 'BLOCKED_BEFORE_TRANSPORT_RECONCILE_ONLY'
     # Once the transaction commits, failure/timeout must never unlock the claim.
     try:
         submit_mock(intent)
