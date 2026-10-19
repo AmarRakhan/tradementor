@@ -19,7 +19,7 @@ def activate_verified_rehedge_offline(*, db, transactional, client,
         if type(steps) is not int or steps<1 or steps>100:
             return 'BLOCKED_STEPS'
         pct=Decimal(str(step_pct))
-        if not pct.is_finite() or pct<=0:
+        if not pct.is_finite() or pct<=0 or pct*steps>=100:
             return 'BLOCKED_STEP_PCT'
         claim=open_claim_ref.get(transaction=db.transaction()).to_dict()
         if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),
