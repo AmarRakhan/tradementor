@@ -56,6 +56,16 @@ class FinalQuantity(unittest.TestCase):
   self.assertIsNotNone(self.db.snapshot('coord')[1]['recoveryFenceReservation'])
   self.assertEqual(self.db.snapshot('position')[1]['state'],'FINAL_SHORT_FILLED_OFFLINE')
   self.assertEqual(self.finalize(),'BLOCKED_CLAIM_SCOPE')
+ def test_unresolved_claim_or_foreign_scope_never_becomes_terminal(self):
+  old=self.db.snapshot('claim')[1]
+  for state in ('RESERVED','UNKNOWN','CANCEL_PENDING'):
+   self.put('claim',{**old,'state':state})
+   self.assertEqual(self.finalize(),'BLOCKED_CLAIM_SCOPE' if state=='RESERVED' else 'BLOCKED_UNRESOLVED_CLAIM_STATE')
+   self.assertEqual(self.db.snapshot('position')[1]['state'],'ADOPTED_OFFLINE')
+  self.put('claim',{**old,'step':3})
+  self.assertEqual(self.finalize(),'BLOCKED_CLAIM_SCOPE')
+  self.put('claim',{**old,'action':'OPEN'})
+  self.assertEqual(self.finalize(),'BLOCKED_CLAIM_SCOPE')
  def test_no_residual_short_or_unknown_open_orders(self):
   self.client.short='1'
   self.assertEqual(self.finalize(),'BLOCKED_FINAL_INVENTORY')
