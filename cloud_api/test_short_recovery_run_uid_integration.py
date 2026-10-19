@@ -138,7 +138,9 @@ class RunUidIntegration(unittest.TestCase):
  def test_execute_true_never_calls_recovery_pair_executor(self):
   r,recon,h=self.run_case(execution_enabled=True,force_shadow=False)
   self.assertEqual(r['shortRecoveryPairSettlement'],'BLOCKED_OFFLINE_ONLY')
-  self.assertIsNone(recon.call_args.kwargs['recovery_shadow_skip_symbols'])
+  self.assertEqual(r['reason'],'RECOVERY_CANONICAL_EXECUTION_FENCE_NOT_VERIFIED')
+  self.assertEqual(r['ordersSent'],0)
+  recon.assert_not_called()
   self.assertEqual(h.fixture.snapshot('pair')['state'],'OPEN')
  def test_unverified_ownership_not_suppressed(self):
   r,recon,h=self.run_case(ownership=False)

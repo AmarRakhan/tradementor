@@ -548,6 +548,15 @@ def _run_uid(
 
     settings = _current(uid)
     execute = EXECUTION_ENABLED and not force_shadow
+    # Until the canonical Recovery ownership/claim partition is available in
+    # execution mode, no legacy Auto Hedge top-up may run for a Recovery account.
+    # This is a deny-only boundary; it cannot authorize exchange transport.
+    from short_recovery_gate import blocks_live_recovery_without_canonical_fence
+    if execute and blocks_live_recovery_without_canonical_fence(settings.get("shortRecoveryPlan")):
+        return {"mode": "LIVE", "ordersSent": 0, "status": "BLOCKED",
+                "reason": "RECOVERY_CANONICAL_EXECUTION_FENCE_NOT_VERIFIED",
+                "shortRecoveryPairSettlement": "BLOCKED_OFFLINE_ONLY",
+                "actions": []}
     coordination_token: str | None = None
     try:
         client = _client(uid, live=execute)

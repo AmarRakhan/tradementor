@@ -33,3 +33,13 @@ def partition_reconciliation(*,settings,protected_sides,existing_skip_symbols,re
     # Live reconciliation deliberately receives no modifications.
     return {"status":"SHADOW_ONLY","legacy_skip":legacy,"shadow_skip":shadow,
             "pairs":status,"orders":0}
+
+
+def blocks_live_recovery_without_canonical_fence(settings):
+    """Fail closed before any live client when Recovery ownership is unresolved."""
+    if settings is None:
+        return False
+    try:
+        return normalize_settings(settings)['enabled']
+    except (TypeError, ValueError, KeyError):
+        return True
