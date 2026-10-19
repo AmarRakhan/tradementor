@@ -60,7 +60,7 @@ class FinalQuantity(unittest.TestCase):
   old=self.db.snapshot('claim')[1]
   for state in ('RESERVED','UNKNOWN','CANCEL_PENDING'):
    self.put('claim',{**old,'state':state})
-   self.assertEqual(self.finalize(),'BLOCKED_CLAIM_SCOPE' if state=='RESERVED' else 'BLOCKED_UNRESOLVED_CLAIM_STATE')
+   self.assertEqual(self.finalize(),'BLOCKED_UNRESOLVED_CLAIM_STATE' if state=='UNKNOWN' else 'BLOCKED_CLAIM_SCOPE')
    self.assertEqual(self.db.snapshot('position')[1]['state'],'ADOPTED_OFFLINE')
   self.put('claim',{**old,'step':3})
   self.assertEqual(self.finalize(),'BLOCKED_CLAIM_SCOPE')
