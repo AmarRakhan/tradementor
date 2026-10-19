@@ -428,6 +428,18 @@ def reconcile_auto_hedge(
     contexts = intent_context or {}
     for action in actions:
         row = action.public_dict()
+        # Recovery is the sole owner of intentional SHORT reductions.
+        # In live mode never compute or submit a legacy Auto Hedge top-up for
+        # a Recovery-fenced symbol. The existing isolated Recovery claim CAS
+        # is the only allowed route for its next action.
+        if action.symbol in (recovery_fence_required_symbols or set()):
+            row.update({'status':'BLOCKED',
+                        'reason':'RECOVERY_CANONICAL_EXECUTOR_ONLY',
+                        'filledQty':0.0})
+            public_actions.append(row)
+            if audit:
+                audit({**row,'result':'BLOCKED'})
+            continue
         if action.required_delta <= EPSILON or orders_sent >= max(0, int(order_budget)):
             public_actions.append(row)
             continue
