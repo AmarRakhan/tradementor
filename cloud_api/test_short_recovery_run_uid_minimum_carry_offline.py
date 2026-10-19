@@ -11,6 +11,9 @@ class RunUidMinimumCarry(unittest.TestCase):
   self.h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');self.h.setUp()
   db=self.h.fixture.db
   self.selector=Ref(db,'minimum-selector');self.position=Ref(db,'minimum-position')
+  # The shared financial fixture has a pre-existing SHORT claim; use a fresh
+  # canonical claim document to exercise reservation rather than overwrite it.
+  self.h.fixture.refs['SHORTclaim']=Ref(db,'minimum-new-short-claim')
   db.commit(self.selector.key,0,{'account':'u','activeStrategy':RECOVERY,'offlineOnly':True})
   db.commit(self.position.key,0,{'account':'u','symbol':'XRPUSDT','cycle':'c',
     'offlineOnly':True,'state':'ADOPTED_OFFLINE','pending':False,'anchor':'2',
