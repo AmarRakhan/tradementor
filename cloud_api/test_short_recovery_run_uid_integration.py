@@ -30,6 +30,9 @@ class RunUidIntegration(unittest.TestCase):
   if mock_transport is not None and action_mode=='REDUCE' and shared_fence is None:
    shared_fence=True
    require_shared_fence=True
+  if minimum_carry_scope is not None:
+   shared_fence=True
+   require_shared_fence=True
   if shared_fence:
    from short_recovery_multidoc_mock import Ref
    from short_recovery_order_claim_shadow import canonical_intent_id
@@ -38,7 +41,9 @@ class RunUidIntegration(unittest.TestCase):
    # A concurrent/restarted call must reuse the committed coordination
    # document, never overwrite the existing submit claim.
    previous=h.fixture.db.snapshot(coordination.key)[1]
-   if previous is None:
+   if previous is None and minimum_carry_scope is not None:
+    h.fixture.db.commit(coordination.key,0,{})
+   elif previous is None:
     h.fixture.db.commit(coordination.key,0,{'recoveryFenceReservation':{
      'account':'u','symbol':'XRPUSDT','cycle':'c',
      'intentId':fence_intent_override or canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side='SHORT',action='CLOSE',step=reduction_step),
@@ -101,7 +106,7 @@ class RunUidIntegration(unittest.TestCase):
     ctx['recovery_action'].update(new_cycle=rehedge_scope['new_cycle'],
       lease_token=rehedge_scope['lease_token'],
       new_short_open_claim_ref=rehedge_scope['new_short_open_claim_ref'])
-   if initialize_action_claim and rehedge_scope is None and previous_close_claim_ref is None:h.fixture.put('SHORTclaim',{**(h.fixture.snapshot('SHORTclaim') or {'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':'SHORT'}),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':reduction_step})
+   if initialize_action_claim and minimum_carry_scope is None and rehedge_scope is None and previous_close_claim_ref is None:h.fixture.put('SHORTclaim',{**(h.fixture.snapshot('SHORTclaim') or {'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':'SHORT'}),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':reduction_step})
    if action_mode=='PAIR_EXIT':
     ctx['recovery_action']['long_claim_ref']=h.fixture.refs['LONGclaim']
     h.fixture.put('LONGclaim',{**h.fixture.snapshot('LONGclaim'),'state':'RESERVED','intentId':ids['LONG_CLOSE'],'side':'LONG','action':'CLOSE','step':1})
