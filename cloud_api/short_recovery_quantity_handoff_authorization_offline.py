@@ -72,6 +72,15 @@ def handoff_verified_quantity_offline(*, mock_only, db, transactional, client,
         step=next_step-1,claim=old,expected_quantity=per_step)
     if evidence.get('status')!='ORDER_EXECUTION_VERIFIED_UNSETTLED':
         return evidence.get('status','BLOCKED_ORDER_EVIDENCE')
+    # Detect inventory changes while the independent order/fill readbacks run.
+    # This is NOT a proof of atomicity with an external exchange; the
+    # established pre-transport guard remains mandatory.
+    try:
+        final_short=read_inventory()
+        if final_short is None or final_short!=short:
+            return 'BLOCKED_INVENTORY_CHANGED_DURING_READBACK'
+    except Exception:
+        return 'BLOCKED_INVENTORY_CHANGED_DURING_READBACK'
 
     @transactional
     def commit(tx):
