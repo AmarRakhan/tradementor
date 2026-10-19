@@ -19,7 +19,7 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, require_independent_funding_mock=False, funding_window_mock=None, authorization_mode="LEGACY_MOCK_TEST", reduction_step=1, reduction_mark=None, confirmed_closed=None, initialize_action_claim=True, shared_fence=None, fence_intent_override=None, require_shared_fence=False, rehedge_scope=None, previous_close_claim_ref=None, quantity_handoff_refs=None, previous_order_mock_client=None, recovery_steps=4):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, require_independent_funding_mock=False, funding_window_mock=None, authorization_mode="LEGACY_MOCK_TEST", reduction_step=1, reduction_mark=None, confirmed_closed=None, initialize_action_claim=True, shared_fence=None, fence_intent_override=None, require_shared_fence=False, rehedge_scope=None, previous_close_claim_ref=None, quantity_handoff_refs=None, previous_order_mock_client=None, recovery_steps=4, minimum_carry_scope=None):
   h=existing_harness or VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement')
   if existing_harness is None:h.setUp()
   if inventory_readback=='fixture':
@@ -88,6 +88,8 @@ class RunUidIntegration(unittest.TestCase):
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':reduction_step,
        'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'require_shared_fence':require_shared_fence, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback,'inventory_mock_client':inventory_mock_client}
+   if minimum_carry_scope is not None:
+    ctx['recovery_action'].update(minimum_carry_scope=minimum_carry_scope,minimum_carry_mock_only=True)
    if action_mode=='REDUCE' and previous_close_claim_ref is not None:
     ctx['recovery_action']['previous_claim_ref']=previous_close_claim_ref
     if quantity_handoff_refs is not None:
