@@ -207,6 +207,17 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
             return 'BLOCKED_CANONICAL_CLAIM'
         if getattr(intent.position_side,'value',None)!=claim['side'] or intent.action!=claim['action']:
             return 'BLOCKED_SIDE_ACTION'
+        if 'minimumCarryQuantity' in claim:
+            from decimal import Decimal, InvalidOperation
+            try:
+                expected=Decimal(str(claim['minimumCarryQuantity']))
+                actual=Decimal(str(intent.quantity))
+                if (not expected.is_finite() or not actual.is_finite() or
+                    expected<=0 or actual!=expected or claim['side']!='SHORT' or
+                    claim['action']!='CLOSE' or claim.get('minimumCarryOffline') is not True):
+                    return 'BLOCKED_MINIMUM_CARRY_QUANTITY'
+            except (InvalidOperation, ValueError, TypeError, AttributeError):
+                return 'BLOCKED_MINIMUM_CARRY_QUANTITY'
         if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
             return 'BLOCKED_RECOVERY_DISABLED_OR_STOPPED'
         tx.set(claim_ref,{**claim,'state':'SUBMITTING'})
