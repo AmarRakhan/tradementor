@@ -119,6 +119,32 @@ class CombinedRehedge(unittest.TestCase):
   self.client.open_status='FILLED';self.client.short='100';self.client.mock_fill()
   self.put('coord',{'recoveryFenceReservation':{'state':'stale'}})
   self.assertEqual(self.activate(),'BLOCKED_REHEDGE_FENCE')
+ def test_submit_worker_before_reservation_cannot_open_short(self):
+  # Reverse worker ordering: submitting before the canonical claim must be
+  # rejected without placing an order. Reservation can only occur afterwards.
+  self.assertIsNone(self.db.snapshot('open')[1])
+  intent=AsterOrderIntent(self.new,'XRPUSDT',PositionSide.SHORT,D(100),'OPEN')
+  attempted=[]
+  outcome=submit_once_offline(db=self.db,transactional=transactional,
+    claim_ref=self.r['open'],control_ref=self.r['control'],
+    coordination_ref=self.r['coord'],require_shared_fence=True,
+    standalone_selector_ref=self.r['selector'],
+    account='u',symbol='XRPUSDT',cycle='c2',intent=intent,
+    account_close_guard=lambda:None,submit_mock=lambda x:attempted.append(x))
+  self.assertEqual(outcome,'BLOCKED_CLAIM_NOT_RESERVED')
+  self.assertEqual(attempted,[])
+  self.assertEqual(self.reserve(),'RESERVED_REHEDGE_MOCK_ONLY')
+  self.assertEqual(self.submit(),'SUBMITTED_RECONCILE_ONLY')
+  self.assertEqual(self.client.posts,1)
+  self.assertEqual(self.submit(),'BLOCKED_CLAIM_NOT_RESERVED')
+ def test_emergency_stop_before_handoff_retains_old_fence(self):
+  original=self.db.snapshot('coord')[1]
+  self.put('control',{'account':'u','enabled':True,
+    'emergencyStop':True,'closeAllActive':False})
+  self.assertEqual(self.reserve(),'BLOCKED_STOP')
+  self.assertEqual(self.db.snapshot('coord')[1],original)
+  self.assertIsNone(self.db.snapshot('open')[1])
+  self.assertEqual(self.client.posts,0)
  def test_expired_lease_blocks_new_rehedge_claim(self):
   self.put('coord',{'recoveryFenceReservation':{'account':'u','symbol':'XRPUSDT',
    'cycle':'c','intentId':self.old,'state':'RECOVERY_SUBMITTING_RECONCILE_ONLY'},
