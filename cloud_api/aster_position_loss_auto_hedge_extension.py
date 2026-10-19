@@ -694,7 +694,7 @@ def _run_uid(
                                 net_exits={symbol} if action_ctx.get("net_exit_due") else set())
                             # Existing canonical cycle: an explicitly verified terminal
                             # previous claim can atomically reserve the next SHORT step.
-                            if action_ctx.get('previous_claim_ref') is not None and scope_step in (2,3,4):
+                            if action_ctx.get('previous_claim_ref') is not None and isinstance(scope_step,int) and 2 <= scope_step <= 10:
                                 from short_recovery_canonical_order_authorization import transfer_confirmed_recovery_step_offline
                                 previous_id=canonical_intent_id(account=uid,symbol=symbol,
                                     cycle=ctx['cycle'],side='SHORT',action='CLOSE',step=scope_step-1)
