@@ -118,7 +118,22 @@ def reserve_normal_hedge_mock_only(*,mock_only,db,transactional,coordination_ref
         claim=claim_ref.get(transaction=tx).to_dict()
         control=control_ref.get(transaction=tx).to_dict()
         if not isinstance(coord,dict):return 'BLOCKED_COORDINATION_MISSING'
-        if isinstance(coord.get('recoveryFenceReservation'),dict):return 'BLOCKED_FENCE_ALREADY_RESERVED'
+        old_fence=coord.get('recoveryFenceReservation')
+        if isinstance(old_fence,dict):
+            if not (allow_quantity_terminal_fence is True and
+                    (old_fence.get('account'),old_fence.get('symbol'),
+                     old_fence.get('cycle'),old_fence.get('intentId'),
+                     old_fence.get('state'))==
+                    (account,symbol,old_cycle,final_claim.get('intentId') if isinstance(final_claim,dict) else None,
+                     'RECOVERY_SUBMITTING_RECONCILE_ONLY') and
+                    isinstance(final_claim,dict) and
+                    final_claim.get('quantityTerminalOnly') is True and
+                    final_claim.get('terminalVerified') is True and
+                    final_claim.get('financialVerified') is False and
+                    final_claim.get('financialSettlement')=='UNRECONCILED'):
+                return 'BLOCKED_FENCE_ALREADY_RESERVED'
+        elif old_fence is not None:
+            return 'BLOCKED_FENCE_UNVERIFIED'
         lease=coord.get('lease')
         if not isinstance(lease,dict) or lease.get('token')!=lease_token:return 'BLOCKED_LEASE_STALE'
         until=lease.get('until')
@@ -139,7 +154,7 @@ def reserve_normal_hedge_mock_only(*,mock_only,db,transactional,coordination_ref
 def reserve_rehedge_mock_only(*,mock_only,db,transactional,coordination_ref,
                               owner_ref,final_claim_ref,control_ref,account,symbol,
                               old_cycle,new_cycle,lease_token,intent_id,now,
-                              final_readback_verified,new_claim_ref=None):
+                              final_readback_verified,new_claim_ref=None,allow_quantity_terminal_fence=False):
     """Separate offline rehedge right, requiring final verified close evidence.
 
     Never auto-releases any old fence and never issues exchange transport.
@@ -200,7 +215,7 @@ def reserve_rehedge_mock_only(*,mock_only,db,transactional,coordination_ref,
     except Exception:return 'BLOCKED_TRANSACTION_FAILURE'
 
 
-def reserve_verified_rehedge_mock_only(*,mock_only,db,transactional,coordination_ref,owner_ref,final_claim_ref,control_ref,account,symbol,old_cycle,new_cycle,lease_token,intent_id,now,client,long_qty,now_ms,new_claim_ref=None):
+def reserve_verified_rehedge_mock_only(*,mock_only,db,transactional,coordination_ref,owner_ref,final_claim_ref,control_ref,account,symbol,old_cycle,new_cycle,lease_token,intent_id,now,client,long_qty,now_ms,new_claim_ref=None,allow_quantity_terminal_fence=False):
     """Do not accept a caller-supplied finality boolean; re-verify the canonical
     CLOSED claim and mock exchange financial/inventory evidence before reserving.
     The transaction rechecks the final claim but this is not live authorization.
@@ -216,4 +231,5 @@ def reserve_verified_rehedge_mock_only(*,mock_only,db,transactional,coordination
         coordination_ref=coordination_ref,owner_ref=owner_ref,final_claim_ref=final_claim_ref,
         control_ref=control_ref,account=account,symbol=symbol,old_cycle=old_cycle,
         new_cycle=new_cycle,lease_token=lease_token,intent_id=intent_id,now=now,
-        final_readback_verified=True,new_claim_ref=new_claim_ref)
+        final_readback_verified=True,new_claim_ref=new_claim_ref,
+        allow_quantity_terminal_fence=allow_quantity_terminal_fence)
