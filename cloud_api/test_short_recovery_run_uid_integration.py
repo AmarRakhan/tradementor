@@ -19,7 +19,7 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, require_independent_funding_mock=False, funding_window_mock=None, authorization_mode="LEGACY_MOCK_TEST", reduction_step=1, reduction_mark=None, confirmed_closed=None, initialize_action_claim=True, shared_fence=None, fence_intent_override=None, require_shared_fence=False, rehedge_scope=None, previous_close_claim_ref=None, quantity_handoff_refs=None, previous_order_mock_client=None):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, require_independent_funding_mock=False, funding_window_mock=None, authorization_mode="LEGACY_MOCK_TEST", reduction_step=1, reduction_mark=None, confirmed_closed=None, initialize_action_claim=True, shared_fence=None, fence_intent_override=None, require_shared_fence=False, rehedge_scope=None, previous_close_claim_ref=None, quantity_handoff_refs=None, previous_order_mock_client=None, recovery_steps=4):
   h=existing_harness or VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement')
   if existing_harness is None:h.setUp()
   if inventory_readback=='fixture':
@@ -47,7 +47,7 @@ class RunUidIntegration(unittest.TestCase):
    from decimal import Decimal as D
    from short_recovery_contract import Plan
    from short_recovery_reduction import ReductionState
-   plan=Plan(D(2),D(100),D(5),4)
+   plan=Plan(D(2),D(100),D(5),recovery_steps)
    closed=D(confirmed_closed) if confirmed_closed is not None else (D(100) if action_mode=='REHEDGE' else D(0))
    qty=D(0) if action_mode=='REHEDGE' else D(100)
    state=ReductionState(plan,closed,D(reduction_mark if reduction_mark is not None else ('1.6' if action_mode=='REHEDGE' else '1.9')))
@@ -109,7 +109,7 @@ class RunUidIntegration(unittest.TestCase):
   states={'XRPUSDT':{'ownerSide':'SHORT','cycleConfirmed':True,'ownershipVerified':ownership,'state':'PARTIAL'}}
   dummy=MagicMock();dummy.position_risk.return_value=[];dummy.open_orders.return_value=[]
   doc=MagicMock();report={'mode':'SHADOW','ordersSent':0,'actions':[]}
-  with patch.object(module,'EXECUTION_ENABLED',execution_enabled),patch.dict(os.environ,{'ASTER_SHORT_RECOVERY_SHADOW_ENABLED':'true'}),patch.object(module.main,'_release_feature_enabled_for_uid',return_value=True),patch.object(module,'_pair_states',return_value={}),patch.object(module,'_current',return_value={'enabled':True,'thresholdUsd':1,'shortRecoveryPlan':{'enabled':enabled,'steps':4,'stepPct':'5'}}),patch.object(module,'_client',return_value=dummy),patch.object(module,'_prepare_lifecycle',return_value=({'XRPUSDT':'LONG'},set(),states,[])),patch.object(module,'_dynamic_hedge_enabled',return_value=False),patch.object(module,'_doc',return_value=doc),patch.object(module,'_audit'),patch.object(module,'reconcile_auto_hedge',return_value=report) as recon,patch.object(module.main,'_acquire_aster_account_coordination',return_value='token'),patch.object(module.main,'_release_aster_account_coordination'),patch.object(module,'_sync_pair_views'):
+  with patch.object(module,'EXECUTION_ENABLED',execution_enabled),patch.dict(os.environ,{'ASTER_SHORT_RECOVERY_SHADOW_ENABLED':'true'}),patch.object(module.main,'_release_feature_enabled_for_uid',return_value=True),patch.object(module,'_pair_states',return_value={}),patch.object(module,'_current',return_value={'enabled':True,'thresholdUsd':1,'shortRecoveryPlan':{'enabled':enabled,'steps':recovery_steps,'stepPct':'5'}}),patch.object(module,'_client',return_value=dummy),patch.object(module,'_prepare_lifecycle',return_value=({'XRPUSDT':'LONG'},set(),states,[])),patch.object(module,'_dynamic_hedge_enabled',return_value=False),patch.object(module,'_doc',return_value=doc),patch.object(module,'_audit'),patch.object(module,'reconcile_auto_hedge',return_value=report) as recon,patch.object(module.main,'_acquire_aster_account_coordination',return_value='token'),patch.object(module.main,'_release_aster_account_coordination'),patch.object(module,'_sync_pair_views'):
    result=module._run_uid('u',force_shadow=force_shadow,offline_pair_settlement=ctx)
   return result,recon,h
  def test_verified_pair_close_calls_real_atomic_resolver(self):
