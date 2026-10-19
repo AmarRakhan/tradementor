@@ -19,21 +19,30 @@ with patch.dict(sys.modules,{'main':main_stub}):
 from test_short_recovery_pair_aster_bridge import VerifiedAsterBridge
 
 class RunUidIntegration(unittest.TestCase):
- def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, require_independent_funding_mock=False, funding_window_mock=None, authorization_mode="LEGACY_MOCK_TEST", reduction_step=1, reduction_mark=None, confirmed_closed=None, initialize_action_claim=True, shared_fence=False, fence_intent_override=None, require_shared_fence=False):
+ def run_case(self, *, enabled=True, ownership=True, force_shadow=True, execution_enabled=False, mock_scope=True, proof=True, action_mode=None, emergency_stop=False, mock_transport=None, readback_mode=None, existing_short_state=None, inventory_readback='fixture', inventory_mock_client=None, restart_readback_mock_client=None, existing_harness=None, rehedge_final_readback="fixture", final_short_close_claim_ref=None, require_independent_funding_mock=False, funding_window_mock=None, authorization_mode="LEGACY_MOCK_TEST", reduction_step=1, reduction_mark=None, confirmed_closed=None, initialize_action_claim=True, shared_fence=None, fence_intent_override=None, require_shared_fence=False, rehedge_scope=None, previous_close_claim_ref=None):
   h=existing_harness or VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement')
   if existing_harness is None:h.setUp()
   if inventory_readback=='fixture':
    inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':9999,'LONG':'100','SHORT':'0' if action_mode=='REHEDGE' else '100'}
   ctx={'client':h.client,'claim_refs':{s:h.fixture.refs[s+'claim'] for s in ('LONG','SHORT')},'ledger_refs':{s:h.fixture.refs[s+'ledger'] for s in ('LONG','SHORT')},'control_ref':h.fixture.refs['control'],'pair_ref':h.fixture.refs['pair'],'db':h.fixture.db,'transactional':__import__('short_recovery_multidoc_mock').transactional,'account':'u' if mock_scope else 'other','symbol':'XRPUSDT','cycle':'c','mock_only':True,'financial_proof':h.proof if proof else None,'restart_readback_mock_client':restart_readback_mock_client,'authorization_mode':authorization_mode,'require_independent_funding_mock':require_independent_funding_mock,'funding_window_mock':funding_window_mock}
+  # Submission fixtures must carry the same durable coordination claim as runtime.
+  # Read-only previews retain their original unreserved setup.
+  if mock_transport is not None and action_mode=='REDUCE' and shared_fence is None:
+   shared_fence=True
+   require_shared_fence=True
   if shared_fence:
    from short_recovery_multidoc_mock import Ref
    from short_recovery_order_claim_shadow import canonical_intent_id
    coordination=Ref(h.fixture.db,('u','XRPUSDT','coordination'))
    ctx['coordination_ref']=coordination
-   h.fixture.db.commit(coordination.key,0,{'recoveryFenceReservation':{
-    'account':'u','symbol':'XRPUSDT','cycle':'c',
-    'intentId':fence_intent_override or canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side='SHORT',action='CLOSE',step=reduction_step),
-    'state':'RECOVERY_CLAIM_RESERVED'}})
+   # A concurrent/restarted call must reuse the committed coordination
+   # document, never overwrite the existing submit claim.
+   previous=h.fixture.db.snapshot(coordination.key)[1]
+   if previous is None:
+    h.fixture.db.commit(coordination.key,0,{'recoveryFenceReservation':{
+     'account':'u','symbol':'XRPUSDT','cycle':'c',
+     'intentId':fence_intent_override or canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side='SHORT',action='CLOSE',step=reduction_step),
+     'state':'RECOVERY_CLAIM_RESERVED'}})
   if action_mode is not None:
    from decimal import Decimal as D
    from short_recovery_contract import Plan
@@ -43,7 +52,14 @@ class RunUidIntegration(unittest.TestCase):
    qty=D(0) if action_mode=='REHEDGE' else D(100)
    state=ReductionState(plan,closed,D(reduction_mark if reduction_mark is not None else ('1.6' if action_mode=='REHEDGE' else '1.9')))
    from short_recovery_order_claim_shadow import canonical_intent_id
+   if action_mode=='REHEDGE' and rehedge_scope is not None:reduction_step=0
    ids={key:canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side=key.split('_')[0],action=key.split('_')[1],step=reduction_step) for key in ('LONG_CLOSE','SHORT_CLOSE','SHORT_OPEN')}
+   if action_mode=='REHEDGE' and rehedge_scope is not None:
+    ids['SHORT_OPEN']=canonical_intent_id(account='u',symbol='XRPUSDT',
+      cycle=rehedge_scope['new_cycle'],side='SHORT',action='OPEN',step=0)
+    ctx['coordination_ref']=rehedge_scope['coordination_ref']
+    ctx['owner_ref']=rehedge_scope['owner_ref']
+    require_shared_fence=True
    if action_mode=='PAIR_EXIT':
     def canonical_query(symbol,cid):
      side='LONG' if cid==ids['LONG_CLOSE'] else 'SHORT' if cid==ids['SHORT_CLOSE'] else 'INVALID'
@@ -72,7 +88,13 @@ class RunUidIntegration(unittest.TestCase):
        'net_exit_due':action_mode=='PAIR_EXIT','net_evidence_verified':proof,
        'claim_ref':h.fixture.refs['SHORTclaim'],'intent_id':ids['SHORT_OPEN' if action_mode=='REHEDGE' else 'SHORT_CLOSE'],'step':reduction_step,
        'account_close_guard':lambda:None,'intent_ids':ids, 'submit_mock':mock_transport, 'require_shared_fence':require_shared_fence, 'offline_mock_confirmed':mock_transport is not None,'inventory_now_ms':10000,'inventory_readback':inventory_readback,'inventory_mock_client':inventory_mock_client}
-   if initialize_action_claim:h.fixture.put('SHORTclaim',{**(h.fixture.snapshot('SHORTclaim') or {'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':'SHORT'}),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':reduction_step})
+   if action_mode=='REDUCE' and previous_close_claim_ref is not None:
+    ctx['recovery_action']['previous_claim_ref']=previous_close_claim_ref
+   if action_mode=='REHEDGE' and rehedge_scope is not None:
+    ctx['recovery_action'].update(new_cycle=rehedge_scope['new_cycle'],
+      lease_token=rehedge_scope['lease_token'],
+      new_short_open_claim_ref=rehedge_scope['new_short_open_claim_ref'])
+   if initialize_action_claim and rehedge_scope is None and previous_close_claim_ref is None:h.fixture.put('SHORTclaim',{**(h.fixture.snapshot('SHORTclaim') or {'account':'u','symbol':'XRPUSDT','cycle':'c','positionSide':'SHORT'}),'state':'RESERVED','intentId':ctx['recovery_action']['intent_id'],'side':'SHORT','action':'OPEN' if action_mode=='REHEDGE' else 'CLOSE','step':reduction_step})
    if action_mode=='PAIR_EXIT':
     ctx['recovery_action']['long_claim_ref']=h.fixture.refs['LONGclaim']
     h.fixture.put('LONGclaim',{**h.fixture.snapshot('LONGclaim'),'state':'RESERVED','intentId':ids['LONG_CLOSE'],'side':'LONG','action':'CLOSE','step':1})
@@ -434,19 +456,31 @@ class PositiveCanonicalRehedge(unittest.TestCase):
    def account_information(self):return {'account':'u','hedgeMode':True}
    def position_risk(self,s):return [{'symbol':s,'positionSide':'LONG','positionAmt':'100'},{'symbol':s,'positionSide':'SHORT','positionAmt':'0'}]
    def open_orders(self,s):return []
-   def query_order(self,s,c):return {'symbol':s,'clientOrderId':c,'orderId':'SHORT-order','status':'FILLED','executedQty':'75'}
-   def user_trades(self,s,**kw):return [{'symbol':s,'orderId':'SHORT-order','id':12,'qty':'75','realizedPnl':'1','commission':'.1'}]
+   def query_order(self,s,c):return {'symbol':s,'clientOrderId':c,'orderId':'SHORT-order','status':'FILLED','executedQty':'25'}
+   def user_trades(self,s,**kw):return [{'symbol':s,'orderId':'SHORT-order','id':12,'qty':'25','realizedPnl':'1','commission':'.1'}]
   final_ref=h.fixture.refs['SHORTclaim']
-  final=h.fixture.snapshot('SHORTclaim');final.update(side='SHORT',action='CLOSE',state='CLOSED',executedQty='75')
+  from short_recovery_order_claim_shadow import canonical_intent_id
+  final=h.fixture.snapshot('SHORTclaim');final.update(side='SHORT',action='CLOSE',state='CLOSED',
+   step=4,intentId=canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c',side='SHORT',action='CLOSE',step=4),executedQty='25')
   h.fixture.put('SHORTclaim',final)
   # Distinct canonical claim: the new OPEN must not overwrite the prior CLOSE.
   from short_recovery_multidoc_mock import Ref
   open_ref=Ref(h.fixture.db,'SHORT_OPEN_claim')
   h.fixture.refs['SHORTclaim']=open_ref
-  h.fixture.put('SHORTclaim',dict(final,state='RESERVED',action='OPEN',intentId='placeholder'))
+  from datetime import datetime,timedelta,timezone
+  now=datetime.now(timezone.utc)
+  coord=Ref(h.fixture.db,('u','XRPUSDT','rehedge-coordination'))
+  owner=Ref(h.fixture.db,('u','XRPUSDT','rehedge-owner'))
+  h.fixture.db.commit(coord.key,0,{'lease':{'token':'rehedge-lease',
+      'until':now+timedelta(seconds=60)}})
+  h.fixture.db.commit(owner.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c',
+      'ownerSide':'SHORT','ownershipVerified':True,'cycleConfirmed':True,'state':'FINAL_PENDING'})
   transport=MagicMock(return_value={'orderId':'mock-open'})
+  scope={'new_cycle':'c2','lease_token':'rehedge-lease','coordination_ref':coord,
+      'owner_ref':owner,'new_short_open_claim_ref':open_ref}
   r,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',existing_harness=h,
-      final_short_close_claim_ref=final_ref,inventory_mock_client=Client(),mock_transport=transport)
+      final_short_close_claim_ref=final_ref,inventory_mock_client=Client(),
+      mock_transport=transport,initialize_action_claim=False,rehedge_scope=scope)
   self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',),repr((transport.call_args_list,h.fixture.snapshot('SHORTclaim'),r.get('shortRecoveryAction'))))
   transport.assert_called_once()
 
@@ -479,6 +513,7 @@ class FourStepRunUidCycle(unittest.TestCase):
    r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',existing_harness=h,
       reduction_step=step,reduction_mark=mark,confirmed_closed=D(25*(step-1)),
       mock_transport=post,inventory_mock_client=exchange,
+      previous_close_claim_ref=last_close_ref,
       inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':10000,'LONG':'100','SHORT':str(exchange.short)})
    self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',),repr(r.get('shortRecoveryAction')))
    self.assertEqual(posts[-1],(step,D(25),'CLOSE'))

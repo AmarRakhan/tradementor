@@ -144,7 +144,8 @@ class EmulatorFence(unittest.TestCase):
   self.assertEqual(posted,[intent_id])
   self.assertEqual(self.refs['lease'].get().to_dict()['recoveryFenceReservation']['state'],'RECOVERY_SUBMITTING_RECONCILE_ONLY')
   self.db=self.firestore.Client(project='amar-short-recovery-offline-test')
-  self.assertEqual(call(),'BLOCKED_COORDINATION_CLAIM_MISMATCH')
+  # A consumed claim deterministically wins over the advanced coordination fence.
+  self.assertEqual(call(),'BLOCKED_CLAIM_NOT_RESERVED')
   self.assertEqual(posted,[intent_id])
   self.refs['lease'].update({'lease':{'token':'token-1','until':self.now+timedelta(seconds=60)}})
   self.assertEqual(self.reserve(i=77),'BLOCKED_FENCE_ALREADY_RESERVED')

@@ -92,11 +92,30 @@ def pre_submit_check(*, db, transactional, claim_ref, control_ref, account, symb
         control=control_ref.get(transaction=tx).to_dict()
         if coordination_ref is not None:
             coordination=coordination_ref.get(transaction=tx).to_dict()
+        if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('intentId'))!=(account,symbol,cycle,intent_id) or claim.get('state')!='RESERVED':
+            return 'BLOCKED_CLAIM_NOT_RESERVED'
+        if coordination_ref is not None:
             fence=coordination.get('recoveryFenceReservation') if isinstance(coordination,dict) else None
-            if not isinstance(fence,dict) or (fence.get('account'),fence.get('symbol'),fence.get('cycle'),fence.get('intentId'),fence.get('state')) != (account,symbol,cycle,intent_id,'RECOVERY_CLAIM_RESERVED'):
+            if not isinstance(fence,dict) or (fence.get('account'),fence.get('symbol'),fence.get('cycle'),fence.get('intentId')) != (account,symbol,cycle,intent_id):
                 return 'BLOCKED_COORDINATION_CLAIM_MISMATCH'
-            if isinstance(coordination.get('lease'),dict) and coordination['lease'].get('token'):
-                return 'BLOCKED_COORDINATION_LEASE_UNRESOLVED'
+            is_rehedge=(isinstance(claim,dict) and claim.get('side')=='SHORT' and claim.get('action')=='OPEN' and claim.get('step')==0)
+            if is_rehedge:
+                if (fence.get('state')!='REHEDGE_MOCK_SUBMITTING' or
+                        not fence.get('previousCycle') or fence.get('previousCycle')==cycle or
+                        not fence.get('leaseToken')):
+                    return 'BLOCKED_COORDINATION_CLAIM_MISMATCH'
+                lease=coordination.get('lease')
+                if not isinstance(lease,dict) or lease.get('token')!=fence.get('leaseToken'):
+                    return 'BLOCKED_COORDINATION_LEASE_UNRESOLVED'
+                from datetime import datetime,timezone
+                expiry=lease.get('until')
+                if not isinstance(expiry,datetime) or expiry.tzinfo is None or expiry.astimezone(timezone.utc)<=datetime.now(timezone.utc):
+                    return 'BLOCKED_COORDINATION_LEASE_EXPIRED'
+            else:
+                if fence.get('state')!='RECOVERY_CLAIM_RESERVED':
+                    return 'BLOCKED_COORDINATION_CLAIM_MISMATCH'
+                if isinstance(coordination.get('lease'),dict) and coordination['lease'].get('token'):
+                    return 'BLOCKED_COORDINATION_LEASE_UNRESOLVED'
         if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('intentId'))!=(account,symbol,cycle,intent_id) or claim.get('state')!='RESERVED':
             return 'BLOCKED_CLAIM_NOT_RESERVED'
         if not isinstance(control,dict) or control.get('account')!=account or control.get('enabled') is not True or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
@@ -126,7 +145,8 @@ def record_mock_transport_origin(*,db,transactional,claim_ref,account,symbol,cyc
     return save(db.transaction())
 
 def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, symbol, cycle,
-                        intent, account_close_guard, submit_mock, coordination_ref=None, require_shared_fence=False):
+                        intent, account_close_guard, submit_mock, coordination_ref=None, require_shared_fence=False,
+                        standalone_selector_ref=None):
     """Atomic single submit right; only caller-supplied mock transport is permitted.
 
     A crash after SUBMITTING is UNKNOWN, never an entitlement to retry. This
@@ -148,11 +168,37 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
         control=control_ref.get(transaction=tx).to_dict()
         if coordination_ref is not None:
             coordination=coordination_ref.get(transaction=tx).to_dict()
+        # Recheck strategy INSIDE the same CAS as the canonical order right.
+        selector=(standalone_selector_ref.get(transaction=tx).to_dict()
+                  if standalone_selector_ref is not None else None)
+        if standalone_selector_ref is not None and (
+                not isinstance(selector,dict) or selector.get('account')!=account or
+                selector.get('activeStrategy')!='AUTO_HEDGE_SHORT_RECOVERY_2' or
+                selector.get('offlineOnly') is not True):
+            return 'BLOCKED_STRATEGY_NOT_ACTIVE'
+        if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('intentId'))!=(account,symbol,cycle,intent.intent_id) or claim.get('state')!='RESERVED':
+            return 'BLOCKED_CLAIM_NOT_RESERVED'
+        if coordination_ref is not None:
             fence=coordination.get('recoveryFenceReservation') if isinstance(coordination,dict) else None
-            if not isinstance(fence,dict) or (fence.get('account'),fence.get('symbol'),fence.get('cycle'),fence.get('intentId'),fence.get('state'))!=(account,symbol,cycle,intent.intent_id,'RECOVERY_CLAIM_RESERVED'):
+            if not isinstance(fence,dict) or (fence.get('account'),fence.get('symbol'),fence.get('cycle'),fence.get('intentId'))!=(account,symbol,cycle,intent.intent_id):
                 return 'BLOCKED_COORDINATION_CLAIM_MISMATCH'
-            if isinstance(coordination.get('lease'),dict) and coordination['lease'].get('token'):
-                return 'BLOCKED_COORDINATION_LEASE_UNRESOLVED'
+            rehedge_open=(getattr(intent.position_side,'value',None)=='SHORT' and intent.action=='OPEN')
+            if rehedge_open:
+                if (fence.get('state')!='REHEDGE_MOCK_SUBMITTING' or not fence.get('previousCycle') or
+                    fence.get('previousCycle')==cycle or not fence.get('leaseToken')):
+                    return 'BLOCKED_COORDINATION_CLAIM_MISMATCH'
+                lease=coordination.get('lease')
+                if not isinstance(lease,dict) or lease.get('token')!=fence['leaseToken']:
+                    return 'BLOCKED_COORDINATION_LEASE_UNRESOLVED'
+                from datetime import datetime,timezone
+                expiry=lease.get('until')
+                if not isinstance(expiry,datetime) or expiry.tzinfo is None or expiry.astimezone(timezone.utc)<=datetime.now(timezone.utc):
+                    return 'BLOCKED_COORDINATION_LEASE_EXPIRED'
+            else:
+                if fence.get('state')!='RECOVERY_CLAIM_RESERVED':
+                    return 'BLOCKED_COORDINATION_CLAIM_MISMATCH'
+                if isinstance(coordination.get('lease'),dict) and coordination['lease'].get('token'):
+                    return 'BLOCKED_COORDINATION_LEASE_UNRESOLVED'
         if not isinstance(claim,dict) or (claim.get('account'),claim.get('symbol'),claim.get('cycle'),claim.get('intentId'))!=(account,symbol,cycle,intent.intent_id) or claim.get('state')!='RESERVED':
             return 'BLOCKED_CLAIM_NOT_RESERVED'
         if claim.get('side') not in ('LONG','SHORT') or claim.get('action') not in ('OPEN','CLOSE') or not isinstance(claim.get('step'),int):
@@ -166,7 +212,7 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
         tx.set(claim_ref,{**claim,'state':'SUBMITTING'})
         if coordination_ref is not None:
             tx.set(coordination_ref,{**coordination,'recoveryFenceReservation':{
-                **fence,'state':'RECOVERY_SUBMITTING_RECONCILE_ONLY'}})
+                **fence,'state':'REHEDGE_SUBMITTING_RECONCILE_ONLY' if rehedge_open else 'RECOVERY_SUBMITTING_RECONCILE_ONLY'}})
         return 'SUBMITTING_LOCKED'
     outcome=acquire(db.transaction())
     if outcome!='SUBMITTING_LOCKED':return outcome

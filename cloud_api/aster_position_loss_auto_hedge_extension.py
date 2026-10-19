@@ -649,7 +649,7 @@ def _run_uid(
             elif offline_pair_settlement.get("symbol") not in (recovery_offline_partition["shadow_skip"] - recovery_offline_partition["legacy_skip"]):
                 report["shortRecoveryPairSettlement"] = "BLOCKED_RECOVERY_OWNERSHIP"
             else:
-                from short_recovery_order_resolution_shadow import reconcile_pair_from_aster_mock
+                from short_recovery_order_resolution_shadow import reconcile_pair_from_aster_mock, finalize_individual_short_order_offline
                 ctx = dict(offline_pair_settlement)
                 if ctx.get("account") != uid or not ctx.get("mock_only"):
                     report["shortRecoveryPairSettlement"] = "BLOCKED_MOCK_SCOPE"
@@ -677,9 +677,11 @@ def _run_uid(
                                 if scope_key not in ("LONG_CLOSE", "SHORT_CLOSE", "SHORT_OPEN"):
                                     raise ValueError("BLOCKED_CANONICAL_SCOPE")
                                 side, act = scope_key.split("_")
+                                scoped_cycle=(action_ctx.get('new_cycle') if scope_key=='SHORT_OPEN' and action_ctx.get('new_cycle') else ctx['cycle'])
+                                scoped_step=0 if scope_key=='SHORT_OPEN' and action_ctx.get('new_cycle') else scope_step
                                 if scoped_id != canonical_intent_id(
-                                        account=uid,symbol=symbol,cycle=ctx["cycle"],
-                                        side=side,action=act,step=scope_step):
+                                        account=uid,symbol=symbol,cycle=scoped_cycle,
+                                        side=side,action=act,step=scoped_step):
                                     raise ValueError("BLOCKED_CANONICAL_SCOPE")
                             if action_ctx["intent_id"] not in identifiers.values():
                                 raise ValueError("BLOCKED_CANONICAL_SCOPE")
@@ -690,13 +692,51 @@ def _run_uid(
                                 exchange_short_quantities={symbol:action_ctx["short_qty"]},
                                 long_quantities={symbol:action_ctx["long_qty"]},
                                 net_exits={symbol} if action_ctx.get("net_exit_due") else set())
-                            preflight = pre_submit_check(
+                            # Existing canonical cycle: an explicitly verified terminal
+                            # previous claim can atomically reserve the next SHORT step.
+                            if action_ctx.get('previous_claim_ref') is not None and scope_step in (2,3,4):
+                                from short_recovery_canonical_order_authorization import transfer_confirmed_recovery_step_offline
+                                previous_id=canonical_intent_id(account=uid,symbol=symbol,
+                                    cycle=ctx['cycle'],side='SHORT',action='CLOSE',step=scope_step-1)
+                                prior_client=action_ctx.get('previous_order_mock_client')
+                                prior_window=action_ctx.get('previous_funding_window')
+                                if (prior_client is None or not isinstance(prior_window,dict) or
+                                        type(prior_window.get('startMs')) is not int or
+                                        type(prior_window.get('endMs')) is not int):
+                                    report['shortRecoveryStepHandoff']='BLOCKED_INDEPENDENT_FINANCIAL_READBACK_REQUIRED'
+                                else:
+                                    report['shortRecoveryIndividualFinality']=finalize_individual_short_order_offline(
+                                        mock_only=True,db=ctx['db'],transactional=ctx['transactional'],
+                                        claim_ref=action_ctx['previous_claim_ref'],
+                                        ledger_ref=ctx['ledger_refs']['SHORT'],control_ref=ctx['control_ref'],
+                                        client=prior_client,account=uid,symbol=symbol,cycle=ctx['cycle'],
+                                        intent_id=previous_id,funding_start_ms=prior_window['startMs'],
+                                        funding_end_ms=prior_window['endMs'])
+                                    if report['shortRecoveryIndividualFinality']!='FINANCIAL_SETTLEMENT_VERIFIED':
+                                        report['shortRecoveryStepHandoff']=report['shortRecoveryIndividualFinality']
+                                    else:
+                                        report['shortRecoveryStepHandoff']=transfer_confirmed_recovery_step_offline(
+                                    mock_only=True,db=ctx['db'],transactional=ctx['transactional'],
+                                    coordination_ref=ctx.get('coordination_ref'),
+                                    previous_claim_ref=action_ctx['previous_claim_ref'],
+                                    next_claim_ref=action_ctx['claim_ref'],control_ref=ctx['control_ref'],
+                                    account=uid,symbol=symbol,cycle=ctx['cycle'],
+                                    previous_intent_id=previous_id,next_intent_id=action_ctx['intent_id'],
+                                    next_step=scope_step,
+                                    verified_financial_readback=action_ctx.get('previous_financial_readback_verified') is True)
+                            # Rehedge preview precedes the *new* cycle's transactional
+                            # reservation. The actual order is still fenced below.
+                            rehedge_cycle=action_ctx.get('new_cycle')
+                            is_new_rehedge=(bool(rehedge_cycle) and action_ctx.get('new_short_open_claim_ref') is not None)
+                            prior_handoff=report.get('shortRecoveryStepHandoff')
+                            preflight=(prior_handoff if prior_handoff is not None and prior_handoff!='HANDOFF_VERIFIED_OFFLINE'
+                                else 'PREFLIGHT_SHADOW_ONLY' if is_new_rehedge else pre_submit_check(
                                 db=ctx["db"], transactional=ctx["transactional"],
                                 claim_ref=action_ctx["claim_ref"], control_ref=ctx["control_ref"],
                                 account=uid, symbol=symbol, cycle=ctx["cycle"],
                                 intent_id=action_ctx["intent_id"],
                                 account_close_guard=action_ctx["account_close_guard"],
-                                coordination_ref=ctx.get("coordination_ref"))
+                                coordination_ref=ctx.get("coordination_ref")))
                             report["shortRecoveryAction"] = (
                                 preview_canonical_executor(
                                     reconciled=bridge, symbol=symbol, intent_ids=action_ctx.get("intent_ids"),
@@ -740,13 +780,19 @@ def _run_uid(
                                         long_qty=action_ctx["long_qty"],now_ms=action_ctx.get("inventory_now_ms")):
                                     report["shortRecoveryAction"]={"status":"BLOCKED_REHEDGE_FINAL_READBACK","ordersSent":0,"intents":()}
                                     proposed=report["shortRecoveryAction"]
-                                elif action_ctx.get("require_shared_fence") is True:
-                                    from short_recovery_lease_fence_offline import reserve_verified_rehedge_mock_only
-                                    rehedge_status=reserve_verified_rehedge_mock_only(
-                                        mock_only=True,db=ctx["db"],transactional=ctx["transactional"],
+                                else:
+                                    # Rehedge may never use the legacy unfenced mock path.
+                                    # Missing cycle/lease/claim evidence fails closed inside
+                                    # the canonical transactional authorization.
+                                    from short_recovery_canonical_order_authorization import authorize_offline_order
+                                    rehedge_status=('BLOCKED_REHEDGE_NEW_CLAIM_REQUIRED'
+                                        if action_ctx.get('new_short_open_claim_ref') is None
+                                        else authorize_offline_order(
+                                        order_type='REHEDGE_SHORT_OPEN',mock_only=True,db=ctx["db"],transactional=ctx["transactional"],
                                         coordination_ref=ctx.get("coordination_ref"),
                                         owner_ref=ctx.get("owner_ref"),
                                         final_claim_ref=action_ctx.get("final_short_close_claim_ref"),
+                                        new_claim_ref=action_ctx.get('new_short_open_claim_ref'),
                                         control_ref=ctx["control_ref"],account=uid,symbol=symbol,
                                         old_cycle=ctx["cycle"],new_cycle=action_ctx.get("new_cycle"),
                                         lease_token=action_ctx.get("lease_token"),
@@ -754,10 +800,21 @@ def _run_uid(
                                         now=datetime.now(timezone.utc),
                                         client=action_ctx.get("inventory_mock_client"),
                                         long_qty=action_ctx["long_qty"],
-                                        now_ms=action_ctx.get("inventory_now_ms"))
+                                        now_ms=action_ctx.get("inventory_now_ms")))
                                     if rehedge_status!="RESERVED_REHEDGE_MOCK_ONLY":
                                         report["shortRecoveryAction"]={"status":rehedge_status,"ordersSent":0,"intents":()}
                                         proposed=report["shortRecoveryAction"]
+                                    else:
+                                        new_check=pre_submit_check(
+                                            db=ctx['db'],transactional=ctx['transactional'],
+                                            claim_ref=action_ctx['new_short_open_claim_ref'],
+                                            control_ref=ctx['control_ref'],coordination_ref=ctx.get('coordination_ref'),
+                                            account=uid,symbol=symbol,cycle=rehedge_cycle,
+                                            intent_id=action_ctx['intent_id'],
+                                            account_close_guard=action_ctx['account_close_guard'])
+                                        if new_check!='PREFLIGHT_SHADOW_ONLY':
+                                            report['shortRecoveryAction']={'status':new_check,'ordersSent':0,'intents':()}
+                                            proposed=report['shortRecoveryAction']
                             elif proposed.get("intents") and action_ctx.get("submit_mock") is not None:
                                 # Offline-only real-cycle seam: independently refresh
                                 # the exchange-shaped side inventory before any mock POST.
@@ -773,7 +830,7 @@ def _run_uid(
                             if proposed.get("intents") and action_ctx.get("submit_mock") is not None:
                                 # Opt-in strict mock transport contract. Legacy replay tests
                                 # remain available until every caller provides canonical refs.
-                                if action_ctx.get("require_shared_fence") is True:
+                                if action_ctx.get("require_shared_fence") is True or is_new_rehedge:
                                     # New mock submissions require a durable, matching
                                     # reservation. Readback/restart uses the separate
                                     # reconciliation path and is never authorized here.
@@ -783,9 +840,9 @@ def _run_uid(
                                         from short_recovery_order_claim_shadow import pre_submit_check
                                         fence_status=pre_submit_check(
                                             db=ctx["db"],transactional=ctx["transactional"],
-                                            claim_ref=action_ctx["claim_ref"],control_ref=ctx["control_ref"],
+                                            claim_ref=(action_ctx['new_short_open_claim_ref'] if is_new_rehedge else action_ctx['claim_ref']),control_ref=ctx["control_ref"],
                                             coordination_ref=ctx["coordination_ref"],
-                                            account=uid,symbol=symbol,cycle=ctx["cycle"],
+                                            account=uid,symbol=symbol,cycle=(rehedge_cycle if is_new_rehedge else ctx['cycle']),
                                             intent_id=action_ctx["intent_id"],
                                             account_close_guard=action_ctx["account_close_guard"])
                                     if fence_status!="PREFLIGHT_SHADOW_ONLY":
@@ -828,8 +885,8 @@ def _run_uid(
                                         account_close_guard=action_ctx["account_close_guard"],
                                         submit_mock=mock_submit)
                                 else:
-                                    from short_recovery_order_claim_shadow import submit_once_offline
-                                    claim_refs = {"SHORT":action_ctx["claim_ref"],
+                                    from short_recovery_canonical_order_authorization import submit_recovery_offline
+                                    claim_refs = {"SHORT":(action_ctx['new_short_open_claim_ref'] if is_new_rehedge else action_ctx['claim_ref']),
                                                   "LONG":action_ctx.get("long_claim_ref")}
                                     results=[]
                                     for intent in proposed["intents"]:
@@ -837,14 +894,14 @@ def _run_uid(
                                         if ref is None:
                                             results.append("BLOCKED_SIDE_CLAIM")
                                             break
-                                        results.append(submit_once_offline(
+                                        results.append(submit_recovery_offline(
+                                            mock_only=True,
                                             db=ctx["db"],transactional=ctx["transactional"],
                                             claim_ref=ref,control_ref=ctx["control_ref"],
-                                            account=uid,symbol=symbol,cycle=ctx["cycle"],intent=intent,
+                                            account=uid,symbol=symbol,cycle=(rehedge_cycle if is_new_rehedge else ctx['cycle']),intent=intent,
                                             account_close_guard=action_ctx["account_close_guard"],
                                             submit_mock=mock_submit,
-                                            coordination_ref=ctx.get("coordination_ref") if action_ctx.get("require_shared_fence") is True else None,
-                                            require_shared_fence=action_ctx.get("require_shared_fence") is True))
+                                            coordination_ref=ctx.get("coordination_ref")))
                                         if results[-1]!="SUBMITTED_RECONCILE_ONLY":break
                                     report["shortRecoverySubmit"] = tuple(results)
                         except (KeyError,TypeError,ValueError):
@@ -925,9 +982,9 @@ def _run_uid(
                             else:
                                 # The existing resolver validates each exchange-shaped
                                 # execution, funding ownership, and atomic pair close.
-                                report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
+                                report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**{k:v for k,v in ctx.items() if k != 'coordination_ref'})
                         else:
-                            report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**ctx)
+                            report["shortRecoveryPairSettlement"] = reconcile_pair_from_aster_mock(**{k:v for k,v in ctx.items() if k != 'coordination_ref'})
         # SHORT Recovery Plan 2.0: strictly read-only shadow instrumentation.
         # NEVER change skip_symbols/protected_sides in the executable reconciler here.
         # No plan execution, order placement, or setting persistence is enabled.

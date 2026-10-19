@@ -64,8 +64,23 @@ def resolve(*, db, transactional, claim_ref, ledger_ref, marker_ref, owner_ref, 
             allocation=ledger.allocations[0]
             if not q.is_finite() or q<=0 or q>allocation.remaining or allocation.cycle_id!=cycle:return 'BLOCKED_QUANTITY'
             updated=ledger.apply(Fill(account,symbol,execution_id,evidence['orderId'],q,pnl,fee,funding),((allocation.zone_id,cycle,q),))
+            old_financials=claim.get('executionFinancials')
+            if old_financials is not None and not isinstance(old_financials,dict):
+                return 'BLOCKED_FINANCIAL_REPLAY_PROVENANCE'
+            per_fill=[str(q),str(pnl),str(fee),str(funding)]
+            new_financials=dict(old_financials or {})
+            if execution_id in new_financials and new_financials[execution_id]!=per_fill:
+                return 'BLOCKED_FINANCIAL_REPLAY_MISMATCH'
+            new_financials[execution_id]=per_fill
+            # No writes before all financial validation has passed.
             tx.set(ledger_ref,encode(updated))
-            tx.set(claim_ref,{**claim,'state':'CLOSED' if updated.allocations[0].remaining==0 else 'PARTIAL','orderId':evidence['orderId'],'executedQty':str(Decimal(str(claim.get('executedQty','0')))+q)})
+            tx.set(claim_ref,{**claim,
+                'state':'CLOSED' if updated.allocations[0].remaining==0 else 'PARTIAL',
+                'orderId':evidence['orderId'],
+                'executedQty':str(Decimal(str(claim.get('executedQty','0')))+q),
+                'executionFinancials':new_financials,
+                'financialVerified':evidence.get('financialVerified') is True and
+                    evidence.get('fundingOwnershipVerified') is True})
             return 'FILL_APPLIED'
         if event in ('CANCEL_TERMINAL','NO_ORDER_TERMINAL'):
             if not isinstance(evidence,dict) or evidence.get('confirmed') is not True or evidence.get('noMoreFills') is not True or evidence.get('intentId')!=intent_id:
@@ -170,7 +185,16 @@ def reconcile_pair_close(*, db, transactional, claim_refs, ledger_refs, control_
             if len(remaining)!=1:return 'BLOCKED_ALLOCATION'
             terminal=row.get('status')=='FILLED' and row.get('terminalVerified') is True and remaining[0]==0 and row.get('incomeHistoryComplete') is True
             updates[side]=new;trusted[side]=terminal
-            claimed[side]={**claim,'state':'CLOSED' if terminal else 'UNKNOWN','executedQty':str(expected),'executionFinancials':replay_financials}
+            # Persist independently verified financial provenance atomically with
+            # the allocation ledger; incomplete executions remain reconcile-only.
+            claimed[side]={**claim,'state':'CLOSED' if terminal else 'UNKNOWN',
+                'executedQty':str(expected),'executionFinancials':replay_financials,
+                'fillsComplete':row.get('fillsComplete') is True,
+                'incomeHistoryComplete':row.get('incomeHistoryComplete') is True,
+                'terminalVerified':terminal,
+                'financialVerified':bool(fills) and all(
+                    fill.get('financialVerified') is True and
+                    fill.get('fundingOwnershipVerified') is True for fill in fills)}
         for side in sides:
             if encode(updates[side])!=raws[side]:tx.set(ledger_refs[side],encode(updates[side]))
             if claimed[side]!=claims[side]:tx.set(claim_refs[side],claimed[side])
@@ -237,3 +261,103 @@ def reconcile_pair_from_aster_mock(*, client, claim_refs, ledger_refs, control_r
                         'status':result['orderStatus'],'executedQty':str(proof['executedQty']),'fills':fills}
     return reconcile_pair_close(db=db,transactional=transactional,claim_refs=claim_refs,ledger_refs=ledger_refs,
                                 control_ref=control_ref,pair_ref=pair_ref,account=account,symbol=symbol,cycle=cycle,readbacks=evidence)
+
+
+def finalize_individual_short_order_offline(*, mock_only, db, transactional,
+        claim_ref, ledger_ref, control_ref, client, account, symbol, cycle,
+        intent_id, funding_start_ms, funding_end_ms):
+    """Validate one terminal SHORT reduction independently of cycle inventory.
+
+    No caller-provided financial flags are trusted. Current Aster funding
+    provenance deliberately fails closed: until independently attributable
+    income is available this function makes no persistent changes.
+    """
+    from short_recovery_mock_storage_boundary import isolated_storage_only
+    from short_recovery_aster_readback_mock_adapter import inspect
+    from short_recovery_independent_funding_gate import inspect_mock_coverage
+    from short_recovery_order_claim_shadow import canonical_intent_id
+    if (mock_only is not True or not isolated_storage_only(db) or
+            getattr(client,'offline_mock_only',False) is not True):
+        return 'BLOCKED_OFFLINE_SCOPE'
+    try:
+        before=claim_ref.get(transaction=db.transaction()).to_dict()
+        control=control_ref.get(transaction=db.transaction()).to_dict()
+        if (not isinstance(control,dict) or control.get('account')!=account or
+                control.get('enabled') is not True or control.get('emergencyStop') is not False or
+                control.get('closeAllActive') is not False):
+            return 'BLOCKED_STOP'
+        if (not isinstance(before,dict) or
+                (before.get('account'),before.get('symbol'),before.get('cycle'),
+                 before.get('intentId'),before.get('side'),before.get('action')) !=
+                (account,symbol,cycle,intent_id,'SHORT','CLOSE') or
+                before.get('step') not in (1,2,3,4) or
+                canonical_intent_id(account=account,symbol=symbol,cycle=cycle,
+                    side='SHORT',action='CLOSE',step=before['step'])!=intent_id or
+                before.get('state') not in ('ACKED','PARTIAL','UNKNOWN','SUBMITTING')):
+            return 'BLOCKED_ORDER_CLAIM_SCOPE'
+        readback=inspect(client,symbol=symbol,client_order_id=intent_id)
+        if readback.get('status')!='READBACK_PREVIEW':
+            return readback.get('status','BLOCKED_ORDER_READBACK')
+        if readback.get('orderStatus')!='FILLED' or not readback.get('fills'):
+            return 'BLOCKED_ORDER_NOT_FULLY_FILLED'
+        confirm=inspect(client,symbol=symbol,client_order_id=intent_id)
+        if confirm!=readback:
+            return 'BLOCKED_ORDER_READBACK_DRIFT'
+        fills=readback['fills']
+        if (not before.get('orderId') or
+                any(str(f['orderId'])!=str(before['orderId']) for f in fills)):
+            return 'BLOCKED_ORDER_ID_MISMATCH'
+        # Ledger economics must be independently checked, not inferred from
+        # terminality of the entire hedge cycle.
+        ledger_snapshot=ledger_ref.get(transaction=db.transaction()).to_dict()
+        ledger=decode(ledger_snapshot)
+        financials=before.get('executionFinancials')
+        if not isinstance(financials,dict):
+            return 'BLOCKED_UNBOOKED_EXECUTION'
+        if len(fills)!=len(set(f['executionId'] for f in fills)):
+            return 'BLOCKED_DUPLICATE_EXECUTION'
+        if set(f['executionId'] for f in fills)!=set(financials) or not set(financials).issubset(ledger.seen):
+            return 'BLOCKED_UNBOOKED_EXECUTION'
+        from decimal import Decimal
+        try:
+            for f in fills:
+                q,pnl,commission,funding=(Decimal(str(v)) for v in financials[f['executionId']])
+                if q!=f['quantity'] or pnl!=f['realizedPnl'] or commission!=f['fee'] or not funding.is_finite():
+                    return 'BLOCKED_EXECUTION_FINANCIAL_MISMATCH'
+        except (ValueError,TypeError,InvalidOperation,KeyError):
+            return 'BLOCKED_EXECUTION_FINANCIAL_MISMATCH'
+        if sum((f['quantity'] for f in fills),Decimal(0)) != Decimal(str(before.get('executedQty'))):
+            return 'BLOCKED_EXECUTION_INCOMPLETE'
+        # Exchange order finality is distinct from financial/cycle finality.
+        # Persist ONLY independently re-read execution identity and economics;
+        # this status never grants another submit right or closes the cycle.
+        @transactional
+        def record_order_terminal(tx):
+            current=claim_ref.get(transaction=tx).to_dict()
+            fresh_control=control_ref.get(transaction=tx).to_dict()
+            current_ledger=ledger_ref.get(transaction=tx).to_dict()
+            if (current!=before or current_ledger!=ledger_snapshot or
+                    not isinstance(fresh_control,dict) or
+                    fresh_control.get('account')!=account or
+                    fresh_control.get('enabled') is not True or
+                    fresh_control.get('emergencyStop') is not False or
+                    fresh_control.get('closeAllActive') is not False):
+                return 'BLOCKED_ORDER_TERMINAL_CONCURRENT_CHANGE'
+            if current.get('orderTerminalVerified') is True:
+                return 'ORDER_TERMINAL_RECORDED_UNSETTLED'
+            tx.set(claim_ref,{**current,'orderTerminalVerified':True,
+                'orderTerminalStatus':'FILLED',
+                'financialSettlementStatus':'FUNDING_PROVENANCE_PENDING'})
+            return 'ORDER_TERMINAL_RECORDED_UNSETTLED'
+        terminal_status=record_order_terminal(db.transaction())
+        if terminal_status!='ORDER_TERMINAL_RECORDED_UNSETTLED':
+            return terminal_status
+        funding=inspect_mock_coverage(client=client,account=account,symbol=symbol,
+            cycle=cycle,start_ms=funding_start_ms,end_ms=funding_end_ms)
+        if funding!='INDEPENDENT_FUNDING_PROVENANCE_VERIFIED':
+            return 'BLOCKED_INDEPENDENT_FUNDING_PROVENANCE'
+        # Do not implement a terminal write until independently verified
+        # per-order allocation is supplied by the Aster financial contract.
+        return 'BLOCKED_ORDER_FUNDING_ALLOCATION_UNAVAILABLE'
+    except (KeyError,ValueError,TypeError,InvalidOperation,AttributeError):
+        return 'BLOCKED_ORDER_READBACK_INCOMPLETE'

@@ -23,11 +23,11 @@ def make_denial_fence(*, mock_only, db, transactional, refs, account, symbol, cy
 def make_normal_hedge_mock_fence(*,mock_only,db,transactional,refs,account,symbol,lease_token,now):
     """Callback for the existing reconciler, with *mock-only* transport."""
     if mock_only is not True:raise ValueError('OFFLINE_BRIDGE_REQUIRED')
-    from short_recovery_lease_fence_offline import reserve_normal_hedge_mock_only
+    from short_recovery_canonical_order_authorization import authorize_offline_order
     def fence(candidate_symbol,operation,intent_id):
         if candidate_symbol!=symbol or operation!='OPEN':
             fence.last_result='BLOCKED_INTENT_SCOPE';return False
-        result=reserve_normal_hedge_mock_only(mock_only=True,db=db,transactional=transactional,
+        result=authorize_offline_order(order_type='AUTO_HEDGE_OPEN',mock_only=True,db=db,transactional=transactional,
             coordination_ref=refs['lease'],owner_ref=refs['owner'],claim_ref=refs['claim'],
             control_ref=refs['control'],account=account,symbol=symbol,
             lease_token=lease_token,intent_id=intent_id,now=now)
