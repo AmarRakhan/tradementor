@@ -948,6 +948,11 @@ def _run_uid(
                                             account=uid,symbol=symbol,cycle=(rehedge_cycle if is_new_rehedge else ctx['cycle']),intent=intent,
                                             account_close_guard=action_ctx["account_close_guard"],
                                             submit_mock=mock_submit,
+                                            pre_transport_check=(
+                                                __import__('short_recovery_pre_transport_offline').fresh_mock_pre_transport_check(
+                                                    client=refresh_client, account=uid, symbol=symbol,
+                                                    now_ms=lambda:action_ctx.get('inventory_now_ms'))
+                                                if refresh_client is not None and action_ctx.get('minimum_carry_scope') is not None else None),
                                             coordination_ref=ctx.get("coordination_ref")))
                                         if results[-1]!="SUBMITTED_RECONCILE_ONLY":break
                                     report["shortRecoverySubmit"] = tuple(results)

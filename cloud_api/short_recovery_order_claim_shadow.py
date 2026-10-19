@@ -224,12 +224,12 @@ def submit_once_offline(*, db, transactional, claim_ref, control_ref, account, s
         if coordination_ref is not None:
             tx.set(coordination_ref,{**coordination,'recoveryFenceReservation':{
                 **fence,'state':'REHEDGE_SUBMITTING_RECONCILE_ONLY' if rehedge_open else 'RECOVERY_SUBMITTING_RECONCILE_ONLY'}})
-        return 'SUBMITTING_LOCKED'
+        return ('SUBMITTING_LOCKED', claim.get('requiresFreshExchangeFilters') is True)
     outcome=acquire(db.transaction())
-    if outcome!='SUBMITTING_LOCKED':return outcome
+    if not isinstance(outcome, tuple) or outcome[0]!='SUBMITTING_LOCKED':return outcome
     # Revalidate immediately before offline transport. Any uncertainty leaves
     # SUBMITTING fenced for explicit readback/reconciliation, never retry.
-    if pre_transport_check is not None:
+    if pre_transport_check is not None or outcome[1]:
         try:
             if not callable(pre_transport_check) or pre_transport_check(intent) is not True:
                 raise OfflinePreTransportBlocked()

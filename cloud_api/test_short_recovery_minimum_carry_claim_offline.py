@@ -32,7 +32,8 @@ class CarryClaim(unittest.TestCase):
     coordination_ref=self.refs['coord'],require_shared_fence=True,
     standalone_selector_ref=self.refs['selector'],account='u',symbol='XRPUSDT',
     cycle='c',intent=AsterOrderIntent(c['intentId'],'XRPUSDT',PositionSide.SHORT,D(quantity),'CLOSE'),
-    account_close_guard=lambda:None,submit_mock=transport)
+    account_close_guard=lambda:None,submit_mock=transport,
+    pre_transport_check=lambda intent:True)
  def test_skip_first_reserve_second_and_one_mock_post(self):
   self.assertEqual(self.reserve(mark='95'),'WAIT_MINIMUM_CARRY_FORWARD')
   self.assertIsNone(self.db.snapshot('claim')[1])

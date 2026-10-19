@@ -19,6 +19,11 @@ class RunUidMinimumCarry(unittest.TestCase):
     'offlineOnly':True,'state':'ADOPTED_OFFLINE','pending':False,'anchor':'2',
     'stepPct':'5','steps':4,'originalShortQty':'100','confirmedClosed':'0'})
   self.posts=[]
+  from test_short_recovery_mock_aster_inventory import Client
+  self.mock_client=Client()
+  self.mock_client.qty='100'
+  self.mock_client.exchange_filters=lambda symbol:{'symbol':symbol,'minimumQty':'1', 'quantityStep':'1','minimumNotional':'30'}
+  self.mock_client.executable_price=lambda symbol:'1'
  def run_step(self,step,minimum_notional='60'):
   # Mock symbol is worth 1 per unit: 25 too small, 50 valid.
   mark='1.9' if step==1 else '1.8'
@@ -31,6 +36,7 @@ class RunUidMinimumCarry(unittest.TestCase):
     action_mode='REDUCE',reduction_step=step,reduction_mark=mark,
     confirmed_closed=D(0),mock_transport=post,
     minimum_carry_scope=scope,
+    inventory_mock_client=self.mock_client,
     inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,
       'hedgeMode':True,'openOrders':[],'timestampMs':10000,'LONG':'100','SHORT':'100'})
  def test_first_small_step_has_no_claim_or_submit(self):
