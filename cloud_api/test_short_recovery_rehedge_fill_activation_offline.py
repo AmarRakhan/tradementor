@@ -31,6 +31,14 @@ class Activation(unittest.TestCase):
     selector_ref=self.r['selector'],position_ref=self.r['position'],open_claim_ref=self.r['claim'],
     coordination_ref=self.r['coord'],control_ref=self.r['control'],
     account='u',symbol='XRPUSDT',old_cycle='c',new_cycle='c2',steps=4,step_pct='5')
+ def test_impossible_new_cycle_settings_fail_closed(self):
+  result=activate(db=self.db,transactional=transactional,client=self.client,
+    selector_ref=self.r['selector'],position_ref=self.r['position'],open_claim_ref=self.r['claim'],
+    coordination_ref=self.r['coord'],control_ref=self.r['control'],
+    account='u',symbol='XRPUSDT',old_cycle='c',new_cycle='c2',steps=20,step_pct='5')
+  self.assertEqual(result,'BLOCKED_STEP_PCT')
+  self.assertEqual(self.db.snapshot('position')[1]['cycle'],'c')
+  self.assertEqual(self.db.snapshot('claim')[1]['state'],'SUBMITTING')
  def test_new_anchor_and_locked_fence(self):
   self.assertEqual(self.call(),'NEW_CYCLE_FILL_VERIFIED_FENCE_LOCKED')
   p=self.db.snapshot('position')[1];self.assertEqual(p['anchor'],'2.5')
