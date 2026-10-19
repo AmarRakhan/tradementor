@@ -44,6 +44,29 @@ def handoff_verified_quantity_offline(*, mock_only, db, transactional, client,
             return 'BLOCKED_INVENTORY_MISMATCH'
     except (KeyError,InvalidOperation,ValueError,TypeError):
         return 'BLOCKED_POSITION'
+    # A caller-provided inventory number cannot authorize another exchange POST.
+    # Verify the actual mock exchange inventory twice, including open orders.
+    try:
+        def read_inventory():
+            account_row=client.account_information()
+            positions=client.position_risk(symbol)
+            orders=client.open_orders(symbol)
+            if (not isinstance(account_row,dict) or
+                account_row.get('account')!=account or
+                account_row.get('hedgeMode') is not True or
+                not isinstance(positions,list) or not isinstance(orders,list) or orders):
+                return None
+            matches=[p for p in positions if isinstance(p,dict) and
+                p.get('symbol')==symbol and p.get('positionSide')=='SHORT']
+            if len(matches)!=1:return None
+            value=Decimal(str(matches[0]['positionAmt']))
+            return value if value.is_finite() and value>=0 else None
+        first_short=read_inventory()
+        second_short=read_inventory()
+        if first_short is None or second_short!=first_short or first_short!=short:
+            return 'BLOCKED_INDEPENDENT_INVENTORY_READBACK'
+    except Exception:
+        return 'BLOCKED_INDEPENDENT_INVENTORY_READBACK'
     evidence=inspect_terminal_short_close_offline(
         client=client,account=account,symbol=symbol,cycle=cycle,
         step=next_step-1,claim=old,expected_quantity=per_step)
