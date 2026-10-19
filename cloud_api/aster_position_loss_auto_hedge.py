@@ -435,7 +435,7 @@ def reconcile_auto_hedge(
         if (action.symbol in (recovery_fence_required_symbols or set()) and
                 pre_order_fence is None):
             row.update({'status':'BLOCKED',
-                        'reason':'RECOVERY_CANONICAL_EXECUTOR_ONLY',
+                        'reason':'RECOVERY_SHARED_FENCE_REQUIRED',
                         'filledQty':0.0})
             public_actions.append(row)
             if audit:
