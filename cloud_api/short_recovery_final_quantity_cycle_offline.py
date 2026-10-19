@@ -87,7 +87,7 @@ def finalize_short_quantity_cycle_offline(*,mock_only,db,transactional,client,
              'RECOVERY_SUBMITTING_RECONCILE_ONLY') or
             coord.get('lease') is not None):return 'BLOCKED_FENCE'
         tx.set(claim_ref,{**claim,'state':'CLOSED','terminalVerified':True,
-            'quantityTerminalOnly':True,'financialVerified':False,
+            'quantityTerminalOnly':True,'executedQty':str(qty),'financialVerified':False,
             'financialSettlement':'UNRECONCILED',
             'offlineNextClaimAuthorized':False})
         tx.set(position_ref,{**pos,'state':'FINAL_SHORT_FILLED_OFFLINE',
