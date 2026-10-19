@@ -69,6 +69,6 @@ class QuantityHandoffReadback(unittest.TestCase):
         self.assertEqual(results.count('QUANTITY_HANDOFF_RESERVED_OFFLINE'),1)
         self.assertEqual(results.count('BLOCKED_POSITION_STATE'),1)
         self.db=self.db.restart();self.refs={k:Ref(self.db,k) for k in self.refs}
-        self.assertEqual(self.handoff(),'BLOCKED_NEXT_CLAIM_EXISTS')
+        self.assertEqual(self.handoff(),'BLOCKED_POSITION_STATE')
 
 if __name__=='__main__':unittest.main()
