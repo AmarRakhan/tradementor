@@ -56,6 +56,16 @@ class Activation(unittest.TestCase):
    {'symbol':s,'orderId':'open-2','id':99,'qty':'50','price':'2.5'}]
   self.assertEqual(self.call(),'BLOCKED_INDEPENDENT_REHEDGE_FILL')
   self.assertEqual(self.db.snapshot('position')[1]['cycle'],'c')
+ def test_wrong_short_open_direction_never_activates(self):
+  original_query=self.client.query_order
+  self.client.query_order=lambda s,c:{**original_query(s,c),'side':'BUY','positionSide':'SHORT'}
+  self.assertEqual(self.call(),'BLOCKED_INDEPENDENT_REHEDGE_FILL')
+  self.assertEqual(self.db.snapshot('position')[1]['cycle'],'c')
+  self.client.query_order=original_query
+  original_trades=self.client.user_trades
+  self.client.user_trades=lambda s,**kw:[{**row,'positionSide':'LONG'} for row in original_trades(s,**kw)]
+  self.assertEqual(self.call(),'BLOCKED_INDEPENDENT_REHEDGE_FILL')
+  self.assertEqual(self.db.snapshot('position')[1]['cycle'],'c')
  def test_partial_unknown_dust_and_open_orders(self):
   self.client.status='PARTIALLY_FILLED';self.assertEqual(self.call(),'BLOCKED_INDEPENDENT_REHEDGE_FILL')
   self.client.status='FILLED';self.client.short='99';self.assertEqual(self.call(),'BLOCKED_INDEPENDENT_REHEDGE_FILL')
