@@ -45,7 +45,7 @@ class QuantityHandoffReadback(unittest.TestCase):
         self.assertEqual(self.db.snapshot('next')[1]['state'],'RESERVED')
         self.assertEqual(self.db.snapshot('next')[1]['financialSettlement'],'UNRECONCILED')
         self.assertGreaterEqual(self.client.calls,2)
-        self.assertEqual(self.handoff(),'BLOCKED_NEXT_CLAIM_EXISTS')
+        self.assertEqual(self.handoff(),'BLOCKED_POSITION_STATE')
     def test_stale_exchange_snapshot_rejected(self):
         self.client.short='100'
         self.assertEqual(self.handoff(),'BLOCKED_INDEPENDENT_INVENTORY_READBACK')
@@ -67,7 +67,7 @@ class QuantityHandoffReadback(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results=list(pool.map(lambda _:self.handoff(),range(2)))
         self.assertEqual(results.count('QUANTITY_HANDOFF_RESERVED_OFFLINE'),1)
-        self.assertEqual(results.count('BLOCKED_NEXT_CLAIM_EXISTS'),1)
+        self.assertEqual(results.count('BLOCKED_POSITION_STATE'),1)
         self.db=self.db.restart();self.refs={k:Ref(self.db,k) for k in self.refs}
         self.assertEqual(self.handoff(),'BLOCKED_NEXT_CLAIM_EXISTS')
 
