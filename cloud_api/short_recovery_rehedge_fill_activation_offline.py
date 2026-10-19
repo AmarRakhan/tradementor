@@ -43,6 +43,15 @@ def activate_verified_rehedge_offline(*, db, transactional, client,
                 or acct.get('account')!=account or acct.get('hedgeMode') is not True
                 or not isinstance(positions,list) or orders!=[]):
                 return None
+            # If the exchange exposes side fields, contradictory direction
+            # evidence must never activate a new SHORT hedge.
+            if order.get('side') not in (None,'SELL') or order.get('positionSide') not in (None,'SHORT'):
+                return None
+            if any(isinstance(fill,dict) and (
+                    fill.get('side') not in (None,'SELL') or
+                    fill.get('positionSide') not in (None,'SHORT'))
+                   for fill in fills):
+                return None
             sides={}
             for p in positions:
                 if not isinstance(p,dict) or p.get('symbol')!=symbol:continue
