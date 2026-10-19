@@ -1,5 +1,40 @@
 (() => {
   const data = window.ORDER_DATA;
+  const APP_VERSION='v1.0.0';
+  const APP_BUILD='20261019.2';
+
+  const LEGACY_ARTICLE_CODE_MAP=new Map([
+    ['D31431-RPET','D31439-RPET']
+  ]);
+
+  function canonicalArticleCode(code){
+    return LEGACY_ARTICLE_CODE_MAP.get(code)||code;
+  }
+
+  function migrateRuntimeArticleCodes(){
+    if(!data)return;
+
+    // If an old/fallback data-current.js is loaded, create the current bag item
+    // from the legacy item before removing the legacy catalog row.
+    if(Array.isArray(data.items)){
+      const oldBag=data.items.find(x=>x.code==='D31431-RPET');
+      const newBag=data.items.find(x=>x.code==='D31439-RPET');
+      if(oldBag && !newBag){
+        data.items.push({...oldBag,code:'D31439-RPET'});
+      }
+      data.items=data.items.filter(x=>x.code!=='D31431-RPET');
+    }
+
+    // Active package templates may never export the legacy code.
+    (data.packages||[]).forEach(pkg=>{
+      (pkg.items||[]).forEach(it=>{
+        it.code=canonicalArticleCode(it.code);
+      });
+    });
+  }
+
+  migrateRuntimeArticleCodes();
+
   const state = {
     view: 'packages',
     packageFilter: 'all',
@@ -342,6 +377,21 @@
         state.learnedAliases = saved.learnedAliases && typeof saved.learnedAliases==='object' ? saved.learnedAliases : {};
         state.customPackages = Array.isArray(saved.customPackages)?saved.customPackages:[];
         state.orderNote = typeof saved.orderNote==='string' ? saved.orderNote : '';
+
+        // Canonicalize old article codes in saved browser state.
+        state.items.forEach(sel=>{ sel.code=canonicalArticleCode(sel.code); });
+        const canonicalStatuses={};
+        Object.entries(state.itemStatuses||{}).forEach(([code,status])=>{
+          canonicalStatuses[canonicalArticleCode(code)]=status;
+        });
+        state.itemStatuses=canonicalStatuses;
+        state.deletedItemCodes=[...new Set((state.deletedItemCodes||[]).map(canonicalArticleCode))];
+        Object.keys(state.learnedAliases||{}).forEach(key=>{
+          state.learnedAliases[key]=canonicalArticleCode(state.learnedAliases[key]);
+        });
+        state.customPackages.forEach(pkg=>{
+          (pkg.items||[]).forEach(it=>{it.code=canonicalArticleCode(it.code);});
+        });
 
         // Legacy order-state migration: G5 dock is superseded by G6.
         state.packages.forEach(sel=>{
@@ -2321,7 +2371,7 @@
   async function copyDynamics(){
     const rows=expandedRows();
     if(!rows.length){toast('Selecteer eerst een pakket of artikel');return;}
-    const txt=rows.map(r=>`${r.code}\t${r.status}`).join('\n');
+    const txt=rows.map(r=>`${canonicalArticleCode(r.code)}\t${r.status}`).join('\n');
     await writeClipboard(txt);
     const serialCount=rows.filter(r=>r.serial).length;
     toast(serialCount
@@ -2502,6 +2552,24 @@
 
   ensureTopdeskUi();
   bindTopdeskUi();
+
+  // Show the version/build of the JavaScript runtime that actually loaded.
+  (function syncRuntimeBuildBadge(){
+    let badge=document.querySelector('.build-badge');
+    if(!badge){
+      const header=document.querySelector('.app-header');
+      if(header){
+        badge=document.createElement('div');
+        badge.className='build-badge';
+        badge.innerHTML='<span class="build-version"></span><span class="build-separator">·</span><span class="build-number"></span>';
+        header.appendChild(badge);
+      }
+    }
+    const versionEl=badge?.querySelector('.build-version');
+    const buildEl=badge?.querySelector('.build-number');
+    if(versionEl)versionEl.textContent=APP_VERSION;
+    if(buildEl)buildEl.textContent='Build '+APP_BUILD;
+  })();
 
     $('tabPackages').addEventListener('click',()=>setView('packages'));
   $('tabItems').addEventListener('click',()=>setView('items'));
