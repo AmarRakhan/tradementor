@@ -491,134 +491,94 @@ class PositiveCanonicalRehedge(unittest.TestCase):
 
 class FourStepRunUidCycle(unittest.TestCase):
  def test_all_four_run_uid_reductions_confirmed_before_next_step(self):
+  """Four canonical mock submits; each next claim requires terminal quantity readback.
+
+  This deliberately does NOT attest funding or trigger a financially unverified
+  rehedge. Financial settlement is a separate, blocked contract.
+  """
   from decimal import Decimal as D
-  from short_recovery_ledger import Ledger,Allocation,Fill
-  from short_recovery_firestore_mock import encode,decode
-  from short_recovery_multidoc_mock import Ref
+  from short_recovery_multidoc_mock import Ref,transactional
+  from short_recovery_order_claim_shadow import canonical_intent_id,submit_once_offline
+  from short_recovery_standalone_offline import RECOVERY
+  from short_recovery_standalone_quantity_settlement_offline import record_confirmed_short_close_offline
+  from aster_gateway import AsterOrderIntent,PositionSide
   h=VerifiedAsterBridge('test_complete_independent_evidence_reaches_atomic_settlement');h.setUp()
-  h.fixture.put('SHORTledger',encode(Ledger('u','XRPUSDT',(Allocation('SHORT','c',D(100)),))))
+  db=h.fixture.db
+  selector=Ref(db,'fourstep-selector');position=Ref(db,'fourstep-position')
+  db.commit(selector.key,0,{'account':'u','activeStrategy':RECOVERY,'offlineOnly':True})
+  db.commit(position.key,0,{'account':'u','symbol':'XRPUSDT','cycle':'c',
+    'state':'ADOPTED_OFFLINE','offlineOnly':True,'pending':False,
+    'anchor':'2','stepPct':'5','steps':4,'originalShortQty':'100',
+    'confirmedClosed':'0'})
   class Exchange:
    offline_mock_only=True
-   def __init__(self):self.short=D(100);self.orders=[];self.fills=[]
+   def __init__(self):
+    self.short=D(100);self.order_id='';self.intent_id='';self.execution=0
    def account_information(self):return {'account':'u','hedgeMode':True}
-   def position_risk(self,s):return [{'symbol':s,'positionSide':'LONG','positionAmt':'100'},{'symbol':s,'positionSide':'SHORT','positionAmt':str(self.short)}]
-   def open_orders(self,s):return self.orders
-   def query_order(self,s,c):return {'symbol':s,'clientOrderId':c,'orderId':'close-final','status':'FILLED','executedQty':'25'}
-   def user_trades(self,s,**kw):return [{'symbol':s,'orderId':'close-final','id':4,'qty':'25','realizedPnl':'1','commission':'.1'}]
-  exchange=Exchange();posts=[];last_close_ref=None
-  from short_recovery_multidoc_mock import Ref
-  marker_ref=Ref(h.fixture.db,('u','XRPUSDT','marker'))
-  owner_ref=Ref(h.fixture.db,('u','XRPUSDT','owner'))
-  h.fixture.db.commit(marker_ref.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','state':'SUSPECT'})
-  h.fixture.db.commit(owner_ref.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c','ownerSide':'SHORT','ownershipVerified':True,'cycleConfirmed':True,'state':'PARTIAL'})
+   def position_risk(self,s):return [
+    {'symbol':s,'positionSide':'LONG','positionAmt':'100'},
+    {'symbol':s,'positionSide':'SHORT','positionAmt':str(self.short)}]
+   def open_orders(self,s):return []
+   def query_order(self,s,c):
+    return {'symbol':s,'clientOrderId':c,'orderId':self.order_id,
+      'status':'FILLED','executedQty':'25'}
+   def user_trades(self,s,**kw):
+    return [{'symbol':s,'orderId':self.order_id,'id':self.execution,
+      'qty':'25','realizedPnl':'1','commission':'.1'}]
+  exchange=Exchange();posts=[];previous_ref=None
   for step,mark in enumerate(('1.90','1.80','1.70','1.60'),1):
-   ref=Ref(h.fixture.db,('u','XRPUSDT','short-close-'+str(step)))
+   ref=Ref(db,('u','XRPUSDT','fourstep-'+str(step)))
    h.fixture.refs['SHORTclaim']=ref
-   def post(intent):posts.append((step,intent.quantity,intent.action));return {'clientOrderId':intent.intent_id,'orderId':'close-'+str(step)}
-   r,_,h=RunUidIntegration().run_case(action_mode='REDUCE',existing_harness=h,
-      reduction_step=step,reduction_mark=mark,confirmed_closed=D(25*(step-1)),
-      mock_transport=post,inventory_mock_client=exchange,
-      previous_close_claim_ref=last_close_ref,
-      inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,'hedgeMode':True,'openOrders':[],'timestampMs':10000,'LONG':'100','SHORT':str(exchange.short)})
-   self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',),repr(r.get('shortRecoveryAction')))
+   order_id='close-'+str(step)
+   def post(intent):
+    posts.append((step,intent.quantity,intent.action))
+    return {'clientOrderId':intent.intent_id,'orderId':order_id}
+   kwargs=dict(action_mode='REDUCE',existing_harness=h,reduction_step=step,
+       reduction_mark=mark,confirmed_closed=D(25*(step-1)),
+       mock_transport=post,inventory_mock_client=exchange,
+       inventory_readback={'account':'u','symbol':'XRPUSDT','verified':True,
+        'hedgeMode':True,'openOrders':[],'timestampMs':10000,
+        'LONG':'100','SHORT':str(exchange.short)})
+   if step>1:
+    kwargs.update(previous_close_claim_ref=previous_ref,
+      initialize_action_claim=False,
+      quantity_handoff_refs={'selector_ref':selector,'position_ref':position},
+      previous_order_mock_client=exchange)
+   result,_,h=RunUidIntegration().run_case(**kwargs)
+   self.assertEqual(result.get('shortRecoverySubmit'),
+       ('SUBMITTED_RECONCILE_ONLY',),repr(result))
    self.assertEqual(posts[-1],(step,D(25),'CLOSE'))
    self.assertEqual(len(posts),step)
-   # Replay of the same canonical claim is never a second order right.
-   from short_recovery_order_claim_shadow import submit_once_offline
-   from aster_gateway import AsterOrderIntent,PositionSide
-   from short_recovery_multidoc_mock import transactional
    claim=h.fixture.snapshot('SHORTclaim')
-   replay=submit_once_offline(db=h.fixture.db,transactional=transactional,claim_ref=ref,
-      control_ref=h.fixture.refs['control'],account='u',symbol='XRPUSDT',cycle='c',
-      intent=AsterOrderIntent(claim['intentId'],'XRPUSDT',PositionSide.SHORT,D(25),'CLOSE'),
-      account_close_guard=lambda:None,submit_mock=post)
+   self.assertEqual(claim['state'],'SUBMITTING')
+   replay=submit_once_offline(db=db,transactional=transactional,claim_ref=ref,
+     control_ref=h.fixture.refs['control'],account='u',symbol='XRPUSDT',cycle='c',
+     intent=AsterOrderIntent(claim['intentId'],'XRPUSDT',PositionSide.SHORT,D(25),'CLOSE'),
+     account_close_guard=lambda:None,submit_mock=post)
    self.assertEqual(replay,'BLOCKED_CLAIM_NOT_RESERVED')
    self.assertEqual(len(posts),step)
-   # Independent mock exchange GETs feed the existing transactional resolver.
-   from short_recovery_aster_readback_mock_adapter import inspect
-   from short_recovery_order_resolution_shadow import resolve
-   from short_recovery_multidoc_mock import transactional
-   order_id='close-'+str(step)
-   exchange.query_order=lambda symbol,cid:{'symbol':symbol,'clientOrderId':cid,'orderId':order_id,'status':'FILLED','executedQty':'25'}
-   exchange.user_trades=lambda symbol,**kw:[{'symbol':symbol,'orderId':order_id,'id':step,'qty':'25','realizedPnl':'1','commission':'.1'}]
-   readback=inspect(exchange,symbol='XRPUSDT',client_order_id=claim['intentId'])
-   self.assertEqual(readback['status'],'READBACK_PREVIEW')
-   self.assertEqual(readback['orderStatus'],'FILLED')
-   self.assertEqual(len(readback['fills']),1)
-   f=readback['fills'][0]
-   self.assertEqual(f['quantity'],D(25))
-   def settle(event,evidence=None,execution_id=None,quantity=None):
-    return resolve(db=h.fixture.db,transactional=transactional,
-       claim_ref=ref,ledger_ref=h.fixture.refs['SHORTledger'],
-       marker_ref=marker_ref,owner_ref=owner_ref,account='u',symbol='XRPUSDT',cycle='c',
-       intent_id=claim['intentId'],event=event,evidence=evidence,
-       execution_id=execution_id,quantity=quantity)
-   self.assertEqual(settle('LATE_ACK',{'confirmed':True,'orderId':order_id}),'ACKED_RECOVERED')
-   proof={'confirmed':True,'readbackVerified':True,'orderId':order_id,
-       'executionId':f['executionId'],'quantity':str(f['quantity']),
-       'realizedPnl':str(f['realizedPnl']),'commission':str(f['fee']),'funding':'-.05',
-       'fundingOwnershipVerified':True,'financialVerified':True}
-   self.assertEqual(settle('FILL',proof,f['executionId'],f['quantity']),'FILL_APPLIED')
-   self.assertEqual(settle('FILL',proof,f['executionId'],f['quantity']),'ALREADY_APPLIED' if step<4 else 'ALREADY_TERMINAL')
-   exchange.short-=D(25)
-   self.assertEqual(decode(h.fixture.snapshot('SHORTledger')).allocations[0].remaining,exchange.short)
-   self.assertEqual(h.fixture.snapshot('SHORTclaim')['executedQty'],'25')
-   self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'CLOSED' if step==4 else 'PARTIAL')
-   last_close_ref=ref
+   # Simulated order execution occurs only after this exact one-time mock post.
+   exchange.short-=D(25);exchange.order_id=order_id
+   exchange.intent_id=claim['intentId'];exchange.execution=step
+   h.fixture.put('SHORTclaim',{**claim,'orderId':order_id})
+   verified=record_confirmed_short_close_offline(db=db,transactional=transactional,
+     selector_ref=selector,position_ref=position,claim_ref=ref,
+     coordination_ref=Ref(db,('u','XRPUSDT','coordination')),
+     control_ref=h.fixture.refs['control'],client=exchange,
+     account='u',symbol='XRPUSDT',cycle='c',step=step,expected_quantity=D(25))
+   self.assertEqual(verified,'QUANTITY_RECORDED_UNSETTLED_NO_HANDOFF')
+   self.assertEqual(db.snapshot(position.key)[1]['confirmedClosed'],str(D(25)*step))
+   self.assertEqual(db.snapshot(ref.key)[1]['offlineFundingStatus'],'UNRECONCILED')
+   self.assertFalse(db.snapshot(ref.key)[1]['offlineNextClaimAuthorized'])
+   previous_ref=ref
   self.assertEqual(exchange.short,D(0))
-  # The new 1:1 opening is distinct from all four prior close claims.
-  exchange.query_order=lambda s,c:{'symbol':s,'clientOrderId':c,'orderId':'close-4','status':'FILLED','executedQty':'25'}
-  exchange.user_trades=lambda s,**kw:[{'symbol':s,'orderId':'close-4','id':4,'qty':'25','realizedPnl':'1','commission':'.1'}]
-  h.fixture.refs['SHORTclaim']=Ref(h.fixture.db,('u','XRPUSDT','short-open-cycle-2'))
-  def open_post(intent):posts.append(('open',intent.quantity,intent.action));return {'orderId':'mock-rehedge'}
-  r,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',existing_harness=h,
-     final_short_close_claim_ref=last_close_ref,inventory_mock_client=exchange,
-     mock_transport=open_post)
-  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',))
-  self.assertEqual(posts[-1],('open',D(100),'OPEN'))
-  self.assertEqual(len(posts),5)
-  # Finality of the SAME four-step CLOSED claim grants one isolated mock
-  # rehedge cycle reservation, never a repeat authorization.
-  from datetime import datetime,timedelta,timezone
-  from short_recovery_lease_fence_offline import reserve_verified_rehedge_mock_only
-  from short_recovery_order_claim_shadow import canonical_intent_id
-  now=datetime.now(timezone.utc)
-  coordination_ref=Ref(h.fixture.db,('u','XRPUSDT','coordination'))
-  h.fixture.db.commit(coordination_ref.key,0,{'lease':{'token':'mock-rehedge-token','until':now+timedelta(seconds=45)}})
-  next_id=canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c2',side='SHORT',action='OPEN',step=0)
-  def reserve_next():
-   return reserve_verified_rehedge_mock_only(mock_only=True,db=h.fixture.db,
-       transactional=transactional,coordination_ref=coordination_ref,
-       owner_ref=owner_ref,final_claim_ref=last_close_ref,
-       control_ref=h.fixture.refs['control'],account='u',symbol='XRPUSDT',
-       old_cycle='c',new_cycle='c2',lease_token='mock-rehedge-token',
-       intent_id=next_id,now=now,client=exchange,long_qty=D(100),now_ms=10000)
-  saved_query=exchange.query_order
-  exchange.query_order=lambda symbol,cid:None
-  self.assertEqual(reserve_next(),'BLOCKED_REHEDGE_FINAL_READBACK')
-  exchange.query_order=saved_query
-  self.assertEqual(reserve_next(),'RESERVED_REHEDGE_MOCK_ONLY')
-  self.assertEqual(reserve_next(),'BLOCKED_FENCE_ALREADY_RESERVED')
-  self.assertEqual(h.fixture.db.snapshot(coordination_ref.key)[1]['recoveryFenceReservation']['state'],'REHEDGE_MOCK_SUBMITTING')
-  # Restart after the OPEN submit: the persisted canonical claim has no
-  # replacement submit right, while the final CLOSE claim stays CLOSED.
-  open_claim_key=h.fixture.refs['SHORTclaim'].key
-  h.fixture.db=h.fixture.db.restart();h.fixture.bind()
-  h.fixture.refs['SHORTclaim']=Ref(h.fixture.db,open_claim_key)
-  self.assertEqual(h.fixture.snapshot('SHORTclaim')['state'],'SUBMITTING')
-  self.assertEqual(Ref(h.fixture.db,last_close_ref.key).get(transaction=h.fixture.db.transaction()).to_dict()['state'],'CLOSED')
-  rerun,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',existing_harness=h,
-      initialize_action_claim=False,final_short_close_claim_ref=Ref(h.fixture.db,last_close_ref.key),
-      inventory_mock_client=exchange,mock_transport=open_post)
-  self.assertNotIn(('SUBMITTED_RECONCILE_ONLY',),[rerun.get('shortRecoverySubmit')])
-  self.assertEqual(len(posts),5)
-
-  # Four canonical mock CLOSE claims and the separate OPEN claim do not
-  # establish exchange funding provenance or authorize pair net TP.
+  self.assertEqual(len(posts),4)
+  self.assertEqual(db.snapshot(position.key)[1]['confirmedClosed'],'100')
+  # Zero inventory + last fill is NOT complete funding settlement.
+  self.assertEqual(db.snapshot(previous_ref.key)[1]['offlineFinancialSettlement'],'PENDING')
   from short_recovery_funding_provenance_decision import decide, NO_GO
   self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',
-      financial_proof={'incomeHistoryComplete':True,'ownershipVerified':True}),NO_GO)
-  self.assertNotEqual(r.get('shortRecoveryPairSettlement'),'PAIR_CLOSED_VERIFIED')
+    financial_proof={'incomeHistoryComplete':True,'ownershipVerified':True}),NO_GO)
 
 class Build66RecoverySafety(unittest.TestCase):
  def test_two_workers_one_canonical_mock_post_and_stop(self):
