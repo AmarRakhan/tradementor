@@ -119,4 +119,31 @@ class CombinedRehedge(unittest.TestCase):
   self.client.open_status='FILLED';self.client.short='100';self.client.mock_fill()
   self.put('coord',{'recoveryFenceReservation':{'state':'stale'}})
   self.assertEqual(self.activate(),'BLOCKED_REHEDGE_FENCE')
+ def test_expired_lease_blocks_new_rehedge_claim(self):
+  self.put('coord',{'recoveryFenceReservation':{'account':'u','symbol':'XRPUSDT',
+   'cycle':'c','intentId':self.old,'state':'RECOVERY_SUBMITTING_RECONCILE_ONLY'},
+   'lease':{'token':'lease-2','until':self.now-timedelta(seconds=1)}})
+  self.assertEqual(self.reserve(),'BLOCKED_LEASE_EXPIRED')
+  self.assertIsNone(self.db.snapshot('open')[1])
+  self.assertEqual(self.client.posts,0)
+
+ def test_unknown_mock_submit_restart_never_reposts(self):
+  self.assertEqual(self.reserve(),'RESERVED_REHEDGE_MOCK_ONLY')
+  def timeout(_):
+   self.client.posts+=1
+   raise TimeoutError('offline uncertain result')
+  intent=AsterOrderIntent(self.new,'XRPUSDT',PositionSide.SHORT,D(100),'OPEN')
+  outcome=submit_once_offline(db=self.db,transactional=transactional,
+   claim_ref=self.r['open'],control_ref=self.r['control'],coordination_ref=self.r['coord'],
+   require_shared_fence=True,standalone_selector_ref=self.r['selector'],
+   account='u',symbol='XRPUSDT',cycle='c2',intent=intent,
+   account_close_guard=lambda:None,submit_mock=timeout)
+  self.assertEqual(outcome,'UNKNOWN_RECONCILE_ONLY')
+  self.assertEqual(self.client.posts,1)
+  self.db=self.db.restart()
+  self.r={k:Ref(self.db,k) for k in self.r}
+  self.assertEqual(self.submit(),'BLOCKED_CLAIM_NOT_RESERVED')
+  self.assertEqual(self.client.posts,1)
+  self.assertEqual(self.db.snapshot('position')[1]['cycle'],'c')
+
 if __name__=='__main__':unittest.main()
