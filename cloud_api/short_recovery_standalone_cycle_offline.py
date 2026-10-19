@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from short_recovery_contract import Plan
 from short_recovery_reduction import ReductionState, plan_reduction
 from short_recovery_standalone_offline import RECOVERY
+from short_recovery_minimum_order_preview_offline import preview_minimum_aware_reduction
 
 
 def _decimal(value):
@@ -17,7 +18,8 @@ def _decimal(value):
 
 def preview_cycle(*, active_strategy, account, position, exchange, mark,
                   auto_hedge_loss_usd, open_long_pnl, stop=False,
-                  close_all=False, pending=False, final_order_verified=False):
+                  close_all=False, pending=False, final_order_verified=False,
+                  exchange_filters=None):
     """One action preview; independent of Classic strategy and financial income.
 
     Caller must establish authentic exchange inventory before a future submit.
@@ -63,8 +65,21 @@ def preview_cycle(*, active_strategy, account, position, exchange, mark,
             return {'status':'PREVIEW_IMMEDIATE_REHEDGE','side':'SHORT','action':'OPEN',
                     'quantity':long,'newCycleRequired':True,'requiresCanonicalOrderClaim':True,
                     'requiresImmediateInventoryReadback':True}
-        reduced=plan_reduction(ReductionState(plan,closed,_decimal(mark)))
-        if reduced['status']!='PREVIEW_REDUCE_ONLY':return reduced
+        reduction_state=ReductionState(plan,closed,_decimal(mark))
+        if exchange_filters is not None:
+            if not isinstance(exchange_filters,dict):
+                return {'status':'BLOCKED_EXCHANGE_FILTER'}
+            required=('minimum_qty','quantity_step','minimum_notional','executable_price')
+            if any(k not in exchange_filters for k in required):
+                return {'status':'BLOCKED_EXCHANGE_FILTER'}
+            reduced=preview_minimum_aware_reduction(
+                state=reduction_state,exchange_short_qty=short,
+                **{k:exchange_filters[k] for k in required})
+            if reduced['status']!='PREVIEW_MINIMUM_VALID_REDUCE_ONLY':
+                return reduced
+        else:
+            reduced=plan_reduction(reduction_state)
+        if reduced['status'] not in ('PREVIEW_REDUCE_ONLY','PREVIEW_MINIMUM_VALID_REDUCE_ONLY'):return reduced
         due=reduced['due_qty']
         if due<=0 or due>short:return {'status':'BLOCKED_OVER_CLOSE'}
         return {'status':'PREVIEW_SHORT_REDUCE','side':'SHORT','action':'CLOSE',
