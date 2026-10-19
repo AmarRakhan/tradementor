@@ -32,6 +32,23 @@ class Bridge(unittest.TestCase):
     recovery_fence_required_symbols={'XRPUSDT'})
   self.assertEqual(result['ordersSent'],0)
   self.assertEqual(result['actions'][0]['reason'],'RECOVERY_SHARED_FENCE_REQUIRED')
+ def test_malformed_existing_recovery_fence_blocks_normal_hedge(self):
+  from short_recovery_lease_fence_offline import reserve_normal_hedge_mock_only
+  from short_recovery_multidoc_mock import transactional
+  for malformed in ('UNKNOWN', [], {'unverified':'claim'}):
+   with self.subTest(malformed=malformed):
+    f=LeaseFence();f.setUp()
+    for key in ('owner','claim'):
+     v,_=f.db.snapshot(key);f.db.commit(key,v,None)
+    v,coord=f.db.snapshot('lease')
+    f.db.commit('lease',v,{**coord,'recoveryFenceReservation':malformed})
+    result=reserve_normal_hedge_mock_only(mock_only=True,db=f.db,transactional=transactional,
+     coordination_ref=f.refs['lease'],owner_ref=f.refs['owner'],claim_ref=f.refs['claim'],
+     control_ref=f.refs['control'],account='u',symbol='XRPUSDT',lease_token='t',
+     intent_id='offline-normal',now=f.now)
+    self.assertEqual(result,'BLOCKED_FENCE_ALREADY_RESERVED')
+    self.assertEqual(f.db.snapshot('lease')[1]['recoveryFenceReservation'],malformed)
+
  def test_normal_one_to_one_mock_submit_without_recovery(self):
   class OfflineClient(Client):
    def __init__(self):self.submitted=[]

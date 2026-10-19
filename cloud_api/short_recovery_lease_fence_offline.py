@@ -118,7 +118,7 @@ def reserve_normal_hedge_mock_only(*,mock_only,db,transactional,coordination_ref
         claim=claim_ref.get(transaction=tx).to_dict()
         control=control_ref.get(transaction=tx).to_dict()
         if not isinstance(coord,dict):return 'BLOCKED_COORDINATION_MISSING'
-        if isinstance(coord.get('recoveryFenceReservation'),dict):return 'BLOCKED_FENCE_ALREADY_RESERVED'
+        if coord.get('recoveryFenceReservation') is not None:return 'BLOCKED_FENCE_ALREADY_RESERVED'
         lease=coord.get('lease')
         if not isinstance(lease,dict) or lease.get('token')!=lease_token:return 'BLOCKED_LEASE_STALE'
         until=lease.get('until')
