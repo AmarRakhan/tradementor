@@ -95,7 +95,8 @@ class CombinedRehedge(unittest.TestCase):
   self.assertEqual((p['cycle'],p['anchor'],p['originalShortQty']),('c2','2.5','100'))
   self.assertEqual(self.db.snapshot('prior')[1]['financialSettlement'],'UNRECONCILED')
   self.assertEqual(self.client.posts,1)
-  self.assertEqual(self.reserve(),'BLOCKED_REHEDGE_NEW_CLAIM_EXISTS')
+  self.assertEqual(self.reserve(),'BLOCKED_REHEDGE_FINAL_READBACK')
+  self.assertEqual(self.client.posts,1)
  def test_concurrent_worker_orders_and_restart(self):
   with ThreadPoolExecutor(max_workers=2) as pool:
    status=list(pool.map(lambda _:self.reserve(),(1,2)))
