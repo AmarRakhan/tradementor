@@ -432,7 +432,8 @@ def reconcile_auto_hedge(
         # In live mode never compute or submit a legacy Auto Hedge top-up for
         # a Recovery-fenced symbol. The existing isolated Recovery claim CAS
         # is the only allowed route for its next action.
-        if action.symbol in (recovery_fence_required_symbols or set()):
+        if (action.symbol in (recovery_fence_required_symbols or set()) and
+                pre_order_fence is None):
             row.update({'status':'BLOCKED',
                         'reason':'RECOVERY_CANONICAL_EXECUTOR_ONLY',
                         'filledQty':0.0})
