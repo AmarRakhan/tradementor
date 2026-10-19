@@ -700,7 +700,25 @@ def _run_uid(
                                     cycle=ctx['cycle'],side='SHORT',action='CLOSE',step=scope_step-1)
                                 prior_client=action_ctx.get('previous_order_mock_client')
                                 prior_window=action_ctx.get('previous_funding_window')
-                                if (prior_client is None or not isinstance(prior_window,dict) or
+                                quantity_refs=action_ctx.get('quantity_handoff_refs')
+                                if (isinstance(quantity_refs,dict) and
+                                        prior_client is not None and
+                                        action_ctx.get('quantity_handoff_mock_only') is True and
+                                        all(quantity_refs.get(key) is not None for key in
+                                            ('selector_ref','position_ref')) and
+                                        ctx.get('coordination_ref') is not None):
+                                    from short_recovery_quantity_handoff_authorization_offline import handoff_verified_quantity_offline
+                                    report['shortRecoveryStepHandoff']=handoff_verified_quantity_offline(
+                                        mock_only=True,db=ctx['db'],transactional=ctx['transactional'],
+                                        client=prior_client,selector_ref=quantity_refs['selector_ref'],
+                                        position_ref=quantity_refs['position_ref'],
+                                        previous_claim_ref=action_ctx['previous_claim_ref'],
+                                        next_claim_ref=action_ctx['claim_ref'],
+                                        coordination_ref=ctx['coordination_ref'],control_ref=ctx['control_ref'],
+                                        account=uid,symbol=symbol,cycle=ctx['cycle'],
+                                        next_step=scope_step,exchange_short_quantity=action_ctx['short_qty'])
+                                    report['shortRecoveryQuantityHandoff']=report['shortRecoveryStepHandoff']
+                                elif (prior_client is None or not isinstance(prior_window,dict) or
                                         type(prior_window.get('startMs')) is not int or
                                         type(prior_window.get('endMs')) is not int):
                                     report['shortRecoveryStepHandoff']='BLOCKED_INDEPENDENT_FINANCIAL_READBACK_REQUIRED'
@@ -729,7 +747,7 @@ def _run_uid(
                             rehedge_cycle=action_ctx.get('new_cycle')
                             is_new_rehedge=(bool(rehedge_cycle) and action_ctx.get('new_short_open_claim_ref') is not None)
                             prior_handoff=report.get('shortRecoveryStepHandoff')
-                            preflight=(prior_handoff if prior_handoff is not None and prior_handoff!='HANDOFF_VERIFIED_OFFLINE'
+                            preflight=(prior_handoff if prior_handoff is not None and prior_handoff not in ('HANDOFF_VERIFIED_OFFLINE','QUANTITY_HANDOFF_RESERVED_OFFLINE')
                                 else 'PREFLIGHT_SHADOW_ONLY' if is_new_rehedge else pre_submit_check(
                                 db=ctx["db"], transactional=ctx["transactional"],
                                 claim_ref=action_ctx["claim_ref"], control_ref=ctx["control_ref"],
