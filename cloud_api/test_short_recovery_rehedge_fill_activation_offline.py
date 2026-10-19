@@ -39,6 +39,23 @@ class Activation(unittest.TestCase):
   self.assertEqual(self.db.snapshot('claim')[1]['state'],'FILLED_QUANTITY_OFFLINE')
   self.assertEqual(self.db.snapshot('coord')[1]['recoveryFenceReservation']['state'],'REHEDGE_SUBMITTING_RECONCILE_ONLY')
   self.assertEqual(self.call(),'BLOCKED_OPEN_CLAIM')
+ def test_new_anchor_is_weighted_by_independent_fill_quantities(self):
+  self.client.user_trades=lambda s,**kw:[
+   {'symbol':s,'orderId':'open-2','id':99,'qty':'40','price':'2'},
+   {'symbol':s,'orderId':'open-2','id':100,'qty':'60','price':'3'}]
+  self.assertEqual(self.call(),'NEW_CYCLE_FILL_VERIFIED_FENCE_LOCKED')
+  self.assertEqual(self.db.snapshot('position')[1]['anchor'],'2.6')
+  self.assertEqual(self.db.snapshot('claim')[1]['executedQty'],'100')
+ def test_incomplete_or_duplicate_fills_never_activate_cycle(self):
+  self.client.user_trades=lambda s,**kw:[
+   {'symbol':s,'orderId':'open-2','id':99,'qty':'50','price':'2.5'}]
+  self.assertEqual(self.call(),'BLOCKED_INDEPENDENT_REHEDGE_FILL')
+  self.assertEqual(self.db.snapshot('position')[1]['cycle'],'c')
+  self.client.user_trades=lambda s,**kw:[
+   {'symbol':s,'orderId':'open-2','id':99,'qty':'50','price':'2.5'},
+   {'symbol':s,'orderId':'open-2','id':99,'qty':'50','price':'2.5'}]
+  self.assertEqual(self.call(),'BLOCKED_INDEPENDENT_REHEDGE_FILL')
+  self.assertEqual(self.db.snapshot('position')[1]['cycle'],'c')
  def test_partial_unknown_dust_and_open_orders(self):
   self.client.status='PARTIALLY_FILLED';self.assertEqual(self.call(),'BLOCKED_INDEPENDENT_REHEDGE_FILL')
   self.client.status='FILLED';self.client.short='99';self.assertEqual(self.call(),'BLOCKED_INDEPENDENT_REHEDGE_FILL')
