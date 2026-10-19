@@ -53,6 +53,15 @@ class QuantityHandoffReadback(unittest.TestCase):
     def test_drift_rejected(self):
         self.client.drift=True
         self.assertEqual(self.handoff(),'BLOCKED_INDEPENDENT_INVENTORY_READBACK')
+    def test_inventory_change_during_execution_readback_blocks_handoff(self):
+        original=self.client.query_order
+        def change_after_order_lookup(symbol,client_id):
+            self.client.short='74'
+            return original(symbol,client_id)
+        self.client.query_order=change_after_order_lookup
+        self.assertEqual(self.handoff(),'BLOCKED_INVENTORY_CHANGED_DURING_READBACK')
+        self.assertIsNone(self.db.snapshot('next')[1])
+
     def test_pending_open_orders_rejected(self):
         self.client.orders=[{'orderId':'open'}]
         self.assertEqual(self.handoff(),'BLOCKED_INDEPENDENT_INVENTORY_READBACK')
