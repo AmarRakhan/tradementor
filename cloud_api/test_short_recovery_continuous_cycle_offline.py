@@ -120,6 +120,22 @@ class ContinuousRecoveryCycle(unittest.TestCase):
    coordination_ref=coord,control_ref=control,account='u',symbol='XRPUSDT',
    cycle='c',step=steps,long_qty=D(100)),
    'QUANTITY_CYCLE_TERMINAL_UNSETTLED_FENCE_LOCKED')
+  from short_recovery_readback_completeness_shadow import inspect_completeness
+  claim=db.snapshot(final_ref.key)[1]
+  class ExchangeFinancialReads:
+   def query_order(self,symbol,cid):
+    return {'symbol':symbol,'clientOrderId':cid,'orderId':claim['orderId'],
+     'status':'FILLED','executedQty':claim['executedQty']}
+   def user_trades(self,symbol,**kwargs):
+    return [{'symbol':symbol,'orderId':claim['orderId'],'id':1000+steps,
+     'qty':claim['executedQty'],'realizedPnl':'1.25','commission':'0.07'}]
+   def income_history(self,**kwargs):
+    return [{'symbol':'XRPUSDT','incomeType':'FUNDING_FEE',
+     'tranId':'funding-'+str(steps),'time':1000,'income':'-0.03'}]
+  financial=inspect_completeness(ExchangeFinancialReads(),symbol='XRPUSDT',
+   client_order_id=claim['intentId'])
+  self.assertEqual(financial['status'],'BLOCKED_FUNDING_ATTRIBUTION')
+  self.assertFalse(financial['complete'])
   self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',
    income_rows=[{'incomeType':'FUNDING_FEE','income':'0','symbol':'XRPUSDT'}],
    financial_proof={'financialVerified':True,'fundingOwnershipVerified':True}),NO_GO)
