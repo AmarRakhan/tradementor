@@ -92,7 +92,7 @@ def preview_adopted_reduction(*, db, selector_ref, position_ref, account, mark):
     try:
         selector = selector_ref.get(transaction=db.transaction()).to_dict()
         position = position_ref.get(transaction=db.transaction()).to_dict()
-        if not isinstance(selector, dict) or selector.get('account') != account or selector.get('activeStrategy') != RECOVERY or not isinstance(position, dict) or position.get('account') != account or position.get('state') != 'ADOPTED_OFFLINE':
+        if not isinstance(selector, dict) or selector.get('account') != account or selector.get('activeStrategy') != RECOVERY or selector.get('offlineOnly') is not True or not isinstance(position, dict) or position.get('account') != account or position.get('offlineOnly') is not True or position.get('state') != 'ADOPTED_OFFLINE':
             return {'status': 'BLOCKED_STRATEGY_OR_ADOPTION'}
         plan = Plan(Decimal(position['anchor']), Decimal(position['originalShortQty']),
                     Decimal(position['stepPct']), position['steps'])

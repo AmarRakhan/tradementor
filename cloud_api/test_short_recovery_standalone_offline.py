@@ -42,6 +42,22 @@ class StandaloneOffline(unittest.TestCase):
                 position_ref=self.position,account='u',mark=100-step*2)
             self.assertEqual(result['due_qty'],D(10))
 
+    def test_recovery_preview_rejects_nonoffline_selector_or_position(self):
+        self.assertEqual(self.choose(), 'SELECTED_OFFLINE_PENDING_ADOPTION')
+        self.assertEqual(self.adopt(), 'ADOPTED_OFFLINE')
+        args=dict(db=self.db,selector_ref=self.selector,position_ref=self.position,
+                  account='u',mark=98)
+        self.assertEqual(preview_adopted_reduction(**args)['due_qty'],D(10))
+        for key,ref in (('selector',self.selector),('position',self.position)):
+            for invalid in (False,None,'true'):
+                with self.subTest(key=key,invalid=invalid):
+                    version,row=self.db.snapshot(ref.key)
+                    self.db.commit(ref.key,version,{**row,'offlineOnly':invalid})
+                    self.assertEqual(preview_adopted_reduction(**args)['status'],
+                                     'BLOCKED_STRATEGY_OR_ADOPTION')
+                    version,_=self.db.snapshot(ref.key)
+                    self.db.commit(ref.key,version,row)
+
     def test_classic_is_unmodified_and_blocks_recovery(self):
         self.assertEqual(self.choose(CLASSIC),'SELECTED_CLASSIC_OFFLINE')
         self.assertEqual(self.adopt(),'BLOCKED_STRATEGY_NOT_SELECTED')
