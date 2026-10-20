@@ -48,6 +48,36 @@ class EmulatorIntegration(unittest.TestCase):
   ledger=decode(self.refs['ledger'].get().to_dict())
   self.assertEqual(ledger.allocations[0].remaining,D(75))
   self.assertEqual(ledger.cycle_realized('c'),D('1.85'))
+ def test_real_firestore_owner_to_autohedge_no_topup_after_client_restart(self):
+  from unittest.mock import patch
+  from short_recovery_gate import partition_reconciliation
+  from aster_position_loss_auto_hedge import reconcile_auto_hedge
+  class NoTransport:
+   def position_mode(self):return True
+   def account_information(self):return {'availableBalance':'100000'}
+   def query_order(self,*args,**kwargs):return None
+   def submit_order_once(self,*args,**kwargs):raise AssertionError('NO_SHORT_TOPUP_ALLOWED')
+  for steps in (4,10):
+   with self.subTest(steps=steps):
+    self.refs['owner'].update({'remainingShort':str(D(100)-D(100)/steps)})
+    self.client=self.firestore.Client(project='amar-short-recovery-offline-test')
+    stored=self.refs['owner'].get().to_dict()
+    partition=partition_reconciliation(settings={'enabled':True,'steps':steps,'stepPct':'5'},
+       protected_sides={'XRPUSDT':'LONG'},existing_skip_symbols=set(),
+       recovery_cycles={'XRPUSDT':stored})
+    owned=partition['shadow_skip']-partition['legacy_skip']
+    self.assertEqual(owned,{'XRPUSDT'})
+    rows=[{'symbol':'XRPUSDT','positionSide':'LONG','positionAmt':'100',
+       'unRealizedProfit':'-20','markPrice':'1.8','leverage':'10'},
+       {'symbol':'XRPUSDT','positionSide':'SHORT','positionAmt':str(-(D(100)-D(100)/steps)),
+       'unRealizedProfit':'0','markPrice':'1.8'}]
+    with patch('aster_position_loss_auto_hedge._exchange_rule',return_value=object()),patch('aster_position_loss_auto_hedge._exact_market_quantity',return_value=D(100)/steps):
+     result=reconcile_auto_hedge(client=NoTransport(),uid='u',threshold_usd=1,
+       execute=True,protected_sides={'XRPUSDT':'LONG'},positions=rows,
+       open_orders=[],recovery_owned_symbols=owned,pre_order_fence=lambda *args:True)
+    self.assertEqual(result['ordersSent'],0)
+    self.assertIn('RECOVERY_OWNS_SHORT_NO_TOPUP',[a.get('reason') for a in result['actions']])
+
  def test_concurrent_claims_single_winner(self):
   import concurrent.futures
   import threading
