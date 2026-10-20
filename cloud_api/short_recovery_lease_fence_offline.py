@@ -247,7 +247,7 @@ def reserve_rehedge_mock_only(*,mock_only,db,transactional,coordination_ref,
     except Exception:return 'BLOCKED_TRANSACTION_FAILURE'
 
 
-def reserve_verified_rehedge_mock_only(*,mock_only,db,transactional,coordination_ref,owner_ref,final_claim_ref,control_ref,account,symbol,old_cycle,new_cycle,lease_token,intent_id,now,client,long_qty,now_ms,new_claim_ref=None,allow_quantity_terminal_fence=False):
+def reserve_verified_rehedge_mock_only(*,mock_only,db,transactional,coordination_ref,owner_ref,final_claim_ref,control_ref,account,symbol,old_cycle,new_cycle,lease_token,intent_id,now,client,long_qty,now_ms,new_claim_ref=None,allow_quantity_terminal_fence=False,require_financial_finality=True):
     """Do not accept a caller-supplied finality boolean; re-verify the canonical
     CLOSED claim and mock exchange financial/inventory evidence before reserving.
     The transaction rechecks the final claim but this is not live authorization.
@@ -264,4 +264,5 @@ def reserve_verified_rehedge_mock_only(*,mock_only,db,transactional,coordination
         control_ref=control_ref,account=account,symbol=symbol,old_cycle=old_cycle,
         new_cycle=new_cycle,lease_token=lease_token,intent_id=intent_id,now=now,
         final_readback_verified=True,new_claim_ref=new_claim_ref,
-        allow_quantity_terminal_fence=allow_quantity_terminal_fence)
+        allow_quantity_terminal_fence=allow_quantity_terminal_fence,
+        require_financial_finality=require_financial_finality)

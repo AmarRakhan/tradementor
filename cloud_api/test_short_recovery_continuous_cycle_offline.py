@@ -50,7 +50,7 @@ class ContinuousRecoveryCycle(unittest.TestCase):
     new_claim_ref=new_ref,control_ref=control,account='u',symbol='XRPUSDT',
     old_cycle='c',new_cycle='c2',lease_token='new-lease',intent_id=new_id,
     now=now,long_qty=D(100),now_ms=10000,
-    allow_quantity_terminal_fence=True)
+    allow_quantity_terminal_fence=True,require_financial_finality=False)
   with ThreadPoolExecutor(max_workers=2) as pool:
    results=list(pool.map(lambda _:reserve(),range(2)))
   self.assertEqual(results.count('RESERVED_REHEDGE_MOCK_ONLY'),1)

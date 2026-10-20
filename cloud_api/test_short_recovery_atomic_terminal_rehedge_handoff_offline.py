@@ -38,7 +38,7 @@ class AtomicTerminalHandoff(unittest.TestCase):
     owner_ref=self.owner,final_claim_ref=self.f.refs['SHORTclaim'],control_ref=self.f.refs['control'],
     account='u',symbol='XRPUSDT',old_cycle='c',new_cycle='c2',lease_token='new-cycle-lease',
     intent_id=self.new_id,now=self.now,client=self.client,long_qty=D(100),now_ms=10000,
-    new_claim_ref=self.new,allow_quantity_terminal_fence=True)
+    new_claim_ref=self.new,allow_quantity_terminal_fence=True,require_financial_finality=False)
   data.update(kwargs)
   return reserve_verified_rehedge_mock_only(**data)
  def test_atomically_transfers_old_fence_to_new_claim_once(self):
@@ -70,5 +70,6 @@ class AtomicTerminalHandoff(unittest.TestCase):
   self.assertEqual(self.reserve(),'BLOCKED_STOP')
  def test_no_opt_in_or_stale_lease(self):
   self.assertEqual(self.reserve(allow_quantity_terminal_fence=False),'BLOCKED_FENCE_ALREADY_RESERVED')
+  self.assertEqual(self.reserve(require_financial_finality=True),'BLOCKED_FINANCIAL_FINALITY_UNVERIFIED')
   self.assertEqual(self.reserve(lease_token='stale'),'BLOCKED_LEASE_STALE')
 if __name__=='__main__':unittest.main()

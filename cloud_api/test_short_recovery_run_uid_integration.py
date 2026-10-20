@@ -495,8 +495,9 @@ class PositiveCanonicalRehedge(unittest.TestCase):
   r,_,h=RunUidIntegration().run_case(action_mode='REHEDGE',existing_harness=h,
       final_short_close_claim_ref=final_ref,inventory_mock_client=Client(),
       mock_transport=transport,initialize_action_claim=False,rehedge_scope=scope)
-  self.assertEqual(r['shortRecoverySubmit'],('SUBMITTED_RECONCILE_ONLY',),repr((transport.call_args_list,h.fixture.snapshot('SHORTclaim'),r.get('shortRecoveryAction'))))
-  transport.assert_called_once()
+  self.assertEqual(r['shortRecoveryAction']['status'],'BLOCKED_FINANCIAL_FINALITY_UNVERIFIED',r)
+  self.assertNotIn('shortRecoverySubmit',r)
+  transport.assert_not_called()
 
 class FourStepRunUidCycle(unittest.TestCase):
  def test_all_four_run_uid_reductions_confirmed_before_next_step(self):

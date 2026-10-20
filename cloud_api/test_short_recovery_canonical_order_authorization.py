@@ -220,9 +220,10 @@ class CanonicalOrderAuthorization(unittest.TestCase):
             existing_harness=h,final_short_close_claim_ref=old,
             inventory_mock_client=OfflineClient(),mock_transport=sent,
             initialize_action_claim=False,rehedge_scope=scope)
-        self.assertEqual(report.get('shortRecoverySubmit'),
-            ('SUBMITTED_RECONCILE_ONLY',),report)
-        sent.assert_called_once()
-        self.assertEqual(h.fixture.db.snapshot(opened.key)[1]['state'],'SUBMITTING')
+        self.assertEqual(report['shortRecoveryAction']['status'],
+            'BLOCKED_FINANCIAL_FINALITY_UNVERIFIED',report)
+        self.assertIsNone(report.get('shortRecoverySubmit'))
+        sent.assert_not_called()
+        self.assertIsNone(h.fixture.db.snapshot(opened.key)[1])
         self.assertEqual(h.fixture.db.snapshot(old.key)[1]['state'],'CLOSED')
-        self.assertEqual(h.fixture.db.snapshot(coord.key)[1]['recoveryFenceReservation']['cycle'],'c2')
+        self.assertIsNone(h.fixture.db.snapshot(coord.key)[1].get('recoveryFenceReservation'))

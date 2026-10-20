@@ -67,7 +67,7 @@ class CombinedRehedge(unittest.TestCase):
    control_ref=self.r['control'],account='u',symbol='XRPUSDT',old_cycle='c',
    new_cycle='c2',lease_token='lease-2',intent_id=self.new,now=self.now,
    client=self.client,long_qty=D(100),now_ms=10000,new_claim_ref=self.r['open'],
-   allow_quantity_terminal_fence=True)
+   allow_quantity_terminal_fence=True,require_financial_finality=False)
  def submit(self):
   return submit_once_offline(db=self.db,transactional=transactional,
    claim_ref=self.r['open'],control_ref=self.r['control'],coordination_ref=self.r['coord'],
