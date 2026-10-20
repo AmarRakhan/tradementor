@@ -637,6 +637,9 @@ def _run_uid(
             # Offline-owned Recovery symbols cannot acquire an unfenced topup.
             # This is a deny-only gate; it does not authorize live execution.
             recovery_fence_required_symbols=(recovery_offline_partition["shadow_skip"] - recovery_offline_partition["legacy_skip"] if recovery_offline_partition else None),
+            # Same verified offline ownership set also enforces the reconciler's
+            # unconditional deny-only no-topup gate; no live permission added.
+            recovery_owned_symbols=(recovery_offline_partition["shadow_skip"] - recovery_offline_partition["legacy_skip"] if recovery_offline_partition else None),
             # The canonical offline reconciler fence never grants exchange rights.
             # Only a caller-provided mock transaction bridge may be injected.
             pre_order_fence=(offline_pair_settlement.get("autohedge_pre_order_fence")
