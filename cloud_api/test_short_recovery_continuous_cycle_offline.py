@@ -108,6 +108,42 @@ class ContinuousRecoveryCycle(unittest.TestCase):
                    'RECONCILED' if financial else 'UNRECONCILED')
   self.assertEqual(submit(),'BLOCKED_CLAIM_NOT_RESERVED')
   self.assertEqual(len(posts),1)
+ def check_unproven_funding_blocks_rehedge(self,steps):
+  from short_recovery_funding_provenance_decision import decide, NO_GO
+  h,exchange,final_ref,selector,position=FourStepRunUidCycle().check_full_cycle(steps)
+  db=h.fixture.db
+  coord=Ref(db,('u','XRPUSDT','coordination'))
+  control=h.fixture.refs['control']
+  self.assertEqual(finalize_short_quantity_cycle_offline(
+   mock_only=True,db=db,transactional=transactional,client=exchange,
+   selector_ref=selector,position_ref=position,claim_ref=final_ref,
+   coordination_ref=coord,control_ref=control,account='u',symbol='XRPUSDT',
+   cycle='c',step=steps,long_qty=D(100)),
+   'QUANTITY_CYCLE_TERMINAL_UNSETTLED_FENCE_LOCKED')
+  self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',
+   income_rows=[{'incomeType':'FUNDING_FEE','income':'0','symbol':'XRPUSDT'}],
+   financial_proof={'financialVerified':True,'fundingOwnershipVerified':True}),NO_GO)
+  owner=Ref(db,'funding-owner-'+str(steps))
+  db.commit(owner.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c',
+   'ownerSide':'SHORT','ownershipVerified':True,'cycleConfirmed':True})
+  now=datetime.now(timezone.utc)
+  v,row=db.snapshot(coord.key)
+  db.commit(coord.key,v,{**row,'lease':{'token':'funding-lease',
+   'until':now+timedelta(minutes=2)}})
+  new_ref=Ref(db,'funding-new-'+str(steps))
+  intent_id=canonical_intent_id(account='u',symbol='XRPUSDT',cycle='c2',
+   side='SHORT',action='OPEN',step=0)
+  self.assertEqual(reserve_verified_rehedge_mock_only(
+   mock_only=True,db=db,transactional=transactional,client=exchange,
+   coordination_ref=coord,owner_ref=owner,final_claim_ref=final_ref,
+   new_claim_ref=new_ref,control_ref=control,account='u',symbol='XRPUSDT',
+   old_cycle='c',new_cycle='c2',lease_token='funding-lease',intent_id=intent_id,
+   now=now,long_qty=D(100),now_ms=10000),
+   'BLOCKED_FINANCIAL_FINALITY_UNVERIFIED')
+  self.assertIsNone(db.snapshot(new_ref.key)[1])
+  self.assertEqual(db.snapshot(position.key)[1]['cycle'],'c')
+ def test_four_steps_unproven_funding_blocks(self):self.check_unproven_funding_blocks_rehedge(4)
+ def test_ten_steps_unproven_funding_blocks(self):self.check_unproven_funding_blocks_rehedge(10)
  def test_four_steps_to_fresh_one_to_one_anchor(self):self.check_cycle(4)
  def test_ten_steps_to_fresh_one_to_one_anchor(self):self.check_cycle(10)
  def test_four_steps_with_explicit_reconciled_fixture(self):self.check_cycle(4,financial=True)
