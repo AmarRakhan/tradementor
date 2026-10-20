@@ -78,6 +78,52 @@ class EmulatorIntegration(unittest.TestCase):
     self.assertEqual(result['ordersSent'],0)
     self.assertIn('RECOVERY_OWNS_SHORT_NO_TOPUP',[a.get('reason') for a in result['actions']])
 
+ def test_real_firestore_four_ten_step_restart_partial_unknown_no_topup(self):
+  from short_recovery_gate import partition_reconciliation
+  from short_recovery_funding_provenance_decision import decide,NO_GO
+  from aster_position_loss_auto_hedge import reconcile_auto_hedge
+  from unittest.mock import patch
+  class DenyTransport:
+   def position_mode(self):return True
+   def account_information(self):return {'availableBalance':'100000'}
+   def query_order(self,*args,**kwargs):return None
+   def submit_order_once(self,*args,**kwargs):raise AssertionError('NO TOPUP')
+  selector=self.refs['control'].parent.document('selector')
+  coordination=self.refs['control'].parent.document('coordination')
+  selector.set({'account':'u','activeStrategy':'AUTO_HEDGE_SHORT_RECOVERY_2','offlineOnly':True})
+  coordination.set({'account':'u','recoveryFenceReservation':{'state':'RECOVERY_CLAIM_RESERVED'}})
+  for steps in (4,10):
+   for step in range(1,steps+1):
+    remaining=D(100)-D(100)*D(step)/D(steps)
+    status='UNKNOWN' if step==2 else ('PARTIAL' if remaining else 'FINAL_PENDING')
+    self.refs['owner'].update({'state':status,'remainingShort':str(remaining)})
+    self.refs['claim'].set({'account':'u','symbol':'XRPUSDT','cycle':'c',
+      'state':status,'side':'SHORT','action':'CLOSE','step':step})
+    self.client=self.firestore.Client(project='amar-short-recovery-offline-test')
+    self.assertEqual(selector.get().to_dict()['activeStrategy'],'AUTO_HEDGE_SHORT_RECOVERY_2')
+    self.assertIsNotNone(coordination.get().to_dict().get('recoveryFenceReservation'))
+    owner=self.refs['owner'].get().to_dict()
+    # UNKNOWN must remain protected rather than being interpreted as Classic.
+    if status=='UNKNOWN':
+     self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',income_rows=[]),NO_GO)
+     owner={**owner,'state':'PARTIAL'}
+    partition=partition_reconciliation(settings={'enabled':True,'steps':steps,'stepPct':'5'},
+      protected_sides={'XRPUSDT':'LONG'},existing_skip_symbols=set(),recovery_cycles={'XRPUSDT':owner})
+    owned=partition['shadow_skip']-partition['legacy_skip']
+    if status=='FINAL_PENDING' or owner['state']=='PARTIAL':
+     self.assertEqual(owned,{'XRPUSDT'})
+    rows=[{'symbol':'XRPUSDT','positionSide':'LONG','positionAmt':'100',
+      'unRealizedProfit':'-20','markPrice':'1.8','leverage':'10'},
+      {'symbol':'XRPUSDT','positionSide':'SHORT','positionAmt':str(-remaining),
+      'unRealizedProfit':'0','markPrice':'1.8'}]
+    with patch('aster_position_loss_auto_hedge._exchange_rule',return_value=object()),patch('aster_position_loss_auto_hedge._exact_market_quantity',return_value=D(100)/steps):
+     report=reconcile_auto_hedge(client=DenyTransport(),uid='u',threshold_usd=1,execute=True,
+       protected_sides={'XRPUSDT':'LONG'},positions=rows,open_orders=[],
+       recovery_owned_symbols={'XRPUSDT'},pre_order_fence=lambda *args:True)
+    self.assertEqual(report['ordersSent'],0)
+    self.assertIn('RECOVERY_OWNS_SHORT_NO_TOPUP',[a.get('reason') for a in report['actions']])
+    self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',income_rows=[]),NO_GO)
+
  def test_concurrent_claims_single_winner(self):
   import concurrent.futures
   import threading
