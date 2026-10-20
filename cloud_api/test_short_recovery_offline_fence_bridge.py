@@ -46,6 +46,28 @@ class Bridge(unittest.TestCase):
   self.assertEqual(result['actions'][0]['reason'],'RECOVERY_OWNS_SHORT_NO_TOPUP')
   self.assertEqual(calls,[])
 
+ def test_four_ten_partial_inventory_never_topups_recovery_owned_short(self):
+  from short_recovery_multidoc_mock import MultiDocDB,Ref
+  for steps in (4,10):
+   for remaining in (Decimal('100')-Decimal('100')/steps,Decimal('50'),Decimal('0')):
+    with self.subTest(steps=steps,remaining=str(remaining)):
+     db=MultiDocDB()
+     ref=Ref(db,('u','XRPUSDT','recovery'))
+     db.commit(ref.key,0,{'account':'u','symbol':'XRPUSDT',
+       'cycle':'c','state':'PARTIAL','remainingShort':str(remaining)})
+     db=db.restart()
+     self.assertEqual(db.snapshot(ref.key)[1]['remainingShort'],str(remaining))
+     rows=[{'symbol':'XRPUSDT','positionSide':'LONG','positionAmt':'100',
+       'unRealizedProfit':'-20','markPrice':'1.8','leverage':'10'},
+       {'symbol':'XRPUSDT','positionSide':'SHORT',
+       'positionAmt':str(-remaining),'unRealizedProfit':'0','markPrice':'1.8'}]
+     result=engine.reconcile_auto_hedge(client=Client(),uid='u',threshold_usd=1,
+       execute=True,protected_sides={'XRPUSDT':'LONG'},positions=rows,
+       open_orders=[],recovery_owned_symbols={'XRPUSDT'},
+       pre_order_fence=lambda *args:True)
+     self.assertEqual(result['ordersSent'],0)
+     self.assertTrue(all(x.get('reason')!='PRE_ORDER_FENCE_APPROVED' for x in result['actions']))
+
  def test_malformed_existing_recovery_fence_blocks_normal_hedge(self):
   from short_recovery_lease_fence_offline import reserve_normal_hedge_mock_only
   from short_recovery_multidoc_mock import transactional
