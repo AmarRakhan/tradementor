@@ -103,14 +103,17 @@ class EmulatorIntegration(unittest.TestCase):
     self.assertEqual(selector.get().to_dict()['activeStrategy'],'AUTO_HEDGE_SHORT_RECOVERY_2')
     self.assertIsNotNone(coordination.get().to_dict().get('recoveryFenceReservation'))
     owner=self.refs['owner'].get().to_dict()
-    # UNKNOWN must remain protected rather than being interpreted as Classic.
-    if status=='UNKNOWN':
-     self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',income_rows=[]),NO_GO)
-     owner={**owner,'state':'PARTIAL'}
+    # Never transform persisted UNKNOWN into PARTIAL merely to pass a test.
+    # The partition intentionally cannot certify UNKNOWN ownership; the
+    # account-level denial remains a separate, required authorization gate.
     partition=partition_reconciliation(settings={'enabled':True,'steps':steps,'stepPct':'5'},
       protected_sides={'XRPUSDT':'LONG'},existing_skip_symbols=set(),recovery_cycles={'XRPUSDT':owner})
     owned=partition['shadow_skip']-partition['legacy_skip']
-    if status=='FINAL_PENDING' or owner['state']=='PARTIAL':
+    if status=='UNKNOWN':
+     self.assertEqual(owned,set())
+     self.assertEqual(partition['pairs']['XRPUSDT'],'BLOCKED_UNVERIFIED')
+     self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',income_rows=[]),NO_GO)
+    else:
      self.assertEqual(owned,{'XRPUSDT'})
     rows=[{'symbol':'XRPUSDT','positionSide':'LONG','positionAmt':'100',
       'unRealizedProfit':'-20','markPrice':'1.8','leverage':'10'},
