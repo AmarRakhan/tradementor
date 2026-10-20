@@ -34,7 +34,7 @@ def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account
         control=control_ref.get(transaction=tx).to_dict()
         coordination=coordination_ref.get(transaction=tx).to_dict() if coordination_ref is not None else None
         if coordination_ref is not None:
-            if not isinstance(coordination,dict) or isinstance(coordination.get('recoveryFenceReservation'),dict):
+            if not isinstance(coordination,dict) or coordination.get('recoveryFenceReservation') is not None:
                 return 'BLOCKED_ACCOUNT_FENCE_RESERVED'
             lease=coordination.get('lease')
             if isinstance(lease,dict) and lease.get('token'):

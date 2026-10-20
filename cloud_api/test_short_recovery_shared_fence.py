@@ -17,6 +17,13 @@ class SharedFence(unittest.TestCase):
   ver,coord=self.db.snapshot('coordination');self.db.commit('coordination',ver,{'recoveryFenceReservation':{'state':'OFFLINE_ONLY'}})
   self.assertEqual(self.go(),'BLOCKED_ACCOUNT_FENCE_RESERVED')
   self.assertIsNone(self.db.snapshot('claim')[1])
+ def test_malformed_fence_blocks_recovery_claim_fail_closed(self):
+  for malformed in ('unknown',[],False,17):
+   with self.subTest(fence=malformed):
+    version,_=self.db.snapshot('coordination')
+    self.db.commit('coordination',version,{'recoveryFenceReservation':malformed})
+    self.assertEqual(self.go(),'BLOCKED_ACCOUNT_FENCE_RESERVED')
+    self.assertIsNone(self.db.snapshot('claim')[1])
  def test_missing_coordination_blocks(self):
   v,_=self.db.snapshot('coordination');self.db.commit('coordination',v,None)
   self.assertEqual(self.go(),'BLOCKED_ACCOUNT_FENCE_RESERVED')
