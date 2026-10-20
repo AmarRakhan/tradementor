@@ -18,7 +18,7 @@ from aster_gateway import AsterOrderIntent,PositionSide
 
 
 class ContinuousRecoveryCycle(unittest.TestCase):
- def check_cycle(self,steps):
+ def check_cycle(self,steps,financial=False):
   h,exchange,final_ref,selector,position=FourStepRunUidCycle().check_full_cycle(steps)
   db=h.fixture.db
   coord=Ref(db,('u','XRPUSDT','coordination'))
@@ -40,6 +40,15 @@ class ContinuousRecoveryCycle(unittest.TestCase):
   now=datetime.now(timezone.utc)
   ver,row=db.snapshot(coord.key)
   db.commit(coord.key,ver,{**row,'lease':{'token':'new-lease','until':now+timedelta(minutes=2)}})
+  if financial:
+   # Explicitly supplied financial fixture; not an exchange income-history readback.
+   v,claim=db.snapshot(final_ref.key)
+   db.commit(final_ref.key,v,{**claim,'financialVerified':True,
+      'fillsComplete':True,'incomeHistoryComplete':True,
+      'financialSettlement':'RECONCILED',
+      'executionFinancials':{'mock-fill':[str(qty),'1','0.1','0']}})
+   v,current=db.snapshot(coord.key)
+   db.commit(coord.key,v,{**current,'recoveryFenceReservation':None})
   new_ref=Ref(db,'continuous-new-'+str(steps))
   new_id=canonical_intent_id(account='u',symbol='XRPUSDT',
     cycle='c2',side='SHORT',action='OPEN',step=0)
@@ -50,7 +59,7 @@ class ContinuousRecoveryCycle(unittest.TestCase):
     new_claim_ref=new_ref,control_ref=control,account='u',symbol='XRPUSDT',
     old_cycle='c',new_cycle='c2',lease_token='new-lease',intent_id=new_id,
     now=now,long_qty=D(100),now_ms=10000,
-    allow_quantity_terminal_fence=True,require_financial_finality=False)
+    allow_quantity_terminal_fence=not financial,require_financial_finality=financial)
   with ThreadPoolExecutor(max_workers=2) as pool:
    results=list(pool.map(lambda _:reserve(),range(2)))
   self.assertEqual(results.count('RESERVED_REHEDGE_MOCK_ONLY'),1)
@@ -95,10 +104,13 @@ class ContinuousRecoveryCycle(unittest.TestCase):
   newpos=db.snapshot(position.key)[1]
   self.assertEqual((newpos['cycle'],newpos['anchor'],newpos['originalShortQty']),
                    ('c2','1.625','100'))
-  self.assertEqual(db.snapshot(final_ref.key)[1]['financialSettlement'],'UNRECONCILED')
+  self.assertEqual(db.snapshot(final_ref.key)[1]['financialSettlement'],
+                   'RECONCILED' if financial else 'UNRECONCILED')
   self.assertEqual(submit(),'BLOCKED_CLAIM_NOT_RESERVED')
   self.assertEqual(len(posts),1)
  def test_four_steps_to_fresh_one_to_one_anchor(self):self.check_cycle(4)
  def test_ten_steps_to_fresh_one_to_one_anchor(self):self.check_cycle(10)
+ def test_four_steps_with_explicit_reconciled_fixture(self):self.check_cycle(4,financial=True)
+ def test_ten_steps_with_explicit_reconciled_fixture(self):self.check_cycle(10,financial=True)
 
 if __name__=='__main__':unittest.main()
