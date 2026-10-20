@@ -43,3 +43,21 @@ def blocks_live_recovery_without_canonical_fence(settings):
         return normalize_settings(settings)['enabled']
     except (TypeError, ValueError, KeyError):
         return True
+
+
+def resolve_existing_active_strategy(settings):
+    """Read-only strategy decision over the existing canonical Auto Hedge config.
+
+    An enabled shortRecoveryPlan selects Recovery but grants no live order right.
+    Missing/disabled plan preserves legacy Classic behavior; malformed input
+    fails closed. No second configuration collection or router is created.
+    """
+    if not isinstance(settings, dict):
+        return 'BLOCKED_INVALID_ACTIVE_SETTINGS'
+    if 'shortRecoveryPlan' not in settings or settings['shortRecoveryPlan'] is None:
+        return 'ASTER_CLASSIC'
+    try:
+        config = normalize_settings(settings['shortRecoveryPlan'])
+    except (TypeError, ValueError, KeyError):
+        return 'BLOCKED_INVALID_ACTIVE_SETTINGS'
+    return 'AUTO_HEDGE_SHORT_RECOVERY_2' if config['enabled'] else 'ASTER_CLASSIC'
