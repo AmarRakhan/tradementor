@@ -52,6 +52,23 @@ class RehedgeReservation(unittest.TestCase):
    return reserve_rehedge_mock_only(**{**args,**changes})
   self.assertEqual(reserve(final_readback_verified=False),'BLOCKED_REHEDGE_FINAL_READBACK')
   self.assertEqual(reserve(new_cycle='c'),'BLOCKED_REHEDGE_CYCLE_REUSE')
+  self.assertEqual(reserve(require_financial_finality=True),'BLOCKED_FINANCIAL_FINALITY_UNVERIFIED')
   self.assertEqual(reserve(),'RESERVED_REHEDGE_MOCK_ONLY')
   self.assertEqual(reserve(),'BLOCKED_FENCE_ALREADY_RESERVED')
   self.assertEqual(f.db.snapshot('lease')[1]['recoveryFenceReservation']['state'],'REHEDGE_MOCK_SUBMITTING')
+
+
+class StrictFinancialRehedgeProof(unittest.TestCase):
+ def test_full_evidence_required_not_a_caller_boolean(self):
+  from short_recovery_lease_fence_offline import verified_financial_finality_offline as proof
+  ready=dict(financialVerified=True,terminalVerified=True,fillsComplete=True,
+   incomeHistoryComplete=True,financialSettlement='RECONCILED',
+   executedQty='25',executionFinancials={'trade-1':['25','1','0.1','0']})
+  self.assertTrue(proof(ready))
+  for key,value in (('financialSettlement','UNRECONCILED'),('financialVerified',False),
+                    ('incomeHistoryComplete',False),('executionFinancials',{}),
+                    ('executionFinancials',{'trade-1':['25','1','0.1']}),
+                    ('executionFinancials',{'trade-1':['25','1','0.1','NaN']}),
+                    ('executedQty','24')):
+   with self.subTest(field=key):
+    self.assertFalse(proof({**ready,key:value}))

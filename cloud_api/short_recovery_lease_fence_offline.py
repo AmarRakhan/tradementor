@@ -136,10 +136,39 @@ def reserve_normal_hedge_mock_only(*,mock_only,db,transactional,coordination_ref
     try:return acquire(db.transaction())
     except Exception:return 'BLOCKED_TRANSACTION_FAILURE'
 
+def verified_financial_finality_offline(final_claim):
+    """Require durable per-fill PnL/fee/funding evidence; never infer missing funding."""
+    from decimal import Decimal, InvalidOperation
+    if not isinstance(final_claim,dict):
+        return False
+    if (final_claim.get('financialVerified') is not True or
+            final_claim.get('terminalVerified') is not True or
+            final_claim.get('fillsComplete') is not True or
+            final_claim.get('incomeHistoryComplete') is not True or
+            final_claim.get('financialSettlement') not in ('RECONCILED','SETTLED')):
+        return False
+    rows=final_claim.get('executionFinancials')
+    if not isinstance(rows,dict) or not rows:
+        return False
+    try:
+        total=Decimal(0)
+        for record in rows.values():
+            if not isinstance(record,(tuple,list)) or len(record)!=4:
+                return False
+            qty,pnl,fee,funding=(Decimal(str(v)) for v in record)
+            if not all(v.is_finite() for v in (qty,pnl,fee,funding)) or qty<=0 or fee<0:
+                return False
+            total+=qty
+        booked=Decimal(str(final_claim['executedQty']))
+        return booked.is_finite() and booked>0 and booked==total
+    except (InvalidOperation,TypeError,ValueError,KeyError):
+        return False
+
+
 def reserve_rehedge_mock_only(*,mock_only,db,transactional,coordination_ref,
                               owner_ref,final_claim_ref,control_ref,account,symbol,
                               old_cycle,new_cycle,lease_token,intent_id,now,
-                              final_readback_verified,new_claim_ref=None,allow_quantity_terminal_fence=False):
+                              final_readback_verified,new_claim_ref=None,allow_quantity_terminal_fence=False,require_financial_finality=False):
     """Separate offline rehedge right, requiring final verified close evidence.
 
     Never auto-releases any old fence and never issues exchange transport.
@@ -159,6 +188,8 @@ def reserve_rehedge_mock_only(*,mock_only,db,transactional,coordination_ref,
         control=control_ref.get(transaction=tx).to_dict()
         next_claim=new_claim_ref.get(transaction=tx).to_dict() if new_claim_ref is not None else None
         if new_claim_ref is not None and next_claim is not None:return 'BLOCKED_REHEDGE_NEW_CLAIM_EXISTS'
+        if require_financial_finality is True and not verified_financial_finality_offline(final_claim):
+            return 'BLOCKED_FINANCIAL_FINALITY_UNVERIFIED'
         if not isinstance(coord,dict):return 'BLOCKED_COORDINATION_MISSING'
         old_fence=coord.get('recoveryFenceReservation')
         if isinstance(old_fence,dict):
