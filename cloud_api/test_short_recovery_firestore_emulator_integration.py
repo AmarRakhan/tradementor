@@ -124,6 +124,33 @@ class EmulatorIntegration(unittest.TestCase):
     self.assertIn('RECOVERY_OWNS_SHORT_NO_TOPUP',[a.get('reason') for a in report['actions']])
     self.assertEqual(decide(account='u',symbol='XRPUSDT',cycle='c',income_rows=[]),NO_GO)
 
+ def test_shared_account_fence_blocks_concurrent_recovery_claim_and_restart(self):
+  import concurrent.futures,threading
+  coord=self.refs['control'].parent.document('coordination')
+  coord.set({'account':'u'})
+  barrier=threading.Barrier(3)
+  def attempt(_):
+   barrier.wait(timeout=10)
+   return reserve(db=self.client,transactional=self.firestore.transactional,
+    marker_ref=self.refs['marker'],owner_ref=self.refs['owner'],
+    ledger_ref=self.refs['ledger'],claim_ref=self.refs['claim'],
+    control_ref=self.refs['control'],coordination_ref=coord,
+    account='u',symbol='XRPUSDT',cycle='c',intent_id='intent',now=1)
+  with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+   answers=list(pool.map(attempt,range(3)))
+  self.assertEqual(answers.count('RESERVED_SHADOW'),1,answers)
+  self.assertTrue(all(x in ('RESERVED_SHADOW','BLOCKED_ACCOUNT_FENCE_RESERVED',
+    'BLOCKED_TRANSACTION_FAILURE') for x in answers),answers)
+  self.client=self.firestore.Client(project='amar-short-recovery-offline-test')
+  self.assertIsNotNone(coord.get().to_dict()['recoveryFenceReservation'])
+  self.assertEqual(self.claim('other'),'BLOCKED_UNRESOLVED_CLAIM')
+  self.assertEqual(reserve(db=self.client,transactional=self.firestore.transactional,
+    marker_ref=self.refs['marker'],owner_ref=self.refs['owner'],
+    ledger_ref=self.refs['ledger'],claim_ref=self.refs['claim'],
+    control_ref=self.refs['control'],coordination_ref=coord,
+    account='u',symbol='XRPUSDT',cycle='c',intent_id='other',now=2),
+    'BLOCKED_ACCOUNT_FENCE_RESERVED')
+
  def test_concurrent_claims_single_winner(self):
   import concurrent.futures
   import threading
