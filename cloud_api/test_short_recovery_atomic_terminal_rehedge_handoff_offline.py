@@ -68,6 +68,20 @@ class AtomicTerminalHandoff(unittest.TestCase):
   self.client.orders=[]
   self.f.put('control',{'account':'u','enabled':True,'emergencyStop':True,'closeAllActive':False})
   self.assertEqual(self.reserve(),'BLOCKED_STOP')
+ def test_strict_financially_reconciled_rehedge_single_right(self):
+  claim=self.f.snapshot('SHORTclaim')
+  claim.update(financialVerified=True,fillsComplete=True,incomeHistoryComplete=True,
+      financialSettlement='RECONCILED',quantityTerminalOnly=False,
+      executionFinancials={'4':['25','1','0.1','0']})
+  self.f.put('SHORTclaim',claim)
+  version,coord=self.f.db.snapshot(self.coord.key)
+  coord.pop('recoveryFenceReservation')
+  self.f.db.commit(self.coord.key,version,coord)
+  self.assertEqual(self.reserve(require_financial_finality=True,
+      allow_quantity_terminal_fence=False),'RESERVED_REHEDGE_MOCK_ONLY')
+  self.assertEqual(self.reserve(require_financial_finality=True,
+      allow_quantity_terminal_fence=False),'BLOCKED_REHEDGE_NEW_CLAIM_EXISTS')
+
  def test_no_opt_in_or_stale_lease(self):
   self.assertEqual(self.reserve(allow_quantity_terminal_fence=False),'BLOCKED_FENCE_ALREADY_RESERVED')
   self.assertEqual(self.reserve(require_financial_finality=True),'BLOCKED_FINANCIAL_FINALITY_UNVERIFIED')
