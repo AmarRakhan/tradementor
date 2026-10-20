@@ -32,6 +32,20 @@ class Bridge(unittest.TestCase):
     recovery_fence_required_symbols={'XRPUSDT'})
   self.assertEqual(result['ordersSent'],0)
   self.assertEqual(result['actions'][0]['reason'],'RECOVERY_SHARED_FENCE_REQUIRED')
+ def test_canonical_owned_short_denies_even_permissive_callback(self):
+  rows=[{'symbol':'XRPUSDT','positionSide':'LONG','positionAmt':'100','unRealizedProfit':'-20','markPrice':'1.8','leverage':'10'},
+        {'symbol':'XRPUSDT','positionSide':'SHORT','positionAmt':'-75','unRealizedProfit':'10','markPrice':'1.8'}]
+  class NoTransport(Client):
+   def submit_order_once(self,*args,**kwargs):raise AssertionError('SHOULD_NOT_SUBMIT')
+  calls=[]
+  def permissive(*args):calls.append(args);return True
+  result=engine.reconcile_auto_hedge(client=NoTransport(),uid='u',threshold_usd=1,execute=True,
+      protected_sides={'XRPUSDT':'LONG'},positions=rows,open_orders=[],
+      recovery_owned_symbols={'XRPUSDT'},pre_order_fence=permissive)
+  self.assertEqual(result['ordersSent'],0)
+  self.assertEqual(result['actions'][0]['reason'],'RECOVERY_OWNS_SHORT_NO_TOPUP')
+  self.assertEqual(calls,[])
+
  def test_malformed_existing_recovery_fence_blocks_normal_hedge(self):
   from short_recovery_lease_fence_offline import reserve_normal_hedge_mock_only
   from short_recovery_multidoc_mock import transactional

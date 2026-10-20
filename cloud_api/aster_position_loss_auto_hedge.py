@@ -388,6 +388,7 @@ def reconcile_auto_hedge(
     recovery_shadow_skip_symbols: set[str] | None = None,
     pre_order_fence: Callable[[str, str, str], bool] | None = None,
     recovery_fence_required_symbols: set[str] | None = None,
+    recovery_owned_symbols: set[str] | None = None,
     positions: list[dict[str, Any]] | None = None,
     open_orders: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -428,6 +429,15 @@ def reconcile_auto_hedge(
     contexts = intent_context or {}
     for action in actions:
         row = action.public_dict()
+        # Canonically Recovery-owned symbols can NEVER acquire a normal Auto Hedge
+        # top-up, even when a caller-supplied pre-order callback returns True.
+        # Ownership cannot be inferred solely from a numeric SHORT deficit.
+        if action.symbol in (recovery_owned_symbols or set()):
+            row.update({'status':'BLOCKED','reason':'RECOVERY_OWNS_SHORT_NO_TOPUP',
+                        'filledQty':0.0})
+            public_actions.append(row)
+            if audit: audit({**row,'result':'BLOCKED'})
+            continue
         # Recovery is the sole owner of intentional SHORT reductions.
         # In live mode never compute or submit a legacy Auto Hedge top-up for
         # a Recovery-fenced symbol. The existing isolated Recovery claim CAS
