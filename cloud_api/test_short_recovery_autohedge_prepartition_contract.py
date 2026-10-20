@@ -29,6 +29,23 @@ class PrePartition(unittest.TestCase):
   self.assertEqual(ast.unparse(params['recovery_owned_symbols']),
                    ast.unparse(params['recovery_fence_required_symbols']))
 
+ def test_four_ten_cycles_preserve_canonical_partition_after_restart(self):
+  from short_recovery_multidoc_mock import MultiDocDB,Ref
+  from decimal import Decimal
+  for steps in (4,10):
+   for remaining in (Decimal('100')-Decimal('100')/steps,Decimal('50'),Decimal('0')):
+    with self.subTest(steps=steps,remaining=str(remaining)):
+     db=MultiDocDB();ref=Ref(db,('u','XRPUSDT','owner'))
+     db.commit(ref.key,0,{'account':'u','symbol':'XRPUSDT','cycleId':'c',
+      'ownerSide':'SHORT','cycleConfirmed':True,'ownershipVerified':True,
+      'state':'PARTIAL','remainingShort':str(remaining)})
+     db=db.restart();owner=db.snapshot(ref.key)[1]
+     p=partition_reconciliation(settings={'enabled':True,'steps':steps,'stepPct':'5'},
+       protected_sides={'XRPUSDT':'LONG','BTCUSDT':'LONG'},existing_skip_symbols=set(),
+       recovery_cycles={'XRPUSDT':owner})
+     self.assertEqual(p['shadow_skip']-p['legacy_skip'],{'XRPUSDT'})
+     self.assertEqual(p['pairs']['XRPUSDT'],'SHADOW_PARTIAL_NO_TOPUP')
+
  def test_live_reconciler_does_not_apply_shadow_skip(self):
   from unittest.mock import patch
   from aster_position_loss_auto_hedge import reconcile_auto_hedge
