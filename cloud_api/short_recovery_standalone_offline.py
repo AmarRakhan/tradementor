@@ -13,7 +13,7 @@ RECOVERY = 'AUTO_HEDGE_SHORT_RECOVERY_2'
 
 
 def select_strategy_offline(*, db, transactional, selector_ref, control_ref,
-                            coordination_ref, account, selected):
+                            coordination_ref, account, selected, position_ref=None):
     """Atomic, fail-closed strategy switch without executing orders."""
     if selected not in (CLASSIC, RECOVERY) or not account:
         return 'BLOCKED_STRATEGY'
@@ -22,6 +22,7 @@ def select_strategy_offline(*, db, transactional, selector_ref, control_ref,
         selector = selector_ref.get(transaction=tx).to_dict()
         control = control_ref.get(transaction=tx).to_dict()
         coordination = coordination_ref.get(transaction=tx).to_dict()
+        position = position_ref.get(transaction=tx).to_dict() if position_ref is not None else None
         if not isinstance(control, dict) or control.get('account') != account or control.get('emergencyStop') is not False or control.get('closeAllActive') is not False:
             return 'BLOCKED_CONTROL'
         if selector is not None and (not isinstance(selector, dict) or selector.get('account') != account):
@@ -31,6 +32,12 @@ def select_strategy_offline(*, db, transactional, selector_ref, control_ref,
                 return 'BLOCKED_INFLIGHT_COORDINATION'
         if isinstance(selector, dict) and selector.get('pendingOrders') is True:
             return 'BLOCKED_INFLIGHT_ORDERS'
+        # A selected Recovery account must not silently return to Classic while
+        # any position/adoption document remains, including malformed records.
+        if (selected == CLASSIC and isinstance(selector, dict)
+                and selector.get('activeStrategy') == RECOVERY):
+            if position_ref is None or position is not None:
+                return 'BLOCKED_RECOVERY_POSITION_UNRESOLVED'
         if isinstance(selector, dict) and selector.get('activeStrategy') == selected:
             return 'ALREADY_SELECTED_OFFLINE'
         tx.set(selector_ref, {'account': account, 'activeStrategy': selected,

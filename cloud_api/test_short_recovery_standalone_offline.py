@@ -73,6 +73,21 @@ class StandaloneOffline(unittest.TestCase):
         self.assertEqual(self.adopt(replace(self.hedge,account='other')),'BLOCKED_ACCOUNT_SCOPE')
         self.assertIsNone(self.db.snapshot(self.position.key)[1])
 
+    def test_switch_back_to_classic_requires_absent_recovery_position(self):
+        self.assertEqual(self.choose(), 'SELECTED_OFFLINE_PENDING_ADOPTION')
+        self.assertEqual(self.adopt(), 'ADOPTED_OFFLINE')
+        def switch():
+            return select_strategy_offline(db=self.db,transactional=transactional,
+                selector_ref=self.selector,control_ref=self.control,
+                coordination_ref=self.coord,position_ref=self.position,
+                account='u',selected=CLASSIC)
+        self.assertEqual(switch(),'BLOCKED_RECOVERY_POSITION_UNRESOLVED')
+        self.assertEqual(self.choose(CLASSIC),'BLOCKED_RECOVERY_POSITION_UNRESOLVED')
+        self.assertEqual(self.db.snapshot(self.selector.key)[1]['activeStrategy'],RECOVERY)
+        v,_=self.db.snapshot(self.position.key)
+        self.db.commit(self.position.key,v,None)
+        self.assertEqual(switch(),'SELECTED_CLASSIC_OFFLINE')
+
     def test_stop_and_fenced_switch_rejected(self):
         self.db.commit(self.coord.key,0,{'recoveryFenceReservation':{'intentId':'in-flight'}})
         self.assertEqual(self.choose(),'BLOCKED_INFLIGHT_COORDINATION')
