@@ -37,7 +37,9 @@ def reserve(*,db,transactional,marker_ref,owner_ref,ledger_ref,claim_ref,account
             if not isinstance(coordination,dict) or coordination.get('recoveryFenceReservation') is not None:
                 return 'BLOCKED_ACCOUNT_FENCE_RESERVED'
             lease=coordination.get('lease')
-            if isinstance(lease,dict) and lease.get('token'):
+            if lease is not None:
+                if not isinstance(lease,dict) or not lease.get('token'):
+                    return 'BLOCKED_ACCOUNT_LEASE_UNVERIFIED'
                 until=lease.get('until')
                 # Missing, malformed or naive expiry never authorizes a claim.
                 if not isinstance(until,datetime) or until.tzinfo is None:

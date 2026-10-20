@@ -36,6 +36,13 @@ class SharedFence(unittest.TestCase):
   self.assertEqual(self.go(),'BLOCKED_ACCOUNT_COORDINATION_BUSY')
   self.assertIsNone(self.db.snapshot('claim')[1])
 
+ def test_malformed_or_tokenless_account_lease_blocks_claim(self):
+  for lease in ('unknown',[],False,{}, {'until':'future'}, {'token':None}):
+   with self.subTest(lease=lease):
+    v,_=self.db.snapshot('coordination')
+    self.db.commit('coordination',v,{'lease':lease})
+    self.assertEqual(self.go(),'BLOCKED_ACCOUNT_LEASE_UNVERIFIED')
+    self.assertIsNone(self.db.snapshot('claim')[1])
  def test_expired_lease_remains_reconcile_only(self):
   v,_=self.db.snapshot('coordination');self.db.commit('coordination',v,{'lease':{'token':'stale','until':datetime.now(timezone.utc)-timedelta(seconds=1)}})
   self.assertEqual(self.go(),'BLOCKED_ACCOUNT_LEASE_STALE_RECONCILE')
