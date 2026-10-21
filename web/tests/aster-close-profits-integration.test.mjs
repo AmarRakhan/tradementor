@@ -28,14 +28,19 @@ const realFetch = globalThis.fetch;
 before(async () => {
   const cwd = path.resolve(new URL("../cloud_api/", root).pathname);
   const env = { ...process.env, PYTHONPATH: [cwd, process.env.CP20_PYTHONPATH].filter(Boolean).join(path.delimiter) };
-  server = spawn("python3", ["offline_close_server.py"], { cwd, env, stdio: ["pipe", "pipe", "inherit"] });
+  // CP20_BACKEND=real: the REAL FastAPI app + REAL Firestore SDK (emulator, FIRESTORE_EMULATOR_HOST) + real gateway against a
+  // fake Aster HTTP API (cloud_api/e2e_stack_server.py). Default: the in-memory Firestore model wrapper.
+  const real = process.env.CP20_BACKEND === "real";
+  server = spawn("python3", real ? ["-W", "ignore", "e2e_stack_server.py"] : ["offline_close_server.py"], { cwd, env, stdio: ["pipe", "pipe", "inherit"] });
   try {
     port = await new Promise((resolve, reject) => {
       server.stdout.once("data", (d) => resolve(Number(String(d).trim())));
       server.once("error", reject); server.once("exit", (c) => reject(new Error("backend exited " + c)));
+      setTimeout(() => reject(new Error("backend did not start within 180 s")), 180000).unref();
     });
   } catch (error) {
     backendUnavailable = String(error);          // e.g. httpx missing: set CP20_PYTHONPATH to a dir with an httpx stub, or install deps
+    if (process.env.CP20_BACKEND === "real") throw new Error("real backend required but not startable: " + backendUnavailable);   // never a silent SKIP
     return;
   }
   const proxySrc = stripTypeScriptTypes(read("lib/cloud-proxy.ts"))

@@ -122,6 +122,38 @@ jobs:
           printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
           tools/ci_report.sh "e2e real stack" 120 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
             'cd cloud_api && python -W ignore -m unittest -v test_close_profits_2_0_e2e_stack'
+  e2e-web-real-backend:
+    # Frontend handlers -> REAL Next proxy code -> REAL FastAPI app (uvicorn) -> REAL Firestore emulator -> fake Aster HTTP.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+          (cd web && npm ci)
+      - name: Frontend -> proxy -> real FastAPI -> Firestore emulator
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
+          tools/ci_report.sh "e2e web real backend" 120 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
+            'cd web && CP20_BACKEND=real node --test tests/aster-close-profits-integration.test.mjs'
   baseline:
     # Same checks on the original PR head and on the production-601 base, to separate pre-existing failures.
     runs-on: ubuntu-latest
