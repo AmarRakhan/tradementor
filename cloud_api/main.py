@@ -120,7 +120,7 @@ from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rej
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, auto_hedge_symbol_managed_strict, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
-from manual_profit_close_guard import BulkProtectionUnreliable, bulk_profit_close_block_reason
+from manual_profit_close_guard import BulkProtectionUnreliable, OwnershipContext, bulk_profit_close_block_reason
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_sniper import SniperSettings, backtest_candles
 from aster_sniper_runtime import run_sniper_tick
@@ -1292,12 +1292,49 @@ def _exclude_auto_hedge_managed_profit_candidates(
     return safe, excluded
 
 
-def _bulk_profit_close_block_reason_live(uid: str, symbol: str, side: str) -> str | None:
-    """Fresh Firestore read; raises on unreliable protection data (callers fail closed)."""
-    snapshot = aster_strategy2_reference(uid).get()
+def _read_bulk_ownership_globals(user: dict[str, Any], uid: str) -> dict[str, Any]:
+    """Fresh read-only snapshot of every ownership document. NEVER writes. Any read error ->
+    BulkProtectionUnreliable (fail closed). See the ownership matrix in the handoff."""
+    try:
+        return {
+            "dynamic": user_reference(user).collection("asterDynamicHedge").document("control").get(),
+            "emergency": db.collection("aster_portfolio_emergency_hedges").document(uid).get(),
+            "settings": db.collection("asterPositionLossAutoHedge").document(uid).get(),
+            "sniper": aster_sniper_reference(uid).get(),
+            "strategy2": aster_strategy2_reference(uid).get(),
+        }
+    except Exception as exc:
+        raise BulkProtectionUnreliable("eigenaarschapsdocumenten zijn onleesbaar") from exc
+
+
+def _bulk_reason_from_globals(uid: str, symbol: str, side: str, snaps: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
+    try:
+        pair = _position_loss_auto_hedge_pair(uid, symbol)
+    except Exception as exc:
+        raise BulkProtectionUnreliable("Auto Hedge pair-document is onleesbaar") from exc
+    has_long = any(
+        str(row.get("symbol", "")).upper() == symbol and str(row.get("positionSide", row.get("side", ""))).upper() == "LONG"
+        and abs(safe_float(row.get("positionAmt", row.get("quantity")))) > 0
+        for row in rows
+    )
+    context = OwnershipContext(
+        pair=pair,
+        dynamic_hedge=snaps["dynamic"].to_dict(), dynamic_hedge_exists=bool(snaps["dynamic"].exists),
+        emergency_hedge=snaps["emergency"].to_dict(), emergency_hedge_exists=bool(snaps["emergency"].exists),
+        auto_hedge_settings=snaps["settings"].to_dict(), auto_hedge_settings_exists=bool(snaps["settings"].exists),
+        sniper=snaps["sniper"].to_dict(), sniper_exists=bool(snaps["sniper"].exists),
+        has_same_symbol_long=has_long,
+    )
     return bulk_profit_close_block_reason(
-        uid, symbol, side, snapshot.to_dict(), strategy2_exists=bool(snapshot.exists),
-        managed_check=auto_hedge_symbol_managed_strict)
+        uid, symbol, side, snaps["strategy2"].to_dict(), strategy2_exists=bool(snaps["strategy2"].exists),
+        managed_check=auto_hedge_symbol_managed_strict, ownership=context)
+
+
+def _bulk_profit_close_block_reason_live(
+    uid: str, symbol: str, side: str, user: dict[str, Any], rows: list[dict[str, Any]],
+) -> str | None:
+    """Fresh Firestore reads; raises on unreliable ownership data (callers fail closed)."""
+    return _bulk_reason_from_globals(uid, symbol, side, _read_bulk_ownership_globals(user, uid), rows)
 
 
 def _profitable_aster_close_candidates(
@@ -8705,14 +8742,12 @@ def preview_manual_profit_close_plan(
         # Close Profits 2.1: drop every candidate the bulk close would be refused
         # for (Auto Hedge, Focus Airbag, non-SHORT). Lock read errors raise -> 502.
         uid = str(user["uid"])
-        strategy2_snapshot = aster_strategy2_reference(uid).get()
-        strategy2_state = strategy2_snapshot.to_dict()
+        ownership_snaps = _read_bulk_ownership_globals(user, uid)
         safe_selected: list[dict[str, Any]] = []
         protected: list[dict[str, Any]] = []
         for item in plan["selected"]:
-            reason = bulk_profit_close_block_reason(
-                uid, str(item.get("symbol", "")).upper(), str(item.get("side", "")).upper(), strategy2_state,
-                strategy2_exists=bool(strategy2_snapshot.exists), managed_check=auto_hedge_symbol_managed_strict)
+            reason = _bulk_reason_from_globals(
+                uid, str(item.get("symbol", "")).upper(), str(item.get("side", "")).upper(), ownership_snaps, rows)
             if reason:
                 protected.append({"symbol": item.get("symbol"), "side": item.get("side"), "reason": reason})
             else:
@@ -8732,7 +8767,7 @@ def preview_manual_profit_close_plan(
     except HTTPException:
         raise
     except BulkProtectionUnreliable as exc:
-        raise HTTPException(502, "Focus Airbag-beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
+        raise HTTPException(502, "Eigenaarschaps-/beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
     except Exception as exc:
         raise HTTPException(502, "Aster-posities of contractregels niet betrouwbaar beschikbaar") from exc
 
@@ -8958,11 +8993,11 @@ def close_one_aster_position(
             # 2) Fresh protection check against live Firestore state, independent of
             #    any (possibly stale) preview. Reader errors / unreliable data fail closed.
             try:
-                block_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)
+                block_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side, user, live_rows)
             except BulkProtectionUnreliable as exc:
                 intent_ref.set({"status": "blocked_bulk_unreliable", "detail": str(exc),
                     "updatedAt": datetime.now(timezone.utc)}, merge=True)
-                raise HTTPException(409, "Focus Airbag-beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
+                raise HTTPException(409, "Eigenaarschaps-/beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
             if block_reason:
                 intent_ref.set({"status": "blocked_bulk_protected", "detail": block_reason,
                     "updatedAt": datetime.now(timezone.utc)}, merge=True)
@@ -9029,7 +9064,7 @@ def close_one_aster_position(
         )
         if request.bulk_profit_close:
             # Last-moment re-check, still inside the lease and right before the order.
-            late_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)
+            late_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side, user, live_rows)
             if late_reason:
                 intent_ref.set({"status": "blocked_bulk_protected", "detail": late_reason,
                     "updatedAt": datetime.now(timezone.utc)}, merge=True)
@@ -9070,7 +9105,7 @@ def close_one_aster_position(
             # this leg while we were closing? Surfaced to the user, never hidden.
             try:
                 protection_changed_during_close = bool(
-                    _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side))
+                    _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side, user, live_rows))
             except Exception:
                 protection_changed_during_close = True
         intent_ref.set({

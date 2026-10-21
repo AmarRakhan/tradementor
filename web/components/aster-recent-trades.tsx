@@ -1439,7 +1439,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
           skipped++;
           continue;
         }
-        if (/valt onder Auto Hedge|Focus Airbag-hedge/i.test(details)) {
+        if (/valt onder Auto Hedge|Focus Airbag-hedge|bulk Close Profits sluit haar niet/i.test(details)) {
           // Server refused before any order: status changed since the preview.
           protectedSkipped++;
           continue;
@@ -1448,7 +1448,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
         break;
       }
     }
-    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen · " + protectedSkipped + " beschermd (Auto Hedge/Airbag) niet aangeraakt" +
+    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen · " + protectedSkipped + " beschermd (Auto Hedge/Airbag/Recovery/andere hedge) niet aangeraakt" +
       (protectionChanged ? " · ⚠ " + protectionChanged + " positie(s) kregen tijdens het sluiten Auto Hedge/Airbag-bescherming: controleer Auto Hedge" : "") +
       (leaseLost ? " · ⚠ " + leaseLost + " sluiting(en) verliepen de account-vergrendeling tijdens verificatie: controleer de posities in Aster" : "") +
       (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));

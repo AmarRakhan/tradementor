@@ -198,8 +198,28 @@ test("Auto Hedge status changed after preview: server refusal is counted as prot
   await h.handler();
   assert.equal(h.calls.length, 3);
   assert.match(h.state.message, /2 SHORTS gesloten/);
-  assert.match(h.state.message, /1 beschermd \(Auto Hedge\/Airbag\) niet aangeraakt/);
+  assert.match(h.state.message, /1 beschermd \(Auto Hedge\/Airbag\/Recovery\/andere hedge\) niet aangeraakt/);
   assert.doesNotMatch(h.state.message, /3 SHORTS gesloten/);
+});
+
+test("round 4: Dynamic Hedge / Emergency Hedge / Recovery / in-flight claim refusals are protected skips, loop continues", async () => {
+  const marker = "; bulk Close Profits sluit haar niet";
+  const h = closeHarness({
+    BTCUSDT: "Dynamic Hedge is actief voor dit account" + marker,
+    ETHUSDT: "Deze positie valt onder een Short Recovery 2.0-cyclus" + marker,
+    SOLUSDT: "Portfolio Noodhedge is LOCKED" + marker,
+  });
+  await h.handler();
+  assert.equal(h.calls.length, 3);                                  // never aborts on a protected skip
+  assert.match(h.state.message, /0 SHORTS gesloten · 0 te klein overgeslagen · 3 beschermd/);
+  assert.doesNotMatch(h.state.message, /gestopt/);
+});
+
+test("round 4: unreliable ownership data (409 'onbetrouwbaar') still stops the run", async () => {
+  const h = closeHarness({ BTCUSDT: "Eigenaarschaps-/beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt" });
+  await h.handler();
+  assert.equal(h.calls.length, 1);
+  assert.match(h.state.message, /0 SHORTS gesloten/);
 });
 
 test("Focus Airbag refusal handled the same way", async () => {
