@@ -8846,22 +8846,40 @@ def _enforce_min_open_pnl(row: dict[str, Any], request: "AsterManualCloseRequest
         raise HTTPException(409, "Open winst is niet meer boven de ingestelde grens; geen order geplaatst")
 
 
+def _series_guard_intents(user_ref: Any, symbol: str, side: str) -> Any:
+    """Per symbol/side collection of closes whose order may have reached Aster and is not yet confirmed.
+    Plain collection listing / document writes only: no filtered query, no composite index, no index deployment."""
+    return (user_ref.collection("asterManualCloseOrderGuards").document(f"{symbol}__{side}")
+            .collection("intents"))
+
+
 def _refuse_if_recent_close_unconfirmed(user_ref: Any, symbol: str, side: str, current_hash: str) -> None:
     """Green series only: a previous close of the same symbol/side that may have reached Aster but was never
     confirmed (e.g. delayed position data) must be checked by a human first; the series skips it."""
     now = datetime.now(timezone.utc)
-    for doc in user_ref.collection("asterManualCloseIntents").where("symbol", "==", symbol).where("side", "==", side).stream():
+    for doc in _series_guard_intents(user_ref, symbol, side).stream():
         if doc.id == current_hash:
             continue
         data = doc.to_dict() or {}
-        if data.get("orderMayHaveBeenSent") is not True or data.get("status") == "confirmed_closed":
+        if data.get("status") == "confirmed_closed":
             continue
-        created = data.get("createdAt")
-        if isinstance(created, datetime):
-            created = created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created.astimezone(timezone.utc)
-            if now - created > _BULK_UNCONFIRMED_CLOSE_WINDOW:
+        started = data.get("orderStartedAt")
+        if isinstance(started, datetime):
+            started = started.replace(tzinfo=timezone.utc) if started.tzinfo is None else started.astimezone(timezone.utc)
+            if now - started > _BULK_UNCONFIRMED_CLOSE_WINDOW:
                 continue
         raise HTTPException(409, "Vorige sluiting van dit symbool is nog niet bevestigd; controleer Aster en gebruik de individuele Close-knop")
+
+
+def _clear_series_guard(guard_ref: Any) -> None:
+    """After a CONFIRMED close only; best effort and never allowed to turn a confirmed close into an error."""
+    try:
+        guard_ref.delete()
+    except Exception:
+        try:
+            guard_ref.set({"status": "confirmed_closed"}, merge=True)
+        except Exception:
+            pass
 
 
 @app.post("/v1/me/aster/positions/{symbol}/close")
@@ -9016,7 +9034,10 @@ def close_one_aster_position(
         )
         id_prefix = f"tm-manual-{intent_hash[:18]}"
         # Durable marker written BEFORE the single order: from here on the order may have reached Aster.
-        intent_ref.set({"orderMayHaveBeenSent": True, "orderStartedAt": datetime.now(timezone.utc)}, merge=True)
+        started_at = datetime.now(timezone.utc)
+        series_guard_ref = _series_guard_intents(user_reference(user), normalized_symbol, request.side).document(intent_hash)
+        series_guard_ref.set({"status": "order_started", "orderStartedAt": started_at})
+        intent_ref.set({"orderMayHaveBeenSent": True, "orderStartedAt": started_at}, merge=True)
         result = execute_aster_leg(
             client, plan, side=PositionSide(request.side), action="CLOSE", id_prefix=id_prefix,
             confirm=True, manual_loss_confirmation=True,
@@ -9035,6 +9056,7 @@ def close_one_aster_position(
             uid, auto_hedge_manual_guard, after_manual_rows,
         )
         complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
+        _clear_series_guard(series_guard_ref)
         intent_ref.set({
             "status": "confirmed_closed", "result": result, "percentage": request.percentage,
             "closedQuantity": close_quantity, "remainingQuantity": remaining_quantity,

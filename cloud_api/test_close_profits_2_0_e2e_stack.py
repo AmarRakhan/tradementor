@@ -11,6 +11,7 @@ import os
 import socket
 import sys
 import threading
+import time
 import unittest
 import uuid
 from decimal import Decimal, ROUND_DOWN
@@ -460,6 +461,271 @@ class ProductionChain(E2E):
         again = self.close("S02USDT", self.expected["S02USDT"], 50, bulk=True)
         self.assertEqual(again.status_code, 409)
         self.assertEqual(len(self.fake.accepted(symbol="S02USDT")), 1)
+
+
+class ProfitSweepSeries(E2E):
+    """Profit Sweep (existing, per-user feature hooked into EVERY Aster close of the shared client) with 25 consecutive
+    profitable closes, on the real stack: real Firestore transactions (emulator), real FastAPI production entrypoint,
+    real gateway, and an HTTP-level fake of Aster's fills, account, income/Spot history and Spot transfer endpoint
+    (reused clientTranId is refused, like Aster does). Nothing here touches a real exchange or real money.
+    Invariant checked after every scenario: money booked = still pending + transferred; the exchange holds exactly the
+    transfers Firestore recorded as SUCCEEDED, each clientTranId once."""
+
+    def setUp(self):
+        super().setUp()
+        previous = os.environ.get("ASTER_PROFIT_SWEEP_LIVE_ENABLED")
+        os.environ["ASTER_PROFIT_SWEEP_LIVE_ENABLED"] = "true"
+        self.addCleanup(lambda: os.environ.pop("ASTER_PROFIT_SWEEP_LIVE_ENABLED", None) if previous is None
+                        else os.environ.__setitem__("ASTER_PROFIT_SWEEP_LIVE_ENABLED", previous))
+        self.set_sweep("25")
+
+    # ---- helpers -------------------------------------------------------------------------------------------
+    def uref(self):
+        return self.db.collection("users").document(self.uid)
+
+    def set_sweep(self, minimum, percent=25):
+        self.uref().collection("executionControls").document("aster").set(
+            {"profitSweep": {"enabled": True, "sweepPercent": percent, "transferAsset": "USDT", "minimumTransfer": minimum}})
+
+    def ledger(self):
+        return [d.to_dict() for d in self.uref().collection("asterProfitSweeps").stream()]
+
+    def state(self):
+        return self.uref().collection("asterProfitSweepState").document("current").get().to_dict() or {}
+
+    def claims(self):
+        return [d.to_dict() for d in self.uref().collection("asterProfitSweepTransfers").stream()]
+
+    def sweep_client(self):
+        return S.main.AsterV3Client(signer_address="0x" + "0" * 40, sign_message=lambda m: "0x" + "0" * 130,
+                                    live_authorized=True)
+
+    def tick(self):
+        from profit_sweep_live import reconcile_profit_savings_buffer
+        return reconcile_profit_savings_buffer(uid=self.uid, user_ref=self.uref(), client=self.sweep_client())
+
+    def check_money(self, allow_inflight=False):
+        booked = sum((Decimal(l["bufferBookedAmount"]) for l in self.ledger() if l.get("bufferBooked") is True), Decimal(0))
+        state = self.state()
+        pending = Decimal(str(state.get("pendingSavings", "0")))
+        done = [c for c in self.claims() if c.get("status") == "SUCCEEDED"]
+        sent = sum((Decimal(str(c["amount"])) for c in done), Decimal(0))
+        self.assertEqual(booked, pending + sent, f"booked {booked} != pending {pending} + transferred {sent}")
+        exchange = self.fake.transfers
+        self.assertEqual(len({t["clientTranId"] for t in exchange}), len(exchange), "a clientTranId was used twice")
+        self.assertEqual(sum((Decimal(str(t["amount"])) for t in exchange), Decimal(0)), sent,
+                         "money the exchange moved differs from what Firestore booked as transferred")
+        self.assertEqual(len(exchange), len(done))
+        claims = self.claims()
+        self.assertEqual(len({c["clientTranId"] for c in claims}), len(claims))
+        if not allow_inflight:
+            self.assertFalse(state.get("inFlight"), state.get("inFlight"))
+        return booked, pending, sent
+
+    # ---- 25 consecutive profitable closes ------------------------------------------------------------------
+    def test_25_closes_book_every_profit_exactly_once_and_transfer_whole_blocks_only(self):
+        self.seed_world(n=25, hedged=5)
+        result = self.bulk(50)
+        self.assertIsNone(result["stopped"], result)
+        self.assertEqual(len(result["closed"]), 25)
+        self.assertEqual(len(self.fake.accepted()), 25)                       # the sweep never adds a market order
+        ledger = self.ledger()
+        self.assertEqual(len(ledger), 25)
+        self.assertEqual(len({l["closureId"] for l in ledger}), 25)
+        self.assertEqual(sorted({l["status"] for l in ledger}), ["BUFFERED"], ledger[:2])
+        booked, pending, sent = self.check_money()
+        self.assertGreater(sent, 0)
+        self.assertTrue(all(Decimal(str(t["amount"])) == Decimal("25") for t in self.fake.transfers))
+        self.assertLess(pending, Decimal("25"))                               # only the sub-threshold remainder stays
+        self.assertEqual(len(self.fake.transfer_posts), len(self.fake.transfers))   # no retries were needed
+        self.assertEqual([], self.fake.unmocked)
+        print("INFO-sweep25: booked", booked, "transferred", sent, "pending", pending, "transfers", len(self.fake.transfers))
+
+    def test_a_replayed_close_request_never_books_or_transfers_twice(self):
+        self.seed_world(n=3, hedged=0)
+        key = "replay-" + uuid.uuid4().hex
+        first = self.close("S00USDT", self.expected["S00USDT"], 100, key=key, bulk=True)
+        self.assertEqual(first.status_code, 200, first.text)
+        before = (len(self.ledger()), len(self.fake.transfers), self.check_money())
+        again = self.close("S00USDT", self.expected["S00USDT"], 100, key=key, bulk=True)
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual((len(self.ledger()), len(self.fake.transfers), self.check_money()), before)
+        self.assertEqual(len(self.fake.accepted()), 1)
+
+    def test_double_hook_booking_of_the_same_close_is_idempotent(self):
+        import profit_sweep_live as psl
+        self.seed_world(n=1, hedged=0)
+        prepared = psl.prepare_close_sweep(uid=self.uid, user_ref=self.uref(), client=self.sweep_client(),
+                                           intent_id="dup-1", symbol="S00USDT", position_side="SHORT",
+                                           close_quantity=Decimal("1"), evidence=None)
+        self.assertIsNotNone(prepared)
+        self.assertEqual(psl._book_contribution(prepared, Decimal("1.5"))["alreadyBooked"], False)
+        self.assertEqual(psl._book_contribution(prepared, Decimal("1.5"))["alreadyBooked"], True)
+        self.assertEqual(Decimal(str(self.state()["pendingSavings"])), Decimal("1.5"))
+        again = psl.prepare_close_sweep(uid=self.uid, user_ref=self.uref(), client=self.sweep_client(),
+                                        intent_id="dup-1", symbol="S00USDT", position_side="SHORT",
+                                        close_quantity=Decimal("1"), evidence=None)
+        self.assertIsNone(again)                                              # same close can never open a 2nd ledger row
+
+    # ---- UNKNOWN / partial fills / rejects on the CLOSE order ---------------------------------------------
+    def test_unconfirmed_or_failed_close_orders_never_book_profit_or_move_money(self):
+        self.seed_world(n=6, hedged=0)
+        self.fake.modes.update({"S00USDT": "partial_fill", "S01USDT": "http503_unknown", "S02USDT": "reject",
+                                "S03USDT": "timeout_after_accept", "S04USDT": "ack_new"})
+        for sym in ("S00USDT", "S01USDT", "S02USDT", "S03USDT", "S04USDT"):
+            r = self.close(sym, self.expected[sym], 100, bulk=True)
+            self.assertNotEqual(r.status_code, 200, (sym, r.text))
+        ok = self.close("S05USDT", self.expected["S05USDT"], 100, bulk=True)
+        self.assertEqual(ok.status_code, 200, ok.text)
+        booked_rows = [l for l in self.ledger() if l.get("bufferBooked") is True]
+        # Only the one fully confirmed close may have booked anything; at most the partial fill's own fills.
+        self.assertTrue(all(l["symbol"] in {"S05USDT", "S00USDT"} for l in booked_rows), [l["symbol"] for l in booked_rows])
+        for l in booked_rows:
+            fills = [f for f in self.fake.trades[l["symbol"]] if f.get("closing") and str(f["orderId"]) == str(l["exchangeOrderId"])]
+            self.assertTrue(fills)
+            realized = sum((Decimal(f["realizedPnl"]) for f in fills), Decimal(0))
+            self.assertLessEqual(Decimal(l["bufferBookedAmount"]), realized * Decimal("0.25"))
+        self.check_money()
+        print("INFO-sweep-unconfirmed: booked symbols", sorted(l["symbol"] for l in booked_rows),
+              "ledger statuses", sorted((l["symbol"], l["status"]) for l in self.ledger()))
+
+    def test_closing_fills_not_yet_visible_book_nothing_and_never_transfer(self):
+        self.seed_world(n=2, hedged=0)
+        self.fake.hide_close_fills.add("S00USDT")
+        r = self.close("S00USDT", self.expected["S00USDT"], 100, bulk=True)
+        self.assertEqual(r.status_code, 200, r.text)                          # the close itself stays valid
+        led = [l for l in self.ledger() if l["symbol"] == "S00USDT"]
+        self.assertEqual(len(led), 1)
+        self.assertNotEqual(led[0]["status"], "BUFFERED")
+        self.assertFalse(led[0].get("bufferBooked"))
+        self.assertEqual(self.fake.transfers, [])
+        self.check_money()
+
+    # ---- Spot transfer failures ---------------------------------------------------------------------------
+    def one_close_with_transfer_plan(self, plan, minimum="10", history_down=False):
+        self.set_sweep(minimum)
+        self.seed_world(n=1, hedged=0)
+        self.fake.transfer_plan = list(plan)
+        self.fake.history_down = history_down
+        r = self.close("S00USDT", self.expected["S00USDT"], 100, bulk=True)
+        self.assertEqual(r.status_code, 200, r.text)
+        return r
+
+    def test_transfer_accepted_but_answer_lost_is_reconciled_from_history_without_a_second_transfer(self):
+        self.one_close_with_transfer_plan(["http503_after_accept"])
+        booked, pending, sent = self.check_money()
+        self.assertGreater(sent, 0)
+        first_id = self.fake.transfer_posts[0][0]
+        self.assertEqual(sum(1 for p in self.fake.transfer_posts if p[0] == first_id), 1, "replayed although history proves it")
+
+    def test_transfer_read_timeout_after_accept_is_reconciled_without_a_second_transfer(self):
+        self.one_close_with_transfer_plan(["timeout_after_accept"])
+        self.check_money()
+        first_id = self.fake.transfer_posts[0][0]
+        self.assertEqual(sum(1 for p in self.fake.transfer_posts if p[0] == first_id), 1)
+
+    def test_transfer_lost_before_acceptance_is_replayed_once_with_the_same_id(self):
+        self.one_close_with_transfer_plan(["http503_before_accept"])
+        self.check_money()
+        first_id = self.fake.transfer_posts[0][0]
+        replays = [p for p in self.fake.transfer_posts if p[0] == first_id]
+        self.assertEqual(len(replays), 2)
+        self.assertEqual(sum(1 for t in self.fake.transfers if t["clientTranId"] == first_id), 1)
+
+    def test_rejected_transfer_keeps_the_buffer_and_moves_no_money(self):
+        self.one_close_with_transfer_plan(["reject"])
+        booked, pending, sent = self.check_money(allow_inflight=True)
+        self.assertEqual(self.fake.transfers, [])
+        self.assertEqual(sent, Decimal(0))
+        self.assertEqual(booked, pending)                                    # the buffer is intact; nothing was lost
+
+    def test_unknown_transfer_with_history_down_blocks_blind_replay_and_recovers_later_without_a_second_transfer(self):
+        self.one_close_with_transfer_plan(["http503_after_accept"], history_down=True)
+        first_id = self.fake.transfer_posts[0][0]
+        self.assertEqual(sum(1 for p in self.fake.transfer_posts if p[0] == first_id), 1, "blind replay while history is down")
+        booked, pending, sent = self.check_money(allow_inflight=True)
+        self.assertEqual(sent, Decimal(0))                                    # buffer untouched until the exchange proves it
+        self.assertEqual(booked, pending)
+        self.assertTrue((self.state().get("inFlight") or {}).get("claimId"))
+        posts_before = len(self.fake.transfer_posts)
+        self.fake.history_down = False
+        self.tick()                                                           # scheduler tick after the outage
+        self.tick()
+        self.check_money()
+        self.assertEqual(sum(1 for p in self.fake.transfer_posts if p[0] == first_id), 1)
+
+    # ---- restart: process died between exchange acceptance and Firestore completion ------------------------
+    def test_restart_after_exchange_accepted_completes_from_history_exactly_once(self):
+        import profit_sweep_live as psl
+        self.set_sweep("25")
+        cid = psl._buffer_client_tran_id(self.uid, 1)
+        now_ms = int(time.time() * 1000)
+        self.fake.transfers.append({"clientTranId": cid, "asset": "USDT", "amount": "25", "tranId": 4242, "time": now_ms})
+        from datetime import datetime, timezone
+        claim = {"claimId": "restart-claim", "sequence": 1, "amount": "25", "asset": "USDT", "clientTranId": cid,
+                 "status": "SUBMITTING", "createdAt": datetime.now(timezone.utc), "submittedAt": datetime.now(timezone.utc)}
+        self.uref().collection("asterProfitSweepState").document("current").set(
+            {"pendingSavings": "30", "transferSequence": 1, "inFlight": claim, "asset": "USDT", "minimumTransfer": "25"})
+        self.uref().collection("asterProfitSweepTransfers").document("restart-claim").set(
+            {"uid": self.uid, "claimId": "restart-claim", "sequence": 1, "amount": "25", "asset": "USDT",
+             "clientTranId": cid, "status": "SUBMITTING"})
+        self.tick()
+        state = self.state()
+        self.assertEqual(Decimal(str(state["pendingSavings"])), Decimal("5"))
+        self.assertFalse(state.get("inFlight"))
+        self.assertEqual(self.fake.transfer_posts, [], "a second POST was sent for an already accepted transfer")
+        self.tick()
+        self.assertEqual(Decimal(str(self.state()["pendingSavings"])), Decimal("5"))   # second tick changes nothing
+        self.assertEqual(len(self.fake.transfers), 1)
+
+    def test_restart_after_submitting_marker_but_before_the_post_sends_one_transfer_with_the_same_id(self):
+        import profit_sweep_live as psl
+        from datetime import datetime, timezone
+        self.set_sweep("25")
+        cid = psl._buffer_client_tran_id(self.uid, 1)
+        claim = {"claimId": "restart-claim-2", "sequence": 1, "amount": "25", "asset": "USDT", "clientTranId": cid,
+                 "status": "SUBMITTING", "createdAt": datetime.now(timezone.utc), "submittedAt": datetime.now(timezone.utc)}
+        self.uref().collection("asterProfitSweepState").document("current").set(
+            {"pendingSavings": "30", "transferSequence": 1, "inFlight": claim, "asset": "USDT", "minimumTransfer": "25"})
+        self.uref().collection("asterProfitSweepTransfers").document("restart-claim-2").set(
+            {"uid": self.uid, "claimId": "restart-claim-2", "sequence": 1, "amount": "25", "asset": "USDT",
+             "clientTranId": cid, "status": "SUBMITTING"})
+        self.tick()
+        self.tick()
+        self.assertEqual([p[0] for p in self.fake.transfer_posts], [cid])
+        self.assertEqual(len(self.fake.transfers), 1)
+        self.assertEqual(Decimal(str(self.state()["pendingSavings"])), Decimal("5"))
+
+    # ---- concurrency: scheduler ticks while the series runs ------------------------------------------------
+    def test_concurrent_scheduler_ticks_during_a_25_close_series_never_double_transfer(self):
+        self.set_sweep("10")
+        self.seed_world(n=25, hedged=5)
+        stop, errors = threading.Event(), []
+
+        def loop():
+            while not stop.is_set():
+                try:
+                    self.tick()
+                except Exception as exc:                                       # a tick must never break the books
+                    errors.append(repr(exc))
+                time.sleep(0.01)
+        ticker = threading.Thread(target=loop)
+        ticker.start()
+        try:
+            result = self.bulk(50)
+        finally:
+            stop.set()
+            ticker.join(timeout=60)
+        self.assertIsNone(result["stopped"], result)
+        self.assertEqual(len(self.fake.accepted()), 25)
+        for _ in range(4):
+            self.tick()
+        booked, pending, sent = self.check_money()
+        self.assertGreater(sent, 0)
+        self.assertTrue(all(Decimal(str(t["amount"])) == Decimal("10") for t in self.fake.transfers))
+        print("INFO-sweep-concurrent: booked", booked, "transferred", sent, "pending", pending,
+              "transfers", len(self.fake.transfers), "posts", len(self.fake.transfer_posts), "tick errors", errors[:3])
+        self.assertEqual(errors, [])
 
 
 class ImportSmoke(E2E):

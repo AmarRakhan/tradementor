@@ -87,6 +87,9 @@ class _Doc:
                 _merge(self.fs.docs[self.path], data)
             else:
                 self.fs.docs[self.path] = copy.deepcopy(data)
+    def delete(self):
+        with self.fs.mutex:
+            self.fs.docs.pop(self.path, None)
     def create(self, data):
         with self.fs.mutex:
             if self.path in self.fs.docs:

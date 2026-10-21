@@ -390,6 +390,20 @@ class RetrySafetyProofTests(unittest.TestCase):
         self.assertLess(route.index('"orderMayHaveBeenSent": True'), order)      # durable marker precedes the single order
         self.assertEqual(route.count("execute_aster_leg("), 1)                    # still exactly one order call site
 
+    def test_new_close_profits_code_needs_no_firestore_index(self):
+        """Only get-by-id, plain collection listing and writes: no filtered/ordered query, no collection-group query,
+        so there is nothing that could need a composite (or any non-automatic) index in production."""
+        root = Path(__file__).parent
+        main_src = (root / "main.py").read_text()
+        route = main_src[main_src.index("def _series_guard_intents("):]
+        route = route[:route.index('@app.post("/v1/me/aster/simulate")')]
+        parts = {"route": route}
+        for name in ("manual_profit_close_planner.py", "manual_profit_close_snapshot.py"):
+            parts[name] = (root / name).read_text()
+        for name, text in parts.items():
+            for forbidden in (".where(", ".order_by(", "collection_group(", ".start_after(", ".limit("):
+                self.assertNotIn(forbidden, text, f"{name} uses {forbidden}")
+
 
 @unittest.skipUnless(HAVE, "needs aster_gateway (httpx)")
 class WorkerLeaseOrderSourceTests(unittest.TestCase):

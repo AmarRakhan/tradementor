@@ -29,6 +29,15 @@ class FakeAster:
         self.on_order_start = None   # callable(symbol) run at the start of every order POST (worker/close concurrency hooks)
         self.on_position_read = None
         self._id = 0
+        # --- Profit Sweep side of the exchange (fills, account, Spot transfers) ------------------------------
+        self.trades = {}                 # symbol -> list of fills (userTrades)
+        self.hide_close_fills = set()    # symbols whose closing fills are not yet visible in userTrades
+        self.account = {"availableBalance": "50000", "totalMarginBalance": "100000", "totalMaintMargin": "100"}
+        self.transfers = []              # accepted FUTURE->SPOT transfers: {clientTranId, asset, amount, tranId, time}
+        self.transfer_plan = []          # per POST attempt: ok | http503_after_accept | http503_before_accept | timeout_after_accept | reject | no_tranid
+        self.transfer_posts = []         # every transfer POST seen: (clientTranId, amount, mode)
+        self.history_down = False        # Spot transactionHistory + futures income TRANSFER reads fail (HTTP 500)
+        self._tran = 9000
 
     # ---- world -------------------------------------------------------------------------------------------
     def add(self, symbol, side, qty, mark=100.0, entry=None, minimum=0.001, step=0.001):
@@ -36,6 +45,13 @@ class FakeAster:
         self.mark[symbol] = float(mark)
         self.entry[(symbol, side)] = entry if entry is not None else (mark + 5 if side == "SHORT" else mark - 5)
         self.minq[symbol], self.step[symbol] = minimum, step
+        opening = "SELL" if side == "SHORT" else "BUY"
+        self._id += 1
+        self.trades.setdefault(symbol, []).append({
+            "id": self._id, "orderId": 100000 + self._id, "symbol": symbol, "side": opening, "positionSide": side,
+            "qty": repr(float(qty)), "price": repr(float(self.entry[(symbol, side)])), "realizedPnl": "0",
+            "commission": repr(-float(qty) * float(self.entry[(symbol, side)]) * 0.0005), "commissionAsset": "USDT",
+            "time": int(time.time() * 1000) - 3_600_000})
 
     def transport(self):
         return httpx.MockTransport(self.handle)
@@ -110,9 +126,59 @@ class FakeAster:
                                "status": row["status"], "executedQty": str(row["executed"]), "origQty": str(row["qty"])})
         if path == "/fapi/v3/order" and request.method == "POST":
             return self._order(request, params)
+        if path == "/fapi/v3/userTrades":
+            symbol = params.get("symbol", "")
+            with self.lock:
+                rows = [dict(r) for r in self.trades.get(symbol, [])
+                        if not (symbol in self.hide_close_fills and r.get("closing"))]
+            for r in rows:
+                r.pop("closing", None)
+            return self._json(rows[-int(params.get("limit", 500)):])
+        if path == "/fapi/v3/accountWithJoinMargin":
+            return self._json(dict(self.account))
+        if path == "/fapi/v3/income":
+            if params.get("incomeType") == "TRANSFER":
+                if self.history_down:
+                    return self._json({"code": -1, "msg": "income history unavailable"}, 500)
+                with self.lock:
+                    return self._json([{"incomeType": "TRANSFER", "asset": t["asset"], "income": repr(-float(t["amount"])),
+                                        "time": t["time"], "tranId": t["tranId"], "symbol": "", "info": "FUTURE_SPOT"}
+                                       for t in self.transfers])
+            return self._json([])
+        if path == "/api/v3/transactionHistory" and request.method == "GET":
+            if self.history_down:
+                return self._json({"code": -1, "msg": "spot history unavailable"}, 500)
+            with self.lock:
+                return self._json([{"type": "TRANSFER_FUTURE_TO_SPOT", "asset": t["asset"], "balanceDelta": t["amount"],
+                                    "time": t["time"], "tranId": t["tranId"]} for t in self.transfers])
+        if path == "/api/v3/asset/wallet/transfer" and request.method == "POST":
+            return self._transfer(request, params)
         with self.lock:
             self.unmocked.append((request.method, path))
         return self._json({"code": -1, "msg": f"unmocked {path}"}, 404)
+
+    def _transfer(self, request, params):
+        cid, amount, asset = params["clientTranId"], params["amount"], params["asset"]
+        with self.lock:
+            mode = self.transfer_plan.pop(0) if self.transfer_plan else "ok"
+            self.transfer_posts.append((cid, amount, mode))
+            if mode == "reject":
+                return self._json({"code": -9000, "msg": "Transfer rejected."}, 400)
+            if mode == "http503_before_accept":
+                return self._json({"code": -1007, "msg": "Timeout waiting for response from backend server."}, 503)
+            if any(t["clientTranId"] == cid for t in self.transfers):       # Aster refuses a reused clientTranId
+                return self._json({"code": -9001, "msg": "clientTranId already exists."}, 400)
+            self._tran += 1
+            self.transfers.append({"clientTranId": cid, "asset": asset, "amount": amount, "tranId": self._tran,
+                                   "time": int(time.time() * 1000)})
+            tran = self._tran
+        if mode == "timeout_after_accept":
+            raise httpx.ReadTimeout("read timeout after Aster accepted the transfer", request=request)
+        if mode == "http503_after_accept":
+            return self._json({"code": -1007, "msg": "Timeout waiting for response from backend server."}, 503)
+        if mode == "no_tranid":
+            return self._json({"status": "PENDING"})
+        return self._json({"status": "SUCCESS", "tranId": tran})
 
     def _order(self, request, params):
         symbol, side, ps = params["symbol"], params["side"], params["positionSide"]
@@ -148,6 +214,14 @@ class FakeAster:
                    "executed": executed, "status": status, "t0": t0, "t1": time.monotonic()}
             self.orders.append(row)
             self.rows_by_cid[cid] = row
+            if executed and reducing:
+                entry, mark = self.entry[(symbol, ps)], self.mark[symbol]
+                pnl = (entry - mark) * executed if ps == "SHORT" else (mark - entry) * executed
+                self.trades.setdefault(symbol, []).append({
+                    "id": self._id + 500000, "orderId": row["id"], "symbol": symbol, "side": side, "positionSide": ps,
+                    "qty": repr(float(executed)), "price": repr(float(mark)), "realizedPnl": repr(pnl),
+                    "commission": repr(-float(executed) * float(mark) * 0.0005), "commissionAsset": "USDT",
+                    "time": int(time.time() * 1000), "closing": True})
         if mode == "timeout_after_accept":
             raise httpx.ReadTimeout("read timeout after Aster accepted the order", request=request)
         if mode == "http503_after_accept":
