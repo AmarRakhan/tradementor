@@ -105,7 +105,7 @@ for (const width of [390, 1280]) {
 
   // 6. the existing individual close button still opens the individual close panel
   page = await open(width);
-  const row = page.getByRole("button", { name: /BTC SHORT sluiten/ });
+  const row = page.locator(`button[aria-label="BTC SHORT sluiten"]`);   // role="cell" on the button, so not getByRole("button")
   await row.waitFor();
   await row.click();
   await page.waitForFunction(() => document.querySelector('div[aria-hidden="true"][inert]') !== null, null, { timeout: 5000 });
