@@ -504,6 +504,24 @@ class ProfitSweepSeries(E2E):
         from profit_sweep_live import reconcile_profit_savings_buffer
         return reconcile_profit_savings_buffer(uid=self.uid, user_ref=self.uref(), client=self.sweep_client())
 
+    def dump(self, label):
+        """Everything needed to understand a Profit Sweep ledger after a scenario (printed into the CI log)."""
+        import json
+        from collections import Counter
+        state = self.state()
+        claims = sorted(self.claims(), key=lambda c: c.get("sequence", 0))
+        print("DUMP", label, json.dumps({
+            "state": {k: (str(v) if not isinstance(v, (dict, type(None))) else
+                          ({kk: str(vv) for kk, vv in v.items()} if v else v)) for k, v in state.items()},
+            "claims": [{k: str(c.get(k)) for k in ("sequence", "status", "amount", "clientTranId", "providerTransactionId",
+                                                    "reconciledFromHistory", "reconciliationStatus", "reason")} for c in claims],
+            "ledger": dict(Counter(l.get("status") for l in self.ledger())),
+            "exchangeTransfers": len(self.fake.transfers),
+            "exchangeDistinctIds": len({t["clientTranId"] for t in self.fake.transfers}),
+            "posts": dict(Counter(p[2] for p in self.fake.transfer_posts)),
+            "postsPerId": dict(Counter(Counter(p[0] for p in self.fake.transfer_posts).values())),
+        }, default=str)[:6000])
+
     def check_money(self, allow_inflight=False):
         booked = sum((Decimal(l["bufferBookedAmount"]) for l in self.ledger() if l.get("bufferBooked") is True), Decimal(0))
         state = self.state()
@@ -513,13 +531,18 @@ class ProfitSweepSeries(E2E):
         self.assertEqual(booked, pending + sent, f"booked {booked} != pending {pending} + transferred {sent}")
         exchange = self.fake.transfers
         self.assertEqual(len({t["clientTranId"] for t in exchange}), len(exchange), "a clientTranId was used twice")
-        self.assertEqual(sum((Decimal(str(t["amount"])) for t in exchange), Decimal(0)), sent,
+        inflight = state.get("inFlight") or {}
+        # A transfer the exchange accepted but Firestore has not yet proven (UNCERTAIN claim) is the one allowed gap.
+        pending_proof = [t for t in exchange if inflight and t["clientTranId"] == inflight.get("clientTranId")]
+        if not allow_inflight:
+            self.assertFalse(inflight, inflight)
+            pending_proof = []
+        self.assertEqual(sum((Decimal(str(t["amount"])) for t in exchange), Decimal(0)),
+                         sent + sum((Decimal(str(t["amount"])) for t in pending_proof), Decimal(0)),
                          "money the exchange moved differs from what Firestore booked as transferred")
-        self.assertEqual(len(exchange), len(done))
+        self.assertEqual(len(exchange), len(done) + len(pending_proof))
         claims = self.claims()
         self.assertEqual(len({c["clientTranId"] for c in claims}), len(claims))
-        if not allow_inflight:
-            self.assertFalse(state.get("inFlight"), state.get("inFlight"))
         return booked, pending, sent
 
     # ---- 25 consecutive profitable closes ------------------------------------------------------------------
@@ -641,6 +664,7 @@ class ProfitSweepSeries(E2E):
 
     def test_unknown_transfer_with_history_down_blocks_blind_replay_and_recovers_later_without_a_second_transfer(self):
         self.one_close_with_transfer_plan(["http503_after_accept"], history_down=True)
+        self.dump("history-down-after-close")
         first_id = self.fake.transfer_posts[0][0]
         self.assertEqual(sum(1 for p in self.fake.transfer_posts if p[0] == first_id), 1, "blind replay while history is down")
         booked, pending, sent = self.check_money(allow_inflight=True)
@@ -718,8 +742,10 @@ class ProfitSweepSeries(E2E):
             ticker.join(timeout=60)
         self.assertIsNone(result["stopped"], result)
         self.assertEqual(len(self.fake.accepted()), 25)
+        self.dump("concurrent-before-settle")
         for _ in range(4):
             self.tick()
+        self.dump("concurrent-after-settle")
         booked, pending, sent = self.check_money()
         self.assertGreater(sent, 0)
         self.assertTrue(all(Decimal(str(t["amount"])) == Decimal("10") for t in self.fake.transfers))

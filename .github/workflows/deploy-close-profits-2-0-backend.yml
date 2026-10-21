@@ -1,0 +1,740 @@
+name: Deploy Close Profits 2.0 Backend (exact release commit)
+# Generated from deploy-cloud-production.yml (proven) with ONLY these changes: dispatch from the release branch on
+# one exact commit that must be live+Close Profits 2.0 files only (tools/verify_close_profits_release.sh), no push
+# trigger, live source must still be the commit this release was built on. Everything else is unchanged.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY_CLOSE_PROFITS_2_0_BACKEND"
+        required: true
+        type: string
+      source_commit:
+        description: "Exact 40-character commit = tip of release/close-profits-2-0 (must equal the dispatched commit)"
+        required: true
+        type: string
+      request_issue:
+        description: "Optional GitHub issue number for agent feedback"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+concurrency:
+  group: tradementor-production-backend
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+  # Production safety floor: never allow a later feature deploy to roll the backend
+  # behind the Zone Warriors capacity invariant restored in Build 470.
+  PROTECTED_BACKEND_BASELINE: 81f1d8006e3df0dce8bef5688493f16b61b8a13c
+  # The backend source this release was built on and tested against. Production must still run exactly this.
+  LIVE_BACKEND_SOURCE_COMMIT: f87d6b201790d612f970355f3b8c4c8766938941
+  RELEASE_BRANCH: release/close-profits-2-0
+
+jobs:
+  test-and-deploy:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
+    steps:
+      - name: Check out deployment control plane
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Resolve exact deployment request
+        id: deploy-request
+        shell: bash
+        env:
+          MANUAL_CONFIRMATION: ${{ inputs.confirmation }}
+          MANUAL_SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              test "$MANUAL_CONFIRMATION" = "DEPLOY_CLOSE_PROFITS_2_0_BACKEND"
+              SOURCE_COMMIT="$MANUAL_SOURCE_COMMIT"
+              REQUEST_ID="manual-$GITHUB_RUN_ID"
+              ;;
+            push)
+              test "$GITHUB_ACTOR" = "AmarRakhan"
+              test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+              test -f ".github/deploy-requests/production-backend.json"
+              python - ".github/deploy-requests/production-backend.json" > "$RUNNER_TEMP/deploy-request.env" <<'PY'
+          import json
+          import re
+          import sys
+
+          request = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected = {"action", "confirmation", "sourceCommit", "requestedBy", "requestId"}
+          if set(request) != expected:
+              raise SystemExit(f"unexpected deploy-request keys: {sorted(request)}")
+          if request["action"] != "deploy-production-backend":
+              raise SystemExit("invalid deploy action")
+          if request["confirmation"] != "DEPLOY_PRODUCTION_BACKEND":
+              raise SystemExit("invalid deploy confirmation")
+          if request["requestedBy"] != "AmarRakhan":
+              raise SystemExit("deploy request is not owner-authorized")
+          source = str(request["sourceCommit"])
+          request_id = str(request["requestId"])
+          if not re.fullmatch(r"[0-9a-f]{40}", source):
+              raise SystemExit("invalid sourceCommit")
+          if not re.fullmatch(r"[A-Za-z0-9._-]{3,80}", request_id):
+              raise SystemExit("invalid requestId")
+          print(f"SOURCE_COMMIT={source}")
+          print(f"REQUEST_ID={request_id}")
+          PY
+              . "$RUNNER_TEMP/deploy-request.env"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          echo "SOURCE_COMMIT=$SOURCE_COMMIT" >> "$GITHUB_ENV"
+          echo "DEPLOY_REQUEST_ID=$REQUEST_ID" >> "$GITHUB_ENV"
+          echo "source_commit=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact requested source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.deploy-request.outputs.source_commit }}
+          fetch-depth: 0
+
+      - name: Authorize exact-source production deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+
+      - name: Verify immutable repository scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              test "$GITHUB_REF" = "refs/heads/release/close-profits-2-0"
+              ;;
+            push)
+              test "$GITHUB_ACTOR" = "AmarRakhan"
+              test "$GITHUB_REF" = "refs/heads/amar-crypto-bot-2026-cloud"
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+          test "$GCP_REGION" = "europe-west4"
+          test "$CLOUD_RUN_SERVICE" = "tradementor-api"
+          git fetch origin "$RELEASE_BRANCH" --quiet
+          # Immutable release: the commit that holds this workflow, the requested source and the tip of the release
+          # branch are ONE commit, and it differs from the live commit by Close Profits 2.0 files only.
+          test "$SOURCE_COMMIT" = "$GITHUB_SHA"
+          test "$SOURCE_COMMIT" = "$(git rev-parse "origin/$RELEASE_BRANCH")"
+          bash tools/verify_close_profits_release.sh --source "$SOURCE_COMMIT" --live "$LIVE_BACKEND_SOURCE_COMMIT" --baseline "$PROTECTED_BACKEND_BASELINE"
+          # Regression lock: exact-source deploys may move production forward, never
+          # back behind the Zone Warriors zone-owned-seat capacity fix. This catches
+          # stale feature dispatchers before tests/build/deploy can mutate Cloud Run.
+          git merge-base --is-ancestor "$PROTECTED_BACKEND_BASELINE" "$SOURCE_COMMIT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+
+      - name: Run all backend tests
+        working-directory: cloud_api
+        run: pytest -q
+
+      - name: Authenticate to Google Cloud without stored keys
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture production configuration and rollback point
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=capture-service-metadata" >> "$GITHUB_ENV"
+          gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-before.json"
+          echo "DEPLOY_PHASE=capture-iam-policy" >> "$GITHUB_ENV"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/service-before.json" >> "$GITHUB_ENV" <<'PY'
+          import json
+          import sys
+
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          spec = service["spec"]["template"]["spec"]
+          variables = {item["name"]: item.get("value") for item in spec["containers"][0].get("env", [])}
+          assert variables.get("ASTER_LIVE_EXECUTION_ENABLED") == "true"
+          assert variables.get("ASTER_STRATEGY2_LIVE_ENABLED") == "true"
+          runtime_service_account = spec.get("serviceAccountName")
+          service_url = service["status"]["url"]
+          assert runtime_service_account and service_url.startswith("https://")
+          traffic = service["status"].get("traffic", [])
+          live = next((row for row in traffic if int(row.get("percent", 0)) == 100), None)
+          assert live and live.get("revisionName")
+          print(f"RUNTIME_SERVICE_ACCOUNT={runtime_service_account}")
+          print(f"SERVICE_URL={service_url}")
+          print(f"PREVIOUS_REVISION={live['revisionName']}")
+          PY
+          echo "DEPLOY_PHASE=capture-current-health" >> "$GITHUB_ENV"
+          SERVICE_URL="$(python -c 'import json,sys; d=json.load(open(sys.argv[1],encoding="utf-8")); print(d["status"]["url"])' "$RUNNER_TEMP/service-before.json")"
+          test -n "$SERVICE_URL"
+          PREVIOUS_HEALTH_FILE="$RUNNER_TEMP/previous-health.json"
+          PREVIOUS_HEALTH_HTTP="$(curl --silent --show-error --retry 8 --retry-delay 3 --retry-all-errors --connect-timeout 10 --max-time 30 -o "$PREVIOUS_HEALTH_FILE" -w '%{http_code}' "$SERVICE_URL/health" || true)"
+          test "$PREVIOUS_HEALTH_HTTP" = "200"
+          python - "$PREVIOUS_HEALTH_FILE" >> "$GITHUB_ENV" <<'PY'
+          import json
+          import sys
+
+          health = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert health["status"] == "ready"
+          assert health["multiUser"] is True
+          previous = health.get("sourceCommit") or health.get("imageSourceCommit") or ""
+          assert previous
+          if __import__("os").environ.get("SOURCE_COMMIT") == "ad8ccbebb32dccc447c1a19e1781bc4c0505c75e":
+              assert previous == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1", "P0 status hotfix requires unchanged live backend"
+          if __import__("os").environ.get("SOURCE_COMMIT") == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1":
+              assert previous == "1698f4e0282651d3e3d8bb95c49171743d2e5b2c", "P0 exact-source hotfix requires unchanged live backend"
+          if __import__("os").environ.get("SOURCE_COMMIT") == "a19d07a6557eb1a83acbad84ea3c751eabe24bee":
+              assert previous == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1", "P0 status fix requires the verified diagnosis revision to be live"
+          if __import__("os").environ.get("SOURCE_COMMIT") == "ad8ccbebb32dccc447c1a19e1781bc4c0505c75e":
+              assert previous == "8ac3c98c6b0433bd318c571c46ac995fa7ca03b1", "P0 status patch requires unchanged deployed diagnostic backend"
+          assert previous == __import__("os").environ["LIVE_BACKEND_SOURCE_COMMIT"], f"production runs {previous}, not the commit this release was built and tested on"
+          print(f"PREVIOUS_SOURCE_COMMIT={previous}")
+          PY
+
+      - name: Collect pre-deploy account runtime snapshot with production runtime identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=collect-runtime-accounts-before" >> "$GITHUB_ENV"
+          PREVIOUS_IMAGE="$(gcloud run revisions describe "$PREVIOUS_REVISION" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --format='value(spec.containers[0].image)')"
+          test -n "$PREVIOUS_IMAGE"
+          JOB="tm-rc-before-${GITHUB_RUN_ID: -7}"
+          SCRIPT_B64="$(base64 -w0 tools/runtime_contract_snapshot.py)"
+          RUNNER_B64="$(printf '%s' "import base64,sys; src=base64.b64decode('$SCRIPT_B64'); sys.argv=['runtime_contract_snapshot.py','--project','$GCP_PROJECT_ID','--accounts-only']; exec(compile(src,'runtime_contract_snapshot.py','exec'))" | base64 -w0)"
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$PREVIOUS_IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$RUNNER_B64'))" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=runtime-contract-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 180s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          echo "RUNTIME_BASELINE_JOB=$JOB" >> "$GITHUB_ENV"
+
+      - name: Authenticate read-only observer for runtime baseline
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Capture pre-deploy runtime contract baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=capture-runtime-baseline" >> "$GITHUB_ENV"
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_COMPLETE"' \
+            --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-ticks-before.json" || echo '[]' > "$RUNNER_TEMP/runtime-ticks-before.json"
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_ERROR"' \
+            --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-errors-before.json" || echo '[]' > "$RUNNER_TEMP/runtime-errors-before.json"
+          # Cloud Logging can lag several seconds behind a completed Cloud Run
+          # job. Poll the exact read-only baseline record instead of failing a
+          # safe deployment merely because log ingestion has not caught up yet.
+          RESULT=""
+          for attempt in {1..12}; do
+            RESULT="$(gcloud logging read \
+              "resource.type=cloud_run_job AND resource.labels.job_name=$RUNTIME_BASELINE_JOB AND textPayload:\"RUNTIME_CONTRACT_ACCOUNTS \"" \
+              --project "$GCP_PROJECT_ID" --freshness=20m --limit=20 --order=desc --format='value(textPayload)' \
+              | grep 'RUNTIME_CONTRACT_ACCOUNTS ' | head -n1 || true)"
+            if [ -n "$RESULT" ]; then
+              break
+            fi
+            echo "Runtime account baseline log not visible yet (attempt $attempt/12); waiting 5s."
+            sleep 5
+          done
+          test -n "$RESULT"
+          printf '%s\n' "${RESULT#RUNTIME_CONTRACT_ACCOUNTS }" > "$RUNNER_TEMP/runtime-accounts-before.json"
+          python - "$RUNNER_TEMP/runtime-accounts-before.json" <<'PY'
+          import json,sys
+          rows=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert isinstance(rows,list) and rows, "runtime account baseline is empty"
+          assert all(isinstance(row,dict) and row.get("accountRef") for row in rows)
+          PY
+          python tools/runtime_contract_snapshot.py \
+            --project "$GCP_PROJECT_ID" \
+            --service-json "$RUNNER_TEMP/service-before.json" \
+            --health-json "$RUNNER_TEMP/previous-health.json" \
+            --ticks-json "$RUNNER_TEMP/runtime-ticks-before.json" \
+            --errors-json "$RUNNER_TEMP/runtime-errors-before.json" \
+            --accounts-json "$RUNNER_TEMP/runtime-accounts-before.json" \
+            --output "$RUNNER_TEMP/runtime-before.json"
+
+      - name: Restore deployment identity after runtime baseline
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Cleanup pre-deploy runtime snapshot job
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${RUNTIME_BASELINE_JOB:-}" ]; then
+            gcloud run jobs delete "$RUNTIME_BASELINE_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
+
+      - name: Select mandatory contracts for exact production delta
+        id: release-impact
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=runtime-contract-selection" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/release-changed-files.txt"
+          if [ "$PREVIOUS_SOURCE_COMMIT" != "$SOURCE_COMMIT" ]; then
+            git cat-file -e "$PREVIOUS_SOURCE_COMMIT^{commit}"
+            git diff --name-only "$PREVIOUS_SOURCE_COMMIT" "$SOURCE_COMMIT" | sort -u > "$RUNNER_TEMP/release-changed-files.txt"
+          fi
+          python tools/runtime_contract_impact.py \
+            --files-file "$RUNNER_TEMP/release-changed-files.txt" \
+            --backend-tests-file "$RUNNER_TEMP/release-backend-tests.txt" \
+            --web-tests-file "$RUNNER_TEMP/release-web-tests.txt" \
+            --github-output "$GITHUB_OUTPUT" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --json
+
+      - name: Run mandatory backend release contracts
+        if: steps.release-impact.outputs.has_backend_tests == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=runtime-backend-contracts" >> "$GITHUB_ENV"
+          mapfile -t TESTS < <(sed 's#^cloud_api/##' "$RUNNER_TEMP/release-backend-tests.txt")
+          test "${#TESTS[@]}" -gt 0
+          cd cloud_api
+          pytest -q "${TESTS[@]}"
+
+      - name: Set up Node for mandatory web release contracts
+        if: steps.release-impact.outputs.has_web_tests == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies for mandatory release contracts
+        if: steps.release-impact.outputs.has_web_tests == 'true'
+        working-directory: web
+        run: npm ci
+
+      - name: Run mandatory web release contracts
+        if: steps.release-impact.outputs.has_web_tests == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=runtime-web-contracts" >> "$GITHUB_ENV"
+          mapfile -t TESTS < <(sed 's#^web/##' "$RUNNER_TEMP/release-web-tests.txt")
+          test "${#TESTS[@]}" -gt 0
+          cd web
+          node --test "${TESTS[@]}"
+
+      - name: Select exact image strategy
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=select-image" >> "$GITHUB_ENV"
+          if [ "$SOURCE_COMMIT" = "$PREVIOUS_SOURCE_COMMIT" ]; then
+            PREVIOUS_IMAGE="$(gcloud run revisions describe "$PREVIOUS_REVISION" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --format='value(spec.containers[0].image)')"
+            test -n "$PREVIOUS_IMAGE"
+            echo "REUSE_LIVE_IMAGE=true" >> "$GITHUB_ENV"
+            echo "IMAGE=$PREVIOUS_IMAGE" >> "$GITHUB_ENV"
+            echo "DEPLOYMENT_PROOF_MODE=existing-live-image" >> "$GITHUB_ENV"
+          else
+            echo "REUSE_LIVE_IMAGE=false" >> "$GITHUB_ENV"
+            echo "DEPLOYMENT_PROOF_MODE=new-image" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build and push backend image
+        if: env.REUSE_LIVE_IMAGE != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=build-image" >> "$GITHUB_ENV"
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$SOURCE_COMMIT"
+          docker build --build-arg "SOURCE_COMMIT=$SOURCE_COMMIT" --tag "$IMAGE" cloud_api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy candidate without production traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=deploy-candidate" >> "$GITHUB_ENV"
+          RUN_SUFFIX="${GITHUB_RUN_ID: -6}"
+          REVISION_SUFFIX="src-${SOURCE_COMMIT:0:8}-$RUN_SUFFIX"
+          TAG="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          gcloud run services update "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --image "$IMAGE"             --revision-suffix "$REVISION_SUFFIX"             --update-env-vars "TRADEMENTOR_SOURCE_COMMIT=$SOURCE_COMMIT,TRADEMENTOR_IMAGE_SOURCE_COMMIT=$SOURCE_COMMIT,ASTER_REALTIME_WORKER=true,ASTER_REALTIME_EXECUTION_ENABLED=true,ASTER_PROFIT_SWEEP_LIVE_ENABLED=true,ASTER_EMERGENCY_HEDGE_WORKER=false,ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER=true,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=true"             --no-traffic             --tag "$TAG"
+          gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/service-candidate.json"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json
+          import os
+          import sys
+
+          before = json.load(open(sys.argv[1], encoding="utf-8"))
+          after = json.load(open(sys.argv[2], encoding="utf-8"))
+          tag = sys.argv[3]
+          before_spec = before["spec"]["template"]["spec"]
+          after_spec = after["spec"]["template"]["spec"]
+          assert before_spec.get("serviceAccountName") == after_spec.get("serviceAccountName")
+          assert before_spec.get("timeoutSeconds") == after_spec.get("timeoutSeconds")
+          assert before_spec.get("containerConcurrency") == after_spec.get("containerConcurrency")
+          before_env = {item["name"]: item.get("value") for item in before_spec["containers"][0].get("env", [])}
+          after_env = {item["name"]: item.get("value") for item in after_spec["containers"][0].get("env", [])}
+          expected_env = dict(before_env)
+          expected_env.update({"TRADEMENTOR_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"TRADEMENTOR_IMAGE_SOURCE_COMMIT":os.environ["SOURCE_COMMIT"],"ASTER_REALTIME_WORKER":"true","ASTER_REALTIME_EXECUTION_ENABLED":"true","ASTER_PROFIT_SWEEP_LIVE_ENABLED":"true","ASTER_EMERGENCY_HEDGE_WORKER":"false","ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER":"true","ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED":"true"})
+          assert after_env == expected_env
+          candidate = next(row for row in after["status"]["traffic"] if row.get("tag") == tag)
+          print(f'CANDIDATE_URL={candidate["url"]}')
+          print(f'CANDIDATE_REVISION={candidate["revisionName"]}')
+          PY
+
+      - name: Verify candidate health and route contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=verify-candidate" >> "$GITHUB_ENV"
+          CANDIDATE_HEALTH_FILE="$RUNNER_TEMP/candidate-health.json"
+          CANDIDATE_OPENAPI_FILE="$RUNNER_TEMP/candidate-openapi.json"
+          curl --fail --silent --show-error --retry 6 --retry-delay 5 "$CANDIDATE_URL/health" -o "$CANDIDATE_HEALTH_FILE"
+          curl --fail --silent --show-error --retry 4 --retry-delay 3 "$CANDIDATE_URL/openapi.json" -o "$CANDIDATE_OPENAPI_FILE"
+          python - "$CANDIDATE_HEALTH_FILE" "$CANDIDATE_OPENAPI_FILE" <<'PY'
+          import json
+          import os
+          import sys
+
+          health = json.load(open(sys.argv[1], encoding="utf-8"))
+          openapi = json.load(open(sys.argv[2], encoding="utf-8"))
+          assert health["status"] == "ready"
+          assert health["multiUser"] is True
+          assert health["sourceCommit"] == os.environ["SOURCE_COMMIT"]
+          assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
+          paths = openapi.get("paths", {})
+          assert "/health" in paths
+          for required in (
+              "/v1/me/aster/sniper",
+              "/v1/me/aster/sniper/start",
+              "/v1/me/aster/sniper/stop",
+              "/v1/me/aster/sniper/settings",
+              "/v1/me/aster/sniper/trades/close",
+              "/v1/me/aster/automation/close-all",
+              "/v1/me/aster/position-loss-auto-hedge",
+              "/v1/me/aster/position-loss-auto-hedge/apply",
+              "/v1/me/aster/position-loss-auto-hedge/pairs/{symbol}/rehedge",
+          ):
+              assert required in paths, required
+          PY
+
+      - name: Promote verified revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=promote" >> "$GITHUB_ENV"
+          echo "PROMOTION_ATTEMPTED=true" >> "$GITHUB_ENV"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --to-revisions "$CANDIDATE_REVISION=100"
+
+      - name: Verify production after promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=verify-production" >> "$GITHUB_ENV"
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format='value(status.url)')"
+          echo "SERVICE_URL=$SERVICE_URL" >> "$GITHUB_ENV"
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-delay 5 "$SERVICE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json
+          import os
+          import sys
+
+          health = json.loads(sys.argv[1])
+          assert health["status"] == "ready"
+          assert health["multiUser"] is True
+          assert health["sourceCommit"] == os.environ["SOURCE_COMMIT"]
+          assert health["imageSourceCommit"] == os.environ["SOURCE_COMMIT"]
+          PY
+
+      - name: Recover blocked NEAR Profit Sweep from 2026-10-05
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$SOURCE_COMMIT" != "d7f16e1d36a59ce5e6cb14fe2e101c9e2dfd59c5" ]; then
+            echo "No scoped Profit Sweep recovery for source $SOURCE_COMMIT"
+            exit 0
+          fi
+          echo "DEPLOY_PHASE=recover-near-profit-sweep-20261005" >> "$GITHUB_ENV"
+          JOB="profit-sweep-near-recovery-${GITHUB_RUN_ID: -8}"
+          cleanup_recovery() {
+            gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true
+          }
+          trap cleanup_recovery EXIT
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command python \
+            --args recover_profit_sweep_near_20261005.py \
+            --max-retries 0 \
+            --task-timeout 300s \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false" \
+            --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          RESULT="$(gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB AND textPayload:\"PROFIT_SWEEP_NEAR_RECOVERY_20261005=\"" \
+            --project "$GCP_PROJECT_ID" --freshness=20m --limit=10 --order=desc --format='value(textPayload)' \
+            | grep 'PROFIT_SWEEP_NEAR_RECOVERY_20261005=' | head -n1 || true)"
+          test -n "$RESULT"
+          echo "$RESULT"
+          printf '%s\n' "$RESULT" > "$RUNNER_TEMP/profit-sweep-near-recovery-result.txt"
+
+      - name: Collect post-deploy account runtime snapshot with production runtime identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=collect-runtime-accounts-after" >> "$GITHUB_ENV"
+          JOB="tm-rc-after-${GITHUB_RUN_ID: -7}"
+          SCRIPT_B64="$(base64 -w0 tools/runtime_contract_snapshot.py)"
+          BASELINE_B64="$(base64 -w0 "$RUNNER_TEMP/runtime-accounts-before.json")"
+          POLLER="$(cat <<'PY'
+          import base64,json,time
+          ns={}
+          exec(compile(base64.b64decode("__SCRIPT_B64__"),"runtime_contract_snapshot.py","exec"),ns,ns)
+          before=json.loads(base64.b64decode("__BASELINE_B64__"))
+          before_map={str(r.get("accountRef") or ""):r for r in before if isinstance(r,dict)}
+          latest=[]
+          for _ in range(12):
+              latest=ns["collect_accounts"]("__PROJECT__")
+              current={str(r.get("accountRef") or ""):r for r in latest if isinstance(r,dict)}
+              ready=True
+              for ref,previous in before_map.items():
+                  if previous.get("monitor") is not True:
+                      continue
+                  row=current.get(ref)
+                  if not row or int(row.get("lastTickAtMs") or 0) <= int(previous.get("lastTickAtMs") or 0):
+                      ready=False
+                      break
+              if ready:
+                  break
+              time.sleep(20)
+          print("RUNTIME_CONTRACT_ACCOUNTS "+json.dumps(latest,sort_keys=True,separators=(",",":")),flush=True)
+          PY
+          )"
+          POLLER="${POLLER/__SCRIPT_B64__/$SCRIPT_B64}"
+          POLLER="${POLLER/__BASELINE_B64__/$BASELINE_B64}"
+          POLLER="${POLLER/__PROJECT__/$GCP_PROJECT_ID}"
+          POLLER_B64="$(printf '%s' "$POLLER" | base64 -w0)"
+          gcloud run jobs deploy "$JOB" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+            --command python \
+            --args=-c,"import base64;exec(base64.b64decode('$POLLER_B64'))" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=runtime-contract-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false" \
+            --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait
+          echo "RUNTIME_AFTER_JOB=$JOB" >> "$GITHUB_ENV"
+
+      - name: Authenticate read-only observer for post-deploy runtime verification
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Verify post-deploy trading runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=verify-trading-runtime-contract" >> "$GITHUB_ENV"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after-runtime.json"
+          curl --fail --silent --show-error --retry 3 --retry-delay 2 "$SERVICE_URL/health" > "$RUNNER_TEMP/health-after-runtime.json"
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_COMPLETE"' \
+            --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-ticks-after.json" || echo '[]' > "$RUNNER_TEMP/runtime-ticks-after.json"
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="tradementor-api" AND textPayload:"ASTER_PERIODIC_TICK_ERROR"' \
+            --project "$GCP_PROJECT_ID" --freshness=6m --limit=30 --order=desc --format=json > "$RUNNER_TEMP/runtime-errors-after.json" || echo '[]' > "$RUNNER_TEMP/runtime-errors-after.json"
+          RESULT="$(gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$RUNTIME_AFTER_JOB AND textPayload:\"RUNTIME_CONTRACT_ACCOUNTS \"" \
+            --project "$GCP_PROJECT_ID" --freshness=20m --limit=20 --order=desc --format='value(textPayload)' \
+            | grep 'RUNTIME_CONTRACT_ACCOUNTS ' | head -n1 || true)"
+          test -n "$RESULT"
+          printf '%s\n' "${RESULT#RUNTIME_CONTRACT_ACCOUNTS }" > "$RUNNER_TEMP/runtime-accounts-after.json"
+          python tools/runtime_contract_snapshot.py \
+            --project "$GCP_PROJECT_ID" \
+            --service-json "$RUNNER_TEMP/service-after-runtime.json" \
+            --health-json "$RUNNER_TEMP/health-after-runtime.json" \
+            --ticks-json "$RUNNER_TEMP/runtime-ticks-after.json" \
+            --errors-json "$RUNNER_TEMP/runtime-errors-after.json" \
+            --accounts-json "$RUNNER_TEMP/runtime-accounts-after.json" \
+            --output "$RUNNER_TEMP/runtime-after.json"
+          NOW_MS="$(python - <<'PY'
+          import time
+          print(int(time.time()*1000))
+          PY
+          )"
+          python tools/runtime_contract_post_deploy.py \
+            --before "$RUNNER_TEMP/runtime-before.json" \
+            --after "$RUNNER_TEMP/runtime-after.json" \
+            --now-ms "$NOW_MS" \
+            --output "$RUNNER_TEMP/runtime-contract-result.json"
+
+      - name: Restore deployment identity after runtime verification
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Cleanup post-deploy runtime snapshot job
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${RUNTIME_AFTER_JOB:-}" ]; then
+            gcloud run jobs delete "$RUNTIME_AFTER_JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet || true
+          fi
+
+      - name: Verify Cloud Run IAM is unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format=json > "$RUNNER_TEMP/iam-after.json"
+          python - "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
+          import json
+          import sys
+
+          before = json.load(open(sys.argv[1], encoding="utf-8"))
+          after = json.load(open(sys.argv[2], encoding="utf-8"))
+          assert before == after
+          PY
+
+      - name: Publish successful deployment to agent issue
+        if: ${{ success() && inputs.request_issue != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ISSUE: ${{ inputs.request_issue }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Production backend deployment complete"
+            echo
+            echo "- Status: **SUCCESS**"
+            echo "- Source commit: $SOURCE_COMMIT"
+            echo "- Live revision: $CANDIDATE_REVISION"
+            echo "- Previous revision: $PREVIOUS_REVISION"
+            echo "- Health: **ready**"
+            echo "- Image mode: $DEPLOYMENT_PROOF_MODE"
+            echo "- Rollback point retained: $PREVIOUS_REVISION"
+          } > "$RUNNER_TEMP/deploy-result.md"
+          gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/deploy-result.md"
+          gh issue close "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --reason completed
+
+      - name: Roll back failed promotion
+        if: ${{ failure() && env.PROMOTION_ATTEMPTED == 'true' && env.PREVIOUS_REVISION != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Production verification failed; restoring $PREVIOUS_REVISION"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --to-revisions "$PREVIOUS_REVISION=100"
+          SERVICE_URL="$(gcloud run services describe "$CLOUD_RUN_SERVICE"             --project "$GCP_PROJECT_ID"             --region "$GCP_REGION"             --format='value(status.url)')"
+          HEALTH="$(curl --fail --silent --show-error --retry 8 --retry-delay 5 "$SERVICE_URL/health")"
+          python - "$HEALTH" <<'PY'
+          import json
+          import os
+          import sys
+
+          health = json.loads(sys.argv[1])
+          assert health["status"] == "ready"
+          assert health["multiUser"] is True
+          assert (health.get("sourceCommit") or health.get("imageSourceCommit")) == os.environ["PREVIOUS_SOURCE_COMMIT"]
+          PY
+
+      - name: Publish failed deployment to agent issue
+        if: ${{ failure() && inputs.request_issue != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_ISSUE: ${{ inputs.request_issue }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Production backend deployment failed"
+            echo
+            echo "- Status: **FAILED**"
+            echo "- Failed phase: ${DEPLOY_PHASE:-unknown}"
+            echo "- Source commit: ${SOURCE_COMMIT:-unknown}"
+            echo "- Candidate revision: ${CANDIDATE_REVISION:-not-created}"
+            echo "- Previous production revision: ${PREVIOUS_REVISION:-unknown}"
+            echo "- Promotion attempted: ${PROMOTION_ATTEMPTED:-false}"
+            echo
+            echo "The issue is intentionally left open for investigation. If promotion had already occurred, the rollback step was attempted automatically."
+          } > "$RUNNER_TEMP/deploy-failure.md"
+          gh issue comment "$REQUEST_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/deploy-failure.md"
+
+      - name: Upload deployment diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-deploy-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/service-before.json
+            ${{ runner.temp }}/service-candidate.json
+            ${{ runner.temp }}/iam-before.json
+            ${{ runner.temp }}/iam-after.json
+            ${{ runner.temp }}/runtime-before.json
+            ${{ runner.temp }}/runtime-after.json
+            ${{ runner.temp }}/runtime-contract-result.json
+            ${{ runner.temp }}/release-changed-files.txt
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,0 +1,94 @@
+name: Rollback Close Profits 2.0 (traffic back to the pinned previous revisions)
+# Only moves Cloud Run traffic back to the two revisions that were live before this release (retained and verified Ready
+# by the read-only diagnostic). It deploys nothing, builds nothing and changes no configuration, data or IAM.
+# Order for "both": web first (the old web works with either backend), then the backend.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type ROLLBACK_CLOSE_PROFITS_2_0"
+        required: true
+        type: string
+      target:
+        description: "web, backend or both"
+        required: true
+        default: both
+        type: choice
+        options: [both, web, backend]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-rollback
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  WEB_SERVICE: amar-bot-v44-direct-install
+  BACKEND_SERVICE: tradementor-api
+  PREVIOUS_WEB_REVISION: amar-bot-v44-direct-install-v46-89ab74a0-1
+  PREVIOUS_BACKEND_REVISION: tradementor-api-src-f87d6b20-124369
+  PREVIOUS_BACKEND_SOURCE_COMMIT: f87d6b201790d612f970355f3b8c4c8766938941
+  WEB_URL: https://amar-bot-v44-direct-install-cyyaq5otyq-ez.a.run.app
+  BACKEND_URL: https://tradementor-api-604335232956.europe-west4.run.app
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Verify request
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/release/close-profits-2-0"
+          test "$CONFIRMATION" = "ROLLBACK_CLOSE_PROFITS_2_0"
+          case "$TARGET" in both|web|backend) ;; *) exit 1;; esac
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Roll back web traffic
+        if: inputs.target == 'both' || inputs.target == 'web'
+        shell: bash
+        run: |
+          set -euo pipefail
+          READY="$(gcloud run revisions describe "$PREVIOUS_WEB_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.conditions[0].status)')"
+          test "$READY" = "True"
+          gcloud run services update-traffic "$WEB_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$PREVIOUS_WEB_REVISION=100"
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$WEB_URL/" | grep -q "Webapp versie 46 · build 601"
+          gcloud run services describe "$WEB_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/web-after.json"
+          python3 - "$RUNNER_TEMP/web-after.json" "$PREVIOUS_WEB_REVISION" <<'PY'
+          import json, sys
+          live = [r for r in json.load(open(sys.argv[1]))["status"].get("traffic", []) if int(r.get("percent", 0)) == 100]
+          assert len(live) == 1 and live[0].get("revisionName") == sys.argv[2], live
+          PY
+
+      - name: Roll back backend traffic
+        if: inputs.target == 'both' || inputs.target == 'backend'
+        shell: bash
+        run: |
+          set -euo pipefail
+          READY="$(gcloud run revisions describe "$PREVIOUS_BACKEND_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.conditions[0].status)')"
+          test "$READY" = "True"
+          gcloud run services update-traffic "$BACKEND_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --to-revisions "$PREVIOUS_BACKEND_REVISION=100"
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$BACKEND_URL/health" > "$RUNNER_TEMP/backend-health.json"
+          python3 - "$RUNNER_TEMP/backend-health.json" "$PREVIOUS_BACKEND_SOURCE_COMMIT" <<'PY'
+          import json, sys
+          h = json.load(open(sys.argv[1]))
+          assert h.get("status") == "ready" and h.get("sourceCommit") == sys.argv[2], h
+          PY
