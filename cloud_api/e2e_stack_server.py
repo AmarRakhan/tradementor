@@ -108,7 +108,7 @@ def state():
 if __name__ == "__main__":
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0)); sock.listen(128)
-    server = uvicorn.Server(uvicorn.Config(main.app, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(S.entry_app, log_level="warning"))   # production ASGI entrypoint
     threading.Thread(target=lambda: (sys.stdin.read(), setattr(server, "should_exit", True)), daemon=True).start()
     print(sock.getsockname()[1], flush=True)
     server.run(sockets=[sock])

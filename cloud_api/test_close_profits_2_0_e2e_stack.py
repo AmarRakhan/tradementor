@@ -19,7 +19,7 @@ from types import SimpleNamespace
 HOST = os.environ.get("FIRESTORE_EMULATOR_HOST", "")
 READY = HOST.startswith(("127.0.0.1:", "localhost:")) and not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
 
-S = SimpleNamespace(main=None, fake=None, uid=None, blocked=[], orig_connect=None)
+S = SimpleNamespace(main=None, fake=None, uid=None, blocked=[], orig_connect=None, entry_app=None)
 
 
 def setUpModule():
@@ -56,6 +56,12 @@ def setUpModule():
 
     sys.path.insert(0, os.path.dirname(__file__))
     import main
+    # The PRODUCTION entrypoint is `uvicorn p0_close_scope_guard:app` -> withdraw_app -> main.app plus every extension
+    # (Profit Sweep hooks on the shared Aster client, Auto Hedge, Legacy Hedge, Withdraw, ...). Import that chain, not
+    # just main, so the tests run with the same hooks and routes production has.
+    import p0_close_scope_guard
+    import profit_sweep_live_extension
+    S.entry_app = p0_close_scope_guard.app
     from offline_fake_aster import FakeAster
     S.main = main
     RealClient = main.AsterV3Client
@@ -65,7 +71,11 @@ def setUpModule():
             kwargs["transport"] = S.fake.transport()
             super().__init__(**kwargs)
     main.AsterV3Client = FakeBackedClient
-    main.load_aster_secret = lambda user: SimpleNamespace(signer_address="0x" + "0" * 40, private_key="not-a-real-key")
+    def fake_secret(user):                                    # same signer->uid registration the Profit Sweep hook does
+        secret = SimpleNamespace(signer_address="0x" + "0" * 40, private_key="not-a-real-key")
+        profit_sweep_live_extension._register(secret.signer_address, str(user.get("uid", "")))
+        return secret
+    main.load_aster_secret = fake_secret
     main.local_eip712_signer = lambda secret: (lambda encoded: "0x" + "0" * 130)
     main.app.dependency_overrides[main.authenticated_user] = lambda: {"uid": S.uid}
 
@@ -90,7 +100,7 @@ class E2E(unittest.TestCase):
         S.fake = self.fake = FakeAster()
         S.uid = self.uid = "e2e-" + uuid.uuid4().hex[:12]
         S.blocked.clear()
-        self.http = TestClient(S.main.app, raise_server_exceptions=False)
+        self.http = TestClient(S.entry_app, raise_server_exceptions=False)         # the production ASGI entrypoint
         self.db = S.main.db
 
     def tearDown(self):
@@ -401,6 +411,55 @@ class SimultaneousRequests(E2E):
         r = self.close("S01USDT", self.expected["S01USDT"], 50)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(len(self.fake.accepted(symbol="S01USDT")), 1)
+
+
+class ProductionChain(E2E):
+    """Everything above runs through the production ASGI entrypoint. These add the Profit Sweep hook ENABLED for the
+    user (an existing, per-user feature that hooks every Aster close of the shared client, manual closes included)."""
+    allow_unmocked = True          # the sweep reads account/income endpoints and posts a Spot transfer: not modelled here
+
+    def setUp(self):
+        super().setUp()
+        previous = os.environ.get("ASTER_PROFIT_SWEEP_LIVE_ENABLED")
+        os.environ["ASTER_PROFIT_SWEEP_LIVE_ENABLED"] = "true"
+        self.addCleanup(lambda: os.environ.pop("ASTER_PROFIT_SWEEP_LIVE_ENABLED", None) if previous is None
+                        else os.environ.__setitem__("ASTER_PROFIT_SWEEP_LIVE_ENABLED", previous))
+        self.db.collection("users").document(self.uid).collection("executionControls").document("aster").set(
+            {"profitSweep": {"enabled": True, "sweepPercent": 25, "transferAsset": "USDT"}})
+
+    def sweep_docs(self):
+        return [d.to_dict() for d in self.db.collection("users").document(self.uid).collection("asterProfitSweeps").stream()]
+
+    def test_entrypoint_serves_the_same_single_close_and_preview_routes(self):
+        close_routes = [r for r in S.main.app.routes if getattr(r, "path", "") == "/v1/me/aster/positions/{symbol}/close"
+                        and "POST" in getattr(r, "methods", set())]
+        self.assertEqual(len(close_routes), 1)
+        self.assertIs(close_routes[0].endpoint, S.main.close_one_aster_position)
+        self.assertEqual(len([r for r in S.main.app.routes if getattr(r, "path", "") == "/v1/me/aster/positions/manual-profit-close-plan"]), 1)
+
+    def test_series_with_profit_sweep_enabled_places_exactly_the_planned_close_orders(self):
+        self.seed_world(n=5, hedged=2)
+        result = self.bulk(50)
+        self.assertIsNone(result["stopped"], result)
+        self.assertEqual(len(result["closed"]), 5)
+        orders = self.fake.accepted()
+        self.assertEqual(len(orders), 5)                                                   # the sweep never adds a MARKET order
+        for o in orders:
+            self.assertEqual((o["side"], o["positionSide"]), ("BUY", "SHORT"))
+        intents = list(self.db.collection("users").document(self.uid).collection("asterManualCloseIntents").stream())
+        self.assertEqual(sorted(d.to_dict().get("status") for d in intents), ["confirmed_closed"] * 5)
+        print("INFO-sweep ledger docs:", len(self.sweep_docs()), sorted({d.get("status") for d in self.sweep_docs()}),
+              "unmocked:", sorted(set(self.fake.unmocked))[:6])
+
+    def test_unknown_outcome_with_profit_sweep_enabled_still_stops_the_series_without_a_second_order(self):
+        self.seed_world(n=5, hedged=2)
+        self.fake.modes["S02USDT"] = "timeout_after_accept"
+        result = self.bulk(50)
+        self.assertEqual(result["stopped"][:2], ("S02USDT", 502))
+        self.assertEqual([o["symbol"] for o in self.fake.accepted()], ["S00USDT", "S01USDT", "S02USDT"])
+        again = self.close("S02USDT", self.expected["S02USDT"], 50, bulk=True)
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(len(self.fake.accepted(symbol="S02USDT")), 1)
 
 
 class ImportSmoke(E2E):
