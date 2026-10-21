@@ -1407,28 +1407,48 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     setProfitConfirming(false);
     let closed = 0;
     let skipped = 0;
+    let coverageRefused = 0;
     let stoppedAt = "";
     for (const target of bulkCloseTargets) {
-      try {
-        await authenticatedRequest(
-          "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
-          { method: "POST", body: JSON.stringify({
-            confirm: true, side: "SHORT", expected_quantity: target.quantity,
-            percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
-          }) },
-        );
-        closed++;
-      } catch (reason) {
-        const details = reason instanceof Error ? reason.message : String(reason);
-        if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details)) {
-          skipped++;
-          continue;
+      let busyRetries = 0;
+      let done = false;
+      while (!done) {
+        try {
+          await authenticatedRequest(
+            "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
+            { method: "POST", body: JSON.stringify({
+              confirm: true, side: "SHORT", expected_quantity: target.quantity,
+              percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
+            }) },
+          );
+          closed++;
+          done = true;
+        } catch (reason) {
+          const details = reason instanceof Error ? reason.message : String(reason);
+          // Only refusals the existing route raises BEFORE any order is sent are handled; anything else
+          // (UNKNOWN, network loss, HTTP 5xx, changed quantity, ...) stops the whole series.
+          // "Too small" = the exact pre-submit refusals of the existing route / ContractRules (no order was sent).
+          if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details) ||
+              /past niet binnen de Aster contractregels: (Order ligt onder de minimale Aster-(hoeveelheid|orderwaarde)|Hoeveelheid en marktprijs moeten positief zijn)\s*$/i.test(details)) {
+            skipped++;
+            done = true;
+          } else if (/zou Auto Hedge-dekking onder de gereserveerde/i.test(details)) {
+            coverageRefused++;
+            done = true;
+          } else if (/Auto Hedge verwerkt momenteel dezelfde accountstatus/i.test(details) && busyRetries < 3) {
+            // Account busy (coordination): nothing was ordered. Wait, then ask again with a NEW idempotency key
+            // (expected_quantity is re-validated by the backend).
+            busyRetries++;
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          } else {
+            stoppedAt = target.symbol + ": " + details;
+            done = true;
+          }
         }
-        stoppedAt = target.symbol + ": " + details;
-        break;
       }
+      if (stoppedAt) break;
     }
-    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen" +
+    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen" + (coverageRefused ? " · " + coverageRefused + " geweigerd door Auto Hedge-dekking (niet gesloten)" : "") +
       (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
     setBulkCloseTargets([]);
     setProfitPreview(null);

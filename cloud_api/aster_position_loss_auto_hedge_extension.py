@@ -560,6 +560,23 @@ def _run_uid(
                 "actions": []}
     coordination_token: str | None = None
     try:
+        if execute:
+            # Take the account lease BEFORE reading positions/pair state: the individual manual
+            # Close holds the same lease across its pair freeze + order, so a worker run can no
+            # longer act on a pre-close snapshot right after the manual close released the lease.
+            coordination_token = main._acquire_aster_account_coordination(
+                uid, "AUTO_HEDGE", "POSITION_LOSS_EXACT_1_TO_1",
+            )
+            if not coordination_token:
+                report = {
+                    "mode": "LIVE", "ordersSent": 0, "status": "PENDING",
+                    "reason": "ACCOUNT_COORDINATION_BUSY", "actions": [],
+                }
+                _doc(uid).set({
+                    "lastReport": report,
+                    "lastCheckedAt": datetime.now(timezone.utc),
+                }, merge=True)
+                return report
         client = _client(uid, live=execute)
         positions = list(client.position_risk() or [])
         open_orders = list(client.open_orders() or [])
@@ -592,21 +609,6 @@ def _run_uid(
                 "lastError": "",
             }, merge=True)
             return report
-
-        if execute:
-            coordination_token = main._acquire_aster_account_coordination(
-                uid, "AUTO_HEDGE", "POSITION_LOSS_EXACT_1_TO_1",
-            )
-            if not coordination_token:
-                report = {
-                    "mode": "LIVE", "ordersSent": 0, "status": "PENDING",
-                    "reason": "ACCOUNT_COORDINATION_BUSY", "actions": [],
-                }
-                _doc(uid).set({
-                    "lastReport": report,
-                    "lastCheckedAt": datetime.now(timezone.utc),
-                }, merge=True)
-                return report
 
         contexts = {}
         for symbol, side in protected_sides.items():

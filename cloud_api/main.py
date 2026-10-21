@@ -8893,6 +8893,15 @@ def close_one_aster_position(
                 time.sleep(.05)
             if not account_token:
                 raise HTTPException(409, "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw")
+            # Positions were read before the lease: Auto Hedge may have acted in between. Re-read under
+            # the lease and re-validate the confirmed quantity before anything is frozen or ordered.
+            live_rows = client.position_risk()
+            fresh = next((row for row in live_rows
+                if str(row.get("symbol", "")).upper() == normalized_symbol
+                and str(row.get("positionSide", "")).upper() == request.side
+                and abs(safe_float(row.get("positionAmt"))) > 0), None)
+            if fresh is None or abs(abs(safe_float(fresh.get("positionAmt"))) - request.expected_quantity) > tolerance:
+                raise HTTPException(409, "De positiegrootte is gewijzigd; controleer de actuele positie en bevestig opnieuw")
             auto_hedge_manual_guard = _begin_position_loss_auto_hedge_manual_release(
                 uid=uid,
                 symbol=normalized_symbol,
