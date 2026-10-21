@@ -1,98 +1,96 @@
-# CLOSE PROFITS 2.1 SAFE FIX — Claude handoff
+# CLOSE PROFITS 2.1 SAFE FIX — Claude handoff (round 2, after independent ChatGPT review)
 
-Repo: `AmarRakhan/tradementor` · PR #783 (draft) · Branch: `review/close-profits-2-1-safe-20261021`
-**Code commit (what to review): `bddff04c3c994d7bb0fe12966f2d301a68fab511`** (parent `f8cd2af5f76c6b240bd49c87deedbbe8622ef4ea` = PR #783 head).
-A later commit on the same branch only adds this file and the two patch files (a file cannot contain its own commit SHA).
-Not merged, not deployed, no Cloud Build, no live orders, production build 601 untouched, SHORT Recovery 2.0 untouched.
+Repo `AmarRakhan/tradementor` · PR #783 (draft) · Branch `review/close-profits-2-1-safe-20261021`
+**Code commit to review: `320c4c7a460aff1a77c2a07dca84ea8c2e115d50`** · round 1 code commit: `bddff04c3c994d7bb0fe12966f2d301a68fab511` · PR #783 head: `f8cd2af5f76c6b240bd49c87deedbbe8622ef4ea`.
+A later commit on the same branch only adds this file and the patches (a file cannot contain its own SHA).
+Not merged, not deployed, no Cloud Build, no live orders, build 601 untouched, SHORT Recovery 2.0 untouched, Auto Hedge/Recovery code untouched (one additive helper in the lock module).
+
+## 0. What round 2 changed (answer to the two review findings)
+| Review finding | Fix | Proof level |
+|---|---|---|
+| 1. Auto Hedge can change after the check | Bulk close takes the **same per-account lease Auto Hedge live execution takes** (`_acquire_aster_account_coordination`) **before** the protection check and holds it through order + verification; released in `finally`. Second check right before the order. Post-order detection `protectionChangedDuringClose` shown to the user. | Mitigated, **not fully eliminated** (see §8.1) |
+| 2. Missing `ownedLegs` treated as empty | Canonical contract investigated; **proven-none vs unreliable** are now different. Unreliable → HTTP 409 / preview 502, no order. | Offline PASS |
+| 3. Integration tests | Real FastAPI + Firestore emulator **NOT RUN** (dependencies missing in sandbox, see §7). Real close-route **source** executed against mocks + a lease model instead. | NOT RUN / substitute |
+| 4. Old backend accepts the flag silently | **Confirmed with real pydantic 2.x**: old model accepts and drops `bulk_profit_close`. New code: preview returns `bulkGuardVersion: 1`; new frontend refuses to run without it and stops when a close response lacks `protectionChangedDuringClose`. Rollout/rollback order in §8.4. | Offline PASS |
 
 ## 1. Exact cause of the original problem
-1. **Build 601** green button counted every profitable LONG+SHORT from the legacy preview (`profitCandidates`, `>= 0.5`), including Auto Hedge-managed legs. The server (`_exclude_auto_hedge_managed_profit_candidates`) removes those, so the number on the button was not the number that can be closed ("Close 15 profits" ≠ closable).
-2. **PR #783** replaced this by sequential calls to the individual close route. That route is built for a *manual* close: closing any leg of an Auto Hedge pair (even 25%) moves the pair to `MANUAL_RELEASE_PENDING` → `RECOVERY` with `rehedgeEnabled=false`. PR #783 had no Auto Hedge filter in the frontend, none in the preview, and none in the route for bulk use. A bulk press could therefore dismantle hedges and silently switch re-hedge off.
-3. Planner bug in PR #783: `if side == "LONG" and opposite and not linked` — a LONG without an opposite row skipped the hedge check and could be selected.
-4. Threshold inconsistency: legacy selector `>= 0.50`, new SHORT path `> 0.50`.
+1. **Build 601** counted Auto Hedge-managed profitable legs that the server excludes ("Close 15 profits" ≠ closable).
+2. **PR #783** bulk = sequential calls to the individual close route, which for an Auto Hedge pair moves it to `MANUAL_RELEASE_PENDING` → `RECOVERY` with `rehedgeEnabled=false` — no Auto Hedge filter in frontend, preview or route.
+3. Planner bug: `if side == "LONG" and opposite and not linked` let a lone LONG through.
+4. Threshold inconsistency (`>= 0.50` legacy vs `> 0.50` new SHORT path).
 
 ## 2. New behaviour
-- Bulk button = **SHORT only**, strictly **> $0.50** (same bound in frontend and planner), **not** Auto Hedge-managed (`positionLossAutoHedge`), **not** Focus Airbag hedge. Button count = real closable count. Percentages 25/50/75/100 unchanged.
-- LONG is never part of the bulk (no verified hedge-link source exists; `hedge_links={}`); planner now also rejects a lone LONG (`long_requires_verified_hedge_link`).
-- Preview endpoint removes protected candidates server-side and returns `protectedExcludedCount`; the confirmation modal says Auto Hedge/Airbag are not closed; preview message shows how many were protected.
-- **Server-side re-check right before every close**: the frontend sends `bulk_profit_close: true` on the *existing* individual route `POST /api/exchanges/aster/positions/{symbol}/close` (no second route/engine). When set, the route (after the live position/quantity/mark checks, before any state change or order) re-reads Auto Hedge state (**strict, fail-closed**), the Focus Airbag role and the side. Refusal = HTTP 409, intent `blocked_bulk_protected`, no order. Unreadable/missing hedge state → `AutoHedgeCloseBlocked` → 409 / run stops.
-- Frontend: refusal "valt onder Auto Hedge"/"Focus Airbag-hedge" is counted as "beschermd niet aangeraakt" and the loop continues; any other error (API error, UNKNOWN, hedge state unreadable, broad contract error) **stops** the run with a visible message; the minimum-order skip is unchanged; the in-flight ref blocks double presses; each symbol gets a fresh idempotency key.
-- Individual Close button/route behaviour without the flag is unchanged (tested). Close Long/Short/All unchanged (generic `>= 0.5` kept).
+- Bulk = **SHORT only**, strictly **> $0.50** (UI + planner), not Auto Hedge-managed, not Focus Airbag. Count on the button = real closable count. 25/50/75/100%. One confirmation modal (count, fraction, Auto Hedge/Airbag note).
+- LONG never bulk-closed (no verified hedge-link source); planner rejects a lone LONG.
+- Preview endpoint (read-only) removes protected candidates server-side, returns `protectedExcludedCount` and `bulkGuardVersion: 1`; unreliable protection data → 502.
+- Execution = existing route `POST /api/exchanges/aster/positions/{symbol}/close` with `bulk_profit_close: true` (no second route/engine). With the flag the route: (1) takes the account lease (busy → 409, nothing placed), (2) re-reads Auto Hedge (strict, fail-closed) + Focus Airbag data live, (3) refuses the manual Auto Hedge release branch, (4) re-checks right before the order, (5) after the order re-checks and reports `protectionChangedDuringClose`.
+- Frontend stop/skip rules: "valt onder Auto Hedge"/"Focus Airbag-hedge" → counted as protected skip, loop continues; busy account, unreliable Airbag data, unreadable hedge lock, API error, UNKNOWN, broad contract error, missing guard confirmation → **stop** with visible message; minimum-order skip unchanged; in-flight ref blocks double press; fresh idempotency key per symbol.
+- Individual Close (no flag): unchanged — no lease, no guard (tested). Close Long/Short/All unchanged.
 
-## 3. Changed files (vs PR #783 head)
-| File | Change |
+## 3. Focus Airbag contract and fail-closed rule
+Canonical writers (`aster_strategy2_focus_multi/_live/_v2`): `asterStrategy2/{uid}.ownedLegs` = list of OwnedLeg mappings, each with `symbol`, `side` (LONG|SHORT) and a non-empty string `role` (default `HARVEST`); airbag hedge leg = role `FOCUS_SLOT_AIRBAG:<slotId>`. `focusLiveSlots[].airbag` (dict) marks a slot with an airbag.
+| State | Outcome |
 |---|---|
-| `cloud_api/main.py` | request flag `bulk_profit_close`; guard in `close_one_aster_position`; preview filters protected; imports |
-| `cloud_api/manual_profit_close_guard.py` (new, 28 lines, pure) | `bulk_profit_close_block_reason` |
-| `cloud_api/aster_position_loss_auto_hedge_lock.py` | additive `auto_hedge_symbol_managed_strict` (existing functions untouched) |
-| `cloud_api/manual_profit_close_planner.py` | lone-LONG fix |
-| `web/components/aster-recent-trades.tsx` | candidate filter, bulk flag, protected handling, texts |
-| `cloud_api/test_close_profits_2_1_guard.py` (new) | 28 tests |
-| `web/tests/aster-close-profits-2-1-safety.test.mjs` (new) | 23 tests |
+| Strategy-2 document does not exist | proven none → allowed |
+| document exists, no focus keys (`focusLiveSlots/State, focusCycleState, focusV2State`), no `ownedLegs` | proven none → allowed |
+| `ownedLegs` list, all rows well-formed, no airbag role on this leg, no airbag slot for the pair | proven none → allowed |
+| airbag role on this leg, or a slot with `airbag` for this pair (both legs protected, conservative) | blocked: protected |
+| `ownedLegs` not a list / row not a dict / row without symbol, side or role; focus keys but no `ownedLegs`; `focusLiveSlots` malformed; slot with airbag missing pair/side; document not a dict | **BulkProtectionUnreliable → 409, no order** |
+| Firestore read error | exception → fail closed (409/502), no order |
+Assumption to review: the "no focus keys → proven none" rule relies on all Focus engines writing `ownedLegs` together with their focus keys (verified in the writers listed above), and on Multi-BB state (`multiBbPositions`) not carrying airbag roles.
 
-Patches: `CLOSE_PROFITS_2_1_vs_PR783.patch` (exact 2.1 changes), `CLOSE_PROFITS_2_1_vs_BUILD601.patch` (whole PR + 2.1 vs `e035431`).
-
-## 4. Commit / branch
-Branch `review/close-profits-2-1-safe-20261021`, code commit `bddff04c3c994d7bb0fe12966f2d301a68fab511`.
+## 4. Changed files (vs PR #783 head)
+`cloud_api/main.py`, `cloud_api/manual_profit_close_guard.py` (new, pure), `cloud_api/aster_position_loss_auto_hedge_lock.py` (additive `auto_hedge_symbol_managed_strict`), `cloud_api/manual_profit_close_planner.py`, `web/components/aster-recent-trades.tsx`, `cloud_api/test_close_profits_2_1_guard.py` (new), `web/tests/aster-close-profits-2-1-safety.test.mjs` (new), `web/tests/aster-close-profits-short-handler.test.mjs` (one mock line: success payload now carries the guard confirmation).
+Patches: `CLOSE_PROFITS_2_1_vs_PR783.patch` (all 2.1), `CLOSE_PROFITS_2_1_ROUND2_vs_bddff04.patch` (only this round), `CLOSE_PROFITS_2_1_vs_BUILD601.patch`.
 
 ## 5. Difference versus production build 601
-Build 601: counts LONG+SHORT incl. Auto Hedge legs, uses legacy `profitable-close-preview` + `close-profitable`. 2.1: SHORT-only, > $0.50, Auto Hedge/Airbag excluded in UI, preview and (re-checked) at execution, percentage choice, single confirmation, per-symbol idempotent calls to the individual route. See `CLOSE_PROFITS_2_1_vs_BUILD601.patch` (14 files, +1166/−39, includes PR #783's own files).
+601: counts LONG+SHORT incl. Auto Hedge legs, legacy `profitable-close-preview` + `close-profitable`. 2.1: SHORT-only, > $0.50, Auto Hedge/Airbag excluded in UI, preview and execution (lease + live re-check), percentage choice, one confirmation, per-symbol idempotent calls to the individual route.
 
-## 6. Proven Auto Hedge protection (offline)
-- `test_auto_hedge_managed_blocked_before_any_order_with_stale_snapshot`: the **real route source** (ast-extracted from main.py, dependencies mocked) with a stale preview (symbol managed only at execution time) → 409, **0 orders**, intent `blocked_bulk_protected`.
-- Focus Airbag leg → blocked, 0 orders. Unreadable hedge reader → blocked, 0 orders. No reader configured / garbage reader / exception → strict lock raises (the legacy helper returns "not managed" in these cases — proven in `test_missing_reader_fails_closed`).
-- Every status (HEDGED, HEDGING, RECOVERY, REHEDGE_ARMED, DISABLED, unknown) → managed; `''`/`CLOSED` → free.
-- Source-order contract: guard runs before `close_size`, `_begin_position_loss_auto_hedge_manual_release`, `begin_manual_action`, `execute_aster_leg`; preview has no order calls.
-- Without the flag the guard is not consulted (individual Close unchanged).
-**Not proven**: behaviour against real Firestore / real FastAPI (see §8).
+## 6. Proven Auto Hedge protection (what is actually proven)
+**Proven offline (real route source from `main.py`, mocks + lease model):**
+- stale preview, Auto Hedge-managed at execution → 409, 0 orders, lease released.
+- Auto Hedge flips between 1st check and the order → caught by the late check, 0 orders.
+- Auto Hedge flips during the order → order done, response `protectionChangedDuringClose=true`, intent flagged, frontend warning.
+- While the bulk close holds the lease, the Auto Hedge tick model gets `PENDING` (same exclusive lease); after release it can run. Account busy → 409, no order, bulk never steals a held lease.
+- Lease released on success, block, unreliable data and order failure (no leak); duplicate idempotency key → 409 before taking the lease.
+- Source contract: Auto Hedge live execution really acquires the same lease (`AUTO_HEDGE`/`POSITION_LOSS_EXACT_1_TO_1`, `ACCOUNT_COORDINATION_BUSY`, release in finally); lease before guard, guard before `close_size`/`begin_manual_action`/`execute_aster_leg`.
+**Not proven:** the same behaviour with the real Auto Hedge worker, real Firestore transactions and real FastAPI (NOT RUN). The lease is a model in the tests; the Auto Hedge side was verified by source reading only.
 
 ## 7. Test results
-Commands: `cd cloud_api && python3 -m unittest <module>`, `cd web && node --test tests/<file>`. No pytest/PyPI in the sandbox; for `httpx` (imported by `aster_gateway`, not used by the tested paths) a 5-line stub on PYTHONPATH was used for the suite runs below — flagged here.
-
-| Scenario | Result |
+Env: Python 3.13, Node 22.22, pydantic 2.13.5. Missing: fastapi, firebase_admin, google-cloud-firestore, pytest, hypothesis, websockets; no Firebase emulator / firebase-tools; PyPI and the npm registry unreachable. `httpx` is imported by `aster_gateway` (not used by the tested paths): runs marked *stub* used a 5-line stub on PYTHONPATH.
+| Item | Result |
 |---|---|
-| Normal profitable SHORT selected (UI + planner) | PASS |
-| Normal profitable LONG "per chosen control" | PASS (by design **not** a bulk candidate; Close Long/Short/All unchanged — source test) |
-| Auto Hedge SHORT with profit excluded (UI, preview, route) | PASS |
-| Auto Hedge LONG with loss untouched | PASS |
-| Mixed portfolio | PASS (UI filter + planner) |
-| Auto Hedge status changes preview→execution | PASS (route test) |
-| Missing/unreliable hedge status fails closed | PASS (strict lock + route) |
-| Negative SHORT quantity / Math.abs | PASS (planner + preview handler) |
-| 25/50/75/100% quantities | PASS (planner, handler); invalid % rejected PASS |
-| Contract validation broad error stops | PASS (PR test, still green) |
-| Minimum order not achievable skipped with reason | PASS (planner reason + handler skip) |
-| API error visible, no false success | PASS |
-| UNKNOWN stops, no blind re-order | PASS |
-| Repeated press, no double order | PASS (UI in-flight guard; route duplicate idempotency key → 409, 0 orders) |
-| Threshold `> 0.50` consistent | PASS (0.50 excluded, 0.51 included, UI + planner) |
-| Firestore emulator / real FastAPI route integration | NOT RUN (main.py not importable offline: firebase_admin/fastapi etc. unavailable; no emulator) |
+| `test_close_profits_2_1_guard` (backend, 46 tests) | **PASS 46/46 with httpx stub; PASS 44 + SKIP 2 without it** (the 2 real-`ContractRules` tests: 25/50/75/100% quantities, exchange minQty/minNotional) |
+| `aster-close-profits-2-1-safety.test.mjs` (27) | PASS 27/27 |
+| `aster-close-profits-short-handler.test.mjs` (9, PR's) | PASS 9/9 (one mock line updated) |
+| Scenarios: normal SHORT; Auto Hedge SHORT blocked; Auto Hedge LONG with loss untouched; mixed portfolio; Focus Airbag blocked; missing/unreliable protection blocked; unreadable hedge lock blocked; concurrent activation (before order / during order); repeated request; Math.abs on negative qty; 25/50/75/100 + exchange minimums; minimum-order skip; API error; UNKNOWN stops; old backend refused; individual Close unchanged | PASS (offline; route-level via real source + mocks) |
+| Real FastAPI app init + Firestore emulator integration (all 8 mandated scenarios) | **NOT RUN** — dependencies/emulator unavailable |
+| Real Auto Hedge worker concurrency | **NOT RUN** |
 | Live Aster orders | NOT RUN (forbidden) |
-
-Suites: new backend **28/28 PASS**; new web **23/23 PASS**; PR's handler tests **16/16 PASS**; planner 9/9, snapshot 3/3, preview-contract 2/2, profit_close 13/13 + 8/8, manual_close_contract 4/4, auto_hedge 19/19, lifecycle_contract 7/7, owner_gate 5/5, close_all 2/2 (all PASS).
-Regression comparison PR-head vs 2.1: whole `cloud_api` suite **identical per file** (before 1990 pass / 21 fail / 73 import errors; after 2018 pass (+28 new) / 21 fail / 73 import errors). The 21 failures and 73 import errors exist unchanged on the PR head (missing pytest, fastapi, websockets, hypothesis, google libs; mexc/gateway tests) = **NOT RUN / pre-existing**, incl. `test_aster_position_loss_auto_hedge_lock`, `test_aster_close_guard`, `test_aster_hedge_recovery`. 100 of 107 `test_short_recovery_*` files ran green-equal to baseline. Web: 149/151 files pass; `extreme-spike-settings-route-execution` and `rendered-html` fail identically on the PR head.
+| Regression, whole `cloud_api` suite, PR head vs this commit | identical per file; PR head 1990 pass/21 fail/73 import errors → now 2036 pass/21 fail/73 import errors (+46 new). The 21 failures/73 import errors are environmental and identical on the PR head, incl. `test_aster_position_loss_auto_hedge_lock`, `test_aster_close_guard`, `test_aster_hedge_recovery` (need pytest/fastapi) = NOT RUN. Auto Hedge: `test_aster_position_loss_auto_hedge` 19/19, lifecycle 7/7, owner gate 5/5 PASS. 100/107 `test_short_recovery_*` files run, equal to baseline. |
+| Regression, web suite | 149/151 files pass (PR head 148/150 + new file); `extreme-spike-settings-route-execution` and `rendered-html` fail identically on the PR head |
 
 ## 8. Open risks
-1. **Deploy order**: backend first. An old backend silently ignores `bulk_profit_close` (pydantic default) → new frontend against old backend has only the UI filter.
-2. Check-then-act race: Auto Hedge could change a pair between the guard and the order (small window; the bulk path does not take the account coordination lock). The existing `require_auto_hedge_close_allowed` still runs afterwards.
-3. Focus Airbag detection on the server relies on `asterStrategy2` `ownedLegs` roles; a missing doc counts as "no airbag legs" (read errors fail closed, absence does not).
-4. Real FastAPI + Firestore integration not run (see §7). Route test executes the real function source but with mocks.
-5. The individual Close button still lets a user dismantle a hedge deliberately (unchanged by requirement).
-6. Threshold: Close Long/Short/All keep `>= 0.5`; the bulk button uses `> 0.5`; a position at exactly $0.50 counts for the former only.
-7. LONG profit-taking via bulk is intentionally off until a verified hedge-link source exists; hedged SHORTs get a later controlled flow.
-8. PR #783 still downloads a CSV on every preview (unchanged).
-9. **Security (outside this change)**: the repo is public and tracks `gha-creds-*.json` (Workload Identity Federation configs, no private key). Make the repo private, remove them from the tree/history and restrict the WIF provider to that repo/branch.
+1. **Race not fully eliminated.** The lease serializes Auto Hedge's *order execution* with our check+order. But Auto Hedge's `_run_uid` calls `_prepare_lifecycle` (which can write a new pair status, e.g. HEDGING) **before** it tries the lease (code order: `_prepare_lifecycle` ≈ line 566, lease ≈ line 597). A status write in the few-ms window between our last check and the order is therefore still possible; it is detected after the fact (`protectionChangedDuringClose`) but not prevented. Consequence analysis: Auto Hedge cannot place orders inside the window (lease), the bulk path can never run the manual release (→ no RECOVERY / re-hedge OFF from this path), and Auto Hedge reconciles to 1:1 on its next tick — but a protected LONG can be briefly under-hedged by the closed fraction. Fully removing it needs Auto Hedge to take the lease before `_prepare_lifecycle` (change in Auto Hedge code; deliberately not done).
+2. Lease TTL is 45 s; a close slower than that loses exclusivity (the post-order check still reports).
+3. Everything that is not the Auto Hedge worker and does not take the lease is not serialized (the individual Close button by design; the user PUT `/rehedge` only touches already-managed pairs).
+4. **Rollout/rollback (code-enforced where possible).** Roll out: (a) deploy backend with 100% traffic (no traffic split; flag defaults false, nothing else changes), (b) verify `GET /v1/me/aster/positions/manual-profit-close-plan` returns `bulkGuardVersion: 1`, (c) deploy frontend. Roll back: frontend first, then backend. New frontend + old backend = refused (no `bulkGuardVersion`); during a traffic split the preview could hit the new and a close the old revision: the frontend stops after that first response (no confirmation field) but that one order would have run without the guard → hence no traffic split.
+5. Real integration (FastAPI + Firestore emulator + real Auto Hedge worker) not run.
+6. Focus Airbag rule "no focus keys ⇒ proven none" is an inference from the writers (see §3).
+7. Individual Close can still dismantle a hedge deliberately (unchanged by requirement). Threshold: bulk `> 0.5`, Close Long/Short/All `>= 0.5`. LONG bulk off. CSV download per preview (PR #783) unchanged.
+8. Security outside this change: repo is public and tracks `gha-creds-*.json` (WIF configs, no private key) — make private, remove, restrict the WIF provider.
 
 ## 9. GO / NO-GO
-- **Integration into the review branch / independent ChatGPT review: GO.**
-- **Production: NO-GO** until risks 1–4 are closed: real integration test (emulator or staging with ASTER_LIVE_EXECUTION_ENABLED=false), backend-before-frontend deploy plan, and a supervised staging check on a controlled account.
+- **Further development / independent review: GO.**
+- **Integration into main: NO-GO** until the mandated FastAPI + Firestore-emulator tests run green in an environment that has the dependencies.
+- **Production: NO-GO** — also needs a decision on risk 1 (Auto Hedge lease before `_prepare_lifecycle`), the rollout order in 8.4, and a supervised staging check with `ASTER_LIVE_EXECUTION_ENABLED=false` first.
 
 ## 10. Independent review (for ChatGPT)
-1. `git fetch origin review/close-profits-2-1-safe-20261021`; review `git diff f8cd2af bddff04c3c994d7bb0fe12966f2d301a68fab511` (= `CLOSE_PROFITS_2_1_vs_PR783.patch`).
-2. Check the guard position in `close_one_aster_position`: after live position/quantity/mark checks, before `close_size`/`_begin_position_loss_auto_hedge_manual_release`/`execute_aster_leg`; verify the guard is skipped when `bulk_profit_close` is false.
-3. Verify `auto_hedge_symbol_managed_strict` fails closed for no reader / exception / non-dict; compare with legacy `current_lock`.
-4. Verify the `shortProfitCandidates` filter and the 409 message regex in `closeProfits` match the backend strings in `manual_profit_close_guard.py`.
-5. Run: `cd cloud_api && python3 -m unittest test_close_profits_2_1_guard` and `cd web && node --test tests/aster-close-profits-2-1-safety.test.mjs tests/aster-close-profits-short-handler.test.mjs` (Node ≥ 22.13 for `stripTypeScriptTypes`).
-6. Try to break it: Auto Hedge status flip after preview, reader outage, LONG with unverified hedge, 0.50 exactly, double click.
+1. `git fetch origin review/close-profits-2-1-safe-20261021`; review `CLOSE_PROFITS_2_1_ROUND2_vs_bddff04.patch` (only this round) and the full `CLOSE_PROFITS_2_1_vs_PR783.patch`.
+2. Check in `close_one_aster_position`: lease → live protection check → … → late check → `begin_manual_action` → order → post check; `account_token` released in `finally`; individual path untouched.
+3. Verify the Auto Hedge side yourself: `aster_position_loss_auto_hedge_extension.py` `_run_uid` — order of `_prepare_lifecycle` vs lease (risk 8.1), and that `reconcile_auto_hedge` runs under the lease.
+4. Verify `manual_profit_close_guard.focus_airbag_protected` against the Strategy-2 writers (§3) for false "proven none".
+5. Run: `cd cloud_api && python3 -m unittest test_close_profits_2_1_guard`; `cd web && node --test tests/aster-close-profits-2-1-safety.test.mjs tests/aster-close-profits-short-handler.test.mjs` (Node ≥ 22.13).
+6. Run the mandated FastAPI + emulator scenarios where fastapi/firebase_admin/firestore exist (not possible in my sandbox).
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code) · https://claude.ai/code/session_01QXY7Vj7kan5d3RCT7LopcA
