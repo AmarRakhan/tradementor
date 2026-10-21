@@ -9,5 +9,9 @@ out="$(mktemp)"
 text="exit=${code}"$'\n'"$(tail -n "$lines" "$out")"
 text="${text//'%'/'%25'}"; text="${text//$'\r'/'%0D'}"; text="${text//$'\n'/'%0A'}"
 if [ "$code" -eq 0 ]; then echo "::notice title=${title}::${text:0:60000}"; else echo "::error title=${title}::${text:0:60000}"; fi
+# compact verdict annotation (always short, never truncated): summary-looking lines + last 6 lines
+sumtext="exit=${code}"$'\n'"$(grep -E '^(Ran |OK|FAILED|[0-9]+ (passed|failed)|=+ .*(passed|failed)|ℹ (tests|pass|fail|skipped|cancelled))|[0-9]+ passed|[0-9]+ failed' "$out" | tail -n 12)"
+sumtext="${sumtext//'%'/'%25'}"; sumtext="${sumtext//$'\r'/'%0D'}"; sumtext="${sumtext//$'\n'/'%0A'}"
+echo "::notice title=SUMMARY ${title}::${sumtext:0:3000}"
 tail -n 40 "$out"
 exit "$code"

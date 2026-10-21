@@ -78,9 +78,10 @@ jobs:
       - name: Install web dependencies
         working-directory: web
         run: npm ci
-      - name: TypeScript typecheck
+      - name: TypeScript typecheck (normalised error set for comparison with baseline)
         working-directory: web
-        run: ../tools/ci_report.sh "typescript typecheck" 80 npx tsc --noEmit -p tsconfig.json
+        continue-on-error: true
+        run: ../tools/ci_report.sh "typescript errors (normalised)" 400 bash -c "npx tsc --noEmit -p tsconfig.json | sed -E 's/\\([0-9]+,[0-9]+\\)//' | sort | uniq -c | sort -rn; exit \${PIPESTATUS[0]}"
       - name: Production build
         working-directory: web
         run: ../tools/ci_report.sh "next production build" 30 npm run build
@@ -92,3 +93,43 @@ jobs:
       - name: Full web test suite
         working-directory: web
         run: ../tools/ci_report.sh "web full suite" 40 node --test tests/*.test.mjs
+  baseline:
+    # Same checks on the original PR head and on the production-601 base, to separate pre-existing failures.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [f8cd2af5f76c6b240bd49c87deedbbe8622ef4ea, e035431eca681586ae3e0d19e34ebe8722e6992d]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tools_src
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          path: base
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Baseline backend pytest
+        working-directory: base/cloud_api
+        run: |
+          pip install -r requirements.txt pytest
+          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} backend pytest" 40 pytest -q -rfE -p no:cacheprovider
+        continue-on-error: true
+      - name: Baseline TypeScript errors (normalised)
+        working-directory: base/web
+        continue-on-error: true
+        run: |
+          npm ci
+          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} typescript errors (normalised)" 400 bash -c "npx tsc --noEmit -p tsconfig.json | sed -E 's/\\([0-9]+,[0-9]+\\)//' | sort | uniq -c | sort -rn; exit \${PIPESTATUS[0]}"
+      - name: Baseline web tests
+        working-directory: base/web
+        continue-on-error: true
+        run: |
+          pip install -r ../cloud_api/requirements.txt
+          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} web node tests" 30 node --test tests/*.test.mjs
