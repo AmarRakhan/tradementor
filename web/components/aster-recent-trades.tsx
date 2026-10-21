@@ -1357,7 +1357,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     setProfitBusy(true);
     setProfitMessage("");
     try {
-      const preview = (await authenticatedRequest(`/api/exchanges/aster/positions/manual-profit-close-plan?percentage=${profitClosePercentage}`, { method: "GET", cache: "no-store" })) as { selected: Array<{symbol:string;side:string;quantity:string;minimumWarning?:string}>; skipped: Array<{reason:string}>; protectedExcludedCount?: number; snapshot: {csv:string;rows:Array<{symbol:string;side:string;quantity:string}>}; executionEnabled:boolean };
+      const preview = (await authenticatedRequest(`/api/exchanges/aster/positions/manual-profit-close-plan?percentage=${profitClosePercentage}`, { method: "GET", cache: "no-store" })) as { selected: Array<{symbol:string;side:string;quantity:string;minimumWarning?:string}>; skipped: Array<{reason:string}>; protectedExcludedCount?: number; bulkGuardVersion?: number; snapshot: {csv:string;rows:Array<{symbol:string;side:string;quantity:string}>}; executionEnabled:boolean };
+      if (preview.bulkGuardVersion !== 1) {
+        // Old backend: it would silently ignore `bulk_profit_close` and run without the server-side protection.
+        setProfitMessage("De backend ondersteunt de bulk-beveiliging (Auto Hedge/Airbag) nog niet. Werk eerst de backend bij; er zijn geen orders geplaatst.");
+        return;
+      }
       // Reuse the exact same single-position CLOSE endpoint as the existing buttons.
       // Backend planning excludes unverified paired LONGs; no bulk order engine.
       const targets = preview.selected.flatMap((item) => {
@@ -1406,10 +1411,11 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     let closed = 0;
     let skipped = 0;
     let protectedSkipped = 0;
+    let protectionChanged = 0;
     let stoppedAt = "";
     for (const target of bulkCloseTargets) {
       try {
-        await authenticatedRequest(
+        const result = await authenticatedRequest(
           "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
           { method: "POST", body: JSON.stringify({
             confirm: true, side: "SHORT", expected_quantity: target.quantity,
@@ -1418,6 +1424,13 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
           }) },
         );
         closed++;
+        if (!result || typeof result.protectionChangedDuringClose !== "boolean") {
+          // Response without the guard confirmation = backend did not run the protection check.
+          stoppedAt = target.symbol + ": backend bevestigde de bulk-beveiliging niet";
+          break;
+        }
+        // Server detected that Auto Hedge/Airbag took this leg while it was closing.
+        if (result && result.protectionChangedDuringClose === true) protectionChanged++;
       } catch (reason) {
         const details = reason instanceof Error ? reason.message : String(reason);
         if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details)) {
@@ -1434,6 +1447,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       }
     }
     setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen · " + protectedSkipped + " beschermd (Auto Hedge/Airbag) niet aangeraakt" +
+      (protectionChanged ? " · ⚠ " + protectionChanged + " positie(s) kregen tijdens het sluiten Auto Hedge/Airbag-bescherming: controleer Auto Hedge" : "") +
       (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
     setBulkCloseTargets([]);
     setProfitPreview(null);

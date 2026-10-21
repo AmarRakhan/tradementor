@@ -120,7 +120,7 @@ from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rej
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, auto_hedge_symbol_managed_strict, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
-from manual_profit_close_guard import bulk_profit_close_block_reason
+from manual_profit_close_guard import BulkProtectionUnreliable, bulk_profit_close_block_reason
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_sniper import SniperSettings, backtest_candles
 from aster_sniper_runtime import run_sniper_tick
@@ -1293,10 +1293,10 @@ def _exclude_auto_hedge_managed_profit_candidates(
 
 
 def _bulk_profit_close_block_reason_live(uid: str, symbol: str, side: str) -> str | None:
-    state = aster_strategy2_reference(uid).get().to_dict() or {}
-    legs = state.get("ownedLegs")
+    """Fresh Firestore read; raises on unreliable protection data (callers fail closed)."""
+    snapshot = aster_strategy2_reference(uid).get()
     return bulk_profit_close_block_reason(
-        uid, symbol, side, legs if isinstance(legs, list) else [],
+        uid, symbol, side, snapshot.to_dict(), strategy2_exists=bool(snapshot.exists),
         managed_check=auto_hedge_symbol_managed_strict)
 
 
@@ -8669,15 +8669,14 @@ def preview_manual_profit_close_plan(
         # Close Profits 2.1: drop every candidate the bulk close would be refused
         # for (Auto Hedge, Focus Airbag, non-SHORT). Lock read errors raise -> 502.
         uid = str(user["uid"])
-        strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
-        owned_legs = strategy2_state.get("ownedLegs")
-        owned_legs = owned_legs if isinstance(owned_legs, list) else []
+        strategy2_snapshot = aster_strategy2_reference(uid).get()
+        strategy2_state = strategy2_snapshot.to_dict()
         safe_selected: list[dict[str, Any]] = []
         protected: list[dict[str, Any]] = []
         for item in plan["selected"]:
             reason = bulk_profit_close_block_reason(
-                uid, str(item.get("symbol", "")).upper(), str(item.get("side", "")).upper(), owned_legs,
-                managed_check=auto_hedge_symbol_managed_strict)
+                uid, str(item.get("symbol", "")).upper(), str(item.get("side", "")).upper(), strategy2_state,
+                strategy2_exists=bool(strategy2_snapshot.exists), managed_check=auto_hedge_symbol_managed_strict)
             if reason:
                 protected.append({"symbol": item.get("symbol"), "side": item.get("side"), "reason": reason})
             else:
@@ -8689,10 +8688,15 @@ def preview_manual_profit_close_plan(
             **plan, "snapshot": snapshot, "reliable": True,
             "executionEnabled": False,
             "protectedExcludedCount": len(protected),
+            # Capability marker: a new frontend refuses to run the bulk close against a
+            # backend that does not return it (old backends ignore `bulk_profit_close`).
+            "bulkGuardVersion": 1,
             "message": "Alleen preview: alleen SHORT-posities buiten Auto Hedge en Focus Airbag; uitvoering controleert de status opnieuw",
         }
     except HTTPException:
         raise
+    except BulkProtectionUnreliable as exc:
+        raise HTTPException(502, "Focus Airbag-beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
     except Exception as exc:
         raise HTTPException(502, "Aster-posities of contractregels niet betrouwbaar beschikbaar") from exc
 
@@ -8888,9 +8892,28 @@ def close_one_aster_position(
             raise HTTPException(409, "Aster gaf geen betrouwbare actuele marktprijs; sluiten is gestopt")
 
         if request.bulk_profit_close:
-            # Fresh protection check against live Firestore state, independent of
-            # any (possibly stale) preview snapshot. Reader errors fail closed.
-            block_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)
+            # 1) Take the SAME per-account lease Auto Hedge's live execution takes
+            #    (_run_uid acquires it before any order and returns PENDING when it
+            #    is busy), so Auto Hedge cannot place orders for this account
+            #    between our protection check and our order. Released in `finally`.
+            for _ in range(20):
+                account_token = _acquire_aster_account_coordination(
+                    uid, "MANUAL_BULK_PROFIT_CLOSE", "BULK_PROFIT_CLOSE",
+                )
+                if account_token:
+                    break
+                time.sleep(.05)
+            if not account_token:
+                intent_ref.set({"status": "blocked_account_busy", "updatedAt": datetime.now(timezone.utc)}, merge=True)
+                raise HTTPException(409, "Account wordt momenteel door Auto Hedge of een andere beheerfunctie verwerkt; bulk sluiten is gestopt, probeer het zo opnieuw")
+            # 2) Fresh protection check against live Firestore state, independent of
+            #    any (possibly stale) preview. Reader errors / unreliable data fail closed.
+            try:
+                block_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)
+            except BulkProtectionUnreliable as exc:
+                intent_ref.set({"status": "blocked_bulk_unreliable", "detail": str(exc),
+                    "updatedAt": datetime.now(timezone.utc)}, merge=True)
+                raise HTTPException(409, "Focus Airbag-beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
             if block_reason:
                 intent_ref.set({"status": "blocked_bulk_protected", "detail": block_reason,
                     "updatedAt": datetime.now(timezone.utc)}, merge=True)
@@ -8924,6 +8947,10 @@ def close_one_aster_position(
             pair_status in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
             and request.side in {pair_protected_side, pair_hedge_side}
         )
+        if needs_manual_auto_hedge_release and request.bulk_profit_close:
+            # Unreachable when the guard above passed; belt and braces: a bulk close
+            # must never run the manual Auto Hedge release (-> RECOVERY, re-hedge OFF).
+            raise HTTPException(409, "Deze positie valt onder Auto Hedge; bulk Close Profits sluit haar niet")
         if needs_manual_auto_hedge_release:
             for _ in range(20):
                 account_token = _acquire_aster_account_coordination(
@@ -8951,6 +8978,13 @@ def close_one_aster_position(
             quantity=close_quantity,
             caller="manual-position-close",
         )
+        if request.bulk_profit_close:
+            # Last-moment re-check, still inside the lease and right before the order.
+            late_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)
+            if late_reason:
+                intent_ref.set({"status": "blocked_bulk_protected", "detail": late_reason,
+                    "updatedAt": datetime.now(timezone.utc)}, merge=True)
+                raise HTTPException(409, late_reason)
         manual_guard = begin_manual_action(dynamic_hedge_ref, request.side, live_rows)
         expected_remaining = max(0.0, live_quantity - close_quantity)
         plan = PairExecutionPlan(
@@ -8976,12 +9010,23 @@ def close_one_aster_position(
             uid, auto_hedge_manual_guard, after_manual_rows,
         )
         complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
+        protection_changed_during_close = False
+        if request.bulk_profit_close:
+            # Detection only (the order is already filled): did Auto Hedge/Airbag take
+            # this leg while we were closing? Surfaced to the user, never hidden.
+            try:
+                protection_changed_during_close = bool(
+                    _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side))
+            except Exception:
+                protection_changed_during_close = True
         intent_ref.set({
             "status": "confirmed_closed", "result": result, "percentage": request.percentage,
             "closedQuantity": close_quantity, "remainingQuantity": remaining_quantity,
             "completedAt": datetime.now(timezone.utc),
+            **({"protectionChangedDuringClose": True} if protection_changed_during_close else {}),
         }, merge=True)
         return {
+            "protectionChangedDuringClose": protection_changed_during_close,
             "closed": remaining_quantity <= remaining_tolerance,
             "partialClosed": request.percentage < 100,
             "symbol": normalized_symbol,

@@ -96,6 +96,7 @@ test("preview: negative SHORT quantity is processed with Math.abs and only safe 
       selected: [{ symbol: "BTCUSDT", side: "SHORT", quantity: "2" }],
       skipped: [], protectedExcludedCount: 2,
       snapshot: { csv: "", rows: [{ symbol: "BTCUSDT", side: "SHORT", quantity: "-8" }] },
+      bulkGuardVersion: 1,
     },
   });
   await h.handler();
@@ -129,7 +130,7 @@ test("preview: server selection not in UI candidates is never turned into a targ
   const h = openHarness({
     shortCandidates: [pos("BTCUSDT", "SHORT", 3)],
     preview: { selected: [{ symbol: "BTCUSDT", side: "SHORT", quantity: "1" }, { symbol: "ETHUSDT", side: "SHORT", quantity: "1" }],
-      skipped: [], snapshot: { csv: "", rows: [
+      skipped: [], bulkGuardVersion: 1, snapshot: { csv: "", rows: [
         { symbol: "BTCUSDT", side: "SHORT", quantity: "-8" }, { symbol: "ETHUSDT", side: "SHORT", quantity: "-5" }] } },
   });
   await h.handler();
@@ -160,7 +161,7 @@ test("preview: unreliable snapshot fails closed without any request", async () =
 // --- closeProfits (execution) --------------------------------------------------
 const closeCode = slice("  async function closeProfits() {", "\n  function selectFilter(");
 
-function closeHarness(failures = {}, targets) {
+function closeHarness(failures = {}, targets, responder) {
   const calls = [];
   const state = { message: "", busy: false, refresh: 0, keys: 0 };
   const ctx = {
@@ -179,7 +180,7 @@ function closeHarness(failures = {}, targets) {
       calls.push({ url, data: JSON.parse(options.body) });
       const symbol = url.split("/").at(-2);
       if (failures[symbol]) throw new Error(failures[symbol]);
-      return { closedSize: 2 };
+      return responder ? responder(symbol) : { closedSize: 2, protectionChangedDuringClose: false };
     },
   };
   return { handler: vm.runInNewContext(closeCode + "\ncloseProfits;", ctx), calls, state, ctx };
@@ -258,4 +259,46 @@ test("generic profitCandidates (Close Long/Short/All) keeps its original inclusi
 
 test("confirmation text states Auto Hedge / Airbag are not closed", () => {
   assert.match(source, /Auto Hedge- en Focus Airbag-posities worden niet gesloten/);
+});
+
+// --- Close Profits 2.1 round 2: rollout safety + race reporting -----------------
+test("old backend (no bulkGuardVersion in preview) is refused: nothing to confirm, no orders", async () => {
+  const h = openHarness({
+    shortCandidates: [pos("BTCUSDT", "SHORT", 3)],
+    preview: { selected: [{ symbol: "BTCUSDT", side: "SHORT", quantity: "1" }], skipped: [],
+      snapshot: { csv: "", rows: [{ symbol: "BTCUSDT", side: "SHORT", quantity: "-8" }] } },
+  });
+  await h.handler();
+  assert.notEqual(h.state.confirming, true);
+  assert.ok(!h.state.targets || h.state.targets.length === 0);
+  assert.match(h.state.message, /backend ondersteunt de bulk-beveiliging \(Auto Hedge\/Airbag\) nog niet/);
+  assert.match(h.state.message, /geen orders geplaatst/);
+});
+
+test("response without guard confirmation (old backend answered the close) stops the run after that symbol", async () => {
+  const h = closeHarness({}, undefined, () => ({ closedSize: 2 }));
+  await h.handler();
+  assert.equal(h.calls.length, 1);
+  assert.match(h.state.message, /Gestopt bij BTCUSDT: backend bevestigde de bulk-beveiliging niet/);
+});
+
+test("protectionChangedDuringClose is surfaced as a warning, not hidden", async () => {
+  const h = closeHarness({}, undefined, (symbol) => ({ closedSize: 2, protectionChangedDuringClose: symbol === "ETHUSDT" }));
+  await h.handler();
+  assert.equal(h.calls.length, 3);
+  assert.match(h.state.message, /3 SHORTS gesloten/);
+  assert.match(h.state.message, /1 positie\(s\) kregen tijdens het sluiten Auto Hedge\/Airbag-bescherming: controleer Auto Hedge/);
+});
+
+test("unreliable Airbag data and busy account STOP the run (they are not 'protected skips')", async () => {
+  for (const message of [
+    "Focus Airbag-beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt",
+    "Account wordt momenteel door Auto Hedge of een andere beheerfunctie verwerkt; bulk sluiten is gestopt, probeer het zo opnieuw",
+  ]) {
+    const h = closeHarness({ BTCUSDT: message });
+    await h.handler();
+    assert.equal(h.calls.length, 1, message);
+    assert.match(h.state.message, /Gestopt bij BTCUSDT/);
+    assert.match(h.state.message, /0 beschermd/);
+  }
 });

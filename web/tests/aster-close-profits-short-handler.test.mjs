@@ -33,7 +33,7 @@ function harness(percent, failures = {}) {
       calls.push({ url, options, data: JSON.parse(options.body) });
       const symbol = url.split("/").at(-2);
       if (failures[symbol]) throw new Error(failures[symbol]);
-      return { closedSize: 2, autoHedgeStatus: "RECOVERY" };
+      return { closedSize: 2, autoHedgeStatus: "RECOVERY", protectionChangedDuringClose: false };
     },
   };
   const handler = vm.runInNewContext(handlerCode + "\ncloseProfits;", ctx);
