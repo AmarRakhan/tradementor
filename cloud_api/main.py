@@ -8635,6 +8635,36 @@ def preview_profitable_aster_positions(
     }
 
 
+@app.get("/v1/me/aster/positions/manual-profit-close-plan")
+def preview_manual_profit_close_plan(
+    percentage: int = 25,
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Account-scoped, read-only exchange snapshot and percentage plan; never submits orders."""
+    from manual_profit_close_planner import build_profit_close_plan, filters_from_aster_exchange_info
+    from manual_profit_close_snapshot import make_profit_close_snapshot
+    if percentage not in {25, 50, 75, 100}:
+        raise HTTPException(422, "Sluitpercentage moet 25, 50, 75 of 100 zijn")
+    try:
+        client = _portfolio_growth_client(user, live=False)
+        rows = list(client.position_risk())
+        exchange_info = client.public_exchange_info()
+        filters = filters_from_aster_exchange_info(exchange_info)
+        # Hedge relationships must be established from canonical account state;
+        # never infer a paired LONG close from the exchange symbol alone.
+        plan = build_profit_close_plan(rows, percentage, filters, hedge_links={}, include_short_below_minimum=True)
+        snapshot = make_profit_close_snapshot(rows, percentage)
+        return {
+            **plan, "snapshot": snapshot, "reliable": True,
+            "executionEnabled": False,
+            "message": "Alleen preview: gekoppelde LONG-posities vereisen geverifieerde hedgekoppeling",
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "Aster-posities of contractregels niet betrouwbaar beschikbaar") from exc
+
+
 @app.post("/v1/me/aster/positions/close-profitable")
 def close_profitable_aster_positions(
     request: AsterProfitableCloseRequest,

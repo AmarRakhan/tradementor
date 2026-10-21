@@ -1027,6 +1027,9 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const [detailFillDcaCount, setDetailFillDcaCount] = useState<number | null>(null);
   const [profitConfirming, setProfitConfirming] = useState(false);
   const [profitBusy, setProfitBusy] = useState(false);
+  const [profitClosePercentage, setProfitClosePercentage] = useState<25 | 50 | 75 | 100>(25);
+  const [bulkCloseTargets, setBulkCloseTargets] = useState<Array<{ symbol: string; side: "SHORT"; quantity: number; minimumWarning?: string }>>([]);
+  const bulkCloseInFlightRef = useRef(false);
   const [profitPreview, setProfitPreview] = useState<ProfitClosePreview | null>(null);
   const [profitMessage, setProfitMessage] = useState("");
   const scrollYRef = useRef(0);
@@ -1125,7 +1128,15 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
         : [],
     [livePositions, profitSnapshotReliable],
   );
-  const profitCandidateTotal = useMemo(() => profitCandidates.reduce((sum, position) => sum + (finite(position.unrealizedPnl) || 0), 0), [profitCandidates]);
+  const shortProfitCandidates = useMemo(
+    () => profitCandidates.filter((position) =>
+      String(position.side || "").toUpperCase() === "SHORT" && (finite(position.unrealizedPnl) || 0) > 0.5),
+    [profitCandidates],
+  );
+  const shortProfitCandidateTotal = useMemo(
+    () => shortProfitCandidates.reduce((sum, position) => sum + (finite(position.unrealizedPnl) || 0), 0),
+    [shortProfitCandidates],
+  );
   const accountDisplay = useMemo(
     () =>
       deriveAsterAccountDisplay({
@@ -1327,14 +1338,56 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const detailManagedByMultiDca = Boolean(detail && multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailMainSide}`]);
   const detailFocusV2Cockpit = detail && !detailManagedByMultiDca && String(detail.selection.strategy2Role || "").toUpperCase() === "FOCUS_V2_LONG" && focusV2Cockpit && normalizedSymbol(String(focusV2Cockpit.symbol || "")) === normalizedSymbol(detail.selection.symbol) ? focusV2Cockpit : null;
   async function openProfitConfirmation() {
-    if (profitBusy || !profitSnapshotReliable || profitCandidates.length === 0) return;
+    if (profitBusy) return;
+    setProfitConfirming(false);
+    setBulkCloseTargets([]);
+    setProfitPreview(null);
+    if (!profitSnapshotReliable) {
+      setProfitMessage("De Aster-positiesnapshot is nog niet bevestigd. Vernieuw de posities en probeer opnieuw; er zijn geen orders geplaatst.");
+      return;
+    }
+    if (shortProfitCandidates.length === 0) {
+      setProfitMessage("Geen open posities met minimaal $0,50 winst gevonden; er zijn geen orders geplaatst.");
+      return;
+    }
     setProfitBusy(true);
     setProfitMessage("");
     try {
-      const preview = (await authenticatedRequest("/api/exchanges/aster/positions/profitable-close-preview", { method: "GET", cache: "no-store" })) as ProfitClosePreview;
-      setProfitPreview(preview);
-      if (preview.eligibleCount > 0) setProfitConfirming(true);
-      else setProfitMessage("Geen profits om te sluiten.");
+      const preview = (await authenticatedRequest(`/api/exchanges/aster/positions/manual-profit-close-plan?percentage=${profitClosePercentage}`, { method: "GET", cache: "no-store" })) as { selected: Array<{symbol:string;side:string;quantity:string;minimumWarning?:string}>; skipped: Array<{reason:string}>; snapshot: {csv:string;rows:Array<{symbol:string;side:string;quantity:string}>}; executionEnabled:boolean };
+      // Reuse the exact same single-position CLOSE endpoint as the existing buttons.
+      // Backend planning excludes unverified paired LONGs; no bulk order engine.
+      const targets = preview.selected.flatMap((item) => {
+        const side = String(item.side).toUpperCase();
+        const symbol = normalizedSymbol(item.symbol);
+        const original = preview.snapshot?.rows?.find((row) =>
+          normalizedSymbol(row.symbol) === symbol && String(row.side).toUpperCase() === side);
+        const quantity = original ? Number(original.quantity) : Number.NaN;
+        const position = shortProfitCandidates.find((row) =>
+          normalizedSymbol(row.symbol || "") === symbol && String(row.side).toUpperCase() === "SHORT");
+        return side === "SHORT" && position?.focusAirbagHedge !== true &&
+          position !== undefined && Number.isFinite(quantity) && Math.abs(quantity) > 0
+          ? [{ symbol, side: "SHORT" as const, quantity: Math.abs(quantity), minimumWarning: item.minimumWarning }] : [];
+      });
+      const uniqueTargets = targets.filter((target, index) =>
+        targets.findIndex((candidate) => candidate.symbol === target.symbol && candidate.side === target.side) === index);
+      setBulkCloseTargets(uniqueTargets);
+      const selectedProfit = uniqueTargets.reduce((total, target) => {
+        const position = shortProfitCandidates.find((row) =>
+          normalizedSymbol(row.symbol || "") === target.symbol && String(row.side).toUpperCase() === "SHORT");
+        return total + (finite(position?.unrealizedPnl) || 0);
+      }, 0);
+      setProfitPreview({ eligibleCount: uniqueTargets.length, totalProfitUsd: selectedProfit, minimumProfitUsd: 0.5 });
+      setProfitConfirming(uniqueTargets.length > 0);
+      setProfitMessage(`Preview ${profitClosePercentage}%: ${uniqueTargets.length} geschikt, ${preview.skipped.length} overgeslagen. Geen orders verstuurd.`);
+      if (typeof window !== "undefined" && preview.snapshot?.csv) {
+        const file = new Blob([preview.snapshot.csv], {type:"text/csv;charset=utf-8"});
+        const url = URL.createObjectURL(file);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `aster-profit-close-${profitClosePercentage}-${new Date().toISOString().replace(/[:.]/g,"-")}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+      }
     } catch (reason) {
       setProfitMessage(reason instanceof Error ? reason.message : "Actuele profits controleren is niet gelukt.");
     } finally {
@@ -1342,28 +1395,38 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     }
   }
   async function closeProfits() {
-    if (profitBusy || !profitPreview?.eligibleCount) return;
+    if (bulkCloseInFlightRef.current || profitBusy || !profitConfirming || !profitSnapshotReliable || bulkCloseTargets.length === 0) return;
+    bulkCloseInFlightRef.current = true;
     setProfitBusy(true);
-    setProfitMessage("");
-    try {
-      const result = (await authenticatedRequest("/api/exchanges/aster/positions/close-profitable", {
-        method: "POST",
-        body: JSON.stringify({
-          confirm: true,
-          idempotency_key: crypto.randomUUID(),
-        }),
-      })) as ProfitCloseResult;
-      const skipped = result.skippedCount + result.failedCount;
-      setProfitMessage(`${result.closedCount} posities gesloten · ${money(result.profitAtSubmitUsd, true)} bevestigd bij order · ${skipped} ${skipped === 1 ? "positie" : "posities"} overgeslagen`);
-      setProfitConfirming(false);
-      setProfitPreview(null);
-      await onRetry();
-    } catch (reason) {
-      setProfitMessage(reason instanceof Error ? reason.message : "Winstposities sluiten is niet gelukt.");
-      await onRetry();
-    } finally {
-      setProfitBusy(false);
+    setProfitConfirming(false);
+    let closed = 0;
+    let skipped = 0;
+    let stoppedAt = "";
+    for (const target of bulkCloseTargets) {
+      try {
+        await authenticatedRequest(
+          "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
+          { method: "POST", body: JSON.stringify({
+            confirm: true, side: "SHORT", expected_quantity: target.quantity,
+            percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
+          }) },
+        );
+        closed++;
+      } catch (reason) {
+        const details = reason instanceof Error ? reason.message : String(reason);
+        if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details)) {
+          skipped++;
+          continue;
+        }
+        stoppedAt = target.symbol + ": " + details;
+        break;
+      }
     }
+    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen" +
+      (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
+    setBulkCloseTargets([]);
+    setProfitPreview(null);
+    try { await Promise.resolve(onRetry()); } finally { bulkCloseInFlightRef.current = false; setProfitBusy(false); }
   }
   function selectFilter(key: FilterKey) {
     setActive(key);
@@ -1513,13 +1576,18 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
               <button type="button" className={styles.scopeShort} disabled={!profitSnapshotReliable || scopedProfitCandidates.SHORT.length === 0} onClick={() => forwardSnapshotProfit("SHORT")}>Close Short</button>
               <button type="button" className={styles.scopeAll} disabled={!profitSnapshotReliable || profitCandidates.length === 0} onClick={() => forwardSnapshotProfit("ALL")}>Close All</button>
             </div>
+            <div aria-label="Percentage winstposities sluiten" style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:10}}>
+              {([25,50,75,100] as const).map((percentage) => (
+                <button key={percentage} type="button" aria-pressed={profitClosePercentage===percentage} onClick={() => setProfitClosePercentage(percentage)} style={{padding:"8px 10px",borderRadius:8,border:profitClosePercentage===percentage?"1px solid #47da89":"1px solid #64748b",background:profitClosePercentage===percentage?"#13432b":"transparent",color:"inherit"}}>{percentage}%</button>
+              ))}
+            </div>
             <footer className={styles.footer}>
               <span className={profitStyles.footerPrimary}>
                 {selectedRows.length > 6 && <button type="button" onClick={() => { setExpanded((value) => !value); setPages(1); }}>{expanded ? "Compact tonen" : "Toon alles"}</button>}
                 {expanded && hasMore && <button type="button" onClick={() => setPages((value) => value + 1)}>Laad nog 100</button>}
               </span>
-              <button type="button" className={`${profitStyles.closeProfits} ${styles.profitCta}`} disabled={profitBusy || !profitSnapshotReliable || profitCandidates.length === 0} onClick={openProfitConfirmation}>
-                {profitBusy ? "Profits controleren…" : profitCandidates.length ? `Close ${profitCandidates.length} profits · ${money(profitCandidateTotal, true)}` : "Geen profits om te sluiten"}
+              <button type="button" className={`${profitStyles.closeProfits} ${styles.profitCta}`} disabled={profitBusy} onClick={openProfitConfirmation}>
+                {profitBusy ? "Profits controleren…" : shortProfitCandidates.length ? `Close ${shortProfitCandidates.length} SHORT profits · ${money(shortProfitCandidateTotal, true)}` : "Geen SHORT profits om te sluiten"}
               </button>
             </footer>
             {profitMessage && <p className={profitStyles.bulkMessage} role="status">{profitMessage}</p>}
@@ -1528,8 +1596,21 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 <div>
                   <h3 id="profit-close-title">{profitPreview.eligibleCount} winstposities sluiten?</h3>
                   <dl><dt>Actuele totale winst</dt><dd className={styles.profit}>{money(profitPreview.totalProfitUsd, true)}</dd><dt>Geschikte posities</dt><dd>{profitPreview.eligibleCount}</dd></dl>
-                  <p>Zowel LONG- als SHORT-posities kunnen worden gesloten. Iedere positie wordt vlak vóór de order opnieuw bij Aster gecontroleerd en wordt overgeslagen als deze niet meer positief is.</p>
-                  <footer><button type="button" disabled={profitBusy} onClick={() => setProfitConfirming(false)}>Annuleren</button><button type="button" disabled={profitBusy} onClick={closeProfits}>{profitBusy ? "Veilig sluiten…" : `${profitPreview.eligibleCount} winstposities sluiten`}</button></footer>
+                  <p>Bevestig {profitClosePercentage}% MARKET-sluiting per geselecteerde SHORT. Iedere munt gebruikt de bestaande individuele Aster-sluitroute. Bij onbekende uitvoeringsstatus stopt de verwerking.</p>
+                  <div style={{maxHeight:250,overflowY:"auto",display:"grid",gap:8}}>
+                    {bulkCloseTargets.map((target) => (
+                      <button key={target.symbol + "|" + target.side} type="button" disabled={profitBusy}
+                        onClick={() => {
+                          setProfitConfirming(false);
+                          const position = livePositions.find((item) => normalizedSymbol(item.symbol || "") === target.symbol && String(item.side).toUpperCase() === target.side);
+                          if (position) openClosePosition(position);
+                        }}>
+                        <span>{target.symbol} · {target.side} · {target.quantity} · individuele sluitknop openen</span>
+                        {target.minimumWarning === "below_exchange_minimum" && <span style={{display:"block",fontWeight:700,color:"#fbbf24",marginTop:4}}>⚠ Mogelijk te kleine order — bestaande individuele sluitroute beslist</span>}
+                      </button>
+                    ))}
+                  </div>
+                  <footer><button type="button" disabled={profitBusy} onClick={() => setProfitConfirming(false)}>Annuleren</button><button type="button" disabled={profitBusy || bulkCloseTargets.length === 0} onClick={closeProfits}>{profitBusy ? "SHORTS sluiten…" : `Bevestig ${profitClosePercentage}% voor ${bulkCloseTargets.length} SHORTS`}</button></footer>
                 </div>
               </div>, document.body,
             )}
