@@ -232,7 +232,7 @@ class ExchangeFailures(E2E):
             r = self.close("S02USDT", self.expected["S02USDT"], 50, key=key)
             self.assertEqual(r.status_code, 409)
         self.assertEqual(len(self.fake.accepted()), 3)
-        self.assertEqual(self.pair("S02USDT") is None, True)         # plain SHORT: no pair side effects
+        self.assertEqual(self.pair("S02USDT")["status"], "MANUAL_RELEASE_UNCERTAIN")   # S02 is an Auto Hedge SHORT: existing fail-closed state
 
     def test_503_without_acceptance_is_unknown_stops_with_no_order_for_that_symbol(self):
         result, _ = self.run_until_stop("http503_unknown")
@@ -244,6 +244,8 @@ class ExchangeFailures(E2E):
         self.assertEqual(result["stopped"][:2], ("S02USDT", 502))
         self.assertEqual([o["symbol"] for o in self.fake.accepted()], ["S00USDT", "S01USDT", "S02USDT"])
         self.assertEqual(self.fake.accepted(symbol="S02USDT")[0]["status"], "PARTIALLY_FILLED")
+        self.assertEqual(self.pair("S02USDT")["status"], "MANUAL_RELEASE_UNCERTAIN")
+        self.assertAlmostEqual(self.fake.pos[("S02USDT", "SHORT")], self.expected["S02USDT"] - self.fake.accepted(symbol="S02USDT")[0]["executed"], places=6)
 
     def test_ack_new_without_fill_stops_series(self):
         result, _ = self.run_until_stop("ack_new")
@@ -254,6 +256,7 @@ class ExchangeFailures(E2E):
         result, _ = self.run_until_stop("reject")
         self.assertEqual(result["stopped"][0], "S02USDT")
         self.assertEqual([o["symbol"] for o in self.fake.accepted()], ["S00USDT", "S01USDT"])
+        print("INFO-reject", result["stopped"][1:], "pair:", (self.pair("S02USDT") or {}).get("status"))
 
     def test_delayed_position_reflection_is_not_confirmed(self):
         self.seed_world(n=3, hedged=0)
