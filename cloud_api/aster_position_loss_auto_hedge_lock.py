@@ -80,6 +80,33 @@ def auto_hedge_symbol_managed(*, account_uid: str, symbol: str) -> bool:
     return status in AUTO_HEDGE_MANAGED_STATUSES or bool(status)
 
 
+def auto_hedge_symbol_managed_strict(*, account_uid: str, symbol: str) -> bool:
+    """Fail-closed variant for bulk profit closes (Close Profits 2.1).
+
+    `current_lock` returns {} when no reader is configured or the reader returns
+    garbage, which `auto_hedge_symbol_managed` reads as "not managed". Bulk
+    actions must not treat missing/unreliable hedge state as absence of
+    protection, so both cases raise AutoHedgeCloseBlocked here.
+    """
+    with _lock:
+        reader = _reader
+    unavailable = {
+        "event": "AUTO_HEDGE_CLOSE_BLOCKED", "accountUid": str(account_uid),
+        "symbol": str(symbol).upper(), "blockReason": "AUTO_HEDGE_LOCK_STATE_UNAVAILABLE",
+        "message": "Auto Hedge-lock kon niet betrouwbaar worden gelezen; bulk sluiten is gestopt",
+    }
+    if not callable(reader) or not account_uid or not symbol:
+        raise AutoHedgeCloseBlocked(unavailable)
+    try:
+        value = reader(str(account_uid), str(symbol).upper())
+    except Exception:
+        raise AutoHedgeCloseBlocked(unavailable)
+    if not isinstance(value, dict):
+        raise AutoHedgeCloseBlocked(unavailable)
+    status = str(value.get("status", "")).upper().strip()
+    return bool(status) and status != "CLOSED"
+
+
 def require_auto_hedge_close_allowed(
     *,
     account_uid: str,

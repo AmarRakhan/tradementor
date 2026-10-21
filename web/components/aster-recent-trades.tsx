@@ -1129,8 +1129,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     [livePositions, profitSnapshotReliable],
   );
   const shortProfitCandidates = useMemo(
+    // Close Profits 2.1: strictly > $0.50 (same bound as the backend planner),
+    // SHORT only, and never Auto Hedge-managed or Focus Airbag hedge legs.
+    // The server re-checks all of this right before every close.
     () => profitCandidates.filter((position) =>
-      String(position.side || "").toUpperCase() === "SHORT" && (finite(position.unrealizedPnl) || 0) > 0.5),
+      String(position.side || "").toUpperCase() === "SHORT" && (finite(position.unrealizedPnl) || 0) > 0.5 &&
+      !position.positionLossAutoHedge && position.focusAirbagHedge !== true),
     [profitCandidates],
   );
   const shortProfitCandidateTotal = useMemo(
@@ -1347,13 +1351,13 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       return;
     }
     if (shortProfitCandidates.length === 0) {
-      setProfitMessage("Geen open posities met minimaal $0,50 winst gevonden; er zijn geen orders geplaatst.");
+      setProfitMessage("Geen sluitbare SHORT-posities met meer dan $0,50 winst buiten Auto Hedge gevonden; er zijn geen orders geplaatst.");
       return;
     }
     setProfitBusy(true);
     setProfitMessage("");
     try {
-      const preview = (await authenticatedRequest(`/api/exchanges/aster/positions/manual-profit-close-plan?percentage=${profitClosePercentage}`, { method: "GET", cache: "no-store" })) as { selected: Array<{symbol:string;side:string;quantity:string;minimumWarning?:string}>; skipped: Array<{reason:string}>; snapshot: {csv:string;rows:Array<{symbol:string;side:string;quantity:string}>}; executionEnabled:boolean };
+      const preview = (await authenticatedRequest(`/api/exchanges/aster/positions/manual-profit-close-plan?percentage=${profitClosePercentage}`, { method: "GET", cache: "no-store" })) as { selected: Array<{symbol:string;side:string;quantity:string;minimumWarning?:string}>; skipped: Array<{reason:string}>; protectedExcludedCount?: number; snapshot: {csv:string;rows:Array<{symbol:string;side:string;quantity:string}>}; executionEnabled:boolean };
       // Reuse the exact same single-position CLOSE endpoint as the existing buttons.
       // Backend planning excludes unverified paired LONGs; no bulk order engine.
       const targets = preview.selected.flatMap((item) => {
@@ -1378,7 +1382,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       }, 0);
       setProfitPreview({ eligibleCount: uniqueTargets.length, totalProfitUsd: selectedProfit, minimumProfitUsd: 0.5 });
       setProfitConfirming(uniqueTargets.length > 0);
-      setProfitMessage(`Preview ${profitClosePercentage}%: ${uniqueTargets.length} geschikt, ${preview.skipped.length} overgeslagen. Geen orders verstuurd.`);
+      setProfitMessage(`Preview ${profitClosePercentage}%: ${uniqueTargets.length} geschikt, ${preview.skipped.length} overgeslagen (${preview.protectedExcludedCount ?? 0} beschermd door Auto Hedge/Airbag). Geen orders verstuurd.`);
       if (typeof window !== "undefined" && preview.snapshot?.csv) {
         const file = new Blob([preview.snapshot.csv], {type:"text/csv;charset=utf-8"});
         const url = URL.createObjectURL(file);
@@ -1401,6 +1405,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     setProfitConfirming(false);
     let closed = 0;
     let skipped = 0;
+    let protectedSkipped = 0;
     let stoppedAt = "";
     for (const target of bulkCloseTargets) {
       try {
@@ -1409,6 +1414,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
           { method: "POST", body: JSON.stringify({
             confirm: true, side: "SHORT", expected_quantity: target.quantity,
             percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
+            bulk_profit_close: true,
           }) },
         );
         closed++;
@@ -1418,11 +1424,16 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
           skipped++;
           continue;
         }
+        if (/valt onder Auto Hedge|Focus Airbag-hedge/i.test(details)) {
+          // Server refused before any order: status changed since the preview.
+          protectedSkipped++;
+          continue;
+        }
         stoppedAt = target.symbol + ": " + details;
         break;
       }
     }
-    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen" +
+    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen · " + protectedSkipped + " beschermd (Auto Hedge/Airbag) niet aangeraakt" +
       (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
     setBulkCloseTargets([]);
     setProfitPreview(null);
@@ -1596,7 +1607,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 <div>
                   <h3 id="profit-close-title">{profitPreview.eligibleCount} winstposities sluiten?</h3>
                   <dl><dt>Actuele totale winst</dt><dd className={styles.profit}>{money(profitPreview.totalProfitUsd, true)}</dd><dt>Geschikte posities</dt><dd>{profitPreview.eligibleCount}</dd></dl>
-                  <p>Bevestig {profitClosePercentage}% MARKET-sluiting per geselecteerde SHORT. Iedere munt gebruikt de bestaande individuele Aster-sluitroute. Bij onbekende uitvoeringsstatus stopt de verwerking.</p>
+                  <p>Bevestig {profitClosePercentage}% MARKET-sluiting per geselecteerde SHORT. Iedere munt gebruikt de bestaande individuele Aster-sluitroute. Auto Hedge- en Focus Airbag-posities worden niet gesloten; de server controleert dit vlak voor elke sluiting opnieuw. Bij onbekende uitvoeringsstatus stopt de verwerking.</p>
                   <div style={{maxHeight:250,overflowY:"auto",display:"grid",gap:8}}>
                     {bulkCloseTargets.map((target) => (
                       <button key={target.symbol + "|" + target.side} type="button" disabled={profitBusy}

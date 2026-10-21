@@ -60,8 +60,11 @@ def build_profit_close_plan(rows, percentage, filters=None, *, closing_fee_rate=
         symbol, side = key
         opposite = positions.get((symbol, "SHORT" if side == "LONG" else "LONG"))
         linked = bool(opposite and hedge_links.get(symbol) is True)
-        if side == "LONG" and opposite and not linked:
-            skipped.append({"symbol": symbol, "side": side, "reason": "hedge_relationship_unverified"})
+        if side == "LONG" and not linked:
+            # Fail closed: a LONG is only ever selected together with its verified
+            # hedge SHORT. A lone LONG (no opposite row) is NOT proof of "no hedge".
+            reason = "hedge_relationship_unverified" if opposite else "long_requires_verified_hedge_link"
+            skipped.append({"symbol": symbol, "side": side, "reason": reason})
             continue
         legs = [leg]
         if side == "LONG" and linked:

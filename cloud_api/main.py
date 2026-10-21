@@ -119,7 +119,8 @@ from aster_execution import configure_maximum_usable_leverage
 from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rejection
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
-from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
+from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, auto_hedge_symbol_managed_strict, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
+from manual_profit_close_guard import bulk_profit_close_block_reason
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_sniper import SniperSettings, backtest_candles
 from aster_sniper_runtime import run_sniper_tick
@@ -412,6 +413,10 @@ class AsterManualCloseRequest(BaseModel):
     expected_quantity: float = Field(gt=0)
     percentage: int = Field(default=100, ge=25, le=100)
     idempotency_key: str = Field(min_length=16, max_length=120)
+    # Close Profits 2.1: set only by the bulk button. Enables the server-side
+    # protection re-check (Auto Hedge / Focus Airbag / SHORT-only) right before
+    # the order. The individual Close button never sets it and is unchanged.
+    bulk_profit_close: bool = False
 
 
 class AsterProfitableCloseRequest(BaseModel):
@@ -1285,6 +1290,14 @@ def _exclude_auto_hedge_managed_profit_candidates(
         else:
             safe.append(candidate)
     return safe, excluded
+
+
+def _bulk_profit_close_block_reason_live(uid: str, symbol: str, side: str) -> str | None:
+    state = aster_strategy2_reference(uid).get().to_dict() or {}
+    legs = state.get("ownedLegs")
+    return bulk_profit_close_block_reason(
+        uid, symbol, side, legs if isinstance(legs, list) else [],
+        managed_check=auto_hedge_symbol_managed_strict)
 
 
 def _profitable_aster_close_candidates(
@@ -8653,11 +8666,30 @@ def preview_manual_profit_close_plan(
         # Hedge relationships must be established from canonical account state;
         # never infer a paired LONG close from the exchange symbol alone.
         plan = build_profit_close_plan(rows, percentage, filters, hedge_links={}, include_short_below_minimum=True)
+        # Close Profits 2.1: drop every candidate the bulk close would be refused
+        # for (Auto Hedge, Focus Airbag, non-SHORT). Lock read errors raise -> 502.
+        uid = str(user["uid"])
+        strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
+        owned_legs = strategy2_state.get("ownedLegs")
+        owned_legs = owned_legs if isinstance(owned_legs, list) else []
+        safe_selected: list[dict[str, Any]] = []
+        protected: list[dict[str, Any]] = []
+        for item in plan["selected"]:
+            reason = bulk_profit_close_block_reason(
+                uid, str(item.get("symbol", "")).upper(), str(item.get("side", "")).upper(), owned_legs,
+                managed_check=auto_hedge_symbol_managed_strict)
+            if reason:
+                protected.append({"symbol": item.get("symbol"), "side": item.get("side"), "reason": reason})
+            else:
+                safe_selected.append(item)
+        plan = {**plan, "selected": safe_selected, "skipped": [*plan["skipped"], *protected]}
+        # The audit snapshot intentionally keeps the full exchange state.
         snapshot = make_profit_close_snapshot(rows, percentage)
         return {
             **plan, "snapshot": snapshot, "reliable": True,
             "executionEnabled": False,
-            "message": "Alleen preview: gekoppelde LONG-posities vereisen geverifieerde hedgekoppeling",
+            "protectedExcludedCount": len(protected),
+            "message": "Alleen preview: alleen SHORT-posities buiten Auto Hedge en Focus Airbag; uitvoering controleert de status opnieuw",
         }
     except HTTPException:
         raise
@@ -8854,6 +8886,15 @@ def close_one_aster_position(
         mark = safe_float(position.get("markPrice"))
         if mark <= 0:
             raise HTTPException(409, "Aster gaf geen betrouwbare actuele marktprijs; sluiten is gestopt")
+
+        if request.bulk_profit_close:
+            # Fresh protection check against live Firestore state, independent of
+            # any (possibly stale) preview snapshot. Reader errors fail closed.
+            block_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)
+            if block_reason:
+                intent_ref.set({"status": "blocked_bulk_protected", "detail": block_reason,
+                    "updatedAt": datetime.now(timezone.utc)}, merge=True)
+                raise HTTPException(409, block_reason)
 
         requested_close_quantity = close_size(live_quantity, request.percentage)
         close_quantity = live_quantity
