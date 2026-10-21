@@ -183,7 +183,8 @@ jobs:
           R_EMULATOR: ${{ needs.firestore-emulator.result }}
           R_WEB: ${{ needs.web.result }}
         run: |
-          set -uo pipefail
+          # GitHub runs bash with -e; counting zero matches must not abort the verdict
+          set +e -u; export LC_ALL=C
           fail=0; report=""
           for j in BACKEND EMULATOR WEB; do v="R_$j"; report+="job ${j}: ${!v}"$'\n'; [ "${!v}" = success ] || fail=1; done
           for suite in backend web; do
