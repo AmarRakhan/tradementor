@@ -1137,16 +1137,39 @@ def _claim_threshold_transfer(prepared: PreparedSweep) -> dict[str, Any] | None:
 
 
 def _mark_claim(prepared: PreparedSweep, claim: dict[str, Any], *, status: str, **fields: Any) -> dict[str, Any]:
+    """Move the in-flight claim to a new status. Transactional: a claim that was completed (or replaced) by another
+    executor in the meantime is never re-opened, and a transfer already proven SUCCEEDED is never downgraded."""
     state_ref = prepared.user_ref.collection("asterProfitSweepState").document("current")
     transfer_ref = prepared.user_ref.collection("asterProfitSweepTransfers").document(str(claim["claimId"]))
-    current_state = state_ref.get().to_dict() or {}
-    current = current_state.get("inFlight")
-    if not isinstance(current, dict) or current.get("claimId") != claim.get("claimId"):
-        return claim
-    next_claim = {**current, "status": status, **fields, "updatedAt": _now()}
-    state_ref.set({"inFlight": next_claim, "updatedAt": _now()}, merge=True)
-    transfer_ref.set({"status": status, **fields, "updatedAt": _now()}, merge=True)
-    return next_claim
+    client = getattr(state_ref, "_client", None)
+
+    def apply(transaction: Any | None = None) -> dict[str, Any]:
+        if transaction is None:
+            current_state = state_ref.get().to_dict() or {}
+            transfer_now = transfer_ref.get().to_dict() or {}
+        else:
+            current_state = state_ref.get(transaction=transaction).to_dict() or {}
+            transfer_now = transfer_ref.get(transaction=transaction).to_dict() or {}
+        current = current_state.get("inFlight")
+        if not isinstance(current, dict) or current.get("claimId") != claim.get("claimId"):
+            return claim
+        if str(transfer_now.get("status", "")) == "SUCCEEDED":
+            return claim
+        next_claim = {**current, "status": status, **fields, "updatedAt": _now()}
+        if transaction is None:
+            state_ref.set({"inFlight": next_claim, "updatedAt": _now()}, merge=True)
+            transfer_ref.set({"status": status, **fields, "updatedAt": _now()}, merge=True)
+        else:
+            transaction.set(state_ref, {"inFlight": next_claim, "updatedAt": _now()}, merge=True)
+            transaction.set(transfer_ref, {"status": status, **fields, "updatedAt": _now()}, merge=True)
+        return next_claim
+
+    if client is None:
+        return apply()
+    @firestore.transactional
+    def run(transaction: Any) -> dict[str, Any]:
+        return apply(transaction)
+    return run(client.transaction())
 
 
 def _complete_claim(prepared: PreparedSweep, claim: dict[str, Any], *, tran_id: str, reconciled: bool = False) -> dict[str, Any]:
@@ -1161,6 +1184,15 @@ def _complete_claim(prepared: PreparedSweep, claim: dict[str, Any], *, tran_id: 
         current = state.get("inFlight")
         if not isinstance(current, dict) or current.get("claimId") != claim.get("claimId"):
             return state
+        transfer_now = (transfer_ref.get().to_dict() or {}) if transaction is None else (transfer_ref.get(transaction=transaction).to_dict() or {})
+        if str(transfer_now.get("status", "")) == "SUCCEEDED":
+            # Already proven and subtracted once; only clear the stale in-flight marker, never subtract again.
+            clear = {"inFlight": None, "updatedAt": _now()}
+            if transaction is None:
+                state_ref.set(clear, merge=True)
+            else:
+                transaction.set(state_ref, clear, merge=True)
+            return {**state, **clear}
         pending = _d(state.get("pendingSavings"))
         next_pending = max(Decimal("0"), pending - amount)
         today_key = _local_day_key()

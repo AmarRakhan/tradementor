@@ -27,7 +27,7 @@ git merge-base --is-ancestor "$LIVE" "$SOURCE" || { echo "FAIL: source is not a 
 if [ -n "$BASELINE" ]; then
   git merge-base --is-ancestor "$BASELINE" "$SOURCE" || { echo "FAIL: protected baseline $BASELINE is not an ancestor" >&2; exit 1; }
 fi
-ALLOW='^(cloud_api/(main\.py|aster_position_loss_auto_hedge_extension\.py|manual_profit_close_(planner|snapshot)\.py|offline_[a-z_]+\.py|e2e_stack_server\.py|test_close_profits_2_0_[a-z0-9_]+\.py|test_manual_profit_close_[a-z_]+\.py)|tools/(ci_report\.sh|run_close_profits_2_0_integration\.sh|verify_close_profits_release\.sh)|web/app/api/exchanges/aster/positions/manual-profit-close-plan/route\.ts|web/components/aster-recent-trades\.tsx|web/lib/(app-version|release-history)\.ts|web/tests/(aster-close-profit[a-z0-9-]*\.test\.mjs|visual/close-profits-ui[a-z.-]*)|\.github/workflows/(deploy|rollback)-close-profits-2-0(-backend|-web)?\.yml)$'
+ALLOW='^(cloud_api/(main\.py|aster_position_loss_auto_hedge_extension\.py|manual_profit_close_(planner|snapshot)\.py|offline_[a-z_]+\.py|e2e_stack_server\.py|test_close_profits_2_0_[a-z0-9_]+\.py|test_manual_profit_close_[a-z_]+\.py)|tools/(ci_report\.sh|run_close_profits_2_0_integration\.sh|verify_close_profits_release\.sh|gen_close_profits_deploy_workflows\.py|ci_release_guards\.sh)|web/app/api/exchanges/aster/positions/manual-profit-close-plan/route\.ts|web/components/aster-recent-trades\.tsx|web/lib/(app-version|release-history)\.ts|web/tests/(aster-close-profit[a-z0-9-]*\.test\.mjs|visual/close-profits-ui[a-z.-]*)|\.github/workflows/(deploy|rollback)-close-profits-2-0(-backend|-web)?\.yml)$'
 if [ -n "$PATHS" ]; then
   ROWS="$(git diff --name-status --no-renames "$LIVE" "$SOURCE" -- "$PATHS")"
 else

@@ -510,7 +510,7 @@ class ProfitSweepSeries(E2E):
         from collections import Counter
         state = self.state()
         claims = sorted(self.claims(), key=lambda c: c.get("sequence", 0))
-        print("DUMP", label, json.dumps({
+        print("INFO-DUMP", label, json.dumps({
             "state": {k: (str(v) if not isinstance(v, (dict, type(None))) else
                           ({kk: str(vv) for kk, vv in v.items()} if v else v)) for k, v in state.items()},
             "claims": [{k: str(c.get(k)) for k in ("sequence", "status", "amount", "clientTranId", "providerTransactionId",
@@ -677,6 +677,27 @@ class ProfitSweepSeries(E2E):
         self.tick()
         self.check_money()
         self.assertEqual(sum(1 for p in self.fake.transfer_posts if p[0] == first_id), 1)
+
+    def test_unknown_transfer_among_equal_recent_transfers_is_ambiguous_pauses_saving_and_never_replays(self):
+        """Known limitation, fail-safe: many equal-sized blocks in minutes make the history match ambiguous after an
+        unknown answer. Nothing is replayed, nothing is double-booked; saving pauses until the claim is resolved."""
+        self.set_sweep("10")
+        self.seed_world(n=3, hedged=0)
+        self.assertEqual(self.close("S00USDT", self.expected["S00USDT"], 100, bulk=True).status_code, 200)
+        self.assertGreaterEqual(len(self.fake.transfers), 2)
+        self.fake.transfer_plan = ["http503_after_accept"]
+        self.assertEqual(self.close("S01USDT", self.expected["S01USDT"], 100, bulk=True).status_code, 200)
+        unknown_id = next(p[0] for p in self.fake.transfer_posts if p[2] == "http503_after_accept")
+        self.assertEqual(sum(1 for p in self.fake.transfer_posts if p[0] == unknown_id), 1, "blind replay")
+        inflight = self.state().get("inFlight") or {}
+        self.assertEqual(inflight.get("status"), "UNCERTAIN", inflight)
+        self.dump("ambiguous")
+        self.check_money(allow_inflight=True)
+        before = len(self.fake.transfers)
+        self.assertEqual(self.close("S02USDT", self.expected["S02USDT"], 100, bulk=True).status_code, 200)
+        self.assertEqual(len(self.fake.transfers), before, "saving must pause while a claim is unproven")
+        self.assertEqual(sum(1 for p in self.fake.transfer_posts if p[0] == unknown_id), 1)
+        self.check_money(allow_inflight=True)
 
     # ---- restart: process died between exchange acceptance and Firestore completion ------------------------
     def test_restart_after_exchange_accepted_completes_from_history_exactly_once(self):
