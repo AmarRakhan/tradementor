@@ -1,0 +1,269 @@
+name: Deploy Close Profits 2.0 Web (exact release commit)
+# MAIN COPY: control plane on main, code from ONE pinned commit (ALLOWED_RELEASE_COMMIT). Dispatch only on refs/heads/main.
+# Generated from deploy-shared-v44-testapp.yml (proven) with ONLY these changes: dispatch from the release branch on
+# one exact commit whose web/ is the live web + Close Profits 2.0 files only, no push trigger, the backend must
+# already serve exactly this commit, build number must always advance. Everything else is unchanged.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY_CLOSE_PROFITS_2_0_WEB"
+        required: true
+        type: string
+      source_commit:
+        description: "Exact 40-character commit; must equal ALLOWED_RELEASE_COMMIT"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tradementor-production-web
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
+  ARTIFACT_REPOSITORY: tradementor
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  # The web commit this release was built on (live build 601) and the backend that must already serve the release.
+  LIVE_WEB_SOURCE_COMMIT: 89ab74a0cc488979b1dc6231ffa27fc8e293a627
+  BACKEND_URL: https://tradementor-api-604335232956.europe-west4.run.app
+  ALLOWED_RELEASE_COMMIT: aebf12391bc0975dc0a7b30249cc930295066ab9
+
+jobs:
+  verify-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the exact release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+
+      - name: Verify release scope (exact commit, web = live web + Close Profits 2.0 only)
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$CLOUD_RUN_SERVICE" = "amar-bot-v44-direct-install"
+          test "$GCP_PROJECT_ID" = "tradementor-production"
+          test "$CONFIRMATION" = "DEPLOY_CLOSE_PROFITS_2_0_WEB"
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          test "$SOURCE_COMMIT" = "$ALLOWED_RELEASE_COMMIT"
+          bash tools/verify_close_profits_release.sh --source "$SOURCE_COMMIT" --live "$LIVE_WEB_SOURCE_COMMIT" --paths web/
+
+      - name: Backend must already serve exactly this release (backend first, then web)
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$BACKEND_URL/health" > "$RUNNER_TEMP/backend-health.json"
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$BACKEND_URL/openapi.json" > "$RUNNER_TEMP/backend-openapi.json"
+          python - "$RUNNER_TEMP/backend-health.json" "$RUNNER_TEMP/backend-openapi.json" "$SOURCE_COMMIT" <<'PY'
+          import json, sys
+          health = json.load(open(sys.argv[1], encoding="utf-8"))
+          paths = json.load(open(sys.argv[2], encoding="utf-8")).get("paths", {})
+          assert health.get("status") == "ready", health
+          assert health.get("sourceCommit") == sys.argv[3], f"backend runs {health.get('sourceCommit')}, deploy the backend first"
+          assert "/v1/me/aster/positions/manual-profit-close-plan" in paths, "backend lacks the Close Profits 2.0 preview route"
+          PY
+
+      - name: Verify canonical release-history contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^export const WEBAPP_VERSION = "\([0-9][0-9]*\)";/\1/p' web/lib/app-version.ts)"
+          BUILD="$(sed -n 's/^export const WEBAPP_BUILD_NUMBER = "\([0-9][0-9]*\)";/\1/p' web/lib/app-version.ts)"
+          test -n "$VERSION"
+          test -n "$BUILD"
+          test "$VERSION" = "46"
+          grep -q 'build: WEBAPP_BUILD_NUMBER' web/lib/release-history.ts
+          grep -q 'version: WEBAPP_VERSION' web/lib/release-history.ts
+          grep -q 'id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`' web/lib/release-history.ts
+          echo "WEBAPP_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "WEBAPP_BUILD_NUMBER=$BUILD" >> "$GITHUB_ENV"
+
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            BEFORE="${{ github.event.before }}"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+              CHANGED="$(git diff --name-only "$BEFORE" "$GITHUB_SHA")"
+              if printf '%s\n' "$CHANGED" | grep -q '^web/'; then
+                printf '%s\n' "$CHANGED" | grep -qx 'web/lib/app-version.ts'
+                printf '%s\n' "$CHANGED" | grep -qx 'web/lib/release-history.ts'
+              fi
+            fi
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run complete web build and regression suite
+        working-directory: web
+        run: npm test
+
+      - name: Verify v46 production-data contract
+        shell: bash
+        run: |
+          grep -q 'amar-bot-shell-v46' web/public/sw.js
+          grep -q 'tradementor-api-604335232956.europe-west4.run.app' web/lib/cloud-proxy.ts
+          grep -q 'proxyCloud(request, "/v1/me/aster/status", "GET")' web/app/api/exchanges/aster/route.ts
+          ! grep -Eqi 'proxyStrategy3Live|mergeAsterProjectStatus' web/app/api/exchanges/aster/route.ts
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Capture canonical service and IAM
+        shell: bash
+        run: |
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-before.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-before.json"
+          python - "$RUNNER_TEMP/service-before.json" >> "$GITHUB_ENV" <<'PY'
+          import json, sys
+          service=json.load(open(sys.argv[1],encoding="utf-8"))
+          live=[row for row in service["status"].get("traffic",[]) if int(row.get("percent",0))==100]
+          assert len(live)==1, live
+          print(f'BEFORE_REVISION={live[0]["revisionName"]}')
+          print(f'CANONICAL_URL={service["status"]["url"]}')
+          PY
+
+      - name: Verify build number advances production
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 2 "$CANONICAL_URL/?versionCheck=$GITHUB_RUN_ID" > "$RUNNER_TEMP/current-live.html"
+          CURRENT_BUILD="$(python - "$RUNNER_TEMP/current-live.html" <<'PY'
+          import re, sys
+          html=open(sys.argv[1],encoding="utf-8").read()
+          match=re.search(r'data-webapp-build="([0-9]+)"', html)
+          print(match.group(1) if match else "")
+          PY
+          )"
+          test -n "$CURRENT_BUILD"
+          echo "CURRENT_LIVE_BUILD=$CURRENT_BUILD" >> "$GITHUB_ENV"
+          if true; then
+            python - "$CURRENT_BUILD" "$WEBAPP_BUILD_NUMBER" <<'PY'
+          import sys
+          current=int(sys.argv[1]); candidate=int(sys.argv[2])
+          if candidate <= current:
+              raise SystemExit(f"release build must advance production: current={current}, candidate={candidate}")
+          PY
+          fi
+
+      - name: Build and push V46 web image
+        shell: bash
+        run: |
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/amar-bot-web-v46:$GITHUB_SHA"
+          docker build --tag "$IMAGE" web
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy candidate without traffic
+        shell: bash
+        run: |
+          TAG="c-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          SUFFIX="v46-${GITHUB_SHA:0:8}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --image "$IMAGE" \
+            --update-env-vars "WEBAPP_BUILD_NUMBER=${WEBAPP_BUILD_NUMBER}" \
+            --revision-suffix "$SUFFIX" \
+            --no-traffic \
+            --tag "$TAG" \
+            --quiet
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-candidate.json"
+          python - "$RUNNER_TEMP/service-before.json" "$RUNNER_TEMP/service-candidate.json" "$TAG" >> "$GITHUB_ENV" <<'PY'
+          import json, sys
+          before=json.load(open(sys.argv[1],encoding="utf-8")); after=json.load(open(sys.argv[2],encoding="utf-8")); tag=sys.argv[3]
+          b=before["spec"]["template"]["spec"]; a=after["spec"]["template"]["spec"]
+          assert b.get("serviceAccountName")==a.get("serviceAccountName")
+          assert b.get("timeoutSeconds")==a.get("timeoutSeconds")
+          assert b.get("containerConcurrency")==a.get("containerConcurrency")
+          def env_contract_without_build(spec):
+              rows=[]
+              for item in spec["containers"][0].get("env",[]):
+                  name=item.get("name")
+                  if not name or name=="WEBAPP_BUILD_NUMBER":
+                      continue
+                  rows.append((name, "secret" if "valueFrom" in item else "plain"))
+              return sorted(rows)
+          assert env_contract_without_build(b)==env_contract_without_build(a)
+          row=next(x for x in after["status"]["traffic"] if x.get("tag")==tag)
+          print(f'CANDIDATE_REVISION={row["revisionName"]}')
+          print(f'CANDIDATE_URL={row["url"]}')
+          PY
+
+      - name: Verify candidate before traffic
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANDIDATE_URL/" > "$RUNNER_TEMP/root.html"
+          grep -q "Webapp versie 46 · build ${WEBAPP_BUILD_NUMBER}" "$RUNNER_TEMP/root.html"
+          curl --fail --silent --show-error "$CANDIDATE_URL/offline.html" > /dev/null
+          curl --fail --silent --show-error "$CANDIDATE_URL/manifest.webmanifest" > /dev/null
+          curl --fail --silent --show-error "$CANDIDATE_URL/sw.js" | grep -q 'amar-bot-shell-v46'
+
+      - name: Promote verified candidate to canonical shared testapp
+        id: promote
+        shell: bash
+        run: |
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --to-revisions "$CANDIDATE_REVISION=100"
+
+      - name: Verify canonical URL after promotion
+        shell: bash
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-delay 3 "$CANONICAL_URL/" > "$RUNNER_TEMP/canonical.html"
+          grep -q "Webapp versie 46 · build ${WEBAPP_BUILD_NUMBER}" "$RUNNER_TEMP/canonical.html"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/service-after.json"
+          python - "$RUNNER_TEMP/service-after.json" "$CANDIDATE_REVISION" <<'PY'
+          import json, sys
+          service=json.load(open(sys.argv[1],encoding="utf-8")); candidate=sys.argv[2]
+          live=[row for row in service["status"].get("traffic",[]) if int(row.get("percent",0))==100]
+          assert len(live)==1 and live[0].get("revisionName")==candidate, live
+          PY
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          python - "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json" <<'PY'
+          import json, sys
+          assert json.load(open(sys.argv[1],encoding="utf-8")) == json.load(open(sys.argv[2],encoding="utf-8"))
+          PY
+
+      - name: Rollback canonical traffic on failed post-promotion verification
+        if: failure() && steps.promote.outcome == 'success'
+        shell: bash
+        run: |
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project "$GCP_PROJECT_ID" \
+            --region "$GCP_REGION" \
+            --to-revisions "$BEFORE_REVISION=100"
+
+# portfolio-growth-live-trigger-20260823
