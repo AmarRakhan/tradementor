@@ -120,8 +120,8 @@ jobs:
       - name: End-to-end on the real stack
         run: |
           printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
-          tools/ci_report.sh "e2e real stack" 150 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
-            'cd cloud_api && python -m unittest -v test_close_profits_2_0_e2e_stack'
+          tools/ci_report.sh "e2e real stack" 120 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -W ignore -m unittest -v test_close_profits_2_0_e2e_stack'
   baseline:
     # Same checks on the original PR head and on the production-601 base, to separate pre-existing failures.
     runs-on: ubuntu-latest

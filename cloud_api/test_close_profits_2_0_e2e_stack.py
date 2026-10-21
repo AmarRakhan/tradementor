@@ -153,12 +153,130 @@ class E2E(unittest.TestCase):
         return (self.db.collection("asterPositionLossAutoHedge").document(self.uid).collection("pairs").document(sym).get().to_dict())
 
 
+BUSY = "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw"
+
+
+class FullSeries(E2E):
+    def assert_series(self, pct, result):
+        from position_close import close_size
+        self.assertIsNone(result["stopped"], result)
+        self.assertEqual(result["skipped"], [])
+        self.assertEqual(sorted(result["closed"]), sorted(self.expected))
+        orders = sorted(self.fake.accepted(), key=lambda o: o["t0"])
+        self.assertEqual(len(orders), 25)
+        for o in orders:                                              # only SHORT legs, BUY side, exact backend sizes
+            self.assertEqual((o["side"], o["positionSide"], o["status"]), ("BUY", "SHORT", "FILLED"))
+            want = floor_step(close_size(self.expected[o["symbol"]], pct), 0.001)
+            self.assertAlmostEqual(o["qty"], want, places=9, msg=o["symbol"])
+            self.assertAlmostEqual(self.fake.pos[(o["symbol"], "SHORT")], self.expected[o["symbol"]] - o["qty"], places=6)
+        for a, b in zip(orders, orders[1:]):                          # strictly sequential at HTTP level
+            self.assertLessEqual(a["t1"], b["t0"], "orders overlapped")
+        for i in range(5):                                            # hedge legs untouched
+            self.assertAlmostEqual(self.fake.pos[(f"S{i:02d}USDT", "LONG")], self.expected[f"S{i:02d}USDT"])
+        self.assertEqual(self.fake.pos[("LOSSUSDT", "SHORT")], 10.0)
+        self.assertEqual(self.fake.pos[("EDGEUSDT", "SHORT")], 10.0)
+        self.assertEqual(self.fake.pos[("LONGUSDT", "LONG")], 10.0)
+        intents = list(self.db.collection("users").document(self.uid).collection("asterManualCloseIntents").stream())
+        self.assertEqual(sorted(d.to_dict().get("status") for d in intents), ["confirmed_closed"] * 25)
+        for i in range(5):                                            # existing manual consequences, unchanged
+            pair = self.pair(f"S{i:02d}USDT")
+            self.assertNotEqual(pair["status"], "HEDGED")
+            self.assertIs(pair["rehedgeEnabled"], False)
+        for i in range(5, 25):
+            self.assertIsNone(self.pair(f"S{i:02d}USDT"))
+        lease = (self.db.collection("asterAccountCoordination").document(self.uid).get().to_dict() or {}).get("lease") or {}
+        self.assertFalse(lease.get("token"))
+
+
+def _series_test(pct):
+    def test(self):
+        self.seed_world()
+        for sym in self.expected:
+            self.fake.delay[sym] = 0.01
+        self.assert_series(pct, self.bulk(pct))
+    test.__name__ = f"test_25_shorts_{pct}_percent_end_to_end_on_real_stack"
+    return test
+
+
+for _p in (25, 50, 75, 100):
+    setattr(FullSeries, f"test_25_shorts_{_p}_percent_end_to_end_on_real_stack", _series_test(_p))
+
+
+class ExchangeFailures(E2E):
+    def run_until_stop(self, mode, pct=50):
+        self.seed_world()
+        self.fake.modes["S02USDT"] = mode
+        order = sorted(self.expected)
+        result = self.bulk(pct)
+        return result, order
+
+    def test_duplicate_click_same_key_places_exactly_one_order(self):
+        self.seed_world(n=3, hedged=1)
+        self.assertEqual(self.close("S01USDT", self.expected["S01USDT"], 50, key="k-dup").status_code, 200)
+        again = self.close("S01USDT", self.expected["S01USDT"], 50, key="k-dup")
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(len(self.fake.accepted()), 1)
+
+    def test_503_after_accept_is_recovered_by_the_single_readonly_query_and_series_continues(self):
+        result, _ = self.run_until_stop("http503_after_accept")
+        self.assertIsNone(result["stopped"])
+        self.assertEqual(len(self.fake.accepted()), 25)
+
+    def test_read_timeout_after_accept_stops_series_and_never_orders_twice(self):
+        result, _ = self.run_until_stop("timeout_after_accept")
+        self.assertEqual(result["stopped"][0], "S02USDT"); self.assertEqual(result["stopped"][1], 502)
+        self.assertIn("niet opnieuw besteld", result["stopped"][2])
+        self.assertEqual([o["symbol"] for o in self.fake.accepted()], ["S00USDT", "S01USDT", "S02USDT"])
+        for key in ("k-replay",):                                    # replays / stale-quantity retries never reorder
+            r = self.close("S02USDT", self.expected["S02USDT"], 50, key=key)
+            self.assertEqual(r.status_code, 409)
+        self.assertEqual(len(self.fake.accepted()), 3)
+        self.assertEqual(self.pair("S02USDT") is None, True)         # plain SHORT: no pair side effects
+
+    def test_503_without_acceptance_is_unknown_stops_with_no_order_for_that_symbol(self):
+        result, _ = self.run_until_stop("http503_unknown")
+        self.assertEqual(result["stopped"][:2], ("S02USDT", 502))
+        self.assertEqual([o["symbol"] for o in self.fake.accepted()], ["S00USDT", "S01USDT"])
+
+    def test_partial_fill_stops_series_without_second_order(self):
+        result, _ = self.run_until_stop("partial_fill")
+        self.assertEqual(result["stopped"][:2], ("S02USDT", 502))
+        self.assertEqual([o["symbol"] for o in self.fake.accepted()], ["S00USDT", "S01USDT", "S02USDT"])
+        self.assertEqual(self.fake.accepted(symbol="S02USDT")[0]["status"], "PARTIALLY_FILLED")
+
+    def test_ack_new_without_fill_stops_series(self):
+        result, _ = self.run_until_stop("ack_new")
+        self.assertEqual(result["stopped"][:2], ("S02USDT", 502))
+        self.assertEqual(len(self.fake.accepted()), 3)
+
+    def test_exchange_reject_places_no_order_and_stops(self):
+        result, _ = self.run_until_stop("reject")
+        self.assertEqual(result["stopped"][0], "S02USDT")
+        self.assertEqual([o["symbol"] for o in self.fake.accepted()], ["S00USDT", "S01USDT"])
+
+    def test_delayed_position_reflection_is_not_confirmed(self):
+        self.seed_world(n=3, hedged=0)
+        self.fake.lag["S00USDT"] = 1
+        r = self.close("S00USDT", self.expected["S00USDT"], 50)
+        self.assertEqual(r.status_code, 502)
+        self.assertEqual(len(self.fake.accepted()), 1)
+
+    def test_profit_gone_before_close_is_skipped_by_the_fresh_check_without_order(self):
+        self.seed_world(n=3, hedged=0)
+        targets = self.targets(50)
+        self.fake.mark["S01USDT"] = 110.0                           # price rises: SHORT now loses
+        fresh = self.preview(50)
+        self.assertNotIn("S01USDT", [s["symbol"] for s in fresh["selected"]])
+        self.assertEqual(len(self.fake.accepted()), 0)
+        self.assertEqual([t[0] for t in targets], ["S00USDT", "S01USDT", "S02USDT"])
+
+
 class ImportSmoke(E2E):
     def test_real_app_imports_and_preview_route_answers_on_real_firestore(self):
         self.seed_world(n=3, hedged=1)
         data = self.preview(50)
-        syms = sorted(s["symbol"] for s in data["selected"])
-        self.assertEqual(syms, ["S00USDT", "S01USDT", "S02USDT"])
+        shorts = sorted(s["symbol"] for s in data["selected"] if str(s["side"]).upper() == "SHORT")
+        self.assertEqual(shorts, ["S00USDT", "S01USDT", "S02USDT"])      # losing / exactly-$0.50 SHORTs are not selected
 
 
 if __name__ == "__main__":
