@@ -3,7 +3,7 @@ name: Close Profits 2.0 integration (isolated, no secrets, no orders)
 # no Aster access, no production Firebase project: Firestore is the local emulator (project close-profits-test-only).
 on:
   push:
-    branches: [review/close-profits-2-0-minimal-20261021]
+    branches: [review/close-profits-2-0-minimal-20261021, claude/close-profits-2-0-ci-gate]
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,7 +12,8 @@ defaults:
     shell: bash
 concurrency:
   group: close-profits-2-0-integration-${{ github.ref }}
-  cancel-in-progress: true
+  # never cancel: a cancelled run is no evidence (dispatch + rerun used to cancel each other)
+  cancel-in-progress: false
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -31,9 +32,18 @@ jobs:
       - name: Close Profits model tests with REAL dependencies
         working-directory: cloud_api
         run: ../tools/ci_report.sh "backend model tests (real deps)" 40 python -m unittest -v test_close_profits_2_0_integration test_close_profits_2_0_round6
-      - name: Full backend regression (same as Cloud Backend CI)
+      - name: Full backend regression (same as Cloud Backend CI; gated against baseline in verdict)
         working-directory: cloud_api
-        run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider
+        continue-on-error: true
+        run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider --junitxml="$RUNNER_TEMP/backend.xml"
+      - name: Record failing backend test ids
+        if: always()
+        run: mkdir -p ci-out && python3 tools/ci_failures.py ci-out/backend.txt "$RUNNER_TEMP/backend.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: failures-candidate-backend
+          path: ci-out/backend.txt
   firestore-emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -90,9 +100,18 @@ jobs:
         run: |
           pip install -r ../cloud_api/requirements.txt
           ../tools/ci_report.sh "web close-profits tests" 25 node --test tests/aster-close-profits-*.test.mjs tests/aster-close-profitable.test.mjs
-      - name: Full web test suite
+      - name: Full web test suite (gated against baseline in verdict)
         working-directory: web
-        run: ../tools/ci_report.sh "web full suite" 40 node --test tests/*.test.mjs
+        continue-on-error: true
+        run: ../tools/ci_report.sh "web full suite" 40 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination="$RUNNER_TEMP/web.xml" tests/*.test.mjs
+      - name: Record failing web test ids
+        if: always()
+        run: mkdir -p ci-out && python3 tools/ci_failures.py ci-out/web.txt "$RUNNER_TEMP/web.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: failures-candidate-web
+          path: ci-out/web.txt
   baseline:
     # Same checks on the original PR head and on the production-601 base, to separate pre-existing failures.
     runs-on: ubuntu-latest
@@ -119,7 +138,7 @@ jobs:
         working-directory: base/cloud_api
         run: |
           pip install -r requirements.txt pytest
-          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} backend pytest" 40 pytest -q -rfE -p no:cacheprovider
+          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} backend pytest" 40 pytest -q -rfE -p no:cacheprovider --junitxml="$RUNNER_TEMP/backend.xml"
         continue-on-error: true
       - name: Baseline TypeScript errors (normalised)
         working-directory: base/web
@@ -132,4 +151,53 @@ jobs:
         continue-on-error: true
         run: |
           pip install -r ../cloud_api/requirements.txt
-          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} web node tests" 30 node --test tests/*.test.mjs
+          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} web node tests" 30 node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination="$RUNNER_TEMP/web.xml" tests/*.test.mjs
+      - name: Record failing baseline test ids
+        if: always()
+        run: |
+          mkdir -p ci-out
+          python3 tools_src/tools/ci_failures.py ci-out/backend.txt "$RUNNER_TEMP/backend.xml"
+          python3 tools_src/tools/ci_failures.py ci-out/web.txt "$RUNNER_TEMP/web.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: failures-baseline-${{ matrix.ref }}
+          path: ci-out/
+  verdict:
+    # One verdict: Close Profits steps must pass, and the full suites may not add failures that the production
+    # base (e035431) does not already have. Pre-existing failures are reported, never silently accepted as passes.
+    if: always()
+    needs: [backend, firestore-emulator, web, baseline]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE: e035431eca681586ae3e0d19e34ebe8722e6992d
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+      - name: Compare candidate failures with production base
+        env:
+          R_BACKEND: ${{ needs.backend.result }}
+          R_EMULATOR: ${{ needs.firestore-emulator.result }}
+          R_WEB: ${{ needs.web.result }}
+        run: |
+          set -uo pipefail
+          fail=0; report=""
+          for j in BACKEND EMULATOR WEB; do v="R_$j"; report+="job ${j}: ${!v}"$'\n'; [ "${!v}" = success ] || fail=1; done
+          for suite in backend web; do
+            cand="art/failures-candidate-${suite}/${suite}.txt"; base="art/failures-baseline-${BASE}/${suite}.txt"
+            if [ ! -f "$cand" ] || [ ! -f "$base" ]; then report+="${suite}: report missing -> FAIL"$'\n'; fail=1; continue; fi
+            if grep -q '^__REPORT_MISSING__' "$cand"; then report+="${suite}: candidate run produced no report -> FAIL"$'\n'; fail=1; fi
+            new="$(comm -23 "$cand" "$base")"; fixed="$(comm -13 "$cand" "$base")"; old="$(comm -12 "$cand" "$base")"
+            report+="${suite}: new=$(printf '%s' "$new" | grep -c .) pre-existing=$(printf '%s' "$old" | grep -c .) fixed=$(printf '%s' "$fixed" | grep -c .)"$'\n'
+            [ -n "$new" ] && { report+="  NEW FAILURES:"$'\n'"$(printf '%s\n' "$new" | sed 's/^/    /')"$'\n'; fail=1; }
+            [ -n "$old" ] && report+="  pre-existing (also on ${BASE:0:7}):"$'\n'"$(printf '%s\n' "$old" | sed 's/^/    /')"$'\n'
+          done
+          verdict=$([ "$fail" = 0 ] && echo PASS || echo FAIL)
+          report="VERDICT ${verdict}"$'\n'"${report}"
+          printf '%s\n' "$report" | tee -a "$GITHUB_STEP_SUMMARY"
+          enc="${report//'%'/'%25'}"; enc="${enc//$'\n'/'%0A'}"
+          echo "::notice title=CLOSE PROFITS 2.0 VERDICT ${verdict}::${enc:0:3000}"
+          exit "$fail"
