@@ -45,6 +45,15 @@ def setUpModule():
         return S.orig_connect(self, address)
     socket.socket.connect = guarded
 
+    # main.py builds a Hyperliquid Info() client at import (public meta request over HTTPS). Not part of Close
+    # Profits and must not touch the network in this test: replace it with an inert stand-in BEFORE the import.
+    import hyperliquid.info
+
+    class _InertInfo:
+        def __init__(self, *args, **kwargs):
+            pass
+    hyperliquid.info.Info = _InertInfo
+
     sys.path.insert(0, os.path.dirname(__file__))
     import main
     from offline_fake_aster import FakeAster
