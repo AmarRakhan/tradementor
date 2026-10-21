@@ -1594,7 +1594,7 @@ def _acquire_aster_account_coordination(uid:str,owner:str,purpose:str)->str|None
             until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
         if isinstance(until,datetime) and until>now:return None
         txn.set(ref,{"lease":{"token":token,"owner":owner,"purpose":purpose,
-            "until":now+timedelta(seconds=45),"acquiredAt":now},"updatedAt":now},merge=True)
+            "until":now+timedelta(seconds=ACCOUNT_COORDINATION_LEASE_SECONDS),"acquiredAt":now},"updatedAt":now},merge=True)
         return token
     return acquire(transaction)
 
@@ -1608,6 +1608,42 @@ def _release_aster_account_coordination(uid:str,token:str)->None:
         now=datetime.now(timezone.utc);txn.set(ref,{"lease":{"token":"","until":now,"releasedAt":now},"updatedAt":now},merge=True)
         return True
     release(transaction)
+
+
+ACCOUNT_COORDINATION_LEASE_SECONDS=45
+
+
+def _renew_aster_account_coordination(uid:str,token:str)->bool:
+    """Extend the account lease ONLY while we still own it and it has not expired.
+
+    Fencing primitive: a holder whose lease expired (or was taken over) gets False and
+    must not send any order. Never re-acquires an expired lease on its own.
+    """
+    if not token:return False
+    ref=aster_account_coordination_reference(uid);transaction=db.transaction()
+    @firestore.transactional
+    def renew(txn):
+        value=ref.get(transaction=txn).to_dict() or {};lease=value.get("lease") if isinstance(value.get("lease"),dict) else {}
+        if str(lease.get("token",""))!=token:return False
+        until=lease.get("until");now=datetime.now(timezone.utc)
+        if not isinstance(until,datetime):return False
+        until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+        if until<=now:return False
+        txn.set(ref,{"lease":{**lease,"until":now+timedelta(seconds=ACCOUNT_COORDINATION_LEASE_SECONDS)},"updatedAt":now},merge=True)
+        return True
+    return bool(renew(transaction))
+
+
+def _aster_account_coordination_held(uid:str,token:str)->bool:
+    """Read-only: do we still own an unexpired lease?"""
+    if not token:return False
+    value=aster_account_coordination_reference(uid).get().to_dict() or {}
+    lease=value.get("lease") if isinstance(value.get("lease"),dict) else {}
+    if str(lease.get("token",""))!=token:return False
+    until=lease.get("until")
+    if not isinstance(until,datetime):return False
+    until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+    return until>datetime.now(timezone.utc)
 
 
 def _acquire_sniper_execution_lease(reference)->str|None:
@@ -8866,9 +8902,21 @@ def close_one_aster_position(
         raise HTTPException(409, "Deze sluitopdracht is al ontvangen; er wordt geen tweede order geplaatst") from exc
 
     secret = load_aster_secret(user)
+    lease_fence: dict[str, Any] = {"token": None}
+    base_submit_guard = _block_order_during_close_all(uid)
+
+    def submit_guard(intent: Any) -> None:
+        base_submit_guard(intent)
+        if request.bulk_profit_close:
+            # Fencing token check at the last moment before transport: renews the lease
+            # (fresh 45 s for the 15 s POST + read-only recovery query) and BLOCKS the
+            # order if the lease expired or was taken over while we were slow.
+            if not _renew_aster_account_coordination(uid, str(lease_fence["token"] or "")):
+                raise AsterValidationError("Account-lease is verlopen of overgenomen; bulk order is niet verstuurd")
+
     client = AsterV3Client(
         signer_address=secret.signer_address, sign_message=local_eip712_signer(secret), live_authorized=True,
-        before_order_submit=_block_order_during_close_all(uid),
+        before_order_submit=submit_guard,
     )
     dynamic_hedge_ref = user_reference(user).collection("asterDynamicHedge").document("control")
     manual_guard = None
@@ -8906,6 +8954,7 @@ def close_one_aster_position(
             if not account_token:
                 intent_ref.set({"status": "blocked_account_busy", "updatedAt": datetime.now(timezone.utc)}, merge=True)
                 raise HTTPException(409, "Account wordt momenteel door Auto Hedge of een andere beheerfunctie verwerkt; bulk sluiten is gestopt, probeer het zo opnieuw")
+            lease_fence["token"] = account_token
             # 2) Fresh protection check against live Firestore state, independent of
             #    any (possibly stale) preview. Reader errors / unreliable data fail closed.
             try:
@@ -9011,7 +9060,12 @@ def close_one_aster_position(
         )
         complete_manual_action(dynamic_hedge_ref, manual_guard, after_manual_rows)
         protection_changed_during_close = False
+        lease_lost_during_close = False
         if request.bulk_profit_close:
+            try:
+                lease_lost_during_close = not _aster_account_coordination_held(uid, str(account_token or ""))
+            except Exception:
+                lease_lost_during_close = True
             # Detection only (the order is already filled): did Auto Hedge/Airbag take
             # this leg while we were closing? Surfaced to the user, never hidden.
             try:
@@ -9024,9 +9078,11 @@ def close_one_aster_position(
             "closedQuantity": close_quantity, "remainingQuantity": remaining_quantity,
             "completedAt": datetime.now(timezone.utc),
             **({"protectionChangedDuringClose": True} if protection_changed_during_close else {}),
+            **({"leaseLostDuringClose": True} if lease_lost_during_close else {}),
         }, merge=True)
         return {
             "protectionChangedDuringClose": protection_changed_during_close,
+            "leaseLostDuringClose": lease_lost_during_close,
             "closed": remaining_quantity <= remaining_tolerance,
             "partialClosed": request.percentage < 100,
             "symbol": normalized_symbol,

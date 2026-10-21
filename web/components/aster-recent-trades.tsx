@@ -1412,6 +1412,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     let skipped = 0;
     let protectedSkipped = 0;
     let protectionChanged = 0;
+    let leaseLost = 0;
     let stoppedAt = "";
     for (const target of bulkCloseTargets) {
       try {
@@ -1431,6 +1432,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
         }
         // Server detected that Auto Hedge/Airbag took this leg while it was closing.
         if (result && result.protectionChangedDuringClose === true) protectionChanged++;
+        if (result && result.leaseLostDuringClose === true) leaseLost++;
       } catch (reason) {
         const details = reason instanceof Error ? reason.message : String(reason);
         if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details)) {
@@ -1448,6 +1450,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     }
     setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen · " + protectedSkipped + " beschermd (Auto Hedge/Airbag) niet aangeraakt" +
       (protectionChanged ? " · ⚠ " + protectionChanged + " positie(s) kregen tijdens het sluiten Auto Hedge/Airbag-bescherming: controleer Auto Hedge" : "") +
+      (leaseLost ? " · ⚠ " + leaseLost + " sluiting(en) verliepen de account-vergrendeling tijdens verificatie: controleer de posities in Aster" : "") +
       (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
     setBulkCloseTargets([]);
     setProfitPreview(null);

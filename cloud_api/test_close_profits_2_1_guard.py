@@ -216,21 +216,35 @@ BTC_INFO = {"symbols": [{"symbol": "BTCUSDT", "status": "TRADING", "filters": [
 
 
 class FakeLease:
-    """Models the per-account lease (`aster_account_coordination_reference`): exclusive, token based."""
+    """Models the per-account lease (`aster_account_coordination_reference`): exclusive, token based,
+    expirable. The REAL acquire/renew/release functions are tested separately (LeaseSemanticsTests)."""
     def __init__(self, busy=False):
         self.holder = "someone" if busy else None
-        self.acquired, self.released = [], []
+        self.token = None
+        self.expired = False
+        self.acquired, self.released, self.renewals = [], [], []
 
     def acquire(self, uid, owner, purpose):
         if self.holder:
             return None
         self.holder = owner
+        self.expired = False
         self.acquired.append((owner, purpose))
-        return f"token-{len(self.acquired)}"
+        self.token = f"token-{len(self.acquired)}"
+        return self.token
 
     def release(self, uid, token):
         self.released.append(token)
-        self.holder = None
+        if token == self.token:
+            self.holder = None   # stale tokens never release a newer holder's lease
+
+    def renew(self, uid, token):
+        ok = bool(token) and token == self.token and not self.expired
+        self.renewals.append((token, ok))
+        return ok
+
+    def held(self, uid, token):
+        return bool(token) and token == self.token and not self.expired
 
     def auto_hedge_tick(self):
         """Auto Hedge live execution: takes the same lease before any order, PENDING when busy."""
@@ -260,7 +274,7 @@ class RouteBehaviourTests(unittest.TestCase):
 
     def build(self, *, managed=lambda n: False, strategy2=None, strategy2_exists=True, strategy2_raises=False,
               bulk=True, qty=8.0, percentage=25, busy=False, order_hook=None, info=None, live_qty=8.0,
-              real_rules=False):
+              real_rules=False, pre_submit_hook=None):
         code, names = load_route_functions()
         ns = {n: mock.MagicMock(name=n) for n in names if not hasattr(builtins, n)}
         calls = SimpleNamespace(orders=[], intents=[], tick_during_order=None, managed_checks=0, lease=FakeLease(busy))
@@ -290,6 +304,9 @@ class RouteBehaviourTests(unittest.TestCase):
             validation_error = ValueError
 
         def execute(*a, **k):
+            if pre_submit_hook:
+                pre_submit_hook(calls.lease)          # e.g. the close was slow and the lease expired
+            calls.hook(SimpleNamespace(action="CLOSE", symbol="BTCUSDT"))   # gateway: before_order_submit(intent)
             calls.orders.append(k)
             calls.tick_during_order = calls.lease.auto_hedge_tick()
             if order_hook:
@@ -309,8 +326,11 @@ class RouteBehaviourTests(unittest.TestCase):
             "timezone": __import__("datetime").timezone,
             "google_exceptions": SimpleNamespace(AlreadyExists=type("AlreadyExists", (Exception,), {})),
             "user_reference": lambda user: SimpleNamespace(collection=lambda n: SimpleNamespace(document=lambda d: Intent())),
-            "AsterV3Client": lambda **kw: client, "load_aster_secret": lambda u: SimpleNamespace(signer_address="a"),
-            "local_eip712_signer": lambda s: None, "_block_order_during_close_all": lambda uid: None,
+            "AsterV3Client": lambda **kw: (setattr(calls, "hook", kw["before_order_submit"]) or client),
+            "load_aster_secret": lambda u: SimpleNamespace(signer_address="a"),
+            "local_eip712_signer": lambda s: None, "_block_order_during_close_all": lambda uid: (lambda intent: None),
+            "_renew_aster_account_coordination": calls.lease.renew,
+            "_aster_account_coordination_held": calls.lease.held,
             "ALLOWED_CLOSE_PERCENTAGES": ALLOWED_CLOSE_PERCENTAGES, "close_size": close_size,
             "safe_float": lambda v, d=0.0: float(v) if v not in (None, "") else d,
             "Decimal": __import__("decimal").Decimal, "ContractRules": rules, "AsterValidationError": validation_error,
@@ -350,6 +370,8 @@ class RouteBehaviourTests(unittest.TestCase):
         self.assertEqual(len(calls.orders), 1)
         self.assertEqual(result["percentage"], 25)
         self.assertFalse(result["protectionChangedDuringClose"])
+        self.assertFalse(result["leaseLostDuringClose"])
+        self.assertEqual(calls.lease.renewals, [("token-1", True)])   # fenced exactly once, right before the order
         self.assertNoLeak(calls)
 
     def test_auto_hedge_managed_blocked_before_any_order_with_stale_snapshot(self):
@@ -441,6 +463,46 @@ class RouteBehaviourTests(unittest.TestCase):
         self.assertEqual(len(calls.orders), 1)
         self.assertNoLeak(calls)
 
+    # --- lease expiry / fencing -------------------------------------------------
+    def test_delayed_close_with_expired_lease_never_sends_the_order(self):
+        _, calls, exc = self.call(pre_submit_hook=lambda lease: setattr(lease, "expired", True))
+        self.assertIsNotNone(exc)
+        self.assertEqual(exc.status_code, 502)                    # fail closed, no retry
+        self.assertEqual(calls.orders, [])
+        self.assertEqual(calls.lease.renewals, [("token-1", False)])
+        self.assertNoLeak(calls)
+
+    def test_lease_taken_over_by_someone_else_blocks_the_order(self):
+        def takeover(lease):
+            lease.token = "token-of-someone-else"                 # expired + re-acquired by another worker
+        _, calls, exc = self.call(pre_submit_hook=takeover)
+        self.assertEqual(calls.orders, [])
+        self.assertIsNotNone(exc)
+
+    def test_lease_expiring_during_exchange_verification_is_reported_not_retried(self):
+        holder = []
+        fn, request, calls, FakeHTTP = self.build(order_hook=lambda: setattr(holder[0].lease, "expired", True))
+        holder.append(calls)
+        result = fn("btcusdt", request, {"uid": "u1"})
+        self.assertEqual(len(calls.orders), 1)                    # exactly one order, never a second
+        self.assertTrue(result["leaseLostDuringClose"])
+        self.assertTrue(any(c[1].get("leaseLostDuringClose") is True for c in calls.intents if c[0] == "set"))
+
+    def test_unknown_order_status_is_not_retried_and_lease_released(self):
+        def boom():
+            raise RuntimeError("UNKNOWN order status")
+        fn, request, calls, FakeHTTP = self.build(order_hook=boom)
+        with self.assertRaises(FakeHTTP) as ctx:
+            fn("btcusdt", request, {"uid": "u1"})
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertEqual(len(calls.orders), 1)                    # one submit, no automatic second order
+        self.assertNoLeak(calls)
+
+    def test_individual_close_has_no_fence_and_no_lease(self):
+        result, calls, exc = self.call(bulk=False)
+        self.assertIsNone(exc)
+        self.assertEqual(calls.lease.renewals, [])
+
     # --- individual close unchanged ----------------------------------------------
     def test_individual_close_unchanged_when_flag_not_set(self):
         result, calls, exc = self.call(managed=lambda n: True, strategy2={"focusLiveSlots": "garbage"}, bulk=False)
@@ -496,6 +558,355 @@ class RouteBehaviourTests(unittest.TestCase):
         _, calls, exc = self.call(percentage=25, real_rules=True, info=info)
         self.assertEqual(exc.status_code, 409)
         self.assertEqual(calls.orders, [])
+
+
+# ---------------------------------------------------------------------------------
+# REAL lease functions from main.py against an in-memory Firestore model, real threads, fake clock
+# ---------------------------------------------------------------------------------
+import copy
+import threading
+from datetime import datetime as _real_datetime, timedelta, timezone
+
+LEASE_FUNCS = ("_acquire_aster_account_coordination", "_release_aster_account_coordination",
+               "_renew_aster_account_coordination", "_aster_account_coordination_held")
+
+
+class _Clock:
+    def __init__(self):
+        self.now = _real_datetime(2026, 10, 21, 12, 0, 0, tzinfo=timezone.utc)
+
+    def advance(self, seconds):
+        self.now += timedelta(seconds=seconds)
+
+
+class _Meta(type(_real_datetime)):
+    def __instancecheck__(cls, instance):
+        return isinstance(instance, _real_datetime)
+
+
+def _deep_merge(base, patch):
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)          # Firestore set(..., merge=True) merges nested maps
+        else:
+            base[key] = copy.deepcopy(value)
+
+
+class _Snapshot:
+    def __init__(self, data):
+        self._data = copy.deepcopy(data)
+
+    def to_dict(self):
+        return copy.deepcopy(self._data)
+
+
+class _Ref:
+    def __init__(self, store):
+        self.store = store
+
+    def get(self, transaction=None):
+        return _Snapshot(self.store.data)
+
+
+class _Txn:
+    def set(self, ref, data, merge=False):
+        if merge:
+            _deep_merge(ref.store.data, data)
+        else:
+            ref.store.data = copy.deepcopy(data)
+
+
+class _Store:
+    def __init__(self):
+        self.data = {}
+        self.mutex = threading.RLock()
+
+
+def load_lease_functions(clock, store):
+    tree = ast.parse(MAIN_SRC)
+    nodes = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in LEASE_FUNCS:
+            nodes.append(node)
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "ACCOUNT_COORDINATION_LEASE_SECONDS" for t in node.targets):
+            nodes.append(node)
+    assert len(nodes) == len(LEASE_FUNCS) + 1, [getattr(n, "name", "assign") for n in nodes]
+    module = ast.Module(body=nodes, type_ignores=[])
+    ast.fix_missing_locations(module)
+
+    class FakeDT(_real_datetime, metaclass=_Meta):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.now
+
+    def transactional(fn):
+        def run(txn):
+            with store.mutex:                      # serializable transaction
+                return fn(txn)
+        return run
+
+    ns = {
+        "datetime": FakeDT, "timezone": timezone, "timedelta": timedelta,
+        "python_secrets": SimpleNamespace(token_hex=lambda n: __import__("secrets").token_hex(n)),
+        "aster_account_coordination_reference": lambda uid: _Ref(store),
+        "db": SimpleNamespace(transaction=lambda: _Txn()),
+        "firestore": SimpleNamespace(transactional=transactional),
+    }
+    exec(compile(module, "main.py::lease", "exec"), ns)
+    return SimpleNamespace(**{n: ns[n] for n in LEASE_FUNCS}, seconds=ns["ACCOUNT_COORDINATION_LEASE_SECONDS"])
+
+
+class LeaseSemanticsTests(unittest.TestCase):
+    def setUp(self):
+        self.clock, self.store = _Clock(), _Store()
+        self.lease = load_lease_functions(self.clock, self.store)
+
+    def acquire(self, owner="W"):
+        return self.lease._acquire_aster_account_coordination("u", owner, "P")
+
+    def test_ttl_constant_is_45(self):
+        self.assertEqual(self.lease.seconds, 45)
+
+    def test_concurrent_acquire_has_exactly_one_winner(self):
+        winners, barrier = [], threading.Barrier(16)
+
+        def worker(i):
+            barrier.wait()
+            token = self.acquire(f"w{i}")
+            if token:
+                winners.append(token)
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(16)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        self.assertEqual(len(winners), 1)
+
+    def test_expiry_takeover_and_stale_holder_is_fenced_out(self):
+        old = self.acquire("AUTO_HEDGE")
+        self.clock.advance(44)
+        self.assertIsNone(self.acquire("BULK"))                      # still held at 44 s
+        self.clock.advance(2)                                        # 46 s: expired
+        self.assertFalse(self.lease._aster_account_coordination_held("u", old))
+        self.assertFalse(self.lease._renew_aster_account_coordination("u", old))   # no resurrection, nobody took it yet
+        new = self.acquire("BULK")
+        self.assertTrue(new)
+        self.assertFalse(self.lease._renew_aster_account_coordination("u", old))   # taken over -> fenced
+        self.assertFalse(self.lease._aster_account_coordination_held("u", old))
+        self.lease._release_aster_account_coordination("u", old)                   # stale release is a no-op
+        self.assertTrue(self.lease._aster_account_coordination_held("u", new))
+        self.assertIsNone(self.acquire("THIRD"))
+
+    def test_renew_extends_ownership_beyond_original_ttl(self):
+        token = self.acquire()
+        self.clock.advance(30)
+        self.assertTrue(self.lease._renew_aster_account_coordination("u", token))
+        self.clock.advance(30)                                       # 60 s after acquire, 30 s after renew
+        self.assertTrue(self.lease._aster_account_coordination_held("u", token))
+        self.assertIsNone(self.acquire("OTHER"))
+        self.clock.advance(16)                                       # 46 s after renew
+        self.assertFalse(self.lease._aster_account_coordination_held("u", token))
+
+    def test_crash_recovery_after_ttl_without_release(self):
+        self.acquire("CRASHED_WORKER")                               # never released
+        self.assertIsNone(self.acquire("RESTARTED"))
+        self.clock.advance(46)
+        self.assertTrue(self.acquire("RESTARTED"))
+
+    def test_release_then_reacquire_and_empty_token_never_holds(self):
+        token = self.acquire()
+        self.lease._release_aster_account_coordination("u", token)
+        self.assertFalse(self.lease._aster_account_coordination_held("u", token))
+        self.assertTrue(self.acquire("NEXT"))
+        self.assertFalse(self.lease._renew_aster_account_coordination("u", ""))
+        self.assertFalse(self.lease._aster_account_coordination_held("u", ""))
+
+    def test_concurrent_renew_and_takeover_never_both_succeed(self):
+        for _ in range(20):
+            store = _Store()
+            lease = load_lease_functions(self.clock, store)
+            old = lease._acquire_aster_account_coordination("u", "A", "P")
+            self.clock.advance(46)
+            results, barrier = {}, threading.Barrier(2)
+
+            def renew():
+                barrier.wait()
+                results["renew"] = lease._renew_aster_account_coordination("u", old)
+
+            def take():
+                barrier.wait()
+                results["take"] = lease._acquire_aster_account_coordination("u", "B", "P")
+            t1, t2 = threading.Thread(target=renew), threading.Thread(target=take)
+            t1.start(); t2.start(); t1.join(); t2.join()
+            self.assertFalse(results["renew"])                       # expired lease can only be taken over
+            self.assertTrue(results["take"])
+
+
+# ---------------------------------------------------------------------------------
+# REAL Auto Hedge _run_uid / _client source: lease before any state read or mutation
+# ---------------------------------------------------------------------------------
+AH_SRC = (HERE / "aster_position_loss_auto_hedge_extension.py").read_text()
+
+
+def load_auto_hedge(execute=True, busy=False, renew_ok=True, prepare_raises=False):
+    tree = ast.parse(AH_SRC)
+    fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {"_run_uid", "_client"}]
+    assert len(fns) == 2
+    for fn in fns:
+        fn.decorator_list = []
+    module = ast.Module(body=fns, type_ignores=[])
+    ast.fix_missing_locations(module)
+    names = {n.id for f in fns for n in ast.walk(f) if isinstance(n, ast.Name)}
+    events = []
+    lease = FakeLease(busy)
+    hooks = {}
+
+    class Done(Exception):
+        pass
+
+    def rec(name, value=None):
+        def f(*a, **k):
+            events.append(name)
+            if name == "_prepare_lifecycle" and prepare_raises:
+                raise Done("boom")
+            return value
+        return f
+
+    main = SimpleNamespace(
+        _release_feature_enabled_for_uid=lambda uid, feature: True,
+        _acquire_aster_account_coordination=lambda uid, o, p: (events.append("acquire") or lease.acquire(uid, o, p)),
+        _renew_aster_account_coordination=lambda uid, token: (events.append("renew") or (renew_ok and lease.renew(uid, token))),
+        _release_aster_account_coordination=lambda uid, token: (events.append("release") or lease.release(uid, token)),
+        _block_order_during_close_all=lambda uid, allow_auto_hedge_locked=False: (lambda intent: None),
+        load_aster_secret=lambda user: SimpleNamespace(signer_address="a"),
+        local_eip712_signer=lambda s: None,
+        AsterValidationError=ValueError,
+        AsterV3Client=lambda **kw: (hooks.update(kw) or events.append("_client") or SimpleNamespace(
+            position_risk=lambda: [], open_orders=lambda: [])),
+    )
+    ns = {n: mock.MagicMock(name=n) for n in names if not hasattr(builtins, n)}
+    ns.update({
+        "main": main, "EXECUTION_ENABLED": True, "datetime": __import__("datetime").datetime,
+        "timezone": timezone, "os": SimpleNamespace(getenv=lambda *a, **k: "false"),
+        "_pair_states": lambda uid: {}, "ACTIVE_STATUSES": {"HEDGING", "HEDGED"},
+        "_current": lambda uid: {"enabled": True, "thresholdUsd": 10.0},
+        "_doc": lambda uid: SimpleNamespace(set=lambda *a, **k: events.append("doc.set")),
+        "_prepare_lifecycle": rec("_prepare_lifecycle", ({}, set(), {}, [])),
+        "_dynamic_hedge_enabled": lambda uid: False,
+        "reconcile_auto_hedge": rec("reconcile_auto_hedge", SimpleNamespace(ordersSent=0, actions=[])),
+        "_sync_pair_views": rec("_sync_pair_views"),
+        "_serialize": lambda v: v,
+        "Any": object,
+    })
+    exec(compile(module, "auto_hedge::_run_uid", "exec"), ns)
+    return ns, events, lease, hooks
+
+
+class AutoHedgeLeaseOrderTests(unittest.TestCase):
+    def run_uid(self, **kw):
+        ns, events, lease, hooks = load_auto_hedge(**kw)
+        try:
+            ns["_run_uid"]("u1", force_shadow=False)
+        except Exception:
+            pass
+        return events, lease, hooks, ns
+
+    def test_lease_is_acquired_before_any_read_or_state_mutation(self):
+        events, lease, _, _ = self.run_uid()
+        self.assertIn("_prepare_lifecycle", events)
+        self.assertLess(events.index("acquire"), events.index("_client"))
+        self.assertLess(events.index("acquire"), events.index("_prepare_lifecycle"))
+        self.assertLess(events.index("_prepare_lifecycle"), events.index("renew"))
+        self.assertLess(events.index("renew"), events.index("reconcile_auto_hedge"))
+        self.assertEqual(events[-1], "release")                      # released after everything, in finally
+        self.assertEqual(len(lease.acquired), len(lease.released))
+
+    def test_busy_lease_defers_everything_no_state_write_no_client_no_order(self):
+        events, lease, _, _ = self.run_uid(busy=True)
+        for forbidden in ("_client", "_prepare_lifecycle", "reconcile_auto_hedge", "_sync_pair_views", "release"):
+            self.assertNotIn(forbidden, events)
+
+    def test_lease_released_when_lifecycle_preparation_crashes(self):
+        events, lease, _, _ = self.run_uid(prepare_raises=True)
+        self.assertEqual(events.count("release"), 1)
+        self.assertNotIn("reconcile_auto_hedge", events)
+        self.assertIsNone(lease.holder)
+
+    def test_lost_lease_before_reconcile_blocks_orders(self):
+        events, lease, _, _ = self.run_uid(renew_ok=False)
+        self.assertNotIn("reconcile_auto_hedge", events)
+        self.assertIn("release", events)
+
+    def test_every_auto_hedge_order_is_fenced_by_the_lease(self):
+        events, lease, hooks, _ = self.run_uid()
+        guard = hooks["before_order_submit"]
+        guard(SimpleNamespace(action="OPEN"))                        # lease valid -> allowed
+        lease.expired = True
+        with self.assertRaises(ValueError):
+            guard(SimpleNamespace(action="OPEN"))                    # lease lost -> order blocked
+
+    def test_shadow_mode_is_unchanged_no_lease_no_fence(self):
+        ns, events, lease, hooks = load_auto_hedge()
+        ns["EXECUTION_ENABLED"] = True
+        try:
+            ns["_run_uid"]("u1", force_shadow=True)
+        except Exception:
+            pass
+        self.assertNotIn("acquire", events)
+        self.assertNotIn("renew", events)
+        guard = hooks["before_order_submit"]
+        guard(SimpleNamespace(action="OPEN"))                        # no lease configured -> no fence
+
+
+# ---------------------------------------------------------------------------------
+# Focus Airbag canonical contract: scan ALL writers (fails when a new writer appears)
+# ---------------------------------------------------------------------------------
+class FocusAirbagContractScanTests(unittest.TestCase):
+    FOCUS = {"focusLiveSlots", "focusLiveState", "focusCycleState", "focusV2State"}
+    # Known writers that set focus state WITHOUT ownedLegs in the same write (merge updates).
+    # The guard treats "focus keys present but ownedLegs missing" as UNRELIABLE (fail closed).
+    KNOWN_WITHOUT_OWNED_LEGS = {("aster_strategy2_focus_live.py", "focusCycleState"),
+                                ("aster_strategy2_focus_live.py", "focusLiveState"),
+                                ("aster_strategy2_focus_v2.py", "focusV2State")}
+
+    def writers(self):
+        for path in sorted(HERE.glob("*.py")):
+            if path.name.startswith("test_"):
+                continue
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in {"set", "update", "create"} and node.args):
+                    first = node.args[0]
+                    if isinstance(first, ast.Dict):
+                        keys = {k.value for k in first.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+                        yield path.name, keys
+                    elif any(isinstance(x, ast.Constant) and x.value in self.FOCUS for x in ast.walk(first)):
+                        yield path.name, {"<NON-LITERAL>"}
+
+    def test_no_unreviewed_writer_of_focus_state(self):
+        for name, keys in self.writers():
+            self.assertNotIn("<NON-LITERAL>", keys, f"{name}: non-literal write of focus state needs review")
+            for focus_key in keys & self.FOCUS:
+                if "ownedLegs" not in keys:
+                    self.assertIn((name, focus_key), self.KNOWN_WITHOUT_OWNED_LEGS, f"{name} writes {focus_key} without ownedLegs")
+
+    def test_airbag_role_is_only_created_by_focus_multi_and_only_persisted_in_owned_legs(self):
+        creators = [p.name for p in sorted(HERE.glob("*.py")) if not p.name.startswith("test_")
+                    and p.name not in {"main.py", "manual_profit_close_guard.py"} and "FOCUS_SLOT_AIRBAG" in p.read_text()]
+        self.assertEqual(creators, ["aster_strategy2_focus_multi.py"])
+        # main.py only filters/reads/labels the role (never assigns it to ownedLegs)
+        for line in MAIN_SRC.splitlines():
+            if "FOCUS_SLOT_AIRBAG" in line:
+                self.assertTrue(any(w in line for w in ("startswith", "return f", "role")), line)
+
+    def test_focus_keys_without_owned_legs_is_unreliable_per_guard(self):
+        for key in self.FOCUS:
+            with self.assertRaises(BulkProtectionUnreliable):
+                focus_airbag_protected({key: {}}, exists=True, symbol="BTCUSDT", side="SHORT")
+
+    def test_strategy2_management_holds_the_same_lease_so_airbag_cannot_change_mid_close(self):
+        # realtime strategy-2/airbag management takes the account lease (main.py REALTIME_MANAGEMENT)
+        self.assertIn('_acquire_aster_account_coordination(uid,"ASTER","REALTIME_MANAGEMENT")', MAIN_SRC)
+        self.assertIn('_acquire_aster_account_coordination(uid,"ASTER","SCHEDULER")', MAIN_SRC)
 
 
 class RolloutCompatibilityTests(unittest.TestCase):

@@ -302,3 +302,11 @@ test("unreliable Airbag data and busy account STOP the run (they are not 'protec
     assert.match(h.state.message, /0 beschermd/);
   }
 });
+
+test("lease lost during verification is surfaced as a warning (one order, never retried)", async () => {
+  const h = closeHarness({}, undefined, (symbol) => ({ closedSize: 2, protectionChangedDuringClose: false, leaseLostDuringClose: symbol === "SOLUSDT" }));
+  await h.handler();
+  assert.equal(h.calls.length, 3);
+  assert.equal(h.calls.filter(c => c.url.includes("SOLUSDT")).length, 1);
+  assert.match(h.state.message, /1 sluiting\(en\) verliepen de account-vergrendeling tijdens verificatie/);
+});

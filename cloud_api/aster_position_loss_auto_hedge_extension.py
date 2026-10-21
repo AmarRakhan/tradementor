@@ -189,14 +189,24 @@ def _audit_global_setting_change(
     })
 
 
-def _client(uid: str, *, live: bool):
+def _client(uid: str, *, live: bool, lease: dict[str, Any] | None = None):
     user = {"uid": uid}
     secret = main.load_aster_secret(user)
+    base_guard = main._block_order_during_close_all(uid, allow_auto_hedge_locked=True)
+
+    def submit_guard(intent: Any) -> None:
+        base_guard(intent)
+        if lease is not None:
+            # Fencing token check before every order: renews the account lease and blocks
+            # the order when it expired or was taken over (e.g. by a bulk profit close).
+            if not main._renew_aster_account_coordination(uid, str(lease.get("token") or "")):
+                raise main.AsterValidationError("Account-lease is verlopen of overgenomen; Auto Hedge order is niet verstuurd")
+
     return main.AsterV3Client(
         signer_address=secret.signer_address,
         sign_message=main.local_eip712_signer(secret),
         live_authorized=bool(live),
-        before_order_submit=main._block_order_during_close_all(uid, allow_auto_hedge_locked=True),
+        before_order_submit=submit_guard,
     )
 
 
@@ -560,7 +570,26 @@ def _run_uid(
                 "actions": []}
     coordination_token: str | None = None
     try:
-        client = _client(uid, live=execute)
+        if execute:
+            # Close Profits 2.1: take the account lease BEFORE any state is read or
+            # mutated. Every Firestore pair-state write in _prepare_lifecycle /
+            # _sync_pair_views is `if execute`-gated and now runs under the same
+            # exclusive lease the bulk profit close holds across check + order.
+            # (Previously the lease was taken after _prepare_lifecycle.)
+            coordination_token = main._acquire_aster_account_coordination(
+                uid, "AUTO_HEDGE", "POSITION_LOSS_EXACT_1_TO_1",
+            )
+            if not coordination_token:
+                report = {
+                    "mode": "LIVE", "ordersSent": 0, "status": "PENDING",
+                    "reason": "ACCOUNT_COORDINATION_BUSY", "actions": [],
+                }
+                _doc(uid).set({
+                    "lastReport": report,
+                    "lastCheckedAt": datetime.now(timezone.utc),
+                }, merge=True)
+                return report
+        client = _client(uid, live=execute, lease={"token": coordination_token} if execute else None)
         positions = list(client.position_risk() or [])
         open_orders = list(client.open_orders() or [])
         protected_sides, skip_symbols, states, created = _prepare_lifecycle(
@@ -593,21 +622,6 @@ def _run_uid(
             }, merge=True)
             return report
 
-        if execute:
-            coordination_token = main._acquire_aster_account_coordination(
-                uid, "AUTO_HEDGE", "POSITION_LOSS_EXACT_1_TO_1",
-            )
-            if not coordination_token:
-                report = {
-                    "mode": "LIVE", "ordersSent": 0, "status": "PENDING",
-                    "reason": "ACCOUNT_COORDINATION_BUSY", "actions": [],
-                }
-                _doc(uid).set({
-                    "lastReport": report,
-                    "lastCheckedAt": datetime.now(timezone.utc),
-                }, merge=True)
-                return report
-
         contexts = {}
         for symbol, side in protected_sides.items():
             state = states.get(symbol) or {}
@@ -624,6 +638,18 @@ def _run_uid(
             recovery_offline_partition = partition_reconciliation(
                 settings=settings.get("shortRecoveryPlan"), protected_sides=protected_sides,
                 existing_skip_symbols=set(skip_symbols or ()), recovery_cycles=states)
+
+        if execute and not main._renew_aster_account_coordination(uid, str(coordination_token)):
+            # Lease expired/taken over during the read + lifecycle phase: no order may follow.
+            report = {
+                "mode": "LIVE", "ordersSent": 0, "status": "BLOCKED",
+                "reason": "ACCOUNT_LEASE_LOST", "actions": [],
+            }
+            _doc(uid).set({
+                "lastReport": report,
+                "lastCheckedAt": datetime.now(timezone.utc),
+            }, merge=True)
+            return report
 
         report = reconcile_auto_hedge(
             client=client,
