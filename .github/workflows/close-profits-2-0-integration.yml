@@ -154,6 +154,39 @@ jobs:
           printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
           tools/ci_report.sh "e2e web real backend" 120 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
             'cd web && CP20_BACKEND=real node --test tests/aster-close-profits-integration.test.mjs'
+  ui-browser:
+    # The REAL AsterRecentTrades component in Chromium (only lib/cloud-client is replaced by an in-page fake).
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies and Chromium
+        working-directory: web
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Start the UI harness and run the browser checks
+        working-directory: web
+        run: |
+          npx vite --config tests/visual/close-profits-ui-vite.config.ts >/tmp/cp-ui-vite.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:4175/tests/visual/close-profits-ui.html >/dev/null; then break; fi
+            sleep 1
+          done
+          ../tools/ci_report.sh "ui browser checks" 60 node tests/visual/close-profits-ui-check.mjs
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: close-profits-ui
+          path: web/artifacts/close-profits-ui
+          if-no-files-found: warn
   baseline:
     # Same checks on the original PR head and on the production-601 base, to separate pre-existing failures.
     runs-on: ubuntu-latest
