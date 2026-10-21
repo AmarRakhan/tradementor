@@ -1,0 +1,867 @@
+diff --git a/cloud_api/main.py b/cloud_api/main.py
+index c286fbd..4fec1d5 100644
+--- a/cloud_api/main.py
++++ b/cloud_api/main.py
+@@ -120,7 +120,7 @@ from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rej
+ from aster_execution import contract_brackets, planning_brackets
+ from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
+ from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, auto_hedge_symbol_managed_strict, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
+-from manual_profit_close_guard import BulkProtectionUnreliable, bulk_profit_close_block_reason
++from manual_profit_close_guard import BulkProtectionUnreliable, OwnershipContext, bulk_profit_close_block_reason
+ from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
+ from aster_sniper import SniperSettings, backtest_candles
+ from aster_sniper_runtime import run_sniper_tick
+@@ -1292,12 +1292,49 @@ def _exclude_auto_hedge_managed_profit_candidates(
+     return safe, excluded
+ 
+ 
+-def _bulk_profit_close_block_reason_live(uid: str, symbol: str, side: str) -> str | None:
+-    """Fresh Firestore read; raises on unreliable protection data (callers fail closed)."""
+-    snapshot = aster_strategy2_reference(uid).get()
++def _read_bulk_ownership_globals(user: dict[str, Any], uid: str) -> dict[str, Any]:
++    """Fresh read-only snapshot of every ownership document. NEVER writes. Any read error ->
++    BulkProtectionUnreliable (fail closed). See the ownership matrix in the handoff."""
++    try:
++        return {
++            "dynamic": user_reference(user).collection("asterDynamicHedge").document("control").get(),
++            "emergency": db.collection("aster_portfolio_emergency_hedges").document(uid).get(),
++            "settings": db.collection("asterPositionLossAutoHedge").document(uid).get(),
++            "sniper": aster_sniper_reference(uid).get(),
++            "strategy2": aster_strategy2_reference(uid).get(),
++        }
++    except Exception as exc:
++        raise BulkProtectionUnreliable("eigenaarschapsdocumenten zijn onleesbaar") from exc
++
++
++def _bulk_reason_from_globals(uid: str, symbol: str, side: str, snaps: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
++    try:
++        pair = _position_loss_auto_hedge_pair(uid, symbol)
++    except Exception as exc:
++        raise BulkProtectionUnreliable("Auto Hedge pair-document is onleesbaar") from exc
++    has_long = any(
++        str(row.get("symbol", "")).upper() == symbol and str(row.get("positionSide", row.get("side", ""))).upper() == "LONG"
++        and abs(safe_float(row.get("positionAmt", row.get("quantity")))) > 0
++        for row in rows
++    )
++    context = OwnershipContext(
++        pair=pair,
++        dynamic_hedge=snaps["dynamic"].to_dict(), dynamic_hedge_exists=bool(snaps["dynamic"].exists),
++        emergency_hedge=snaps["emergency"].to_dict(), emergency_hedge_exists=bool(snaps["emergency"].exists),
++        auto_hedge_settings=snaps["settings"].to_dict(), auto_hedge_settings_exists=bool(snaps["settings"].exists),
++        sniper=snaps["sniper"].to_dict(), sniper_exists=bool(snaps["sniper"].exists),
++        has_same_symbol_long=has_long,
++    )
+     return bulk_profit_close_block_reason(
+-        uid, symbol, side, snapshot.to_dict(), strategy2_exists=bool(snapshot.exists),
+-        managed_check=auto_hedge_symbol_managed_strict)
++        uid, symbol, side, snaps["strategy2"].to_dict(), strategy2_exists=bool(snaps["strategy2"].exists),
++        managed_check=auto_hedge_symbol_managed_strict, ownership=context)
++
++
++def _bulk_profit_close_block_reason_live(
++    uid: str, symbol: str, side: str, user: dict[str, Any], rows: list[dict[str, Any]],
++) -> str | None:
++    """Fresh Firestore reads; raises on unreliable ownership data (callers fail closed)."""
++    return _bulk_reason_from_globals(uid, symbol, side, _read_bulk_ownership_globals(user, uid), rows)
+ 
+ 
+ def _profitable_aster_close_candidates(
+@@ -8705,14 +8742,12 @@ def preview_manual_profit_close_plan(
+         # Close Profits 2.1: drop every candidate the bulk close would be refused
+         # for (Auto Hedge, Focus Airbag, non-SHORT). Lock read errors raise -> 502.
+         uid = str(user["uid"])
+-        strategy2_snapshot = aster_strategy2_reference(uid).get()
+-        strategy2_state = strategy2_snapshot.to_dict()
++        ownership_snaps = _read_bulk_ownership_globals(user, uid)
+         safe_selected: list[dict[str, Any]] = []
+         protected: list[dict[str, Any]] = []
+         for item in plan["selected"]:
+-            reason = bulk_profit_close_block_reason(
+-                uid, str(item.get("symbol", "")).upper(), str(item.get("side", "")).upper(), strategy2_state,
+-                strategy2_exists=bool(strategy2_snapshot.exists), managed_check=auto_hedge_symbol_managed_strict)
++            reason = _bulk_reason_from_globals(
++                uid, str(item.get("symbol", "")).upper(), str(item.get("side", "")).upper(), ownership_snaps, rows)
+             if reason:
+                 protected.append({"symbol": item.get("symbol"), "side": item.get("side"), "reason": reason})
+             else:
+@@ -8732,7 +8767,7 @@ def preview_manual_profit_close_plan(
+     except HTTPException:
+         raise
+     except BulkProtectionUnreliable as exc:
+-        raise HTTPException(502, "Focus Airbag-beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
++        raise HTTPException(502, "Eigenaarschaps-/beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
+     except Exception as exc:
+         raise HTTPException(502, "Aster-posities of contractregels niet betrouwbaar beschikbaar") from exc
+ 
+@@ -8958,11 +8993,11 @@ def close_one_aster_position(
+             # 2) Fresh protection check against live Firestore state, independent of
+             #    any (possibly stale) preview. Reader errors / unreliable data fail closed.
+             try:
+-                block_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)
++                block_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side, user, live_rows)
+             except BulkProtectionUnreliable as exc:
+                 intent_ref.set({"status": "blocked_bulk_unreliable", "detail": str(exc),
+                     "updatedAt": datetime.now(timezone.utc)}, merge=True)
+-                raise HTTPException(409, "Focus Airbag-beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
++                raise HTTPException(409, "Eigenaarschaps-/beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt") from exc
+             if block_reason:
+                 intent_ref.set({"status": "blocked_bulk_protected", "detail": block_reason,
+                     "updatedAt": datetime.now(timezone.utc)}, merge=True)
+@@ -9029,7 +9064,7 @@ def close_one_aster_position(
+         )
+         if request.bulk_profit_close:
+             # Last-moment re-check, still inside the lease and right before the order.
+-            late_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)
++            late_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side, user, live_rows)
+             if late_reason:
+                 intent_ref.set({"status": "blocked_bulk_protected", "detail": late_reason,
+                     "updatedAt": datetime.now(timezone.utc)}, merge=True)
+@@ -9070,7 +9105,7 @@ def close_one_aster_position(
+             # this leg while we were closing? Surfaced to the user, never hidden.
+             try:
+                 protection_changed_during_close = bool(
+-                    _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side))
++                    _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side, user, live_rows))
+             except Exception:
+                 protection_changed_during_close = True
+         intent_ref.set({
+diff --git a/cloud_api/manual_profit_close_guard.py b/cloud_api/manual_profit_close_guard.py
+index 2a98a36..3b540dd 100644
+--- a/cloud_api/manual_profit_close_guard.py
++++ b/cloud_api/manual_profit_close_guard.py
+@@ -14,6 +14,7 @@ BulkProtectionUnreliable and the bulk close stops.
+ """
+ from __future__ import annotations
+ 
++from dataclasses import dataclass
+ from typing import Any, Callable
+ 
+ AIRBAG_ROLE_PREFIX = "FOCUS_SLOT_AIRBAG:"
+@@ -68,21 +69,171 @@ def focus_airbag_protected(state: Any, *, exists: bool, symbol: str, side: str)
+     return protected
+ 
+ 
++PROTECTED_SUFFIX = "; bulk Close Profits sluit haar niet"   # frontend treats every reason with this suffix as a protected skip
++UNRELIABLE_PREFIX = "Eigenaarschaps-/beschermingsgegevens ontbreken of zijn onbetrouwbaar"
++
++RECOVERY_CYCLE_STATES = {"PARTIAL", "FINAL_PENDING"}          # canonical Recovery cycle states (short_recovery_gate)
++EMERGENCY_STATUSES = {"OFF", "ARMED", "EXECUTING", "LOCKED"}  # aster_portfolio_emergency_hedge
++EMERGENCY_BLOCKING = {"EXECUTING", "LOCKED"}
++
++
++@dataclass(frozen=True)
++class OwnershipContext:
++    """Fresh copies of every document that can prove a protection/Recovery/claim owner.
++
++    `*_exists=False` means the document is proven absent (system never configured).
++    A read error never reaches this class: the reader raises BulkProtectionUnreliable.
++    """
++    pair: Any                      # asterPositionLossAutoHedge/{uid}/pairs/{SYMBOL}  ({} when absent)
++    dynamic_hedge: Any             # users/{uid}/asterDynamicHedge/control
++    dynamic_hedge_exists: bool
++    emergency_hedge: Any           # aster_portfolio_emergency_hedges/{uid}
++    emergency_hedge_exists: bool
++    auto_hedge_settings: Any       # asterPositionLossAutoHedge/{uid}  (holds shortRecoveryPlan)
++    auto_hedge_settings_exists: bool
++    sniper: Any                    # asterSniper/{uid}
++    sniper_exists: bool
++    has_same_symbol_long: bool     # live exchange rows: a LONG leg exists on this symbol
++
++
++def _norm_symbol(value: Any) -> str:
++    return str(value or "").upper().strip()
++
++
++def pair_recovery_reason(pair: Any) -> str | None:
++    """Recovery cycle fields live in the Auto Hedge pair document (short_recovery_gate reads them there)."""
++    if pair is None:
++        return None
++    if not isinstance(pair, dict):
++        raise BulkProtectionUnreliable("Auto Hedge pair-document is ongeldig")
++    state = pair.get("state")
++    if state is not None and not isinstance(state, str):
++        raise BulkProtectionUnreliable("Recovery-cyclusstatus is ongeldig")
++    owner_side = pair.get("ownerSide")
++    if (str(state or "").upper() in RECOVERY_CYCLE_STATES
++            or (owner_side not in (None, "") and pair.get("cycleConfirmed") is True)):
++        return "Deze positie valt onder een Short Recovery 2.0-cyclus" + PROTECTED_SUFFIX
++    return None
++
++
++def dynamic_hedge_reason(control: Any, exists: bool) -> str | None:
++    if not exists:
++        return None
++    if not isinstance(control, dict):
++        raise BulkProtectionUnreliable("Dynamic Hedge-status is geen geldig document")
++    enabled = control.get("enabled", False)
++    if not isinstance(enabled, bool):
++        raise BulkProtectionUnreliable("Dynamic Hedge enabled-veld is ongeldig")
++    if enabled or str(control.get("ownershipState", "")).upper() == "MANUAL_ACTION_LOCK":
++        return "Dynamic Hedge is actief voor dit account" + PROTECTED_SUFFIX
++    return None
++
++
++def emergency_hedge_reason(doc: Any, exists: bool) -> str | None:
++    if not exists:
++        return None
++    if not isinstance(doc, dict):
++        raise BulkProtectionUnreliable("Noodhedge-status is geen geldig document")
++    status = doc.get("status", "OFF")
++    if not isinstance(status, str) or status not in EMERGENCY_STATUSES:
++        raise BulkProtectionUnreliable("Noodhedge-status is onbekend")
++    if status in EMERGENCY_BLOCKING:
++        return f"Portfolio Noodhedge is {status}" + PROTECTED_SUFFIX
++    return None
++
++
++def recovery_plan_reason(settings: Any, exists: bool, has_same_symbol_long: bool) -> str | None:
++    """Short Recovery 2.0 ownership of a SHORT is not persisted per leg yet (offline/shadow), so while
++    the plan is enabled every SHORT that has a same-symbol LONG might be Recovery-owned: not provable
++    -> excluded. Disabled / never configured -> Classic, unchanged behaviour."""
++    from short_recovery_gate import resolve_existing_active_strategy
++    if not exists:
++        return None
++    plan = settings.get("shortRecoveryPlan") if isinstance(settings, dict) else None
++    if isinstance(plan, dict) and "enabled" in plan and not isinstance(plan["enabled"], bool):
++        # the canonical resolver would read a non-bool flag as "off"; for a bulk SELL that is not proof
++        raise BulkProtectionUnreliable("Short Recovery enabled-veld is ongeldig")
++    outcome = resolve_existing_active_strategy(settings)
++    if outcome == "BLOCKED_INVALID_ACTIVE_SETTINGS":
++        raise BulkProtectionUnreliable("Short Recovery-instellingen zijn ongeldig")
++    if outcome == "AUTO_HEDGE_SHORT_RECOVERY_2" and has_same_symbol_long:
++        return "Short Recovery 2.0 is actief en kan deze SHORT beheren" + PROTECTED_SUFFIX
++    return None
++
++
++def inflight_claim_reason(symbol: str, strategy2_state: Any, strategy2_exists: bool,
++                          sniper: Any, sniper_exists: bool) -> str | None:
++    """Exclusive in-flight claims (aster_symbol_ownership): Strategy-2 pending reopen / current queue intent,
++    Sniper pending intent and active Sniper trades."""
++    symbol = _norm_symbol(symbol)
++
++    def symbols_of(rows: Any, what: str) -> set[str]:
++        if rows is None:
++            return set()
++        if not isinstance(rows, list):
++            raise BulkProtectionUnreliable(f"{what} is geen lijst")
++        found = set()
++        for row in rows:
++            if not isinstance(row, dict):
++                raise BulkProtectionUnreliable(f"{what} bevat een ongeldige rij")
++            found.add(_norm_symbol(row.get("symbol")))
++        return found
++
++    claimed: set[str] = set()
++    if strategy2_exists:
++        if not isinstance(strategy2_state, dict):
++            raise BulkProtectionUnreliable("Strategy-2 status is geen geldig document")
++        claimed |= symbols_of(strategy2_state.get("pendingReopens"), "pendingReopens")
++        queue = strategy2_state.get("orderQueueState")
++        if queue is not None:
++            if not isinstance(queue, dict):
++                raise BulkProtectionUnreliable("orderQueueState is ongeldig")
++            intent = queue.get("currentIntent")
++            if intent is not None:
++                if not isinstance(intent, dict):
++                    raise BulkProtectionUnreliable("currentIntent is ongeldig")
++                claimed.add(_norm_symbol(intent.get("symbol")))
++    if claimed and symbol in claimed:
++        return "Een strategie heeft een order in uitvoering voor dit symbool" + PROTECTED_SUFFIX
++    if sniper_exists:
++        if not isinstance(sniper, dict):
++            raise BulkProtectionUnreliable("Sniper-status is geen geldig document")
++        sniper_claims = symbols_of(sniper.get("activeTrades"), "activeTrades")
++        pending = sniper.get("pendingIntent")
++        if pending is not None:
++            if not isinstance(pending, dict):
++                raise BulkProtectionUnreliable("pendingIntent is ongeldig")
++            sniper_claims.add(_norm_symbol(pending.get("symbol")))
++        if symbol in sniper_claims:
++            return "Deze positie hoort bij een actieve Sniper-trade" + PROTECTED_SUFFIX
++    return None
++
++
+ def bulk_profit_close_block_reason(
+     uid: str, symbol: str, side: str, strategy2_state: Any,
+-    *, strategy2_exists: bool = True, managed_check: Callable[..., bool],
++    *, strategy2_exists: bool = True, managed_check: Callable[..., bool], ownership: OwnershipContext,
+ ) -> str | None:
+     """Return a Dutch reason when a bulk profit close must not touch this leg.
+ 
+-    Raises (never returns None) when protection status cannot be established:
++    Raises (never returns None) when ownership/protection cannot be established:
+     managed_check errors (AutoHedgeCloseBlocked) and BulkProtectionUnreliable.
++    `ownership` is mandatory so no caller can silently skip the cross-system checks.
+     """
+-    symbol = str(symbol).upper().strip()
++    symbol = _norm_symbol(symbol)
+     side = str(side).upper().strip()
+     if side != "SHORT":
+         return "Bulk Close Profits sluit alleen SHORT-posities; LONG vereist een geverifieerde hedgekoppeling"
+     if managed_check(account_uid=uid, symbol=symbol):
+-        return "Deze positie valt onder Auto Hedge; bulk Close Profits sluit haar niet"
++        return "Deze positie valt onder Auto Hedge" + PROTECTED_SUFFIX
++    reason = pair_recovery_reason(ownership.pair)
++    if reason:
++        return reason
+     if focus_airbag_protected(strategy2_state, exists=strategy2_exists, symbol=symbol, side=side):
+-        return "Deze positie is een Focus Airbag-hedge; bulk Close Profits sluit haar niet"
+-    return None
++        return "Deze positie is een Focus Airbag-hedge" + PROTECTED_SUFFIX
++    return (
++        dynamic_hedge_reason(ownership.dynamic_hedge, ownership.dynamic_hedge_exists)
++        or emergency_hedge_reason(ownership.emergency_hedge, ownership.emergency_hedge_exists)
++        or recovery_plan_reason(ownership.auto_hedge_settings, ownership.auto_hedge_settings_exists,
++                                ownership.has_same_symbol_long)
++        or inflight_claim_reason(symbol, strategy2_state, strategy2_exists, ownership.sniper, ownership.sniper_exists)
++    )
+diff --git a/cloud_api/test_close_profits_2_1_firestore_emulator.py b/cloud_api/test_close_profits_2_1_firestore_emulator.py
+new file mode 100644
+index 0000000..271cb47
+--- /dev/null
++++ b/cloud_api/test_close_profits_2_1_firestore_emulator.py
+@@ -0,0 +1,146 @@
++"""Close Profits 2.1 — real Firestore-emulator checks (lease transactions + ownership reads).
++
++NOT RUN in the authoring sandbox (no google-cloud-firestore / emulator reachable). Runs only when
++FIRESTORE_EMULATOR_HOST is set and google-cloud-firestore is installed; otherwise every test SKIPs.
++It extracts the REAL lease and ownership-read functions from main.py (AST) and binds them to a real
++Firestore client pointed at the emulator. Aster is never contacted; no orders exist here.
++
++    npx firebase emulators:exec --config <cfg> --only firestore --project close-profits-test-only \
++      'PYTHONPATH=cloud_api python -m unittest -v cloud_api.test_close_profits_2_1_firestore_emulator'
++"""
++from __future__ import annotations
++
++import ast
++import os
++import secrets
++import threading
++import unittest
++import uuid
++from datetime import datetime, timedelta, timezone
++from pathlib import Path
++from types import SimpleNamespace
++
++EMULATOR = bool(os.environ.get("FIRESTORE_EMULATOR_HOST"))
++try:
++    from google.cloud import firestore
++    HAVE_CLIENT = True
++except Exception:  # pragma: no cover
++    HAVE_CLIENT = False
++
++MAIN_SRC = (Path(__file__).with_name("main.py")).read_text()
++WANTED = {"_acquire_aster_account_coordination", "_release_aster_account_coordination",
++          "_renew_aster_account_coordination", "_aster_account_coordination_held",
++          "aster_account_coordination_reference", "_read_bulk_ownership_globals", "_bulk_reason_from_globals",
++          "_position_loss_auto_hedge_pair_ref", "_position_loss_auto_hedge_pair", "user_reference",
++          "aster_strategy2_reference", "aster_sniper_reference"}
++
++
++def load_real_functions(db):
++    tree = ast.parse(MAIN_SRC)
++    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in WANTED]
++    nodes += [n for n in tree.body if isinstance(n, ast.Assign)
++              and any(getattr(t, "id", "") == "ACCOUNT_COORDINATION_LEASE_SECONDS" for t in n.targets)]
++    assert len(nodes) == len(WANTED) + 1, sorted(getattr(n, "name", "assign") for n in nodes)
++    for node in nodes:
++        if isinstance(node, ast.FunctionDef):
++            node.decorator_list = []
++    module = ast.Module(body=nodes, type_ignores=[])
++    ast.fix_missing_locations(module)
++    from manual_profit_close_guard import BulkProtectionUnreliable, OwnershipContext, bulk_profit_close_block_reason
++    ns = {
++        "db": db, "firestore": firestore, "datetime": datetime, "timezone": timezone, "timedelta": timedelta,
++        "python_secrets": secrets, "Any": object, "BulkProtectionUnreliable": BulkProtectionUnreliable,
++        "OwnershipContext": OwnershipContext, "bulk_profit_close_block_reason": bulk_profit_close_block_reason,
++        "auto_hedge_symbol_managed_strict": lambda **kw: False,   # Auto Hedge status is covered by its own tests
++        "safe_float": lambda v, d=0.0: float(v) if v not in (None, "") else d,
++    }
++    exec(compile(module, "main.py::emulator", "exec"), ns)
++    return SimpleNamespace(**ns)
++
++
++@unittest.skipUnless(EMULATOR and HAVE_CLIENT, "needs FIRESTORE_EMULATOR_HOST and google-cloud-firestore")
++class EmulatorLeaseTests(unittest.TestCase):
++    def setUp(self):
++        self.db = firestore.Client(project=os.environ.get("GCLOUD_PROJECT", "close-profits-test-only"))
++        self.fn = load_real_functions(self.db)
++        self.uid = "u-" + uuid.uuid4().hex[:10]
++
++    def test_sixteen_concurrent_acquirers_exactly_one_winner(self):
++        results, barrier = [], threading.Barrier(16)
++
++        def worker(i):
++            barrier.wait()
++            results.append(self.fn._acquire_aster_account_coordination(self.uid, f"W{i}", "TEST"))
++        threads = [threading.Thread(target=worker, args=(i,)) for i in range(16)]
++        [t.start() for t in threads]
++        [t.join() for t in threads]
++        self.assertEqual(len([r for r in results if r]), 1)
++
++    def test_renew_release_and_expiry_fencing(self):
++        token = self.fn._acquire_aster_account_coordination(self.uid, "MANUAL_BULK_PROFIT_CLOSE", "TEST")
++        self.assertTrue(token)
++        self.assertIsNone(self.fn._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "TEST"))
++        self.assertTrue(self.fn._renew_aster_account_coordination(self.uid, token))
++        self.assertTrue(self.fn._aster_account_coordination_held(self.uid, token))
++        # force expiry directly in Firestore
++        self.fn.aster_account_coordination_reference(self.uid).set(
++            {"lease": {"until": datetime.now(timezone.utc) - timedelta(seconds=1)}}, merge=True)
++        self.assertFalse(self.fn._renew_aster_account_coordination(self.uid, token))     # never resurrects
++        self.assertFalse(self.fn._aster_account_coordination_held(self.uid, token))
++        other = self.fn._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "TEST")
++        self.assertTrue(other)
++        self.fn._release_aster_account_coordination(self.uid, token)                     # stale release is a no-op
++        self.assertTrue(self.fn._aster_account_coordination_held(self.uid, other))
++        self.fn._release_aster_account_coordination(self.uid, other)
++        self.assertFalse(self.fn._aster_account_coordination_held(self.uid, other))
++
++
++@unittest.skipUnless(EMULATOR and HAVE_CLIENT, "needs FIRESTORE_EMULATOR_HOST and google-cloud-firestore")
++class EmulatorOwnershipReadTests(unittest.TestCase):
++    def setUp(self):
++        self.db = firestore.Client(project=os.environ.get("GCLOUD_PROJECT", "close-profits-test-only"))
++        self.fn = load_real_functions(self.db)
++        self.uid = "u-" + uuid.uuid4().hex[:10]
++        self.user = {"uid": self.uid}
++        self.rows = [{"symbol": "BTCUSDT", "positionSide": "SHORT", "positionAmt": "-8"}]
++
++    def reason(self, symbol="BTCUSDT", rows=None):
++        snaps = self.fn._read_bulk_ownership_globals(self.user, self.uid)
++        return self.fn._bulk_reason_from_globals(self.uid, symbol, "SHORT", snaps, rows or self.rows)
++
++    def test_nothing_configured_allows_plain_short(self):
++        self.assertIsNone(self.reason())
++
++    def test_each_owner_document_blocks(self):
++        d = self.db
++        d.collection("users").document(self.uid).collection("asterDynamicHedge").document("control").set({"enabled": True})
++        self.assertIn("Dynamic Hedge", self.reason())
++        d.collection("users").document(self.uid).collection("asterDynamicHedge").document("control").set({"enabled": False})
++        d.collection("aster_portfolio_emergency_hedges").document(self.uid).set({"status": "LOCKED"})
++        self.assertIn("Noodhedge", self.reason())
++        d.collection("aster_portfolio_emergency_hedges").document(self.uid).set({"status": "OFF"})
++        d.collection("asterPositionLossAutoHedge").document(self.uid).collection("pairs").document("BTCUSDT").set({"state": "PARTIAL"})
++        self.assertIn("Short Recovery 2.0", self.reason())
++        d.collection("asterPositionLossAutoHedge").document(self.uid).collection("pairs").document("BTCUSDT").delete()
++        d.collection("asterSniper").document(self.uid).set({"activeTrades": [{"symbol": "BTCUSDT"}]})
++        self.assertIn("Sniper", self.reason())
++        d.collection("asterSniper").document(self.uid).delete()
++        d.collection("asterStrategy2").document(self.uid).set({"ownedLegs": [], "pendingReopens": [{"symbol": "BTCUSDT"}]})
++        self.assertIn("order in uitvoering", self.reason())
++
++    def test_recovery_plan_blocks_hedged_short_only(self):
++        self.db.collection("asterPositionLossAutoHedge").document(self.uid).set({"shortRecoveryPlan": {"enabled": True}})
++        self.assertIsNone(self.reason())
++        hedged = self.rows + [{"symbol": "BTCUSDT", "positionSide": "LONG", "positionAmt": "8"}]
++        self.assertIn("Short Recovery 2.0", self.reason(rows=hedged))
++
++    def test_guard_reads_do_not_write(self):
++        before = {c.id for c in self.db.collections()}
++        self.reason()
++        self.assertFalse(self.db.collection("asterPositionLossAutoHedge").document(self.uid).get().exists)
++        self.assertFalse(self.db.collection("aster_portfolio_emergency_hedges").document(self.uid).get().exists)
++        self.assertTrue({c.id for c in self.db.collections()} >= before)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/cloud_api/test_close_profits_2_1_guard.py b/cloud_api/test_close_profits_2_1_guard.py
+index 5af455f..3a4fde4 100644
+--- a/cloud_api/test_close_profits_2_1_guard.py
++++ b/cloud_api/test_close_profits_2_1_guard.py
+@@ -15,7 +15,8 @@ from types import SimpleNamespace
+ from unittest import mock
+ 
+ import aster_position_loss_auto_hedge_lock as lock
+-from manual_profit_close_guard import BulkProtectionUnreliable, bulk_profit_close_block_reason, focus_airbag_protected
++from manual_profit_close_guard import (BulkProtectionUnreliable, OwnershipContext, bulk_profit_close_block_reason,
++                                       focus_airbag_protected)
+ from manual_profit_close_planner import build_profit_close_plan
+ 
+ HERE = Path(__file__).parent
+@@ -36,9 +37,19 @@ def never_managed(**_):
+     return False
+ 
+ 
+-def reason(symbol="BTCUSDT", side="SHORT", state=None, *, exists=True, managed=lambda **_: False):
++def ctx(**over):
++    """OwnershipContext where every system is proven absent/unconfigured unless overridden."""
++    base = dict(pair={}, dynamic_hedge=None, dynamic_hedge_exists=False, emergency_hedge=None,
++                emergency_hedge_exists=False, auto_hedge_settings=None, auto_hedge_settings_exists=False,
++                sniper=None, sniper_exists=False, has_same_symbol_long=False)
++    base.update(over)
++    return OwnershipContext(**base)
++
++
++def reason(symbol="BTCUSDT", side="SHORT", state=None, *, exists=True, managed=lambda **_: False, ownership=None):
+     state = {"ownedLegs": []} if state is None else state
+-    return bulk_profit_close_block_reason("u", symbol, side, state, strategy2_exists=exists, managed_check=managed)
++    return bulk_profit_close_block_reason("u", symbol, side, state, strategy2_exists=exists, managed_check=managed,
++                                          ownership=ownership or ctx())
+ 
+ 
+ class GuardTests(unittest.TestCase):
+@@ -191,9 +202,10 @@ class PlannerTests(unittest.TestCase):
+ def load_route_functions():
+     """Real source of the close route and its protection-read helper, straight from main.py."""
+     tree = ast.parse(MAIN_SRC)
+-    wanted = {"close_one_aster_position", "_bulk_profit_close_block_reason_live"}
++    wanted = {"close_one_aster_position", "_bulk_profit_close_block_reason_live", "_bulk_reason_from_globals",
++              "_read_bulk_ownership_globals"}
+     fns = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
+-    assert len(fns) == 2
++    assert len(fns) == 4
+     for fn in fns:
+         fn.decorator_list = []
+     module = ast.Module(body=fns, type_ignores=[])
+@@ -268,13 +280,16 @@ class FakeDoc:
+         return self._data
+ 
+ 
+-class RouteBehaviourTests(unittest.TestCase):
++class RouteHarness:
+     """Runs the REAL close route + protection-read source (ast-extracted from main.py)
+     against mocks and a model of the account lease. No FastAPI, no Firestore, no orders."""
+ 
+     def build(self, *, managed=lambda n: False, strategy2=None, strategy2_exists=True, strategy2_raises=False,
+               bulk=True, qty=8.0, percentage=25, busy=False, order_hook=None, info=None, live_qty=8.0,
+-              real_rules=False, pre_submit_hook=None):
++              real_rules=False, pre_submit_hook=None, docs=None, pair=None, extra_rows=()):
++        # docs: {"dynamic"|"emergency"|"settings"|"sniper": dict | FakeDoc}; unset => proven absent
++        docs = docs if docs is not None else {}
++        pair = {} if pair is None else pair
+         code, names = load_route_functions()
+         ns = {n: mock.MagicMock(name=n) for n in names if not hasattr(builtins, n)}
+         calls = SimpleNamespace(orders=[], intents=[], tick_during_order=None, managed_checks=0, lease=FakeLease(busy))
+@@ -287,7 +302,21 @@ class RouteBehaviourTests(unittest.TestCase):
+             def create(self, data): calls.intents.append(("create", data))
+             def set(self, data, merge=False): calls.intents.append(("set", data))
+ 
+-        live = [{"symbol": "BTCUSDT", "positionSide": "SHORT", "positionAmt": str(-live_qty), "markPrice": "100", "leverage": "5"}]
++        live = [{"symbol": "BTCUSDT", "positionSide": "SHORT", "positionAmt": str(-live_qty), "markPrice": "100", "leverage": "5"},
++                *extra_rows]
++
++        def doc_for(key):
++            value = docs.get(key)
++            if isinstance(value, FakeDoc):
++                return value
++            return FakeDoc(value, exists=value is not None)
++
++        class _Collection:
++            def __init__(self, name): self.name = name
++            def document(self, d):
++                if self.name == "asterDynamicHedge":
++                    return doc_for("dynamic")
++                return Intent()
+         client = mock.MagicMock()
+         client.position_risk.return_value = live
+         client.public_exchange_info.return_value = info or BTC_INFO
+@@ -316,8 +345,11 @@ class RouteBehaviourTests(unittest.TestCase):
+ 
+         ns.update({
+             "HTTPException": FakeHTTP, "AutoHedgeCloseBlocked": lock.AutoHedgeCloseBlocked,
+-            "BulkProtectionUnreliable": BulkProtectionUnreliable,
++            "BulkProtectionUnreliable": BulkProtectionUnreliable, "OwnershipContext": OwnershipContext,
+             "bulk_profit_close_block_reason": bulk_profit_close_block_reason,
++            "db": SimpleNamespace(collection=lambda name: SimpleNamespace(
++                document=lambda d: doc_for("emergency" if name == "aster_portfolio_emergency_hedges" else "settings"))),
++            "aster_sniper_reference": lambda uid: doc_for("sniper"),
+             "auto_hedge_symbol_managed_strict": strict_check,
+             "aster_strategy2_reference": lambda uid: FakeDoc(strategy2 if strategy2 is not None else {"ownedLegs": []},
+                                                              exists=strategy2_exists, raises=strategy2_raises),
+@@ -325,7 +357,7 @@ class RouteBehaviourTests(unittest.TestCase):
+             "hashlib": __import__("hashlib"), "datetime": __import__("datetime").datetime,
+             "timezone": __import__("datetime").timezone,
+             "google_exceptions": SimpleNamespace(AlreadyExists=type("AlreadyExists", (Exception,), {})),
+-            "user_reference": lambda user: SimpleNamespace(collection=lambda n: SimpleNamespace(document=lambda d: Intent())),
++            "user_reference": lambda user: SimpleNamespace(collection=_Collection),
+             "AsterV3Client": lambda **kw: (setattr(calls, "hook", kw["before_order_submit"]) or client),
+             "load_aster_secret": lambda u: SimpleNamespace(signer_address="a"),
+             "local_eip712_signer": lambda s: None, "_block_order_during_close_all": lambda uid: (lambda intent: None),
+@@ -334,7 +366,7 @@ class RouteBehaviourTests(unittest.TestCase):
+             "ALLOWED_CLOSE_PERCENTAGES": ALLOWED_CLOSE_PERCENTAGES, "close_size": close_size,
+             "safe_float": lambda v, d=0.0: float(v) if v not in (None, "") else d,
+             "Decimal": __import__("decimal").Decimal, "ContractRules": rules, "AsterValidationError": validation_error,
+-            "_position_loss_auto_hedge_pair": lambda uid, sym: {},
++            "_position_loss_auto_hedge_pair": (lambda uid, sym: pair) if not isinstance(pair, Exception) else mock.Mock(side_effect=pair),
+             "_MANUAL_AUTO_HEDGE_RELEASE_STATUSES": set(),
+             "require_auto_hedge_close_allowed": lambda **kw: None,
+             "begin_manual_action": lambda *a, **k: object(), "complete_manual_action": lambda *a, **k: None,
+@@ -363,6 +395,8 @@ class RouteBehaviourTests(unittest.TestCase):
+         self.assertEqual(len(calls.lease.acquired), len(calls.lease.released))
+         self.assertIsNone(calls.lease.holder)
+ 
++
++class RouteBehaviourTests(RouteHarness, unittest.TestCase):
+     # --- selection / protection -------------------------------------------------
+     def test_normal_bulk_short_is_closed(self):
+         result, calls, exc = self.call()
+@@ -560,6 +594,159 @@ class RouteBehaviourTests(unittest.TestCase):
+         self.assertEqual(calls.orders, [])
+ 
+ 
++# ---------------------------------------------------------------------------------
++# ROUND 4: cross-system ownership (Dynamic Hedge, Emergency Hedge, Short Recovery 2.0, in-flight claims)
++# ---------------------------------------------------------------------------------
++RECOVERY_ON = {"shortRecoveryPlan": {"enabled": True, "version": 2}}
++
++
++class OwnershipGuardTests(unittest.TestCase):
++    def test_all_systems_absent_or_off_allows_plain_short(self):
++        self.assertIsNone(reason(ownership=ctx()))
++        self.assertIsNone(reason(ownership=ctx(
++            dynamic_hedge={"enabled": False}, dynamic_hedge_exists=True,
++            emergency_hedge={"status": "OFF"}, emergency_hedge_exists=True,
++            auto_hedge_settings={"enabled": True}, auto_hedge_settings_exists=True,
++            sniper={"activeTrades": [], "pendingIntent": None}, sniper_exists=True)))
++
++    def test_dynamic_hedge_enabled_blocks_and_malformed_fails_closed(self):
++        self.assertIn("Dynamic Hedge", reason(ownership=ctx(dynamic_hedge={"enabled": True}, dynamic_hedge_exists=True)))
++        self.assertIn("Dynamic Hedge", reason(ownership=ctx(
++            dynamic_hedge={"enabled": False, "ownershipState": "MANUAL_ACTION_LOCK"}, dynamic_hedge_exists=True)))
++        for bad in ("x", {"enabled": "yes"}, None):
++            with self.assertRaises(BulkProtectionUnreliable, msg=repr(bad)):
++                reason(ownership=ctx(dynamic_hedge=bad, dynamic_hedge_exists=True))
++
++    def test_emergency_hedge_blocking_statuses(self):
++        for status in ("EXECUTING", "LOCKED"):
++            self.assertIn("Noodhedge", reason(ownership=ctx(emergency_hedge={"status": status}, emergency_hedge_exists=True)))
++        for status in ("OFF", "ARMED"):
++            self.assertIsNone(reason(ownership=ctx(emergency_hedge={"status": status}, emergency_hedge_exists=True)))
++        for bad in ({"status": "WHATEVER"}, {"status": 5}, "x"):
++            with self.assertRaises(BulkProtectionUnreliable, msg=repr(bad)):
++                reason(ownership=ctx(emergency_hedge=bad, emergency_hedge_exists=True))
++
++    def test_recovery_cycle_fields_in_pair_block(self):
++        for pair in ({"state": "PARTIAL"}, {"state": "FINAL_PENDING"}, {"ownerSide": "SHORT", "cycleConfirmed": True}):
++            self.assertIn("Short Recovery 2.0", reason(ownership=ctx(pair=pair)), pair)
++        self.assertIsNone(reason(ownership=ctx(pair={"ownerSide": "SHORT", "cycleConfirmed": False})))
++        with self.assertRaises(BulkProtectionUnreliable):
++            reason(ownership=ctx(pair={"state": 7}))
++        with self.assertRaises(BulkProtectionUnreliable):
++            reason(ownership=ctx(pair="garbage"))
++
++    def test_recovery_plan_enabled_blocks_only_shorts_with_same_symbol_long(self):
++        on = dict(auto_hedge_settings=RECOVERY_ON, auto_hedge_settings_exists=True)
++        self.assertIn("Short Recovery 2.0", reason(ownership=ctx(has_same_symbol_long=True, **on)))
++        self.assertIsNone(reason(ownership=ctx(has_same_symbol_long=False, **on)))   # lone SHORT: plain profit close
++        off = dict(auto_hedge_settings={"shortRecoveryPlan": {"enabled": False}}, auto_hedge_settings_exists=True)
++        self.assertIsNone(reason(ownership=ctx(has_same_symbol_long=True, **off)))   # Classic: unchanged
++
++    def test_invalid_recovery_settings_fail_closed(self):
++        for plan in ({"enabled": "maybe"}, "garbage"):
++            with self.assertRaises(BulkProtectionUnreliable, msg=repr(plan)):
++                reason(ownership=ctx(auto_hedge_settings={"shortRecoveryPlan": plan},
++                                     auto_hedge_settings_exists=True, has_same_symbol_long=True))
++
++    def test_inflight_strategy2_and_sniper_claims_block_only_their_symbol(self):
++        s2 = {"ownedLegs": [], "pendingReopens": [{"symbol": "BTCUSDT"}]}
++        self.assertIn("order in uitvoering", reason(state=s2))
++        self.assertIsNone(reason("ETHUSDT", state=s2))
++        s2 = {"ownedLegs": [], "orderQueueState": {"currentIntent": {"symbol": "btcusdt"}}}
++        self.assertIn("order in uitvoering", reason(state=s2))
++        sn = ctx(sniper={"activeTrades": [{"symbol": "BTCUSDT"}]}, sniper_exists=True)
++        self.assertIn("Sniper", reason(ownership=sn))
++        sn = ctx(sniper={"pendingIntent": {"symbol": "BTCUSDT"}}, sniper_exists=True)
++        self.assertIn("Sniper", reason(ownership=sn))
++        self.assertIsNone(reason("ETHUSDT", ownership=sn))
++        for bad in ({"ownedLegs": [], "pendingReopens": "x"}, {"ownedLegs": [], "pendingReopens": ["x"]},
++                    {"ownedLegs": [], "orderQueueState": "x"}):
++            with self.assertRaises(BulkProtectionUnreliable, msg=repr(bad)):
++                reason(state=bad)
++        with self.assertRaises(BulkProtectionUnreliable):
++            reason(ownership=ctx(sniper="x", sniper_exists=True))
++
++    def test_protected_reasons_share_the_frontend_marker(self):
++        samples = [
++            reason(ownership=ctx(dynamic_hedge={"enabled": True}, dynamic_hedge_exists=True)),
++            reason(ownership=ctx(emergency_hedge={"status": "LOCKED"}, emergency_hedge_exists=True)),
++            reason(ownership=ctx(pair={"state": "PARTIAL"})),
++            reason(state={"ownedLegs": [], "pendingReopens": [{"symbol": "BTCUSDT"}]}),
++        ]
++        for text in samples:
++            self.assertIn("bulk Close Profits sluit haar niet", text)
++
++    def test_long_is_never_bulk_closed(self):
++        self.assertIn("SHORT", reason(side="LONG", ownership=ctx(has_same_symbol_long=True)))
++
++
++class OwnershipRouteTests(RouteHarness, unittest.TestCase):
++    """Real route + real live-read helpers; ownership documents come from the fake Firestore."""
++
++    def assertBlocked(self, **kw):
++        _, calls, exc = self.call(**kw)
++        self.assertEqual(exc.status_code, 409)
++        self.assertEqual(calls.orders, [])
++        self.assertNoLeak(calls)
++        return exc, calls
++
++    def test_dynamic_hedge_enabled_blocks_before_any_order(self):
++        exc, calls = self.assertBlocked(docs={"dynamic": {"enabled": True}})
++        self.assertIn("Dynamic Hedge", exc.detail)
++        self.assertTrue(any(c[1].get("status") == "blocked_bulk_protected" for c in calls.intents if c[0] == "set"))
++
++    def test_emergency_hedge_locked_blocks(self):
++        exc, _ = self.assertBlocked(docs={"emergency": {"status": "EXECUTING"}})
++        self.assertIn("Noodhedge", exc.detail)
++
++    def test_recovery_pair_state_blocks(self):
++        exc, _ = self.assertBlocked(pair={"state": "PARTIAL", "ownerSide": "SHORT", "cycleConfirmed": True})
++        self.assertIn("Short Recovery 2.0", exc.detail)
++
++    def test_recovery_plan_blocks_hedged_short_but_not_lone_short(self):
++        long_row = {"symbol": "BTCUSDT", "positionSide": "LONG", "positionAmt": "8", "markPrice": "100", "leverage": "5"}
++        exc, _ = self.assertBlocked(docs={"settings": RECOVERY_ON}, extra_rows=[long_row])
++        self.assertIn("Short Recovery 2.0", exc.detail)
++        result, calls, exc = self.call(docs={"settings": RECOVERY_ON})
++        self.assertIsNone(exc)
++        self.assertEqual(len(calls.orders), 1)
++
++    def test_unreadable_ownership_documents_fail_closed(self):
++        for key in ("dynamic", "emergency", "settings", "sniper"):
++            _, calls, exc = self.call(docs={key: FakeDoc(None, raises=True)})
++            self.assertEqual(exc.status_code, 409, key)
++            self.assertIn("onbetrouwbaar", exc.detail)
++            self.assertEqual(calls.orders, [])
++            self.assertNoLeak(calls)
++        _, calls, exc = self.call(pair=RuntimeError("boom"))
++        self.assertEqual(exc.status_code, 409)
++        self.assertEqual(calls.orders, [])
++
++    def test_ownership_change_between_first_check_and_order_is_caught_by_late_check(self):
++        state = {"n": 0}
++
++        class Flip(FakeDoc):
++            def get(self_inner):
++                state["n"] += 1                                  # 1st read free, later reads Dynamic Hedge ON
++                self_inner._data = {"enabled": state["n"] >= 2}
++                return self_inner
++        _, calls, exc = self.call(docs={"dynamic": Flip({"enabled": False})})
++        self.assertEqual(exc.status_code, 409)
++        self.assertEqual(calls.orders, [])
++        self.assertNoLeak(calls)
++
++    def test_individual_close_ignores_all_ownership_documents(self):
++        result, calls, exc = self.call(bulk=False, docs={"dynamic": {"enabled": True}, "emergency": {"status": "LOCKED"}},
++                                       pair={"state": "PARTIAL"})
++        self.assertIsNone(exc)
++        self.assertEqual(len(calls.orders), 1)
++
++    def test_guard_reads_are_read_only(self):
++        src = MAIN_SRC[MAIN_SRC.index("def _read_bulk_ownership_globals("):MAIN_SRC.index("def _profitable_aster_close_candidates(")]
++        for forbidden in (".set(", ".update(", ".create(", ".delete(", "transaction", "batch(", "merge="):
++            self.assertNotIn(forbidden, src)
++
++
+ # ---------------------------------------------------------------------------------
+ # REAL lease functions from main.py against an in-memory Firestore model, real threads, fake clock
+ # ---------------------------------------------------------------------------------
+@@ -954,7 +1141,7 @@ class SourceContractTests(unittest.TestCase):
+         route = route[:route.index('@app.post("/v1/me/aster/simulate")')]
+         flag = route.index("if request.bulk_profit_close:")
+         lease = route.index('"MANUAL_BULK_PROFIT_CLOSE"')
+-        guard = route.index("_bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)")
++        guard = route.index("_bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side, user, live_rows)")
+         self.assertLess(flag, lease)
+         self.assertLess(lease, guard)                       # lease first, then check
+         for later in ("close_size(live_quantity", "_begin_position_loss_auto_hedge_manual_release(",
+@@ -978,7 +1165,8 @@ class SourceContractTests(unittest.TestCase):
+     def test_preview_uses_strict_check_and_no_new_close_route(self):
+         preview = MAIN_SRC[MAIN_SRC.index("def preview_manual_profit_close_plan("):]
+         preview = preview[:preview.index('@app.post("/v1/me/aster/positions/close-profitable")')]
+-        self.assertIn("auto_hedge_symbol_managed_strict", preview)
++        self.assertIn("_bulk_reason_from_globals", preview)          # same guard as the route
++        self.assertIn("_read_bulk_ownership_globals", preview)
+         self.assertEqual(MAIN_SRC.count('"/v1/me/aster/positions/{symbol}/close"'), 1)
+         self.assertNotIn("bulk-close", MAIN_SRC.lower().replace("bulk_close", ""))
+ 
+diff --git a/tools/run_close_profits_2_1_integration.sh b/tools/run_close_profits_2_1_integration.sh
+new file mode 100755
+index 0000000..e897d18
+--- /dev/null
++++ b/tools/run_close_profits_2_1_integration.sh
+@@ -0,0 +1,24 @@
++#!/usr/bin/env bash
++# Reproducible FULL validation for Close Profits 2.1. Needs network (npm/PyPI) + Java 21 -> run in CI or on an
++# authorised dev machine, NOT in the offline review sandbox. Uses ONLY the Firestore emulator and mocked Aster
++# (no credentials, no production project, no orders). Mirrors .github/workflows/extreme-spike-firestore-emulator.yml.
++set -euo pipefail
++cd "$(dirname "$0")/.."
++export GCLOUD_PROJECT=close-profits-test-only
++export FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
++python3 -m venv /tmp/cp21-venv && . /tmp/cp21-venv/bin/activate
++python -m pip install -r cloud_api/requirements.txt pytest
++npm install --no-save firebase-tools@14.21.0
++printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp21-firebase.json
++# 1) pure + route tests (no emulator needed; real httpx so the 2 ContractRules tests run too)
++( cd cloud_api && python -m unittest -v test_close_profits_2_1_guard )
++# 2) real Firestore transactions (lease) + ownership reads against the emulator
++npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project "$GCLOUD_PROJECT" \
++  'PYTHONPATH=cloud_api python -m unittest -v cloud_api.test_close_profits_2_1_firestore_emulator'
++# 3) existing Recovery/Spike emulator suites (must stay green: proves Recovery fences/claims untouched)
++npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project "$GCLOUD_PROJECT" \
++  'PYTHONPATH=cloud_api python -m unittest -v cloud_api.test_short_recovery_fence_emulator cloud_api.test_short_recovery_firestore_emulator_integration cloud_api.test_aster_spike_firestore_emulator'
++# 4) whole backend suite with real dependencies (pytest like cloud-backend-ci.yml)
++( cd cloud_api && python -m pytest -q )
++# 5) web
++( cd web && node --test tests/aster-close-profits-2-1-safety.test.mjs tests/aster-close-profits-short-handler.test.mjs )
+diff --git a/web/components/aster-recent-trades.tsx b/web/components/aster-recent-trades.tsx
+index 07acb0d..b5ce848 100644
+--- a/web/components/aster-recent-trades.tsx
++++ b/web/components/aster-recent-trades.tsx
+@@ -1439,7 +1439,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+           skipped++;
+           continue;
+         }
+-        if (/valt onder Auto Hedge|Focus Airbag-hedge/i.test(details)) {
++        if (/valt onder Auto Hedge|Focus Airbag-hedge|bulk Close Profits sluit haar niet/i.test(details)) {
+           // Server refused before any order: status changed since the preview.
+           protectedSkipped++;
+           continue;
+@@ -1448,7 +1448,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+         break;
+       }
+     }
+-    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen · " + protectedSkipped + " beschermd (Auto Hedge/Airbag) niet aangeraakt" +
++    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen · " + protectedSkipped + " beschermd (Auto Hedge/Airbag/Recovery/andere hedge) niet aangeraakt" +
+       (protectionChanged ? " · ⚠ " + protectionChanged + " positie(s) kregen tijdens het sluiten Auto Hedge/Airbag-bescherming: controleer Auto Hedge" : "") +
+       (leaseLost ? " · ⚠ " + leaseLost + " sluiting(en) verliepen de account-vergrendeling tijdens verificatie: controleer de posities in Aster" : "") +
+       (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
+diff --git a/web/tests/aster-close-profits-2-1-safety.test.mjs b/web/tests/aster-close-profits-2-1-safety.test.mjs
+index e611dbe..01f8801 100644
+--- a/web/tests/aster-close-profits-2-1-safety.test.mjs
++++ b/web/tests/aster-close-profits-2-1-safety.test.mjs
+@@ -198,10 +198,30 @@ test("Auto Hedge status changed after preview: server refusal is counted as prot
+   await h.handler();
+   assert.equal(h.calls.length, 3);
+   assert.match(h.state.message, /2 SHORTS gesloten/);
+-  assert.match(h.state.message, /1 beschermd \(Auto Hedge\/Airbag\) niet aangeraakt/);
++  assert.match(h.state.message, /1 beschermd \(Auto Hedge\/Airbag\/Recovery\/andere hedge\) niet aangeraakt/);
+   assert.doesNotMatch(h.state.message, /3 SHORTS gesloten/);
+ });
+ 
++test("round 4: Dynamic Hedge / Emergency Hedge / Recovery / in-flight claim refusals are protected skips, loop continues", async () => {
++  const marker = "; bulk Close Profits sluit haar niet";
++  const h = closeHarness({
++    BTCUSDT: "Dynamic Hedge is actief voor dit account" + marker,
++    ETHUSDT: "Deze positie valt onder een Short Recovery 2.0-cyclus" + marker,
++    SOLUSDT: "Portfolio Noodhedge is LOCKED" + marker,
++  });
++  await h.handler();
++  assert.equal(h.calls.length, 3);                                  // never aborts on a protected skip
++  assert.match(h.state.message, /0 SHORTS gesloten · 0 te klein overgeslagen · 3 beschermd/);
++  assert.doesNotMatch(h.state.message, /gestopt/);
++});
++
++test("round 4: unreliable ownership data (409 'onbetrouwbaar') still stops the run", async () => {
++  const h = closeHarness({ BTCUSDT: "Eigenaarschaps-/beschermingsgegevens ontbreken of zijn onbetrouwbaar; bulk sluiten is gestopt" });
++  await h.handler();
++  assert.equal(h.calls.length, 1);
++  assert.match(h.state.message, /0 SHORTS gesloten/);
++});
++
+ test("Focus Airbag refusal handled the same way", async () => {
+   const h = closeHarness({ SOLUSDT: "Deze positie is een Focus Airbag-hedge; bulk Close Profits sluit haar niet" });
+   await h.handler();
