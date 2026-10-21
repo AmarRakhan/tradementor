@@ -123,7 +123,9 @@ class FakeAster:
             if not row:
                 return self._json({"code": -2013, "msg": "Order does not exist."}, 400)
             return self._json({"orderId": row["id"], "clientOrderId": row["cid"], "symbol": row["symbol"],
-                               "status": row["status"], "executedQty": str(row["executed"]), "origQty": str(row["qty"])})
+                               "side": row["side"], "positionSide": row["positionSide"], "type": "MARKET",
+                               "status": row["status"], "executedQty": str(row["executed"]), "origQty": str(row["qty"]),
+                               "avgPrice": str(self.mark.get(row["symbol"], 0)), "updateTime": int(time.time() * 1000)})
         if path == "/fapi/v3/order" and request.method == "POST":
             return self._order(request, params)
         if path == "/fapi/v3/userTrades":
@@ -226,5 +228,7 @@ class FakeAster:
             raise httpx.ReadTimeout("read timeout after Aster accepted the order", request=request)
         if mode == "http503_after_accept":
             return self._json({"code": -1007, "msg": "Timeout waiting for response from backend server."}, 503)
-        return self._json({"orderId": row["id"], "clientOrderId": cid, "symbol": symbol, "status": status,
-                           "executedQty": str(executed), "origQty": str(qty)})
+        return self._json({"orderId": row["id"], "clientOrderId": cid, "symbol": symbol, "side": side,
+                           "positionSide": ps, "type": "MARKET", "status": status, "executedQty": str(executed),
+                           "origQty": str(qty), "avgPrice": str(self.mark.get(symbol, 0)),
+                           "updateTime": int(time.time() * 1000)})

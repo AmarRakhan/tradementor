@@ -173,7 +173,8 @@ def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra
               "_manual_auto_hedge_leg_view", "_position_loss_auto_hedge_pair_ref", "_position_loss_auto_hedge_pair",
               "user_reference", "aster_account_coordination_reference", "_acquire_aster_account_coordination",
               "_release_aster_account_coordination", "_renew_aster_account_coordination", "_open_pnl_check",
-              "_enforce_min_open_pnl", "_refuse_if_recent_close_unconfirmed"}
+              "_enforce_min_open_pnl", "_refuse_if_recent_close_unconfirmed", "_series_guard_intents",
+              "_clear_series_guard"}
     wanted = wanted | set(extra)
     tree = ast.parse(src if src is not None else MAIN_SRC)
     nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]

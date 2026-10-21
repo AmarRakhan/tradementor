@@ -120,9 +120,12 @@ class SeriesLock(base.E2E):
         self.db.collection("asterPositionLossAutoHedge").document(self.uid).set({"enabled": False})
         self.fake.lag["S00USDT"] = 1
         self.assertEqual(self.close("S00USDT", self.expected["S00USDT"], 50, bulk=True).status_code, 502)
-        refs = self.db.collection("users").document(self.uid).collection("asterManualCloseIntents")
-        for doc in refs.stream():
-            doc.reference.set({"createdAt": datetime.now(timezone.utc) - timedelta(minutes=11)}, merge=True)
+        guards = (self.db.collection("users").document(self.uid).collection("asterManualCloseOrderGuards")
+                  .document("S00USDT__SHORT").collection("intents"))
+        stale = list(guards.stream())
+        self.assertEqual(len(stale), 1)                                              # the unconfirmed close left its guard
+        for doc in stale:
+            doc.reference.set({"orderStartedAt": datetime.now(timezone.utc) - timedelta(minutes=11)}, merge=True)
         self.fake.lag["S00USDT"] = 0                                                 # Aster has caught up
         live = self.fake.pos[("S00USDT", "SHORT")]
         again = self.close("S00USDT", live, 50, bulk=True)
