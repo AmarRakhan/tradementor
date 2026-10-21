@@ -28,9 +28,12 @@ jobs:
           cache-dependency-path: cloud_api/requirements.txt
       - name: Install backend dependencies
         run: pip install -r cloud_api/requirements.txt pytest
-      - name: Close Profits 2.0 + 2.1 model tests (real dependencies)
+      - name: Close Profits 2.0 model tests (real dependencies)
         working-directory: cloud_api
-        run: ../tools/ci_report.sh "backend model tests 2.0+2.1" 40 python -m unittest -v test_close_profits_2_0_integration test_close_profits_2_0_round6 test_close_profits_2_1_rounds
+        run: ../tools/ci_report.sh "backend model tests 2.0" 12 python -m unittest test_close_profits_2_0_integration test_close_profits_2_0_round6
+      - name: Close Profits 2.1 round model tests (real dependencies)
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend model tests 2.1" 40 python -m unittest -v test_close_profits_2_1_rounds
       - name: Full backend regression
         working-directory: cloud_api
         run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider
@@ -60,8 +63,12 @@ jobs:
       - name: Rounds + 2.0 scenarios on the REAL Firestore emulator
         run: |
           printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp21-firebase.json
-          tools/ci_report.sh "firestore emulator tests" 60 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
-            'cd cloud_api && python -m unittest -v test_close_profits_2_0_firestore_emulator test_close_profits_2_1_rounds_emulator'
+          tools/ci_report.sh "firestore emulator tests 2.0" 12 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -m unittest test_close_profits_2_0_firestore_emulator'
+      - name: Close Profits 2.1 rounds on the REAL Firestore emulator
+        run: |
+          tools/ci_report.sh "firestore emulator tests 2.1" 60 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -m unittest -v test_close_profits_2_1_rounds_emulator'
   e2e-stack:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -88,8 +95,12 @@ jobs:
       - name: End-to-end on the real stack (production ASGI entrypoint)
         run: |
           printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp21-firebase.json
-          tools/ci_report.sh "e2e real stack" 120 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
-            'cd cloud_api && python -W ignore -m unittest -v test_close_profits_2_0_e2e_stack test_close_profits_2_0_release_guards test_close_profits_2_1_e2e_stack'
+          tools/ci_report.sh "e2e real stack 2.0" 12 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -W ignore -m unittest test_close_profits_2_0_e2e_stack test_close_profits_2_0_release_guards'
+      - name: Close Profits 2.1 rounds end-to-end on the real stack
+        run: |
+          tools/ci_report.sh "e2e real stack 2.1" 40 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -W ignore -m unittest -v test_close_profits_2_1_e2e_stack'
   e2e-web-real-backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30

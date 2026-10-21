@@ -266,7 +266,20 @@ def create_round(env: RoundEnv, user: dict[str, Any], *, percentage: int, idempo
             txn.set(active_ref, {"roundId": round_id, "updatedAt": now})
         return ("created", round_id, data)
 
-    outcome, rid, stored = reserve(env.db.transaction())
+    try:
+        outcome, rid, stored = reserve(env.db.transaction())
+    except Exception as exc:
+        # Contention (Firestore gives up after its retries) or a transient store error: never guess. Re-read and
+        # answer from what is actually stored; nothing was ordered either way.
+        pointer = active_ref.get().to_dict() or {}
+        current_id = str(pointer.get("roundId") or "")
+        current = _rounds(env, uid).document(current_id).get().to_dict() if current_id else None
+        if current_id == round_id and current:
+            return {"created": False, "round": view(round_id, current)}
+        if current and current.get("status") not in ROUND_TERMINAL:
+            raise RoundError(409, "Er loopt nog een Close Profits-ronde; hervat of sluit die eerst af",
+                             view(current_id, current)) from exc
+        raise RoundError(503, "Close Profits kon niet starten; er is niets gesloten, probeer opnieuw") from exc
     if outcome == "busy":
         raise RoundError(409, "Er loopt nog een Close Profits-ronde; hervat of sluit die eerst af", view(rid, stored))
     return {"created": outcome == "created", "round": view(rid, stored)}
@@ -321,7 +334,13 @@ def _commit(env: RoundEnv, uid: str, round_id: str, token: str, mutate: Callable
                 txn.set(active_ref, {"roundId": "", "updatedAt": now})
         return data
 
-    return write(env.db.transaction())
+    last: Exception | None = None
+    for _ in range(3):                         # an item result must not be lost to transient contention
+        try:
+            return write(env.db.transaction())
+        except Exception as exc:               # if all fail, the lease expires and the next advance re-reads the
+            last = exc                         # attempt's own intent document (confirmed_closed -> DONE): no double
+    raise RoundError(503, "Voortgang tijdelijk niet opgeslagen; de ronde gaat verder na de volgende stap") from last
 
 
 # ------------------------------------------------------------------------------------------------------------ outcome

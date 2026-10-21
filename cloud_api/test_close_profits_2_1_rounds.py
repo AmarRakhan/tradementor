@@ -137,10 +137,16 @@ class CreateTests(RoundBase):
                                               idempotency_key=f"concurrent-key-{i:08d}", targets=self.targets(syms)))
             except R.RoundError as exc:
                 errors.append(exc.status_code)
+            except Exception as exc:                                          # must never escape as a raw error
+                errors.append(repr(exc))
         threads = [threading.Thread(target=go, args=(i,)) for i in range(20)]
         [t.start() for t in threads]; [t.join() for t in threads]
         self.assertEqual(len([r for r in results if r["created"]]), 1)
-        self.assertEqual(errors, [409] * 19)
+        self.assertEqual(len(results) + len(errors), 20)
+        self.assertTrue(all(e in (409, 503) for e in errors), errors)          # refused or "try again", never raw
+        self.assertEqual(R.get_active(self.env, self.uid)["roundId"],
+                         next(r["round"]["roundId"] for r in results if r["created"]))
+        self.assertEqual(self.L.orders, [])
 
     def test_server_only_keeps_shorts_its_own_plan_still_selects(self):
         self.L.add("GOODUSDT", "SHORT", 8.0, mark=100.0)
