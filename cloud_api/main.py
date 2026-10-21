@@ -73,6 +73,7 @@ from aster_gateway import (
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, full_leg_closes_from_sweep_ledgers, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
 from aster_account_truth import build_aster_account_truth
+from closed_trades_warmup import ClosedTradesWarmup
 from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, confirmed_durable_close_activity_rows, collection_for_timeframe as portfolio_chart_collection, daily_equity_range as portfolio_chart_daily_equity_range, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
@@ -5964,6 +5965,12 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
         return {"closedTrades": _merge_aster_closed_trades(stored, fallback), "realizedEvents": durable_events, "recentTradeActivity": activity, "closedTradeSummaryToday": summary, "historyAvailable": bool(durable_events)}
 
 
+# Chart labels (moneybags, LONG/SHORT entries) read `_aster_closed_trades_cache`. Let the chart routes fill it through
+# the existing read-only loader when it is cold or stale (#738). Late-bound lambda: extensions may wrap the route.
+_closed_trades_warmup = ClosedTradesWarmup(_aster_closed_trades_cache, _cache_lock,
+                                           lambda user: aster_closed_trades(user))
+
+
 @app.get("/v1/me/aster/status")
 def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
     control = user_reference(user).collection("executionControls").document("aster").get().to_dict() or {}
@@ -6992,8 +6999,7 @@ def aster_portfolio_chart_active_trades(
     adjusted_value = safe_float(active_state.get("value")) if active_state else None
     candles = _read_active_trades_chart_candles(user, timeframe, limit)
 
-    with _cache_lock:
-        history_cache = _aster_closed_trades_cache.get(uid)
+    history_cache = _closed_trades_warmup.ensure(uid, user)
     recent_activity = history_cache[3] if history_cache else {"entries": [], "exits": []}
     markers = portfolio_chart_trade_markers(recent_activity, timeframe)
     day_high = safe_float(active_state.get("dayHigh")) if active_state else adjusted_value
@@ -7080,8 +7086,7 @@ def aster_portfolio_chart(
     cycle = strategy_state.get("multiBbCycle") if isinstance(strategy_state.get("multiBbCycle"), dict) else {}
     cycle_start = safe_float(cycle.get("cycleStartEquity"))
 
-    with _cache_lock:
-        history_cache = _aster_closed_trades_cache.get(uid)
+    history_cache = _closed_trades_warmup.ensure(uid, user)
     recent_activity = history_cache[3] if history_cache else {"entries": [], "exits": []}
     # New zone-owned entries retain their origin in the compact chart tooltip.
     # Work on a copy of the cached fill activity; never rewrite historical fills.

@@ -3,7 +3,7 @@ name: Close Profits 2.1 CI (isolated, no secrets, no orders)
 # access, no production Firebase project: Firestore is the local emulator (project close-profits-test-only).
 on:
   push:
-    branches: [claude/close-profits-2-1]
+    branches: [claude/close-profits-2-1, claude/chart-markers-warmup]
   workflow_dispatch:
 permissions:
   contents: read
@@ -34,6 +34,9 @@ jobs:
       - name: Close Profits 2.1 round model tests (real dependencies)
         working-directory: cloud_api
         run: ../tools/ci_report.sh "backend model tests 2.1" 40 python -m unittest -v test_close_profits_2_1_rounds
+      - name: Chart label warm-up unit + wiring tests (#738)
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend chart warmup tests" 30 python -m unittest -v test_closed_trades_warmup
       - name: Full backend regression
         working-directory: cloud_api
         run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider
@@ -97,6 +100,10 @@ jobs:
           printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp21-firebase.json
           tools/ci_report.sh "e2e real stack 2.0" 12 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
             'cd cloud_api && python -W ignore -m unittest test_close_profits_2_0_e2e_stack test_close_profits_2_0_release_guards'
+      - name: Chart labels with a cold cache (#738) on the real stack
+        run: |
+          tools/ci_report.sh "e2e chart labels cold cache" 40 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -W ignore -m unittest -v test_chart_markers_cold_cache_e2e'
       - name: Close Profits 2.1 rounds end-to-end on the real stack
         run: |
           tools/ci_report.sh "e2e real stack 2.1" 40 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
@@ -210,7 +217,7 @@ jobs:
           path: tools_src
       - uses: actions/checkout@v4
         with:
-          ref: aebf12391bc0975dc0a7b30249cc930295066ab9
+          ref: ${{ github.ref_name == 'claude/chart-markers-warmup' && '421f3452e7f629b53cde83ce357e91644f24fc14' || 'aebf12391bc0975dc0a7b30249cc930295066ab9' }}
           path: base
       - uses: actions/setup-node@v4
         with:
