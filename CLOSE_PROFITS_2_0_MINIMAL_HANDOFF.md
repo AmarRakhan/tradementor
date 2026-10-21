@@ -1,3 +1,52 @@
+# Close Profits 2.0 — handoff, REVIEWRONDE 6 (bovenaan; ronde 1–5 hieronder ongewijzigd als historie)
+
+Code-commit ronde 6: `013b470427e3dce01f09a5e804edd6b60087a41f`. Start ronde 6: `dd70d3fe2356e0f9d9aa5f18ecc49bf7502f1367`. Geen live-orders, geen deploy/Cloud Build/workflow, geen merge, 2.1-branch en build 601 onaangetast.
+
+## R6.1 + R6.2 Frontend: fail-closed controle vóór ELKE POST-poging (fix, failing-first)
+Aangetoond op de ronde-5-code (11 nieuwe handler-tests, 8 FAIL vóór de fix, 11 PASS erna): (a) ontbrak de positie in de verse snapshot terwijl `selected` haar nog bevatte, dan werd er gesloten; (b) de controle gebeurde één keer vóór de retry-lus, dus na de 1,5 s "account bezig"-wachttijd kon winst/hoeveelheid veranderd zijn. Nu draait `freshCheck()` vóór de eerste poging én vóór elke retry: snapshot moet `reliable === true` zijn met arrays; de SHORT moet **precies één keer** in de rijen staan; volle hoeveelheid ongewijzigd; `unrealizedPnl` leesbaar en strikt > 0,50; nog door de planner geselecteerd. Niet meer geselecteerd → overslaan zonder order; al het andere onduidelijke (ontbrekend, dubbel, onleesbaar, tegenstrijdig, netwerkfout) → reeks stopt vóór de order. UNKNOWN/5xx/afwijkende tekst wordt nooit herhaald; max. 3 retries blijft. Alleen frontend gewijzigd; de individuele route niet.
+
+## R6.3 Lease-expiry bij trage orders (onderzoek, geen codewijziging)
+Feiten uit de code: TTL 45 s, geen verlenging; Aster-HTTP `timeout=15 s` (per fase: connect/write/read apart, dus geen harde totaalgrens); onder de lease: positielezing → Firestore-stappen → één POST (`execute_leg_once`: nooit een tweede POST, één read-only query, NEW/PARTIALLY_FILLED = RuntimeError → 502 "niet opnieuw besteld") → positielezing. `_release…` geeft alleen vrij bij eigen token.
+Bewezen (model + echte `execute_leg_once`): (1) lease verloopt tijdens een late respons (+60 s): de worker *kan* de lease daarna nemen, maar het paar staat dan op `MANUAL_RELEASE_PENDING` met re-hedge UIT en dat is volgens de workerbron geen ACTIVE/REHEDGEABLE-status; de release van de route wist de lease van de worker niet; precies één order; (2) verloopt de lease tijdens de trage herlezing onder de lease, dan wordt een daarna aangemaakt paar alsnog bevroren (het paar wordt ná de exchange-lezing herlezen). Er is **geen pad naar een dubbele close-order door lease-expiry**: de enige code die een sluit-MARKET plaatst is de route zelf met deterministische order-id en idempotentie.
+**Niet bewezen veilig (KNOWN_RESIDUAL-test):** gewone SHORT + tegenovergestelde leg + Auto Hedge aan, en de order/Firestore-stap duurt > 45 s: de worker maakt het paar ná de laatste paar-lezing aan → paar blijft `HEDGED` terwijl de SHORT wordt verkleind (nog steeds precies één order). Vereist een exchange-/Firestore-stilstand > 45 s. Niet opgelost: dat zou lease-vernieuwing of een lease-controle vóór de order in de bestaande route vragen. Productie blijft NO-GO.
+
+## R6.4 Exchange-randgevallen (harness gebruikt nu de ECHTE `execute_leg_once`)
+| Scenario | Resultaat (PASS) |
+|---|---|
+| gedeeltelijke fill (40 %) | 502 "niet opnieuw besteld", 1 order, paar `MANUAL_RELEASE_UNCERTAIN`, nieuwe sleutel/zelfde sleutel → 409, geen 2e order |
+| vertraagde positiereflectie | 502, 1 order, zelfde sleutel geweigerd |
+| timeout na acceptatie + read-only query vindt de order | 1 order, succes |
+| timeout na acceptatie + query faalt | 502 UNKNOWN, 1 order, herhaling geweigerd |
+| order-ack NEW, query laat FILLED zien | 1 order, succes |
+| order-ack NEW blijft NEW | 502, 1 order |
+| reject vóór uitvoering | 502, 0 orders, niets gewijzigd |
+| reeks met UNKNOWN op 2e SHORT | stopt; 3e SHORT en alle LONG-legs onaangeroerd |
+**Nieuw gevonden bestaand risico (KNOWN_RESIDUAL, gemeten):** zolang Aster's positie-endpoint nog de OUDE grootte toont, kan een mens op de **individuele** knop met een *nieuwe* sleutel opnieuw klikken en de route plaatst dan een tweede MARKET-sluiting (8 → 6 → 4). De groene knop doet dit niet (stopt op 502, geen herhaling); een nieuwe bulkactie direct na een gestopte reeks gebruikt echter dezelfde vertraagde data. Niet gewijzigd (route moet ongewijzigd blijven). Aanbeveling: na "Gestopt bij …" eerst Aster controleren; eventueel later een server-side "recente close"-vergrendeling per symbool.
+
+## R6.5 Emulator-runner (statisch geverifieerd, niet uitgevoerd)
+Gevonden en gecorrigeerd: (1) het script exporteerde `FIRESTORE_EMULATOR_HOST` globaal → de emulatortests zouden in stap 4 (pytest, geen emulator) draaien en falen; nu alleen binnen `emulators:exec` (Firebase zet de variabele zelf); (2) credentials/projecten worden `unset`; de emulatortests weigeren te draaien zonder localhost-host of met `GOOGLE_APPLICATION_CREDENTIALS`; (3) ronde-6-tests toegevoegd aan model- en emulatorstappen; (4) klokmodel: de geïnjecteerde `datetime` accepteert Firestore's eigen datetime-subklasse (`isinstance`-metaklasse, getest) — zonder dat had de lease op de emulator altijd vrij gelegen; (5) unieke `uid` per test, `demo`-project, Aster blijft ledger (geen netwerkcode in de harness; `httpx` alleen als import). `bash -n` en `py_compile` OK. Java 21 is aanwezig, maar `npm view firebase-tools` en `pip download google-cloud-firestore` worden door de proxy geweigerd (opnieuw één poging, niet omzeild).
+Onderscheid: **modeltests** (in-memory Firestore-model, echte route/execute_leg_once), **Firestore-emulatortests** (zelfde scenario's, echte transacties; NOT RUN), **volledige applicatie-integratie** (echte FastAPI + Next + worker-loop; NOT RUN).
+
+## R6.6 Tests (exact)
+| Suite | PASS | FAIL | SKIP | NOT RUN |
+|---|---|---|---|---|
+| web `aster-close-profits-round6` (handler, fail-closed) | 11 | 0 | | |
+| web alle close-profits + profitable (46; incl. 11 keten-tests met httpx-stub) | 46 | 0 | 0 | |
+| backend `test_close_profits_2_0_round6` (model + echte execute_leg_once) | 15 | 0 | | |
+| backend `test_close_profits_2_0_integration` | 24 | 0 | | |
+| backend emulatortests | 0 | 0 | 33 | emulator |
+| backend hele map vs ronde 5 | 2034 → 2062 pass (+15 nieuwe, +13 nieuwe emulator-SKIPs door runall als pass geteld), 21 FAIL en 73 importfouten onveranderd (pre-existing t.o.v. PR-head), alleen de twee nieuwe/uitgebreide bestanden verschillen | | | |
+| web hele map | 151 van 153 bestanden; 2 FAIL pre-existing (`extreme-spike-settings-route-execution`, `rendered-html`) | | | |
+| TypeScript-typecheck / Next-build | | | | NOT RUN |
+| echte FastAPI, Firestore-emulator, worker-loop, Aster | | | | NOT RUN |
+
+## R6.7 Resterende risico's
+1. Geen run op echte infrastructuur. 2. Bestaand: tweede individuele klik met nieuwe sleutel tijdens vertraagde positiereflectie → tweede order (niet door de groene knop). 3. Pair-aanmaak na lease-expiry (> 45 s stilstand). 4. Winstvenster van enkele ms tussen verse controle en order. 5. Meer "account bezig" op hedged symbolen. 6. Eén extra GET per positie en per retry. 7. Publieke repo met `gha-creds-*.json`.
+
+## R6.8 GO / NO-GO
+Technische review: **GO**. Merge: **NO-GO** tot de emulatorrun groen is. Productie: **NO-GO** (geen echte infrastructuurrun; bewezen resterende risico's 2–4). Geen productietoestemming.
+
+---
 # Close Profits 2.0 — handoff, REVIEWRONDE 5 (bovenaan; ronde 1–4 hieronder ongewijzigd als historie)
 
 Code-commit ronde 5: `5fb66837db5ab0e27390de54f6fc4159dbd9fc7b`. Start ronde 5: `9837a05393778857b78c3126e3f4895b8fddb550`. Branch `review/close-profits-2-0-minimal-20261021`. 2.1-branch gescheiden, build 601/productie/vier accounts onaangetast, geen live-orders, geen workflow/Cloud Build, geen merge.

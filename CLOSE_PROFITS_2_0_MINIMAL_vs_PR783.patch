@@ -118,10 +118,10 @@ index a6fb873..4349563 100644
              account_uid=uid,
 diff --git a/cloud_api/offline_close_harness.py b/cloud_api/offline_close_harness.py
 new file mode 100644
-index 0000000..e242199
+index 0000000..f72122c
 --- /dev/null
 +++ b/cloud_api/offline_close_harness.py
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,283 @@
 +"""Offline harness for Close Profits 2.0: REAL source of the individual close route, the Auto Hedge manual-release
 +helpers, the account-lease functions, the Auto Hedge lock/dynamic-hedge guard modules and (optionally) the Auto
 +Hedge worker entry, executed against an in-memory Firestore model and a simulated Aster ledger.
@@ -217,15 +217,35 @@ index 0000000..e242199
 +        self.modes = {}          # symbol -> "ok" | "drop_after_accept" | "reject_before"
 +        self.on_before_order = None
 +        self.on_before_read = None
++        self.order_log = {}      # client order id -> {"symbol","side","qty","executed","status"}  (REAL-leg mode)
++        self.reflection_lag = {} # symbol -> number of position_risk() reads that still show the OLD size
++        self._pending = []       # [(reads_left, symbol, side, new_qty)]
++        self.partial_ratio = 0.4
++        self.query_fails = set() # symbols for which the read-only order query errors
 +
 +    def add(self, symbol, side, qty, mark=100.0, entry=None, minimum=0.001, step=0.001):
 +        self.pos[(symbol, side)] = float(qty); self.mark[symbol] = float(mark)
 +        self.entry[(symbol, side)] = entry if entry is not None else (mark + 5 if side == "SHORT" else mark - 5)
 +        self.min_qty[symbol] = minimum; self.step[symbol] = step
 +
++    def reduce(self, symbol, side, qty, lag=0):
++        """Apply a fill to the exchange position; with lag>0 the position endpoint keeps showing the old size."""
++        new_qty = max(0.0, self.pos[(symbol, side)] - qty)
++        if lag:
++            self._pending.append([lag, symbol, side, self.pos[(symbol, side)], new_qty])
++        self.pos[(symbol, side)] = new_qty
++
 +    def rows(self):
++        shown = dict(self.pos)
++        still = []
++        for item in self._pending:
++            if item[0] > 0:
++                shown[(item[1], item[2])] = item[3]          # lagging reflection: old size still visible
++                item[0] -= 1
++                still.append(item)
++        self._pending = still
 +        out = []
-+        for (symbol, side), qty in self.pos.items():
++        for (symbol, side), qty in shown.items():
 +            if qty <= 0:
 +                continue
 +            mark = self.mark[symbol]
@@ -241,7 +261,7 @@ index 0000000..e242199
 +            {"filterType": "MIN_NOTIONAL", "notional": "5"}]} for s in self.mark]}
 +
 +
-+def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra=(), real=None):
++def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra=(), real=None, real_leg=False):
 +    """`real=(firestore_module, google_exceptions_module)` binds the SAME route/lease/helper source to a real
 +    Firestore client `fs` (emulator) instead of the in-memory model."""
 +    """Returns (close_route, ns). `ns` exposes the lease + lock plumbing for worker-side models."""
@@ -268,6 +288,19 @@ index 0000000..e242199
 +    module = ast.Module(body=nodes, type_ignores=[])
 +    ast.fix_missing_locations(module)
 +
++    clock = SimpleNamespace(offset=timedelta(0))          # advance to simulate slow exchange calls / lease expiry
++
++    class _AnyDatetime(type):
++        # Firestore returns its own datetime subclass: isinstance() in the route must accept every datetime.
++        def __instancecheck__(cls, obj):
++            return isinstance(obj, datetime)
++
++    class FakeDT(datetime, metaclass=_AnyDatetime):
++        @classmethod
++        def now(cls, tz=None):
++            base = datetime.now(tz) + clock.offset
++            return cls(base.year, base.month, base.day, base.hour, base.minute, base.second, base.microsecond, base.tzinfo)
++
 +    class HTTPException(Exception):
 +        def __init__(self, status_code, detail):
 +            super().__init__(detail); self.status_code, self.detail = status_code, detail
@@ -283,6 +316,46 @@ index 0000000..e242199
 +            if ledger.on_before_read: ledger.on_before_read()
 +            return ledger.rows()
 +        def public_exchange_info(self): return ledger.exchange_info()
++        # --- REAL-leg mode: the real aster_execution.execute_leg_once talks to these two methods ----------
++        def submit_order_once(self, intent, *, config, confirm, hedge_mode_confirmed, risk_approved):
++            from aster_gateway import AsterSubmissionUncertain
++            sym, side_v, qty = intent.symbol, intent.position_side.value, float(intent.quantity)
++            mode = ledger.modes.get(sym, "ok")
++            if ledger.on_before_order:
++                ledger.on_before_order(sym)
++            if mode == "reject_before":
++                raise RuntimeError("exchange rejected before accept")
++            ledger.orders.append((sym, side_v, qty, intent.intent_id))
++            lag = ledger.reflection_lag.get(sym, 0)
++            if mode == "ack_new":                                 # acknowledged, not (yet) filled; stays NEW on every query
++                ledger.order_log[intent.intent_id] = {"symbol": sym, "executed": 0.0, "status": "NEW"}
++                return {"orderId": 1, "status": "NEW"}, False
++            if mode == "ack_new_then_filled":                     # ack NEW, the confirmation query already sees FILLED
++                ledger.reduce(sym, side_v, qty, lag)
++                ledger.order_log[intent.intent_id] = {"symbol": sym, "executed": qty, "status": "FILLED"}
++                return {"orderId": 1, "status": "NEW"}, False
++            if mode == "partial_fill":
++                done = qty * ledger.partial_ratio
++                ledger.reduce(sym, side_v, done, lag)
++                ledger.order_log[intent.intent_id] = {"symbol": sym, "executed": done, "status": "PARTIALLY_FILLED"}
++                return {"orderId": 1, "status": "PARTIALLY_FILLED", "executedQty": str(done)}, False
++            ledger.reduce(sym, side_v, qty, lag)
++            ledger.order_log[intent.intent_id] = {"symbol": sym, "executed": qty, "status": "FILLED"}
++            if mode == "drop_after_accept":
++                raise ConnectionError("connection lost after Aster accepted the order")
++            if mode == "timeout_after_accept":                    # read timeout; the gateway then does ONE read-only query
++                if sym in ledger.query_fails:
++                    raise AsterSubmissionUncertain("Aster-order blijft onzeker")
++                return {"orderId": 1, "status": "FILLED"}, True
++            if mode == "late_response":                           # the answer arrives very late (lease may have expired)
++                clock.offset += timedelta(seconds=60)
++            return {"orderId": 1, "status": "FILLED"}, False
++        def query_order(self, symbol, intent_id):
++            if symbol in ledger.query_fails:
++                from aster_gateway import AsterApiError
++                raise AsterApiError("query failed")
++            row = ledger.order_log.get(intent_id)
++            return {"orderId": 1, "status": row["status"] if row else "UNKNOWN"}
 +
 +    def execute_aster_leg(client, plan, *, side, action, id_prefix, confirm, manual_loss_confirmation):
 +        sym, side_v = plan.symbol, side.value if hasattr(side, "value") else side
@@ -300,9 +373,13 @@ index 0000000..e242199
 +            raise ConnectionError("connection lost after Aster accepted the order")   # UNKNOWN to the caller
 +        return {"status": "FILLED"}
 +
++    if real_leg:
++        from aster_execution import execute_leg_once
++        execute_aster_leg = execute_leg_once  # noqa: F811  (REAL code path: no double POST, fill confirmation, fail-closed)
 +    ns = {
++        "clock": clock,
 +        "db": fs, "firestore": real[0] if real else SimpleNamespace(transactional=lambda f: (lambda txn: _locked(fs, f, txn))),
-+        "datetime": datetime, "timezone": timezone, "timedelta": timedelta, "python_secrets": secrets,
++        "datetime": FakeDT, "timezone": timezone, "timedelta": timedelta, "python_secrets": secrets,
 +        "hashlib": __import__("hashlib"), "os": SimpleNamespace(getenv=lambda *a, **k: "true"), "time": SimpleNamespace(sleep=lambda x: None),
 +        "HTTPException": HTTPException, "google_exceptions": real[1] if real else SimpleNamespace(AlreadyExists=AlreadyExists),
 +        "AutoHedgeCloseBlocked": lock.AutoHedgeCloseBlocked, "require_auto_hedge_close_allowed": lock.require_auto_hedge_close_allowed,
@@ -435,10 +512,10 @@ index 0000000..38ad2e7
 +    sys.stdin.read()          # parent closes stdin to stop
 diff --git a/cloud_api/test_close_profits_2_0_firestore_emulator.py b/cloud_api/test_close_profits_2_0_firestore_emulator.py
 new file mode 100644
-index 0000000..955c8a3
+index 0000000..559ea88
 --- /dev/null
 +++ b/cloud_api/test_close_profits_2_0_firestore_emulator.py
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,52 @@
 +"""Close Profits 2.0 — the SAME scenarios as test_close_profits_2_0_integration, executed against a REAL Firestore
 +(emulator). Real here: Firestore transactions/documents/AlreadyExists; the route/helper/lease source from main.py.
 +Still mocked: the Aster exchange (ledger). NOT RUN in the authoring sandbox (no google-cloud-firestore / emulator).
@@ -453,6 +530,7 @@ index 0000000..955c8a3
 +import uuid
 +
 +import test_close_profits_2_0_integration as scenarios
++import test_close_profits_2_0_round6 as round6
 +
 +EMULATOR = bool(os.environ.get("FIRESTORE_EMULATOR_HOST"))
 +try:
@@ -467,6 +545,9 @@ index 0000000..955c8a3
 +    EMULATOR = True
 +
 +    def make_store(self):
++        host = os.environ.get("FIRESTORE_EMULATOR_HOST", "")
++        if not host.startswith(("127.0.0.1:", "localhost:")) or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
++            raise RuntimeError("refusing to run: emulator on localhost only, and no service-account credentials in the env")
 +        self.uid = "u-" + uuid.uuid4().hex[:12]                 # unique account per test: no cross-test state
 +        db = firestore.Client(project=os.environ.get("GCLOUD_PROJECT", "close-profits-test-only"))
 +        return db, (firestore, google_exceptions)
@@ -481,6 +562,9 @@ index 0000000..955c8a3
 +EmulatorUnknownOutcomeTests = _make(scenarios.UnknownOutcomeTests)
 +EmulatorAutoHedgeConcurrencyTests = _make(scenarios.AutoHedgeConcurrencyTests)
 +EmulatorPlainShortBecomesAutoHedgeTests = _make(scenarios.PlainShortBecomesAutoHedgeTests)
++EmulatorExchangeEdgeCaseTests = _make(round6.ExchangeEdgeCaseTests)
++EmulatorLeaseExpiryTests = _make(round6.LeaseExpiryTests)
++EmulatorClockModelTests = _make(round6.ClockModelTests)
 +
 +if __name__ == "__main__":
 +    unittest.main()
@@ -890,34 +974,284 @@ index 0000000..61b4059
 +
 +if __name__ == "__main__":
 +    unittest.main()
+diff --git a/cloud_api/test_close_profits_2_0_round6.py b/cloud_api/test_close_profits_2_0_round6.py
+new file mode 100644
+index 0000000..0139ef5
+--- /dev/null
++++ b/cloud_api/test_close_profits_2_0_round6.py
+@@ -0,0 +1,242 @@
++"""Close Profits 2.0 round 6 — exchange edge cases and lease expiry, model based.
++
++Mocked: Firestore (in-memory model), Aster ledger + a controllable clock. REAL: the individual close route, the
++manual-release helpers, the lease functions, the lock / dynamic-hedge guards and — in these tests — the REAL
++aster_execution.execute_leg_once (single POST, fill confirmation, fail-closed on NEW/PARTIALLY_FILLED).
++NOT real: Firestore, Aster, the Auto Hedge worker loop (modelled by a probe that follows its lease-first protocol).
++Tests named KNOWN_RESIDUAL document behaviour that is NOT safe-by-proof; they exist so the risk stays visible."""
++from __future__ import annotations
++
++import re
++import unittest
++from datetime import timedelta
++from pathlib import Path
++
++import offline_close_harness as H
++from test_close_profits_2_0_integration import Base, KEY, pair
++
++
++class RealLeg(Base):
++    def setUp(self, src=None):
++        self.fs, real = self.make_store()
++        self.L = H.Ledger(self.fs)
++        self.route, self.ns, self.HTTP = H.build_backend(self.L, self.fs, src=src, real=real, real_leg=True)
++        self.n = 0
++
++    def world(self):
++        self.L.add("BTCUSDT", "SHORT", 8.0); self.L.add("BTCUSDT", "LONG", 8.0)
++        self.L.add("ETHUSDT", "SHORT", 5.0); self.L.add("ETHUSDT", "LONG", 5.0)
++        self.L.add("SOLUSDT", "SHORT", 7.0)
++        self.seed_pair("BTCUSDT", pair())
++        self.before = dict(self.L.pos)
++
++    def others_untouched(self):
++        for k, v in self.before.items():
++            if k[0] != "BTCUSDT" or k[1] == "LONG":
++                self.assertEqual(self.L.pos[k], v, k)
++
++
++class ExchangeEdgeCaseTests(RealLeg):
++    def test_partial_fill_stops_with_one_order_and_never_a_second_market_order(self):
++        self.world(); self.L.modes["BTCUSDT"] = "partial_fill"
++        with self.assertRaises(self.HTTP) as ctx:
++            self.close("BTCUSDT", 8.0, 50, key=KEY(1))
++        self.assertEqual(ctx.exception.status_code, 502)
++        self.assertIn("er wordt niet opnieuw besteld", ctx.exception.detail)
++        self.assertEqual(len(self.L.orders), 1)
++        self.assertEqual(self.pair_doc("BTCUSDT")["status"], "MANUAL_RELEASE_UNCERTAIN")
++        self.assertEqual(self.L.pos[("BTCUSDT", "SHORT")], 8.0 - 4.0 * 0.4)        # only the partial fill happened
++        self.others_untouched(); self.assertTrue(self.lease_free())
++        for key in (KEY(1), KEY(2)):                                              # same key / new key with the stale size
++            with self.assertRaises(self.HTTP) as again:
++                self.close("BTCUSDT", 8.0, 50, key=key)
++            self.assertEqual(again.exception.status_code, 409)
++        self.assertEqual(len(self.L.orders), 1)
++
++    def test_exchange_reject_before_execution_leaves_everything_untouched(self):
++        self.world(); self.L.modes["BTCUSDT"] = "reject_before"
++        with self.assertRaises(self.HTTP) as ctx:
++            self.close("BTCUSDT", 8.0, 25)
++        self.assertEqual(ctx.exception.status_code, 502)
++        self.assertEqual(self.L.orders, []); self.assertEqual(self.L.pos, self.before); self.assertTrue(self.lease_free())
++
++    def test_timeout_after_accept_recovered_by_the_single_readonly_query_is_one_order(self):
++        self.world(); self.L.modes["BTCUSDT"] = "timeout_after_accept"
++        out = self.close("BTCUSDT", 8.0, 25)
++        self.assertEqual(len(self.L.orders), 1)
++        self.assertEqual(out["remainingSize"], 6.0)
++        self.others_untouched()
++
++    def test_timeout_after_accept_with_failing_query_is_unknown_and_stops(self):
++        self.world(); self.L.modes["BTCUSDT"] = "timeout_after_accept"; self.L.query_fails.add("BTCUSDT")
++        with self.assertRaises(self.HTTP) as ctx:
++            self.close("BTCUSDT", 8.0, 25, key=KEY(1))
++        self.assertEqual(ctx.exception.status_code, 502)
++        self.assertEqual(len(self.L.orders), 1)
++        self.assertEqual(self.pair_doc("BTCUSDT")["status"], "MANUAL_RELEASE_UNCERTAIN")
++        with self.assertRaises(self.HTTP):
++            self.close("BTCUSDT", 8.0, 25, key=KEY(1))                            # replay: refused, no second order
++        self.assertEqual(len(self.L.orders), 1); self.others_untouched()
++
++    def test_order_ack_without_final_fill_new_status_is_unknown_not_a_new_order(self):
++        self.world(); self.L.modes["BTCUSDT"] = "ack_new"
++        with self.assertRaises(self.HTTP) as ctx:
++            self.close("BTCUSDT", 8.0, 25)
++        self.assertEqual(ctx.exception.status_code, 502)
++        self.assertEqual(len(self.L.orders), 1); self.others_untouched()
++
++    def test_order_ack_new_then_confirmed_filled_by_the_readonly_query_is_one_order(self):
++        self.world(); self.L.modes["BTCUSDT"] = "ack_new_then_filled"
++        out = self.close("BTCUSDT", 8.0, 25)
++        self.assertEqual(len(self.L.orders), 1); self.assertEqual(out["remainingSize"], 6.0)
++
++    def test_delayed_position_reflection_is_not_confirmed_and_stops_without_second_order(self):
++        self.world(); self.L.reflection_lag["BTCUSDT"] = 1                        # next position read still shows the old size
++        with self.assertRaises(self.HTTP) as ctx:
++            self.close("BTCUSDT", 8.0, 25, key=KEY(1))
++        self.assertEqual(ctx.exception.status_code, 502)
++        self.assertIn("niet opnieuw besteld", ctx.exception.detail)
++        self.assertEqual(len(self.L.orders), 1)
++        self.assertEqual(self.pair_doc("BTCUSDT")["status"], "MANUAL_RELEASE_UNCERTAIN")
++        with self.assertRaises(self.HTTP):
++            self.close("BTCUSDT", 8.0, 25, key=KEY(1))                            # same key: idempotent refusal
++        self.assertEqual(len(self.L.orders), 1)
++
++    def test_KNOWN_RESIDUAL_manual_click_with_new_key_while_exchange_still_shows_old_size_can_order_again(self):
++        """Pre-existing behaviour of the individual route (not reachable from the green button, which stops on 502):
++        while Aster's position endpoint still shows the OLD size, a human clicking again with a NEW key passes the
++        expected_quantity check. Documented, not fixed (route must stay unchanged)."""
++        self.world(); self.L.reflection_lag["BTCUSDT"] = 4
++        with self.assertRaises(self.HTTP):
++            self.close("BTCUSDT", 8.0, 25, key=KEY(1))
++        self.close("BTCUSDT", 8.0, 25, key=KEY(2))
++        self.assertEqual(len(self.L.orders), 2)              # measured: the second click DOES place a second MARKET close
++        self.assertEqual(self.L.pos[("BTCUSDT", "SHORT")], 4.0)   # 8 -> 6 -> 4: 25% of the stale displayed 8, twice
++
++    def test_series_stops_at_the_first_unknown_and_other_shorts_are_never_touched(self):
++        self.world(); self.L.modes["ETHUSDT"] = "partial_fill"
++        sent = []
++        for sym, qty in (("BTCUSDT", 8.0), ("ETHUSDT", 5.0), ("SOLUSDT", 7.0)):      # what the frontend loop does
++            try:
++                self.close(sym, qty, 50); sent.append((sym, "ok"))
++            except self.HTTP:
++                sent.append((sym, "stop")); break
++        self.assertEqual(sent, [("BTCUSDT", "ok"), ("ETHUSDT", "stop")])
++        self.assertEqual(self.L.pos[("SOLUSDT", "SHORT")], 7.0)
++        self.assertEqual(self.L.pos[("ETHUSDT", "LONG")], 5.0); self.assertEqual(self.L.pos[("BTCUSDT", "LONG")], 8.0)
++
++
++class LeaseExpiryTests(RealLeg):
++    def worker_acquires(self, store):
++        token = self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "POSITION_LOSS_EXACT_1_TO_1")
++        store.append(token)
++        return token
++
++    def test_lease_expired_during_a_late_response_worker_may_take_it_but_cannot_rehedge_the_frozen_pair(self):
++        self.world(); self.L.modes["BTCUSDT"] = "late_response"                   # response arrives 60 s late > 45 s TTL
++        worker, seen = [], {}
++        reads = {"n": 0}
++
++        def on_read():
++            reads["n"] += 1
++            if reads["n"] == 3 and not worker:                                     # the read AFTER the late order
++                self.worker_acquires(worker)
++                seen["pair"] = dict(self.pair_doc("BTCUSDT"))
++        self.L.on_before_read = on_read
++        out = self.close("BTCUSDT", 8.0, 25)
++        self.assertTrue(worker and worker[0])                                      # FACT: lease can be taken after expiry
++        self.assertIn(seen["pair"]["status"], {"MANUAL_RELEASE_PENDING"})          # ... but the pair is frozen,
++        self.assertFalse(seen["pair"]["rehedgeEnabled"])                           # re-hedge is OFF while pending
++        self.assertEqual(len(self.L.orders), 1)
++        self.assertEqual(out["remainingSize"], 6.0)
++        self.assertEqual(self.pair_doc("BTCUSDT")["status"], "RECOVERY")
++        lease = (self.get("asterAccountCoordination", self.uid) or {}).get("lease") or {}
++        self.assertEqual(lease.get("token"), worker[0])                            # route's release did NOT clobber the worker's lease
++        self.others_untouched()
++
++    def test_lease_expiring_during_the_exchange_reread_still_freezes_a_pair_created_meanwhile(self):
++        self.L.add("BTCUSDT", "SHORT", 8.0); self.L.add("BTCUSDT", "LONG", 8.0)
++        self.put("asterPositionLossAutoHedge", self.uid, {"enabled": True})
++        done = {"v": False}
++        calls = {"n": 0}
++
++        def on_read():
++            calls["n"] += 1
++            if calls["n"] == 2 and not done["v"]:                                 # the re-read under the lease is slow (50 s)
++                done["v"] = True
++                self.ns.clock.offset += timedelta(seconds=50)
++                token = self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "x")
++                self.assertTrue(token)
++                self.seed_pair("BTCUSDT", pair())                                  # worker creates the pair after expiry
++                self.ns._release_aster_account_coordination(self.uid, token)
++        self.L.on_before_read = on_read
++        self.close("BTCUSDT", 8.0, 25)
++        self.assertEqual(self.pair_doc("BTCUSDT")["status"], "RECOVERY")           # pair is re-read AFTER the exchange read
++        self.assertFalse(self.pair_doc("BTCUSDT")["rehedgeEnabled"])
++        self.assertEqual(len(self.L.orders), 1)
++
++    def test_KNOWN_RESIDUAL_plain_short_pair_created_after_lease_expiry_while_the_order_is_in_flight(self):
++        """Only reachable if the exchange POST (or a Firestore stall) outlives the 45 s lease: the worker then creates
++        the pair AFTER the route's last pair read, so the close is not frozen. Needs >45 s; Aster calls time out at
++        15 s per phase. Not fixed (no lease renewal / TTL change without proven necessity) -> production NO-GO stays."""
++        self.L.add("BTCUSDT", "SHORT", 8.0); self.L.add("BTCUSDT", "LONG", 8.0)
++        self.put("asterPositionLossAutoHedge", self.uid, {"enabled": True})
++        self.L.modes["BTCUSDT"] = "late_response"
++        state = {"n": 0}
++
++        def on_before_order(sym):
++            token = self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "x")
++            self.assertIsNone(token)                                               # lease still valid at the moment of ordering
++        self.L.on_before_order = on_before_order
++        reads = {"n": 0}
++
++        def on_read():
++            reads["n"] += 1
++            if reads["n"] == 3:                                                    # after the late response (lease expired)
++                token = self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "x")
++                if token:
++                    self.seed_pair("BTCUSDT", pair())
++                    self.ns._release_aster_account_coordination(self.uid, token)
++                    state["pair_created_late"] = True
++        self.L.on_before_read = on_read
++        self.close("BTCUSDT", 8.0, 25)
++        self.assertTrue(state.get("pair_created_late"))
++        self.assertEqual(self.pair_doc("BTCUSDT")["status"], "HEDGED")             # NOT frozen: the residual, made visible
++        self.assertEqual(len(self.L.orders), 1)                                    # but still exactly one close order
++
++
++class ClockModelTests(RealLeg):
++    def test_injected_datetime_accepts_foreign_datetime_subclasses_like_firestore_timestamps(self):
++        from datetime import datetime, timezone
++
++        class DatetimeWithNanoseconds(datetime):
++            pass
++        foreign = DatetimeWithNanoseconds(2030, 1, 1, tzinfo=timezone.utc)
++        self.assertIsInstance(foreign, self.ns.datetime)
++        self.put("asterAccountCoordination", self.uid, {"lease": {"token": "x", "until": foreign}})
++        self.assertIsNone(self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "x"))   # still held
++
++
++class WorkerStatusSourceTests(unittest.TestCase):
++    SRC = (Path(__file__).parent / "aster_position_loss_auto_hedge_extension.py").read_text()
++
++    def sets(self, name):
++        m = re.search(name + r" = \{([^}]*)\}", self.SRC)
++        return set(re.findall(r'"([A-Z_]+)"', m.group(1)))
++
++    def test_manual_release_states_are_recovery_states_the_worker_never_treats_as_active_or_rehedgeable(self):
++        recovery, active, rehedgeable = self.sets("RECOVERY_STATUSES"), self.sets("ACTIVE_STATUSES"), self.sets("REHEDGEABLE_STATUSES")
++        for status in ("MANUAL_RELEASE_PENDING", "MANUAL_RELEASE_UNCERTAIN"):
++            self.assertIn(status, recovery)
++            self.assertNotIn(status, active)
++            self.assertNotIn(status, rehedgeable)
++
++    def test_begin_release_turns_rehedge_off_before_the_order(self):
++        src = (Path(__file__).parent / "main.py").read_text()
++        body = src[src.index("def _begin_position_loss_auto_hedge_manual_release"):src.index("def _complete_position_loss_auto_hedge_manual_release")]
++        self.assertIn('"rehedgeEnabled": False', body.replace("False,", "False,"))
++        self.assertIn("MANUAL_RELEASE_PENDING", body)
++
++
++if __name__ == "__main__":
++    unittest.main()
 diff --git a/tools/run_close_profits_2_0_integration.sh b/tools/run_close_profits_2_0_integration.sh
 new file mode 100755
-index 0000000..6b4d199
+index 0000000..959f8a9
 --- /dev/null
 +++ b/tools/run_close_profits_2_0_integration.sh
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,22 @@
 +#!/usr/bin/env bash
 +# Reproducible validation for Close Profits 2.0 against the REAL Firestore emulator (Aster stays a mock; no credentials,
 +# no production project, no orders). Needs network (npm/PyPI) + Java 21: run in CI or on an authorised dev machine.
 +set -euo pipefail
 +cd "$(dirname "$0")/.."
 +export GCLOUD_PROJECT=close-profits-test-only
-+export FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
++# Never inherit credentials or a real project; FIRESTORE_EMULATOR_HOST is set ONLY inside `emulators:exec` below
++# (exporting it globally would make the emulator tests run, and fail, in steps that have no emulator).
++unset GOOGLE_APPLICATION_CREDENTIALS GOOGLE_CLOUD_PROJECT FIRESTORE_EMULATOR_HOST GOOGLE_CLOUD_QUOTA_PROJECT
 +python3 -m venv /tmp/cp20-venv && . /tmp/cp20-venv/bin/activate
 +python -m pip install -r cloud_api/requirements.txt pytest
 +npm install --no-save firebase-tools@14.21.0
 +printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
 +# 1) model-based scenarios (real route source, in-memory Firestore MODEL)
-+( cd cloud_api && python -m unittest -v test_close_profits_2_0_integration )
++( cd cloud_api && python -m unittest -v test_close_profits_2_0_integration test_close_profits_2_0_round6 )
 +# 2) the same scenarios on the REAL Firestore emulator
 +npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project "$GCLOUD_PROJECT" \
 +  'cd cloud_api && python -m unittest -v test_close_profits_2_0_firestore_emulator'
 +# 3) frontend handlers -> real Next proxy code -> local backend wrapper (real httpx, model Firestore)
-+( cd web && node --test tests/aster-close-profits-integration.test.mjs tests/aster-close-profits-scope.test.mjs tests/aster-close-profits-short-handler.test.mjs )
++( cd web && node --test tests/aster-close-profits-integration.test.mjs tests/aster-close-profits-scope.test.mjs tests/aster-close-profits-short-handler.test.mjs tests/aster-close-profits-round6.test.mjs )
 +# 4) full backend regression with real dependencies, like cloud-backend-ci.yml
 +( cd cloud_api && python -m pytest -q )
 diff --git a/web/components/aster-recent-trades.tsx b/web/components/aster-recent-trades.tsx
-index 221e1e0..eab05df 100644
+index 221e1e0..4d9f0f7 100644
 --- a/web/components/aster-recent-trades.tsx
 +++ b/web/components/aster-recent-trades.tsx
 @@ -1394,6 +1394,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
@@ -933,7 +1267,7 @@ index 221e1e0..eab05df 100644
    async function closeProfits() {
      if (bulkCloseInFlightRef.current || profitBusy || !profitConfirming || !profitSnapshotReliable || bulkCloseTargets.length === 0) return;
      bulkCloseInFlightRef.current = true;
-@@ -1401,28 +1407,74 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+@@ -1401,28 +1407,90 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
      setProfitConfirming(false);
      let closed = 0;
      let skipped = 0;
@@ -941,46 +1275,65 @@ index 221e1e0..eab05df 100644
 +    let noLongerEligible = 0;
      let stoppedAt = "";
      for (const target of bulkCloseTargets) {
-+      let busyRetries = 0;
-+      let done = false;
-+      // Re-check immediately before this close (read-only): the SHORT must still exist with the same full
-+      // quantity and still be strictly above the $0,50 profit threshold. Unreliable read -> stop the series.
-       try {
+-      try {
 -        await authenticatedRequest(
 -          "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
 -          { method: "POST", body: JSON.stringify({
 -            confirm: true, side: "SHORT", expected_quantity: target.quantity,
 -            percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
 -          }) },
-+        const fresh = await authenticatedRequest(
-+          "/api/exchanges/aster/positions/manual-profit-close-plan?percentage=" + profitClosePercentage,
-+          { method: "GET", cache: "no-store" },
-         );
+-        );
 -        closed++;
 -      } catch (reason) {
 -        const details = reason instanceof Error ? reason.message : String(reason);
 -        if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details)) {
 -          skipped++;
 -          continue;
-+        let stillSelected = false;
-+        for (const item of (fresh.selected || [])) {
-+          if (String(item.symbol || "").toUpperCase() === target.symbol && String(item.side || "").toUpperCase() === "SHORT") stillSelected = true;
-+        }
-+        let liveRow = null;
-+        for (const row of (fresh.snapshot?.rows || [])) {
-+          if (String(row.symbol || "").toUpperCase() === target.symbol && String(row.side || "").toUpperCase() === "SHORT") liveRow = row;
++      let busyRetries = 0;
++      let done = false;
++      // Fresh read-only check, run before EVERY close attempt (first try and each account-busy retry).
++      // Fail-closed: the SHORT must appear exactly once in a reliable snapshot, with the same full quantity,
++      // a readable profit strictly above $0,50, and still be selected by the backend planner.
++      // Returns "ok", "gone" (no longer eligible -> skip, no order) or a stop reason string.
++      const freshCheck = async () => {
++        try {
++          const fresh = await authenticatedRequest(
++            "/api/exchanges/aster/positions/manual-profit-close-plan?percentage=" + profitClosePercentage,
++            { method: "GET", cache: "no-store" },
++          );
++          if (!fresh || fresh.reliable !== true || !Array.isArray(fresh.selected) || !fresh.snapshot || !Array.isArray(fresh.snapshot.rows)) {
++            return target.symbol + ": actuele positiegegevens zijn niet betrouwbaar";
++          }
++          let selectedCount = 0;
++          for (const item of fresh.selected) {
++            if (String(item.symbol || "").toUpperCase() === target.symbol && String(item.side || "").toUpperCase() === "SHORT") selectedCount++;
++          }
++          let rowCount = 0;
++          let liveRow = null;
++          for (const row of fresh.snapshot.rows) {
++            if (String(row.symbol || "").toUpperCase() === target.symbol && String(row.side || "").toUpperCase() === "SHORT") { rowCount++; liveRow = row; }
++          }
++          if (rowCount !== 1 || selectedCount > 1) return target.symbol + ": positie ontbreekt of is niet eenduidig in de actuele gegevens";
++          const liveQuantity = Math.abs(Number(liveRow.quantity));
++          if (!(liveQuantity > 0) || Math.abs(liveQuantity - target.quantity) > Math.max(1e-12, target.quantity * 1e-9)) {
++            return target.symbol + ": positiegrootte is gewijzigd sinds de preview";
++          }
++          if (selectedCount === 0) return "gone";
++          const livePnl = Number(liveRow.unrealizedPnl);
++          if (liveRow.unrealizedPnl === null || liveRow.unrealizedPnl === undefined || liveRow.unrealizedPnl === "" || !Number.isFinite(livePnl) || !(livePnl > 0.5)) {
++            return target.symbol + ": winstgegevens zijn tegenstrijdig of onleesbaar";
++          }
++          return "ok";
++        } catch (reason) {
++          return target.symbol + ": actuele winstcontrole mislukt (" + (reason instanceof Error ? reason.message : String(reason)) + ")";
          }
 -        stoppedAt = target.symbol + ": " + details;
-+        if (liveRow && Math.abs(Math.abs(Number(liveRow.quantity)) - target.quantity) > Math.max(1e-12, target.quantity * 1e-9)) {
-+          stoppedAt = target.symbol + ": positiegrootte is gewijzigd sinds de preview";
-+          break;
-+        }
-+        if (!stillSelected) { noLongerEligible++; continue; }
-+      } catch (reason) {
-+        stoppedAt = target.symbol + ": actuele winstcontrole mislukt (" + (reason instanceof Error ? reason.message : String(reason)) + ")";
-         break;
+-        break;
        }
 +      while (!done) {
++        const checked = await freshCheck();
++        if (checked === "gone") { noLongerEligible++; done = true; continue; }
++        if (checked !== "ok") { stoppedAt = checked; done = true; continue; }
 +        try {
 +          await authenticatedRequest(
 +            "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
@@ -1022,7 +1375,7 @@ index 221e1e0..eab05df 100644
        (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
      setBulkCloseTargets([]);
      setProfitPreview(null);
-@@ -1597,6 +1649,9 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+@@ -1597,6 +1665,9 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                    <h3 id="profit-close-title">{profitPreview.eligibleCount} winstposities sluiten?</h3>
                    <dl><dt>Actuele totale winst</dt><dd className={styles.profit}>{money(profitPreview.totalProfitUsd, true)}</dd><dt>Geschikte posities</dt><dd>{profitPreview.eligibleCount}</dd></dl>
                    <p>Bevestig {profitClosePercentage}% MARKET-sluiting per geselecteerde SHORT. Iedere munt gebruikt de bestaande individuele Aster-sluitroute. Bij onbekende uitvoeringsstatus stopt de verwerking.</p>
@@ -1032,7 +1385,7 @@ index 221e1e0..eab05df 100644
                    <div style={{maxHeight:250,overflowY:"auto",display:"grid",gap:8}}>
                      {bulkCloseTargets.map((target) => (
                        <button key={target.symbol + "|" + target.side} type="button" disabled={profitBusy}
-@@ -1605,7 +1660,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+@@ -1605,7 +1676,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                            const position = livePositions.find((item) => normalizedSymbol(item.symbol || "") === target.symbol && String(item.side).toUpperCase() === target.side);
                            if (position) openClosePosition(position);
                          }}>
@@ -1277,9 +1630,147 @@ index 0000000..656f368
 +  const hedged = new Set(Object.keys(world().pairs));
 +  assert.ok(r.state.probes.filter((p) => /^C\d\d/.test(p.symbol) && !hedged.has(p.symbol)).every((p) => p.workerGotLease === true));   // original lease-free path
 +});
+diff --git a/web/tests/aster-close-profits-round6.test.mjs b/web/tests/aster-close-profits-round6.test.mjs
+new file mode 100644
+index 0000000..9e95e9d
+--- /dev/null
++++ b/web/tests/aster-close-profits-round6.test.mjs
+@@ -0,0 +1,132 @@
++// Round 6: fail-closed fresh check before EVERY close attempt (first try and each account-busy retry).
++import assert from "node:assert/strict";
++import fs from "node:fs";
++import vm from "node:vm";
++import test from "node:test";
++
++const source = fs.readFileSync(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
++const start = source.indexOf("  async function closeProfits() {");
++const end = source.indexOf("\n  function selectFilter(", start);
++const handlerCode = source.slice(start, end);
++const BUSY = "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw";
++
++// previews: array of functions (n-th preview call) -> response object (or throws). Default: healthy.
++function harness({ targets, previews = [], posts = {} }) {
++  const calls = [], previewCalls = [];
++  const state = { message: "", refresh: 0, keys: 0 };
++  const healthy = () => ({
++    reliable: true,
++    selected: targets.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
++    snapshot: { rows: targets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(t.quantity), unrealizedPnl: "1.25" })) },
++  });
++  const ctx = {
++    profitBusy: false, profitConfirming: true, profitSnapshotReliable: true,
++    bulkCloseTargets: targets, bulkCloseInFlightRef: { current: false }, profitClosePercentage: 50,
++    setProfitBusy: () => {}, setProfitConfirming: () => {},
++    setProfitMessage: (v) => { state.message = v; }, setBulkCloseTargets: () => {}, setProfitPreview: () => {},
++    onRetry: () => { state.refresh++; },
++    encodeURIComponent, JSON, Promise, Error, String, Number, Math, Array,
++    setTimeout: (fn) => fn(), // no real 1.5 s wait in tests
++    newCloseIdempotencyKey: () => "k" + ++state.keys,
++    authenticatedRequest: async (url, options) => {
++      if (url.includes("manual-profit-close-plan")) {
++        const n = previewCalls.length; previewCalls.push(url);
++        const f = previews[n];
++        return f ? f(healthy()) : healthy();
++      }
++      const symbol = url.split("/").at(-2);
++      const n = calls.filter((c) => c.symbol === symbol).length;
++      calls.push({ symbol, data: JSON.parse(options.body) });
++      const script = posts[symbol] || [];
++      const step = script[n];
++      if (step instanceof Error) throw step;
++      return { closedSize: 1 };
++    },
++  };
++  const handler = vm.runInNewContext(handlerCode + "\ncloseProfits;", ctx);
++  return { handler, calls, previewCalls, state };
++}
++const T = [{ symbol: "BTCUSDT", quantity: 8 }];
++const drop = (res) => { res.snapshot.rows = []; return res; };
++
++test("selected but position missing from snapshot -> stop BEFORE any order", async () => {
++  const h = harness({ targets: T, previews: [drop] });
++  await h.handler();
++  assert.equal(h.calls.length, 0);
++  assert.match(h.state.message, /Gestopt bij BTCUSDT/);
++});
++test("duplicate / contradictory position rows -> stop before order", async () => {
++  const dup = (res) => { res.snapshot.rows.push({ ...res.snapshot.rows[0] }); return res; };
++  const h = harness({ targets: T, previews: [dup] });
++  await h.handler();
++  assert.equal(h.calls.length, 0);
++  assert.match(h.state.message, /Gestopt bij BTCUSDT/);
++});
++test("unreadable snapshot shape (rows not an array / reliable missing) -> stop", async () => {
++  for (const mut of [(r) => { r.snapshot.rows = null; return r; }, (r) => { delete r.snapshot; return r; }, (r) => { r.reliable = false; return r; }, (r) => { r.selected = null; return r; }]) {
++    const h = harness({ targets: T, previews: [mut] });
++    await h.handler();
++    assert.equal(h.calls.length, 0);
++    assert.match(h.state.message, /Gestopt bij BTCUSDT/);
++  }
++});
++test("selected but row profit <= 0.50 or unreadable -> stop (contradiction), no order", async () => {
++  for (const pnl of ["0.50", "0.49", "abc", undefined]) {
++    const m = (r) => { r.snapshot.rows[0].unrealizedPnl = pnl; return r; };
++    const h = harness({ targets: T, previews: [m] });
++    await h.handler();
++    assert.equal(h.calls.length, 0, String(pnl));
++    assert.match(h.state.message, /Gestopt bij BTCUSDT/);
++  }
++});
++test("not selected anymore (profit gone) -> skipped without order, series continues", async () => {
++  const two = [{ symbol: "BTCUSDT", quantity: 8 }, { symbol: "ETHUSDT", quantity: 3 }];
++  const gone = (r) => { r.selected = r.selected.filter((s) => s.symbol !== "BTCUSDT"); return r; };
++  const h = harness({ targets: two, previews: [gone] });
++  await h.handler();
++  assert.deepEqual(h.calls.map((c) => c.symbol), ["ETHUSDT"]);
++  assert.match(h.state.message, /1 niet meer boven \$0,50 winst/);
++});
++test("retry: profit re-checked after the busy wait; profit gone -> NO second POST", async () => {
++  const gone = (r) => { r.selected = []; return r; };
++  const h = harness({ targets: T, previews: [undefined, gone], posts: { BTCUSDT: [new Error(BUSY)] } });
++  await h.handler();
++  assert.equal(h.calls.length, 1);
++  assert.equal(h.previewCalls.length, 2);
++  assert.match(h.state.message, /niet meer boven \$0,50 winst/);
++});
++test("retry: quantity changed during the wait -> stop, NO second POST", async () => {
++  const changed = (r) => { r.snapshot.rows[0].quantity = "7"; return r; };
++  const h = harness({ targets: T, previews: [undefined, changed], posts: { BTCUSDT: [new Error(BUSY)] } });
++  await h.handler();
++  assert.equal(h.calls.length, 1);
++  assert.match(h.state.message, /Gestopt bij BTCUSDT.*positiegrootte/);
++});
++test("retry: preview fails during the wait -> stop, NO second POST", async () => {
++  const boom = () => { throw new Error("netwerk"); };
++  const h = harness({ targets: T, previews: [undefined, boom], posts: { BTCUSDT: [new Error(BUSY)] } });
++  await h.handler();
++  assert.equal(h.calls.length, 1);
++  assert.match(h.state.message, /Gestopt bij BTCUSDT/);
++});
++test("retry happy path: busy x2 then success, fresh check before each of 3 POSTs, new key each time, full quantity", async () => {
++  const h = harness({ targets: T, posts: { BTCUSDT: [new Error(BUSY), new Error(BUSY)] } });
++  await h.handler();
++  assert.equal(h.calls.length, 3);
++  assert.equal(h.previewCalls.length, 3);
++  assert.equal(new Set(h.calls.map((c) => c.data.idempotency_key)).size, 3);
++  assert.ok(h.calls.every((c) => c.data.expected_quantity === 8));
++  assert.match(h.state.message, /1 SHORTS gesloten/);
++});
++test("max three busy retries (4 POSTs total), then stop", async () => {
++  const h = harness({ targets: T, posts: { BTCUSDT: [new Error(BUSY), new Error(BUSY), new Error(BUSY), new Error(BUSY), new Error(BUSY)] } });
++  await h.handler();
++  assert.equal(h.calls.length, 4);
++  assert.match(h.state.message, /Gestopt bij BTCUSDT/);
++});
++test("UNKNOWN after a busy retry is never repeated", async () => {
++  const h = harness({ targets: T, posts: { BTCUSDT: [new Error(BUSY), new Error("Sluitstatus is niet betrouwbaar bevestigd; er wordt niet opnieuw besteld")] } });
++  await h.handler();
++  assert.equal(h.calls.length, 2);
++  assert.match(h.state.message, /Gestopt bij BTCUSDT/);
++});
 diff --git a/web/tests/aster-close-profits-scope.test.mjs b/web/tests/aster-close-profits-scope.test.mjs
 new file mode 100644
-index 0000000..ed8e09c
+index 0000000..a3fd0ad
 --- /dev/null
 +++ b/web/tests/aster-close-profits-scope.test.mjs
 @@ -0,0 +1,142 @@
@@ -1307,8 +1798,8 @@ index 0000000..ed8e09c
 +      if (url.includes("manual-profit-close-plan")) {            // fresh read-only re-check before every close
 +        ctx.previews++;
 +        const live = ctx.bulkCloseTargets.filter((t) => !ctx.eligible || ctx.eligible.includes(t.symbol));
-+        return { selected: live.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
-+                 snapshot: { rows: ctx.bulkCloseTargets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(ctx.liveQty?.[t.symbol] ?? t.quantity) })) } };
++        return { reliable: true, selected: live.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
++                 snapshot: { rows: ctx.bulkCloseTargets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(ctx.liveQty?.[t.symbol] ?? t.quantity), unrealizedPnl: "1.25" })) } };
 +      }
 +      calls.push({ url, body: JSON.parse(options.body), method: options.method });
 +      const symbol = url.split("/").at(-2);
@@ -1426,7 +1917,7 @@ index 0000000..ed8e09c
 +  }
 +});
 diff --git a/web/tests/aster-close-profits-short-handler.test.mjs b/web/tests/aster-close-profits-short-handler.test.mjs
-index 88111f7..ec5ef93 100644
+index 88111f7..f8fa782 100644
 --- a/web/tests/aster-close-profits-short-handler.test.mjs
 +++ b/web/tests/aster-close-profits-short-handler.test.mjs
 @@ -30,6 +30,10 @@ function harness(percent, failures = {}) {
@@ -1434,8 +1925,8 @@ index 88111f7..ec5ef93 100644
      newCloseIdempotencyKey: () => "unique-close-" + ++state.keys,
      authenticatedRequest: async (url, options) => {
 +      if (url.includes("manual-profit-close-plan")) {
-+        return { selected: targets.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
-+                 snapshot: { rows: targets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(t.quantity) })) } };
++        return { reliable: true, selected: targets.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
++                 snapshot: { rows: targets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(t.quantity), unrealizedPnl: "1.25" })) } };
 +      }
        calls.push({ url, options, data: JSON.parse(options.body) });
        const symbol = url.split("/").at(-2);
