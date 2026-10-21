@@ -8883,7 +8883,22 @@ def close_one_aster_position(
             pair_status in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
             and request.side in {pair_protected_side, pair_hedge_side}
         )
-        if needs_manual_auto_hedge_release:
+        # A plain SHORT with a same-symbol LONG can become an Auto Hedge pair at any moment while Auto
+        # Hedge is on (the worker creates the pair under the account lease). Take the lease in that case
+        # too and decide on the pair state read UNDER the lease; Auto Hedge off / no opposite leg: unchanged.
+        auto_hedge_may_start = False
+        if not needs_manual_auto_hedge_release and any(
+            str(row.get("symbol", "")).upper() == normalized_symbol
+            and str(row.get("positionSide", "")).upper() not in {request.side, ""}
+            and abs(safe_float(row.get("positionAmt"))) > 0 for row in live_rows
+        ):
+            try:
+                auto_hedge_may_start = (
+                    db.collection("asterPositionLossAutoHedge").document(uid).get().to_dict() or {}
+                ).get("enabled") is True
+            except Exception:
+                auto_hedge_may_start = True        # unreadable setting is not proof that Auto Hedge is off
+        if needs_manual_auto_hedge_release or auto_hedge_may_start:
             for _ in range(20):
                 account_token = _acquire_aster_account_coordination(
                     uid, "MANUAL_POSITION_CLOSE", "AUTO_HEDGE_LEG_RELEASE",
@@ -8893,8 +8908,8 @@ def close_one_aster_position(
                 time.sleep(.05)
             if not account_token:
                 raise HTTPException(409, "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw")
-            # Positions were read before the lease: Auto Hedge may have acted in between. Re-read under
-            # the lease and re-validate the confirmed quantity before anything is frozen or ordered.
+            # Positions and pair were read before the lease: Auto Hedge may have acted in between. Re-read
+            # both under the lease and re-validate the confirmed quantity before anything is frozen or ordered.
             live_rows = client.position_risk()
             fresh = next((row for row in live_rows
                 if str(row.get("symbol", "")).upper() == normalized_symbol
@@ -8902,15 +8917,21 @@ def close_one_aster_position(
                 and abs(safe_float(row.get("positionAmt"))) > 0), None)
             if fresh is None or abs(abs(safe_float(fresh.get("positionAmt"))) - request.expected_quantity) > tolerance:
                 raise HTTPException(409, "De positiegrootte is gewijzigd; controleer de actuele positie en bevestig opnieuw")
-            auto_hedge_manual_guard = _begin_position_loss_auto_hedge_manual_release(
-                uid=uid,
-                symbol=normalized_symbol,
-                side=request.side,
-                percentage=request.percentage,
-                close_quantity=close_quantity,
-                live_rows=live_rows,
-                intent_hash=intent_hash,
-            )
+            pair_before_close = _position_loss_auto_hedge_pair(uid, normalized_symbol)
+            if (
+                str(pair_before_close.get("status", "")).upper() in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
+                and request.side in {str(pair_before_close.get("protectedSide", "")).upper(),
+                                     str(pair_before_close.get("hedgeSide", "")).upper()}
+            ):
+                auto_hedge_manual_guard = _begin_position_loss_auto_hedge_manual_release(
+                    uid=uid,
+                    symbol=normalized_symbol,
+                    side=request.side,
+                    percentage=request.percentage,
+                    close_quantity=close_quantity,
+                    live_rows=live_rows,
+                    intent_hash=intent_hash,
+                )
 
         require_auto_hedge_close_allowed(
             account_uid=uid,

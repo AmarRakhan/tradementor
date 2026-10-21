@@ -91,9 +91,10 @@ function world() {
   return { positions, pairs };
 }
 
-async function run({ percentage, modes = {}, workerProbe = true, afterForward, concurrent = false }) {
+async function run({ percentage, modes = {}, workerProbe = true, afterForward, concurrent = false, between, autoHedgeEnabled = true }) {
   const w = world();
   await api("/__setup", { ...w, modes, workerProbe });
+  await api("/__mutate", { autoHedgeEnabled });
   const state0 = await api("/__state");
   const auth = makeAuthenticatedRequest(afterForward);
   const live = state0.rows.map((r) => ({
@@ -110,6 +111,7 @@ async function run({ percentage, modes = {}, workerProbe = true, afterForward, c
   };
   vm.createContext(openCtx); vm.runInContext(helperCode, openCtx);
   await vm.runInContext(openCode + "\nopenProfitConfirmation;", openCtx)();
+  if (between) await between();                                   // world changes after the preview, before the confirmation is executed
   const closeCtx = {
     profitBusy: false, profitConfirming: true, profitSnapshotReliable: true, bulkCloseTargets: ui.targets,
     bulkCloseInFlightRef: { current: false }, profitClosePercentage: percentage,
@@ -200,4 +202,29 @@ test("positions changing between snapshot and execution are refused, never close
   const s = await api("/__state");
   assert.deepEqual(s.orders.map((o) => o[0]), ["C01USDT"]);                                          // C02 refused (stale) and the series stopped
   assert.equal(s.positions["C02USDT|SHORT"], 10);
+});
+
+test("profit fell to <= $0,50 between preview and execution: that SHORT is skipped without an order, the rest continues", async () => {
+  const r = await run({ percentage: 25, between: () => api("/__mutate", { marks: { C00USDT: 104.95 } }) });   // 8 * 0.05 = $0,40
+  assert.equal(r.state.orders.some((o) => o[0] === "C00USDT"), false);
+  assert.equal(r.state.orders.some((o) => o[0] === "C01USDT"), true);
+  assert.match(r.ui.messages.at(-1), /1 niet meer boven \$0,50 winst/);
+});
+
+test("plain SHORT becomes an Auto Hedge pair between preview and execution: closed with the existing manual transition, worker deferred", async () => {
+  const r = await run({ percentage: 50, between: () => api("/__mutate", {
+    pairs: { C07USDT: { status: "HEDGED", protectedSide: "LONG", hedgeSide: "SHORT", rehedgeEnabled: true, reservedHedgeQty: 0, generationId: "late" } } }) });
+  assert.equal(r.state.pairs.C07USDT.status, "RECOVERY");
+  assert.equal(r.state.pairs.C07USDT.rehedgeEnabled, false);
+  assert.equal(r.state.orders.filter((o) => o[0] === "C07USDT").length, 1);
+  const probe = r.state.probes.find((p) => p.symbol === "C07USDT");
+  assert.equal(probe.workerGotLease, false);
+});
+
+test("plain SHORT with a same-symbol LONG holds the account lease while Auto Hedge is on (worker deferred); off -> unchanged", async () => {
+  let r = await run({ percentage: 25 });
+  assert.ok(r.state.probes.filter((p) => /^C\d\d/.test(p.symbol)).every((p) => p.workerGotLease === false));
+  r = await run({ percentage: 25, autoHedgeEnabled: false });
+  const hedged = new Set(Object.keys(world().pairs));
+  assert.ok(r.state.probes.filter((p) => /^C\d\d/.test(p.symbol) && !hedged.has(p.symbol)).every((p) => p.workerGotLease === true));   // original lease-free path
 });

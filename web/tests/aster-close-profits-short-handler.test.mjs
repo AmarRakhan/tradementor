@@ -30,6 +30,10 @@ function harness(percent, failures = {}) {
     encodeURIComponent, JSON, Promise, Error, String,
     newCloseIdempotencyKey: () => "unique-close-" + ++state.keys,
     authenticatedRequest: async (url, options) => {
+      if (url.includes("manual-profit-close-plan")) {
+        return { selected: targets.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
+                 snapshot: { rows: targets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(t.quantity) })) } };
+      }
       calls.push({ url, options, data: JSON.parse(options.body) });
       const symbol = url.split("/").at(-2);
       if (failures[symbol]) throw new Error(failures[symbol]);

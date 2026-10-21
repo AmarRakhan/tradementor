@@ -117,7 +117,9 @@ class Ledger:
             {"filterType": "MIN_NOTIONAL", "notional": "5"}]} for s in self.mark]}
 
 
-def build_backend(ledger: Ledger, fs: FakeFirestore, *, uid="u1", src: str | None = None, extra=()):
+def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra=(), real=None):
+    """`real=(firestore_module, google_exceptions_module)` binds the SAME route/lease/helper source to a real
+    Firestore client `fs` (emulator) instead of the in-memory model."""
     """Returns (close_route, ns). `ns` exposes the lease + lock plumbing for worker-side models."""
     import aster_position_loss_auto_hedge_lock as lock
     from aster_dynamic_hedge_manual import begin_manual_action, complete_manual_action, fail_manual_action
@@ -175,10 +177,10 @@ def build_backend(ledger: Ledger, fs: FakeFirestore, *, uid="u1", src: str | Non
         return {"status": "FILLED"}
 
     ns = {
-        "db": fs, "firestore": SimpleNamespace(transactional=lambda f: (lambda txn: _locked(fs, f, txn))),
+        "db": fs, "firestore": real[0] if real else SimpleNamespace(transactional=lambda f: (lambda txn: _locked(fs, f, txn))),
         "datetime": datetime, "timezone": timezone, "timedelta": timedelta, "python_secrets": secrets,
         "hashlib": __import__("hashlib"), "os": SimpleNamespace(getenv=lambda *a, **k: "true"), "time": SimpleNamespace(sleep=lambda x: None),
-        "HTTPException": HTTPException, "google_exceptions": SimpleNamespace(AlreadyExists=AlreadyExists),
+        "HTTPException": HTTPException, "google_exceptions": real[1] if real else SimpleNamespace(AlreadyExists=AlreadyExists),
         "AutoHedgeCloseBlocked": lock.AutoHedgeCloseBlocked, "require_auto_hedge_close_allowed": lock.require_auto_hedge_close_allowed,
         "begin_manual_action": begin_manual_action, "complete_manual_action": complete_manual_action,
         "fail_manual_action": fail_manual_action, "PairExecutionPlan": PairExecutionPlan, "PositionSide": PositionSide,

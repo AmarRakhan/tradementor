@@ -69,6 +69,16 @@ class Handler(BaseHTTPRequestHandler):
                         ns._release_aster_account_coordination("u1", token)
                 ledger.on_before_order = probe
             return self._send(200, {"ok": True})
+        if url.path == "/__mutate":
+            for sym, price in data.get("marks", {}).items():
+                ledger.mark[sym] = float(price)
+            for key, qty in data.get("pos", {}).items():
+                sym, side = key.split("|"); ledger.pos[(sym, side)] = float(qty)
+            for sym, doc in data.get("pairs", {}).items():
+                fs.docs[("asterPositionLossAutoHedge", "u1", "pairs", sym)] = doc
+            if "autoHedgeEnabled" in data:
+                fs.docs[("asterPositionLossAutoHedge", "u1")] = {"enabled": bool(data["autoHedgeEnabled"])}
+            return self._send(200, {"ok": True})
         parts = url.path.strip("/").split("/")
         if parts[:4] == ["v1", "me", "aster", "positions"] and parts[-1] == "close":
             request_log.append({"symbol": parts[-2], "body": data})

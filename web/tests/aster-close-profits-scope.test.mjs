@@ -17,7 +17,14 @@ function run(failures = {}) {
     setProfitBusy() {}, setProfitConfirming() {}, setProfitMessage(v) { ctx.message = v; }, setBulkCloseTargets() {},
     setProfitPreview() {}, onRetry() {}, encodeURIComponent, JSON, Promise, Error, String, n: 0, setTimeout: (fn) => fn(),
     newCloseIdempotencyKey: () => "key-" + ++ctx.n,
+    previews: 0, eligible: null,
     authenticatedRequest: async (url, options) => {
+      if (url.includes("manual-profit-close-plan")) {            // fresh read-only re-check before every close
+        ctx.previews++;
+        const live = ctx.bulkCloseTargets.filter((t) => !ctx.eligible || ctx.eligible.includes(t.symbol));
+        return { selected: live.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
+                 snapshot: { rows: ctx.bulkCloseTargets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(ctx.liveQty?.[t.symbol] ?? t.quantity) })) } };
+      }
       calls.push({ url, body: JSON.parse(options.body), method: options.method });
       const symbol = url.split("/").at(-2);
       if (failures[symbol]) throw new Error(failures[symbol]);
@@ -98,4 +105,38 @@ test("account-lease busy refusal retries at most 3 times with a NEW key, then st
   h = run({ BTCUSDT: "TradeMentor Cloud is tijdelijk niet bereikbaar" });
   await h.handler();
   assert.equal(h.calls.length, 1);                                            // network/proxy loss is never retried
+});
+
+test("profit/quantity re-check runs before EVERY close; a position no longer above $0,50 is skipped without an order", async () => {
+  const h = run();
+  h.ctx.eligible = ["ETHUSDT"];                                  // BTC fell to <= $0,50 since the preview
+  await h.handler();
+  assert.equal(h.ctx.previews, 2);
+  assert.deepEqual(h.calls.map((c) => c.url.split("/").at(-2)), ["ETHUSDT"]);
+  assert.match(h.ctx.message, /1 SHORTS gesloten[^]*1 niet meer boven \$0,50 winst/);
+});
+
+test("changed live quantity or an unreadable re-check stops the series before any order", async () => {
+  let h = run();
+  h.ctx.liveQty = { BTCUSDT: 9 };
+  await h.handler();
+  assert.equal(h.calls.length, 0);
+  assert.match(h.ctx.message, /Gestopt bij BTCUSDT: positiegrootte is gewijzigd/);
+  h = run();
+  const original = h.ctx.authenticatedRequest;
+  h.ctx.authenticatedRequest = async (url, o) => { if (url.includes("manual-profit-close-plan")) throw new Error("HTTP 502"); return original(url, o); };
+  await h.handler();
+  assert.equal(h.calls.length, 0);
+  assert.match(h.ctx.message, /actuele winstcontrole mislukt/);
+});
+
+test("retry/skip classification is anchored: look-alike or composite messages never trigger a retry or skip", async () => {
+  for (const msg of ["xx Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw",
+                     "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw (timeout, status onbekend)",
+                     "HTTP 500", "HTTP 502", "HTTP 504", "TradeMentor Cloud is tijdelijk niet bereikbaar"]) {
+    const h = run({ BTCUSDT: msg });
+    await h.handler();
+    assert.equal(h.calls.length, 1, msg);                         // one attempt, series stopped, no retry
+    assert.match(h.ctx.message, /Gestopt bij BTCUSDT/);
+  }
 });
