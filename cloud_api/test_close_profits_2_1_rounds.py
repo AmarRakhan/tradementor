@@ -35,12 +35,21 @@ class RoundBase(unittest.TestCase):
         self.route, self.ns, self.HTTP = H.build_backend(self.L, self.fs, real=real, real_leg=True)
         self.user = {"uid": self.uid}
         self.route_calls = []
+        self.route_requests = []
+        self.extra_rows = []
+        self.snapshot_broken = False
+        self.inject = {}                       # symbol -> list of HTTP(status, detail) raised BEFORE the real route
         self.lose_response = set()            # symbols whose route answer is "lost" once (raised after success)
         ledger = self.L
 
+        test = self
+
         class Reader:
             """Read-only Aster client as seen by the round engine: position_risk, exchange info, order query."""
-            def position_risk(self): return ledger.rows()
+            def position_risk(self):
+                if test.snapshot_broken:
+                    raise RuntimeError("Aster positionRisk unreadable")
+                return ledger.rows() + [dict(r) for r in test.extra_rows]
             def public_exchange_info(self): return ledger.exchange_info()
             def query_order(self, symbol, cid):
                 if symbol in ledger.query_fails:
@@ -52,6 +61,11 @@ class RoundBase(unittest.TestCase):
 
         def route(symbol, request, user):
             self.route_calls.append((symbol, request.idempotency_key))
+            self.route_requests.append((symbol, dict(vars(request))))
+            queue = self.inject.get(symbol)
+            if queue:
+                status, detail = queue.pop(0)
+                raise self.HTTP(status, detail)
             result = self.route(symbol, request, user)
             if symbol in self.lose_response:
                 self.lose_response.discard(symbol)
@@ -329,6 +343,270 @@ class RefusalTests(RoundBase):
         done = self.run_round(rid)
         self.assertEqual(done["status"], "FINISHED")
         self.assertEqual(len(self.L.orders), 2)
+
+
+PAIR = {"status": "HEDGED", "protectedSide": "LONG", "hedgeSide": "SHORT", "rehedgeEnabled": True,
+        "reservedHedgeQty": 0.0, "generationId": "g1"}
+BUSY = "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw"
+
+
+def floor_step(value, step=0.001):
+    from decimal import Decimal, ROUND_DOWN
+    d = Decimal(str(step))
+    return float((Decimal(repr(value)) / d).to_integral_value(rounding=ROUND_DOWN) * d)
+
+
+class ContractParityTests(RoundBase):
+    """The safety contracts of the five removed 2.0 browser-loop test files, proven on the 2.1 server round.
+    Each test names the 2.0 file it replaces (see the contract matrix in the release dossier)."""
+
+    def seed_pair(self, symbol):
+        self.L.add(symbol, "LONG", 8.0, mark=100.0)
+        self.fs.collection("asterPositionLossAutoHedge").document(self.uid).collection("pairs").document(symbol).set(
+            {**PAIR, "symbol": symbol})
+        self.fs.collection("asterPositionLossAutoHedge").document(self.uid).set({"enabled": True})
+
+    def pair_status(self, symbol):
+        snap = self.fs.collection("asterPositionLossAutoHedge").document(self.uid).collection("pairs").document(symbol).get()
+        return (snap.to_dict() or {}).get("status")
+
+    # --- release-guards / scope / short-handler: exact request body ----------------------------------------
+    def test_every_close_carries_the_series_safeguards_and_the_full_live_quantity(self):
+        syms = self.shorts(3, qty=12.345)
+        rid = self.create(syms, pct=50, qty=12.345)["round"]["roundId"]
+        self.run_round(rid)
+        self.assertEqual(len(self.route_requests), 3)
+        for sym, req in self.route_requests:
+            self.assertEqual(sorted(req), ["bulk_series", "confirm", "expected_quantity", "idempotency_key",
+                                           "min_open_pnl_usd", "percentage", "side"])
+            self.assertEqual((req["confirm"], req["side"], req["percentage"]), (True, "SHORT", 50))
+            self.assertEqual(req["expected_quantity"], 12.345)                 # FULL position, never the close size
+            self.assertEqual(req["min_open_pnl_usd"], 0.5)
+            self.assertIs(req["bulk_series"], True)
+            self.assertEqual(req["idempotency_key"], f"round:{rid}:{sym}:0")
+
+    # --- short-handler / integration: once per symbol, exact sizes, all percentages, LONGs untouched --------
+    def test_all_percentages_once_per_symbol_exact_step_rounded_sizes_longs_untouched(self):
+        for pct in (25, 50, 75, 100):
+            self.setUp()
+            syms = [f"P{i:02d}USDT" for i in range(6)]
+            for i, s in enumerate(syms):
+                self.L.add(s, "SHORT", 8.0 + i * 1.37, mark=100.0)
+                self.L.add(s, "LONG", 5.0, mark=100.0)
+            rid = R.create_round(self.env, self.user, percentage=pct, idempotency_key=self.key(),
+                                 targets=[{"symbol": s, "side": "SHORT", "quantity": 8.0 + i * 1.37}
+                                          for i, s in enumerate(syms)])["round"]["roundId"]
+            done = self.run_round(rid)
+            self.assertEqual(done["counts"]["done"], 6, pct)
+            self.assertEqual(sorted(o[0] for o in self.L.orders), sorted(syms))
+            for sym, side, qty, _ in self.L.orders:
+                i = syms.index(sym)
+                expected = (8.0 + i * 1.37) if pct == 100 else floor_step((8.0 + i * 1.37) * pct / 100)
+                self.assertEqual(side, "SHORT")
+                self.assertAlmostEqual(qty, expected, places=9, msg=f"{sym} {pct}%")
+                self.assertEqual(self.L.pos[(sym, "LONG")], 5.0)
+
+    # --- round6: fresh position check right before every close -----------------------------------------
+    def test_position_missing_right_before_its_close_is_skipped_without_order(self):
+        syms = self.shorts(3)
+        rid = self.create(syms)["round"]["roundId"]
+        self.L.pos[(syms[1], "SHORT")] = 0.0
+        done = self.run_round(rid)
+        self.assertEqual(self.item(done, syms[1])["reason"], "position_gone")
+        self.assertEqual(self.orders_for(syms[1]), [])
+        self.assertEqual(done["counts"]["done"], 2)
+
+    def test_duplicate_or_contradictory_position_rows_need_check_without_order(self):
+        syms = self.shorts(3)
+        rid = self.create(syms)["round"]["roundId"]
+        self.extra_rows = [r for r in self.L.rows() if r["symbol"] == syms[0]]     # same SHORT reported twice
+        done = self.run_round(rid)
+        self.assertEqual(self.item(done, syms[0])["status"], "NEEDS_CHECK")
+        self.assertEqual(self.item(done, syms[0])["reason"], "position_ambiguous")
+        self.assertEqual(self.orders_for(syms[0]), [])
+        self.assertEqual(done["counts"]["done"], 2)
+
+    def test_unreadable_position_snapshot_pauses_the_round_without_any_order(self):
+        syms = self.shorts(2)
+        rid = self.create(syms)["round"]["roundId"]
+        self.snapshot_broken = True
+        paused = self.run_round(rid)
+        self.assertEqual((paused["status"], paused["pauseReason"]), ("PAUSED", "system_errors"))
+        self.assertEqual(self.L.orders, [])
+        self.assertEqual(self.route_calls, [])                                 # stopped BEFORE the route
+
+    def test_unreadable_profit_pauses_the_round_without_any_order(self):
+        syms = self.shorts(2)
+        rid = self.create(syms)["round"]["roundId"]
+        original = self.L.rows
+        self.L.rows = lambda: [{**r, "unRealizedProfit": "n/a"} if r["symbol"] == syms[0] else r for r in original()]
+        paused = self.run_round(rid)
+        self.assertEqual(paused["status"], "PAUSED")
+        self.assertEqual(self.L.orders, [])
+        self.assertNotEqual(self.item(paused, syms[0])["status"], "DONE")
+
+    def test_profit_gone_before_each_close_is_rechecked_and_skipped_without_order(self):
+        syms = self.shorts(3)
+        rid = self.create(syms)["round"]["roundId"]
+        R.advance(self.env, self.user, rid)                                    # first closes
+        self.L.mark[syms[1]] = 104.99                                          # second falls to ~$0,08
+        done = self.run_round(rid)
+        self.assertEqual(self.item(done, syms[1])["reason"], "not_profitable")
+        self.assertEqual(self.orders_for(syms[1]), [])
+        self.assertEqual(done["counts"]["done"], 2)
+
+    # --- release-guards: earlier unconfirmed close of the same symbol ------------------------------------
+    def test_earlier_unconfirmed_close_of_the_symbol_needs_check_and_the_rest_continues(self):
+        syms = self.shorts(3)
+        rid = self.create(syms)["round"]["roundId"]
+        R._guard_ref(self.env, self.uid, syms[1], "an-earlier-unconfirmed-intent").set(
+            {"status": "order_started", "orderStartedAt": datetime.now(timezone.utc)})
+        done = self.run_round(rid)
+        self.assertEqual(self.item(done, syms[1])["status"], "NEEDS_CHECK")
+        self.assertEqual(self.item(done, syms[1])["reason"], "earlier_close_unconfirmed")
+        self.assertEqual(self.orders_for(syms[1]), [])
+        self.assertEqual(done["counts"]["done"], 2)
+
+    # --- release-guards / round6 / scope: account busy (real lease held by the Auto Hedge worker) ----------
+    def test_account_busy_is_retried_at_most_three_times_with_a_new_key_then_skipped(self):
+        self.L.add("BUSYUSDT", "SHORT", 8.0, mark=100.0); self.seed_pair("BUSYUSDT")
+        other = self.shorts(1)
+        rid = self.create(["BUSYUSDT"] + other)["round"]["roundId"]
+        self.assertTrue(self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "worker"))
+        for _ in range(4):
+            R.advance(self.env, self.user, rid)
+        keys = [k for s, k in self.route_calls if s == "BUSYUSDT"]
+        self.assertEqual(keys, [f"round:{rid}:BUSYUSDT:{n}" for n in range(4)])   # 1 + 3 retries, new key each
+        rnd = R.get_round(self.env, self.uid, rid)
+        self.assertEqual(self.item(rnd, "BUSYUSDT")["status"], "SKIPPED")
+        self.assertEqual(self.item(rnd, "BUSYUSDT")["reason"], "account_busy")
+        self.assertEqual(self.orders_for("BUSYUSDT"), [])
+        self.assertEqual(self.pair_status("BUSYUSDT"), "HEDGED")                 # nothing frozen
+
+    def test_busy_twice_then_success_one_order_full_quantity_new_key_each_time(self):
+        self.L.add("BUSYUSDT", "SHORT", 8.0, mark=100.0); self.seed_pair("BUSYUSDT")
+        rid = self.create(["BUSYUSDT"])["round"]["roundId"]
+        token = self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "worker")
+        R.advance(self.env, self.user, rid); R.advance(self.env, self.user, rid)
+        self.ns._release_aster_account_coordination(self.uid, token)
+        done = self.run_round(rid)
+        self.assertEqual(self.item(done, "BUSYUSDT")["status"], "DONE")
+        self.assertEqual(len(self.orders_for("BUSYUSDT")), 1)
+        reqs = [r for s, r in self.route_requests if s == "BUSYUSDT"]
+        self.assertEqual([r["idempotency_key"] for r in reqs], [f"round:{rid}:BUSYUSDT:{n}" for n in range(3)])
+        self.assertTrue(all(r["expected_quantity"] == 8.0 for r in reqs))
+        self.assertEqual(self.pair_status("BUSYUSDT"), "RECOVERY")             # existing manual transition
+
+    def test_quantity_changed_during_the_busy_wait_is_skipped_without_order(self):
+        self.L.add("BUSYUSDT", "SHORT", 8.0, mark=100.0); self.seed_pair("BUSYUSDT")
+        rid = self.create(["BUSYUSDT"])["round"]["roundId"]
+        token = self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "worker")
+        R.advance(self.env, self.user, rid)
+        self.ns._release_aster_account_coordination(self.uid, token)
+        self.L.pos[("BUSYUSDT", "SHORT")] = 6.0                                # the worker changed the SHORT
+        done = self.run_round(rid)
+        self.assertEqual(self.item(done, "BUSYUSDT")["reason"], "size_changed")
+        self.assertEqual(self.orders_for("BUSYUSDT"), [])
+
+    def test_snapshot_failure_during_the_busy_wait_places_no_order(self):
+        self.L.add("BUSYUSDT", "SHORT", 8.0, mark=100.0); self.seed_pair("BUSYUSDT")
+        rid = self.create(["BUSYUSDT"])["round"]["roundId"]
+        token = self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "worker")
+        R.advance(self.env, self.user, rid)
+        self.ns._release_aster_account_coordination(self.uid, token)
+        self.snapshot_broken = True
+        paused = self.run_round(rid)
+        self.assertEqual(paused["status"], "PAUSED")
+        self.assertEqual(self.L.orders, [])
+
+    def test_unknown_after_a_busy_retry_is_reconciled_and_never_ordered_twice(self):
+        self.L.add("BUSYUSDT", "SHORT", 8.0, mark=100.0); self.seed_pair("BUSYUSDT")
+        rid = self.create(["BUSYUSDT"])["round"]["roundId"]
+        token = self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "worker")
+        R.advance(self.env, self.user, rid)
+        self.ns._release_aster_account_coordination(self.uid, token)
+        self.L.modes["BUSYUSDT"] = "drop_after_accept"
+        done = self.run_round(rid)
+        self.assertEqual(len(self.orders_for("BUSYUSDT")), 1)
+        self.assertEqual(self.item(done, "BUSYUSDT")["status"], "DONE")
+
+    # --- scope / short-handler: contract errors -----------------------------------------------------------
+    def test_only_the_exact_minimum_refusals_are_skips_other_contract_errors_never_skip_or_order(self):
+        for msg in ("Deze gedeeltelijke sluiting past niet binnen de Aster contractregels: Order ligt onder de minimale Aster-hoeveelheid",
+                    "Deze gedeeltelijke sluiting past niet binnen de Aster contractregels: Order ligt onder de minimale Aster-orderwaarde",
+                    "Deze gedeeltelijke sluiting past niet binnen de Aster contractregels: Hoeveelheid en marktprijs moeten positief zijn"):
+            self.assertEqual(R._classify_refusal(msg), ("SKIPPED", "too_small"), msg)
+        syms = self.shorts(2)
+        rid = self.create(syms)["round"]["roundId"]
+        broad = "Deze gedeeltelijke sluiting past niet binnen de Aster contractregels: Order ligt boven de maximale Aster-hoeveelheid"
+        self.inject[syms[0]] = [(409, broad), (409, broad)]
+        paused = self.run_round(rid)
+        self.assertEqual(paused["status"], "PAUSED")                            # not skipped, not ordered
+        self.assertNotEqual(self.item(paused, syms[0])["status"], "SKIPPED")
+        self.assertEqual(self.L.orders, [])
+
+    def test_classification_is_anchored_lookalikes_never_skip_or_retry(self):
+        lookalikes = [
+            "xx " + BUSY, BUSY + " (timeout, status onbekend)", BUSY.upper(), "HTTP 500", "HTTP 502", "HTTP 504",
+            "TradeMentor Cloud is tijdelijk niet bereikbaar",
+            "Sluitstatus is niet betrouwbaar bevestigd; er wordt niet opnieuw besteld",
+            "xx Open winst is niet meer boven de ingestelde grens; geen order geplaatst",
+            "Open winst is niet meer boven de ingestelde grens; geen order geplaatst (onbekend)",
+            "Deze gedeeltelijke sluiting past niet binnen de Aster contractregels: Order ligt onder de minimale Aster-hoeveelheid en meer",
+            "BTCUSDT: sluiting van 1 SHORT zou Auto Hedge-dekking onder de gereserveerde 2 brengen; daarna onbekend",
+            "xx Vorige sluiting van dit symbool is nog niet bevestigd; controleer Aster en gebruik de individuele Close-knop",
+        ]
+        for msg in lookalikes:
+            self.assertIsNone(R._classify_refusal(msg), msg)
+            self.assertNotIn(msg, R._BUSY, msg)
+        # and on the round: a look-alike busy text is NOT retried as busy, it counts as a system error
+        syms = self.shorts(1)
+        rid = self.create(syms)["round"]["roundId"]
+        self.inject[syms[0]] = [(409, "xx " + BUSY), (409, "xx " + BUSY)]
+        paused = self.run_round(rid)
+        self.assertEqual(paused["status"], "PAUSED")
+        self.assertEqual(self.L.orders, [])
+
+    # --- integration: Auto Hedge consequence never stops the run; worker deferred while ordering -----------
+    def test_auto_hedge_shorts_get_the_existing_recovery_transition_and_the_run_continues(self):
+        for s in ("AH1USDT", "AH2USDT"):
+            self.L.add(s, "SHORT", 8.0, mark=100.0); self.seed_pair(s)
+        plain = self.shorts(2)
+        deferred = []
+        self.L.on_before_order = lambda sym: deferred.append(
+            (sym, self.ns._acquire_aster_account_coordination(self.uid, "AUTO_HEDGE", "POSITION_LOSS_EXACT_1_TO_1")))
+        rid = self.create(["AH1USDT", "AH2USDT"] + plain)["round"]["roundId"]
+        done = self.run_round(rid)
+        self.assertEqual(done["counts"]["done"], 4)
+        for s in ("AH1USDT", "AH2USDT"):
+            self.assertEqual(self.pair_status(s), "RECOVERY")
+            self.assertEqual(self.L.pos[(s, "LONG")], 8.0)
+        self.assertEqual([tok for sym, tok in deferred if sym in ("AH1USDT", "AH2USDT")], [None, None])  # worker deferred
+
+    def test_plain_short_that_becomes_an_auto_hedge_pair_after_the_preview_gets_the_manual_transition(self):
+        self.L.add("NEWUSDT", "SHORT", 8.0, mark=100.0)
+        rid = self.create(["NEWUSDT"])["round"]["roundId"]
+        self.seed_pair("NEWUSDT")                                               # pair created after the preview
+        done = self.run_round(rid)
+        self.assertEqual(self.item(done, "NEWUSDT")["status"], "DONE")
+        self.assertEqual(self.pair_status("NEWUSDT"), "RECOVERY")
+        self.assertEqual(self.L.pos[("NEWUSDT", "LONG")], 8.0)
+
+    def test_edge_selection_exactly_050_excluded_051_included_losing_and_long_only_never(self):
+        self.L.add("EDGE50USDT", "SHORT", 1.0, mark=100.0, entry=100.5)          # pnl exactly 0.50
+        self.L.add("EDGE51USDT", "SHORT", 1.0, mark=100.0, entry=100.51)         # pnl 0.51
+        self.L.add("LOSSUSDT", "SHORT", 3.0, mark=100.0, entry=95.0)
+        self.L.add("LONGUSDT", "LONG", 3.0, mark=100.0)
+        rnd = R.create_round(self.env, self.user, percentage=25, idempotency_key=self.key(), targets=[
+            {"symbol": s, "side": "SHORT", "quantity": q} for s, q in
+            (("EDGE50USDT", 1.0), ("EDGE51USDT", 1.0), ("LOSSUSDT", 3.0), ("LONGUSDT", 3.0))])["round"]
+        self.assertEqual(self.item(rnd, "EDGE50USDT")["status"], "SKIPPED")
+        self.assertEqual(self.item(rnd, "EDGE51USDT")["status"], "PENDING")
+        self.assertEqual(self.item(rnd, "LOSSUSDT")["status"], "SKIPPED")
+        self.assertEqual(self.item(rnd, "LONGUSDT")["status"], "SKIPPED")       # no SHORT row -> not selected
+        done = self.run_round(rnd["roundId"])
+        self.assertEqual([o[0] for o in self.L.orders], ["EDGE51USDT"])
+        self.assertTrue(all(o[1] == "SHORT" for o in self.L.orders))
 
 
 class StaticTests(unittest.TestCase):

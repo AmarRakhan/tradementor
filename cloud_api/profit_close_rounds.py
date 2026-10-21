@@ -445,6 +445,28 @@ def _process(env: RoundEnv, user: dict[str, Any], round_id: str, item: dict[str,
                     "updatedAt": now}, "ok"
         return {**retry, "reason": "earlier_attempt_failed_before_order"}, "system"
 
+    # 2.0 parity (the browser's fresh check before EVERY close, now on the server): the SHORT must appear exactly
+    # once in a reliable position snapshot right before the route is called. Missing -> skipped; duplicate or
+    # contradictory rows -> NEEDS_CHECK; unreadable snapshot -> system error. No order in any of these cases.
+    try:
+        rows = env.client_for(user).position_risk()
+        if not isinstance(rows, list):
+            raise ValueError("position snapshot is not a list")
+        matches = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("position row is not an object")
+            if (str(row.get("symbol", "")).upper() == symbol and str(row.get("positionSide", "")).upper() == "SHORT"
+                    and abs(float(row.get("positionAmt") or 0)) > 0):
+                matches.append(row)
+    except Exception as exc:
+        return {**retry, "reason": "positions_unreadable", "detail": str(exc)[:200]}, "system"
+    if not matches:
+        return {"status": "SKIPPED", "reason": "position_gone", "updatedAt": now}, "ok"
+    if len(matches) > 1:
+        return {"status": "NEEDS_CHECK", "reason": "position_ambiguous",
+                "detail": f"{len(matches)} SHORT-regels voor {symbol} in de positiedata", "updatedAt": now}, "ok"
+
     request = env.make_request(
         confirm=True, side="SHORT", expected_quantity=float(item["expectedQuantity"]), percentage=percentage,
         idempotency_key=key, min_open_pnl_usd=MIN_OPEN_PNL_USD, bulk_series=True,

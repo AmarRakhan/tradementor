@@ -46,6 +46,7 @@ EmulatorNetworkLossTests = _make(scenarios.NetworkLossTests)
 EmulatorReconciliationTests = _make(scenarios.ReconciliationTests)
 EmulatorRefusalTests = _make(scenarios.RefusalTests)
 EmulatorRejectBeforeAcceptTests = _make(scenarios.RejectBeforeAcceptTests)
+EmulatorContractParityTests = _make(scenarios.ContractParityTests)
 
 if __name__ == "__main__":
     unittest.main()
