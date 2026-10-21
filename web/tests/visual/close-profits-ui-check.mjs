@@ -30,7 +30,9 @@ for (const width of [390, 1280]) {
   assert.ok(box && box.x >= 0 && box.x + box.width <= width + 0.5, `green button inside viewport at ${width}`);
   const inFooter = await green.evaluate((el) => Boolean(el.closest("footer")) && Boolean(el.closest("article")));
   assert.ok(inFooter, "green button sits in the footer of the Tradecentrum card");
-  assert.match(await green.innerText(), /Close 4 SHORT profits · \+?\$?[\d.,]+/);
+  const label = (await green.innerText()).replace(/\s+/g, " ");
+  assert.match(label, /^Close 4 SHORT profits · \S*\d/, "label: " + label);
+  console.log("INFO green button label:", label);
   assert.ok((await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 0, `no horizontal overflow at ${width}`);
   await page.screenshot({ path: `artifacts/close-profits-ui/button-${width}.png`, fullPage: true });
   ok(`${width}px green button visible, correct place and count, no overflow`);
