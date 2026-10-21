@@ -1394,6 +1394,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       setProfitBusy(false);
     }
   }
+  const bulkAutoHedgeTargets = bulkCloseTargets
+    .filter((target) => {
+      const position = livePositions.find((item) => normalizedSymbol(item.symbol || "") === target.symbol && String(item.side).toUpperCase() === target.side);
+      return Boolean(position?.positionLossAutoHedge);
+    })
+    .map((target) => target.symbol);
   async function closeProfits() {
     if (bulkCloseInFlightRef.current || profitBusy || !profitConfirming || !profitSnapshotReliable || bulkCloseTargets.length === 0) return;
     bulkCloseInFlightRef.current = true;
@@ -1597,6 +1603,9 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                   <h3 id="profit-close-title">{profitPreview.eligibleCount} winstposities sluiten?</h3>
                   <dl><dt>Actuele totale winst</dt><dd className={styles.profit}>{money(profitPreview.totalProfitUsd, true)}</dd><dt>Geschikte posities</dt><dd>{profitPreview.eligibleCount}</dd></dl>
                   <p>Bevestig {profitClosePercentage}% MARKET-sluiting per geselecteerde SHORT. Iedere munt gebruikt de bestaande individuele Aster-sluitroute. Bij onbekende uitvoeringsstatus stopt de verwerking.</p>
+                  {bulkAutoHedgeTargets.length > 0 && (
+                    <div className={styles.closeNotice} data-testid="bulk-auto-hedge-warning"><span aria-hidden="true">i</span><p><strong>{bulkAutoHedgeTargets.length} van deze SHORTS {bulkAutoHedgeTargets.length === 1 ? "valt" : "vallen"} onder Auto Hedge.</strong><br />Dit is exact hetzelfde als de individuele Close-knop: het paar gaat daarna in Recovery, de verkleinde SHORT wordt niet automatisch teruggevuld en re-hedge blijft UIT totdat je die zelf weer inschakelt. Er wordt niets aan de hedge-logica gewijzigd. ({bulkAutoHedgeTargets.join(", ")})</p></div>
+                  )}
                   <div style={{maxHeight:250,overflowY:"auto",display:"grid",gap:8}}>
                     {bulkCloseTargets.map((target) => (
                       <button key={target.symbol + "|" + target.side} type="button" disabled={profitBusy}
@@ -1605,7 +1614,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                           const position = livePositions.find((item) => normalizedSymbol(item.symbol || "") === target.symbol && String(item.side).toUpperCase() === target.side);
                           if (position) openClosePosition(position);
                         }}>
-                        <span>{target.symbol} · {target.side} · {target.quantity} · individuele sluitknop openen</span>
+                        <span>{target.symbol} · {target.side} · {target.quantity}{bulkAutoHedgeTargets.includes(target.symbol) ? " · Auto Hedge" : ""} · individuele sluitknop openen</span>
                         {target.minimumWarning === "below_exchange_minimum" && <span style={{display:"block",fontWeight:700,color:"#fbbf24",marginTop:4}}>⚠ Mogelijk te kleine order — bestaande individuele sluitroute beslist</span>}
                       </button>
                     ))}
