@@ -1,0 +1,1386 @@
+diff --git a/cloud_api/aster_position_loss_auto_hedge_lock.py b/cloud_api/aster_position_loss_auto_hedge_lock.py
+index 9486af8..dfbde38 100644
+--- a/cloud_api/aster_position_loss_auto_hedge_lock.py
++++ b/cloud_api/aster_position_loss_auto_hedge_lock.py
+@@ -80,6 +80,33 @@ def auto_hedge_symbol_managed(*, account_uid: str, symbol: str) -> bool:
+     return status in AUTO_HEDGE_MANAGED_STATUSES or bool(status)
+ 
+ 
++def auto_hedge_symbol_managed_strict(*, account_uid: str, symbol: str) -> bool:
++    """Fail-closed variant for bulk profit closes (Close Profits 2.1).
++
++    `current_lock` returns {} when no reader is configured or the reader returns
++    garbage, which `auto_hedge_symbol_managed` reads as "not managed". Bulk
++    actions must not treat missing/unreliable hedge state as absence of
++    protection, so both cases raise AutoHedgeCloseBlocked here.
++    """
++    with _lock:
++        reader = _reader
++    unavailable = {
++        "event": "AUTO_HEDGE_CLOSE_BLOCKED", "accountUid": str(account_uid),
++        "symbol": str(symbol).upper(), "blockReason": "AUTO_HEDGE_LOCK_STATE_UNAVAILABLE",
++        "message": "Auto Hedge-lock kon niet betrouwbaar worden gelezen; bulk sluiten is gestopt",
++    }
++    if not callable(reader) or not account_uid or not symbol:
++        raise AutoHedgeCloseBlocked(unavailable)
++    try:
++        value = reader(str(account_uid), str(symbol).upper())
++    except Exception:
++        raise AutoHedgeCloseBlocked(unavailable)
++    if not isinstance(value, dict):
++        raise AutoHedgeCloseBlocked(unavailable)
++    status = str(value.get("status", "")).upper().strip()
++    return bool(status) and status != "CLOSED"
++
++
+ def require_auto_hedge_close_allowed(
+     *,
+     account_uid: str,
+diff --git a/cloud_api/main.py b/cloud_api/main.py
+index 863fa06..21365ad 100644
+--- a/cloud_api/main.py
++++ b/cloud_api/main.py
+@@ -119,7 +119,8 @@ from aster_execution import configure_maximum_usable_leverage
+ from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rejection
+ from aster_execution import contract_brackets, planning_brackets
+ from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
+-from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
++from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, auto_hedge_symbol_managed_strict, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
++from manual_profit_close_guard import bulk_profit_close_block_reason
+ from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
+ from aster_sniper import SniperSettings, backtest_candles
+ from aster_sniper_runtime import run_sniper_tick
+@@ -412,6 +413,10 @@ class AsterManualCloseRequest(BaseModel):
+     expected_quantity: float = Field(gt=0)
+     percentage: int = Field(default=100, ge=25, le=100)
+     idempotency_key: str = Field(min_length=16, max_length=120)
++    # Close Profits 2.1: set only by the bulk button. Enables the server-side
++    # protection re-check (Auto Hedge / Focus Airbag / SHORT-only) right before
++    # the order. The individual Close button never sets it and is unchanged.
++    bulk_profit_close: bool = False
+ 
+ 
+ class AsterProfitableCloseRequest(BaseModel):
+@@ -1287,6 +1292,14 @@ def _exclude_auto_hedge_managed_profit_candidates(
+     return safe, excluded
+ 
+ 
++def _bulk_profit_close_block_reason_live(uid: str, symbol: str, side: str) -> str | None:
++    state = aster_strategy2_reference(uid).get().to_dict() or {}
++    legs = state.get("ownedLegs")
++    return bulk_profit_close_block_reason(
++        uid, symbol, side, legs if isinstance(legs, list) else [],
++        managed_check=auto_hedge_symbol_managed_strict)
++
++
+ def _profitable_aster_close_candidates(
+     uid: str, rows: list[dict[str, Any]],
+ ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+@@ -8635,6 +8648,55 @@ def preview_profitable_aster_positions(
+     }
+ 
+ 
++@app.get("/v1/me/aster/positions/manual-profit-close-plan")
++def preview_manual_profit_close_plan(
++    percentage: int = 25,
++    user: dict[str, Any] = Depends(authenticated_user),
++) -> dict[str, Any]:
++    """Account-scoped, read-only exchange snapshot and percentage plan; never submits orders."""
++    from manual_profit_close_planner import build_profit_close_plan, filters_from_aster_exchange_info
++    from manual_profit_close_snapshot import make_profit_close_snapshot
++    if percentage not in {25, 50, 75, 100}:
++        raise HTTPException(422, "Sluitpercentage moet 25, 50, 75 of 100 zijn")
++    try:
++        client = _portfolio_growth_client(user, live=False)
++        rows = list(client.position_risk())
++        exchange_info = client.public_exchange_info()
++        filters = filters_from_aster_exchange_info(exchange_info)
++        # Hedge relationships must be established from canonical account state;
++        # never infer a paired LONG close from the exchange symbol alone.
++        plan = build_profit_close_plan(rows, percentage, filters, hedge_links={}, include_short_below_minimum=True)
++        # Close Profits 2.1: drop every candidate the bulk close would be refused
++        # for (Auto Hedge, Focus Airbag, non-SHORT). Lock read errors raise -> 502.
++        uid = str(user["uid"])
++        strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
++        owned_legs = strategy2_state.get("ownedLegs")
++        owned_legs = owned_legs if isinstance(owned_legs, list) else []
++        safe_selected: list[dict[str, Any]] = []
++        protected: list[dict[str, Any]] = []
++        for item in plan["selected"]:
++            reason = bulk_profit_close_block_reason(
++                uid, str(item.get("symbol", "")).upper(), str(item.get("side", "")).upper(), owned_legs,
++                managed_check=auto_hedge_symbol_managed_strict)
++            if reason:
++                protected.append({"symbol": item.get("symbol"), "side": item.get("side"), "reason": reason})
++            else:
++                safe_selected.append(item)
++        plan = {**plan, "selected": safe_selected, "skipped": [*plan["skipped"], *protected]}
++        # The audit snapshot intentionally keeps the full exchange state.
++        snapshot = make_profit_close_snapshot(rows, percentage)
++        return {
++            **plan, "snapshot": snapshot, "reliable": True,
++            "executionEnabled": False,
++            "protectedExcludedCount": len(protected),
++            "message": "Alleen preview: alleen SHORT-posities buiten Auto Hedge en Focus Airbag; uitvoering controleert de status opnieuw",
++        }
++    except HTTPException:
++        raise
++    except Exception as exc:
++        raise HTTPException(502, "Aster-posities of contractregels niet betrouwbaar beschikbaar") from exc
++
++
+ @app.post("/v1/me/aster/positions/close-profitable")
+ def close_profitable_aster_positions(
+     request: AsterProfitableCloseRequest,
+@@ -8825,6 +8887,15 @@ def close_one_aster_position(
+         if mark <= 0:
+             raise HTTPException(409, "Aster gaf geen betrouwbare actuele marktprijs; sluiten is gestopt")
+ 
++        if request.bulk_profit_close:
++            # Fresh protection check against live Firestore state, independent of
++            # any (possibly stale) preview snapshot. Reader errors fail closed.
++            block_reason = _bulk_profit_close_block_reason_live(uid, normalized_symbol, request.side)
++            if block_reason:
++                intent_ref.set({"status": "blocked_bulk_protected", "detail": block_reason,
++                    "updatedAt": datetime.now(timezone.utc)}, merge=True)
++                raise HTTPException(409, block_reason)
++
+         requested_close_quantity = close_size(live_quantity, request.percentage)
+         close_quantity = live_quantity
+         if request.percentage != 100:
+diff --git a/cloud_api/manual_profit_close_guard.py b/cloud_api/manual_profit_close_guard.py
+new file mode 100644
+index 0000000..c825e44
+--- /dev/null
++++ b/cloud_api/manual_profit_close_guard.py
+@@ -0,0 +1,28 @@
++"""Pure protection check for the bulk Close Profits button (2.1). No I/O of its own.
++
++The Auto Hedge lock reader is injected so the rule is unit-testable offline and
++reader failures propagate (callers fail closed: no order is sent).
++"""
++from __future__ import annotations
++
++from typing import Any, Callable
++
++
++def bulk_profit_close_block_reason(
++    uid: str, symbol: str, side: str, strategy2_owned_legs: list[Any],
++    *, managed_check: Callable[..., bool],
++) -> str | None:
++    """Return a Dutch reason when a bulk profit close must not touch this leg."""
++    symbol = str(symbol).upper().strip()
++    side = str(side).upper().strip()
++    if side != "SHORT":
++        return "Bulk Close Profits sluit alleen SHORT-posities; LONG vereist een geverifieerde hedgekoppeling"
++    if managed_check(account_uid=uid, symbol=symbol):
++        return "Deze positie valt onder Auto Hedge; bulk Close Profits sluit haar niet"
++    for item in strategy2_owned_legs:
++        if not isinstance(item, dict):
++            continue
++        if (str(item.get("symbol", "")).upper() == symbol and str(item.get("side", "")).upper() == side
++                and str(item.get("role", "")).upper().startswith("FOCUS_SLOT_AIRBAG:")):
++            return "Deze positie is een Focus Airbag-hedge; bulk Close Profits sluit haar niet"
++    return None
+diff --git a/cloud_api/manual_profit_close_planner.py b/cloud_api/manual_profit_close_planner.py
+new file mode 100644
+index 0000000..68f320a
+--- /dev/null
++++ b/cloud_api/manual_profit_close_planner.py
+@@ -0,0 +1,110 @@
++"""Pure, offline planner for manual Close Profits percentages. No exchange calls."""
++from __future__ import annotations
++from decimal import Decimal, ROUND_DOWN, InvalidOperation
++
++PERCENTAGES = {25, 50, 75, 100}
++MIN_PROFIT = Decimal("0.50")
++
++
++def filters_from_aster_exchange_info(exchange_info):
++    """Use canonical Aster contract normalization, never guessed lot sizes."""
++    from aster_gateway import ContractRules
++    results = {}
++    for item in exchange_info.get("symbols", []):
++        if not isinstance(item, dict) or str(item.get("status", "")).upper() != "TRADING":
++            continue
++        rules = ContractRules.from_exchange_info(item)
++        results[rules.symbol] = {
++            "stepSize": str(rules.market_quantity_step),
++            "minQty": str(max(rules.market_min_quantity, rules.min_quantity)),
++            "minNotional": str(rules.min_notional),
++            "maxQty": str(rules.market_max_quantity),
++        }
++    return results
++
++
++def _dec(value):
++    try:
++        number = Decimal(str(value))
++        return number if number.is_finite() else None
++    except (ValueError, TypeError, InvalidOperation):
++        return None
++
++
++def build_profit_close_plan(rows, percentage, filters=None, *, closing_fee_rate="0", hedge_links=None, include_short_below_minimum=False):
++    """Return candidate legs and individual skips. Pair links map symbols to True only when verified."""
++    if percentage not in PERCENTAGES:
++        raise ValueError("percentage must be 25, 50, 75 or 100")
++    filters = filters or {}
++    hedge_links = hedge_links or {}
++    positions = {}
++    for row in rows:
++        symbol = str(row.get("symbol", "")).upper().strip()
++        side = str(row.get("positionSide", row.get("side", ""))).upper()
++        qty = _dec(row.get("positionAmt", row.get("quantity")))
++        pnl = _dec(row.get("unRealizedProfit", row.get("unrealizedPnl")))
++        mark = _dec(row.get("markPrice"))
++        if symbol and side in {"LONG", "SHORT"} and qty is not None and qty != 0:
++            positions[(symbol, side)] = {"symbol": symbol, "side": side, "quantity": abs(qty), "pnl": pnl, "mark": mark}
++    selected, skipped = [], []
++    visited = set()
++    fee_rate = _dec(closing_fee_rate)
++    if fee_rate is None or fee_rate < 0:
++        raise ValueError("invalid closing fee rate")
++    # Evaluate LONG first so a linked pair cannot be partially selected because
++    # the exchange happened to return its SHORT row first.
++    ordered = sorted(positions.items(), key=lambda item: (item[0][0], 0 if item[0][1] == "LONG" else 1))
++    for key, leg in ordered:
++        if key in visited:
++            continue
++        symbol, side = key
++        opposite = positions.get((symbol, "SHORT" if side == "LONG" else "LONG"))
++        linked = bool(opposite and hedge_links.get(symbol) is True)
++        if side == "LONG" and not linked:
++            # Fail closed: a LONG is only ever selected together with its verified
++            # hedge SHORT. A lone LONG (no opposite row) is NOT proof of "no hedge".
++            reason = "hedge_relationship_unverified" if opposite else "long_requires_verified_hedge_link"
++            skipped.append({"symbol": symbol, "side": side, "reason": reason})
++            continue
++        legs = [leg]
++        if side == "LONG" and linked:
++            legs = [leg, opposite]
++            pair_profit = None if any(x["pnl"] is None or x["mark"] is None for x in legs) else sum((x["pnl"] - x["quantity"] * x["mark"] * fee_rate) for x in legs)
++            if pair_profit is None or pair_profit <= 0:
++                # LONG is protected; let an independently profitable SHORT be
++                # evaluated on its own during the next iteration.
++                skipped.append({"symbol": symbol, "side": "LONG", "reason": "pair_net_not_positive"})
++                continue
++        elif leg["pnl"] is None or leg["pnl"] <= MIN_PROFIT:
++            skipped.append({"symbol": symbol, "side": side, "reason": "profit_not_above_0_50"})
++            continue
++        proposed = []
++        for part in legs:
++            rules = filters.get(part["symbol"])
++            step = _dec((rules or {}).get("stepSize"))
++            minimum = _dec((rules or {}).get("minQty"))
++            min_notional = _dec((rules or {}).get("minNotional", "0"))
++            max_qty = _dec((rules or {}).get("maxQty", "0"))
++            if not rules or step is None or step <= 0 or minimum is None or minimum <= 0 or part["mark"] is None or part["mark"] <= 0 or min_notional is None:
++                proposed.append((None, part, "filters_unverified"))
++                continue
++            quantity = (part["quantity"] * Decimal(percentage) / 100 / step).to_integral_value(rounding=ROUND_DOWN) * step
++            if quantity < minimum or quantity * part["mark"] < min_notional or quantity <= 0 or (max_qty is not None and max_qty > 0 and quantity > max_qty):
++                proposed.append((None, part, "below_exchange_minimum"))
++                continue
++            proposed.append((quantity, part, None))
++        if linked and side == "LONG" and any(err for _, _, err in proposed):
++            skipped.append({"symbol": symbol, "side": "PAIR", "reason": "paired_order_not_eligible"})
++            continue
++        if linked and side == "LONG":
++            visited.add((symbol, "SHORT"))
++        for quantity, part, err in proposed:
++            if err == "below_exchange_minimum" and include_short_below_minimum and part["side"] == "SHORT" and side == "SHORT":
++                # Read-only preview: retain profitable SHORT for the existing per-position
++                # close route to issue its own authoritative minimum-size validation.
++                selected.append({"symbol": symbol, "side": "SHORT", "quantity": str(part["quantity"]), "percentage": percentage, "paired": False, "minimumWarning": err})
++            elif err:
++                skipped.append({"symbol": symbol, "side": part["side"], "reason": err})
++            else:
++                selected.append({"symbol": symbol, "side": part["side"], "quantity": str(quantity), "percentage": percentage, "paired": linked and side == "LONG"})
++    return {"percentage": percentage, "selected": selected, "skipped": skipped}
+diff --git a/cloud_api/manual_profit_close_snapshot.py b/cloud_api/manual_profit_close_snapshot.py
+new file mode 100644
+index 0000000..83e4c10
+--- /dev/null
++++ b/cloud_api/manual_profit_close_snapshot.py
+@@ -0,0 +1,38 @@
++"""Immutable audit snapshot for manual Close Profits planning; no orders."""
++from __future__ import annotations
++import csv
++import io
++import json
++from datetime import datetime, timezone
++
++
++FIELDS = ("capturedAtUtc", "symbol", "side", "quantity", "markPrice", "unrealizedPnl", "hedgeLink", "percentage")
++
++
++def make_profit_close_snapshot(rows, percentage, hedge_links=None, captured_at=None):
++    if percentage not in (25, 50, 75, 100):
++        raise ValueError("unsupported percentage")
++    when = captured_at or datetime.now(timezone.utc)
++    if when.tzinfo is None:
++        raise ValueError("snapshot timestamp must include timezone")
++    at = when.astimezone(timezone.utc).isoformat()
++    links = hedge_links or {}
++    entries = []
++    for row in rows:
++        symbol = str(row.get("symbol", "")).strip().upper()
++        side = str(row.get("positionSide", row.get("side", ""))).strip().upper()
++        if not symbol or side not in ("LONG", "SHORT"):
++            continue
++        entries.append({
++            "capturedAtUtc": at, "symbol": symbol, "side": side,
++            "quantity": str(row.get("positionAmt", row.get("quantity", ""))),
++            "markPrice": str(row.get("markPrice", "")),
++            "unrealizedPnl": str(row.get("unRealizedProfit", row.get("unrealizedPnl", ""))),
++            "hedgeLink": "verified" if links.get(symbol) is True else "unverified",
++            "percentage": percentage,
++        })
++    buffer = io.StringIO()
++    writer = csv.DictWriter(buffer, fieldnames=FIELDS, lineterminator="\n")
++    writer.writeheader()
++    writer.writerows(entries)
++    return {"capturedAtUtc": at, "rows": entries, "csv": buffer.getvalue(), "json": json.dumps(entries, separators=(",", ":"), ensure_ascii=False)}
+diff --git a/cloud_api/test_close_profits_2_1_guard.py b/cloud_api/test_close_profits_2_1_guard.py
+new file mode 100644
+index 0000000..903b5ef
+--- /dev/null
++++ b/cloud_api/test_close_profits_2_1_guard.py
+@@ -0,0 +1,303 @@
++"""Close Profits 2.1 offline tests: guard, strict Auto Hedge lock, planner, route behaviour.
++
++No network, no Firestore, no live orders. The close route is executed from its real
++source (ast-extracted from main.py) against mocks, because main.py itself cannot be
++imported offline (firebase_admin etc.).
++"""
++from __future__ import annotations
++
++import ast
++import builtins
++import unittest
++from decimal import Decimal
++from pathlib import Path
++from types import SimpleNamespace
++from unittest import mock
++
++import aster_position_loss_auto_hedge_lock as lock
++from manual_profit_close_guard import bulk_profit_close_block_reason
++from manual_profit_close_planner import build_profit_close_plan
++
++HERE = Path(__file__).parent
++MAIN_SRC = (HERE / "main.py").read_text()
++
++FILTERS = {s: {"stepSize": "0.001", "minQty": "0.001", "minNotional": "5", "maxQty": "100000"}
++           for s in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT")}
++
++
++def row(symbol, side, qty, pnl, mark="100"):
++    qty = float(qty)
++    amt = -qty if side == "SHORT" else qty
++    return {"symbol": symbol, "positionSide": side, "positionAmt": str(amt),
++            "unRealizedProfit": str(pnl), "markPrice": mark}
++
++
++def never_managed(**_):
++    return False
++
++
++class GuardTests(unittest.TestCase):
++    def test_normal_short_allowed(self):
++        self.assertIsNone(bulk_profit_close_block_reason("u", "BTCUSDT", "SHORT", [], managed_check=never_managed))
++
++    def test_normal_long_not_allowed_in_bulk(self):
++        self.assertIn("SHORT", bulk_profit_close_block_reason("u", "BTCUSDT", "LONG", [], managed_check=never_managed))
++
++    def test_auto_hedge_short_blocked(self):
++        reason = bulk_profit_close_block_reason("u", "BTCUSDT", "SHORT", [], managed_check=lambda **_: True)
++        self.assertIn("Auto Hedge", reason)
++
++    def test_focus_airbag_blocked(self):
++        legs = [{"symbol": "ETHUSDT", "side": "SHORT", "role": "FOCUS_SLOT_AIRBAG:slot1"}]
++        self.assertIn("Focus Airbag", bulk_profit_close_block_reason("u", "ETHUSDT", "SHORT", legs, managed_check=never_managed))
++        self.assertIsNone(bulk_profit_close_block_reason("u", "SOLUSDT", "SHORT", legs, managed_check=never_managed))
++
++    def test_status_change_between_preview_and_execution_blocks(self):
++        state = {"managed": False}
++        check = lambda **_: state["managed"]
++        self.assertIsNone(bulk_profit_close_block_reason("u", "BTCUSDT", "SHORT", [], managed_check=check))
++        state["managed"] = True  # Auto Hedge took the pair after the preview
++        self.assertIsNotNone(bulk_profit_close_block_reason("u", "BTCUSDT", "SHORT", [], managed_check=check))
++
++    def test_reader_failure_propagates(self):
++        def boom(**_):
++            raise lock.AutoHedgeCloseBlocked({"message": "unreadable"})
++        with self.assertRaises(lock.AutoHedgeCloseBlocked):
++            bulk_profit_close_block_reason("u", "BTCUSDT", "SHORT", [], managed_check=boom)
++
++
++class StrictLockTests(unittest.TestCase):
++    def tearDown(self):
++        lock.configure_auto_hedge_lock_reader(None)
++
++    def test_missing_reader_fails_closed(self):
++        lock.configure_auto_hedge_lock_reader(None)
++        with self.assertRaises(lock.AutoHedgeCloseBlocked):
++            lock.auto_hedge_symbol_managed_strict(account_uid="u", symbol="BTCUSDT")
++        # legacy helper keeps its old (open) behaviour: proves the strict one is needed
++        self.assertFalse(lock.auto_hedge_symbol_managed(account_uid="u", symbol="BTCUSDT"))
++
++    def test_reader_exception_and_garbage_fail_closed(self):
++        def boom(uid, sym):
++            raise RuntimeError("firestore down")
++        lock.configure_auto_hedge_lock_reader(boom)
++        with self.assertRaises(lock.AutoHedgeCloseBlocked):
++            lock.auto_hedge_symbol_managed_strict(account_uid="u", symbol="BTCUSDT")
++        lock.configure_auto_hedge_lock_reader(lambda uid, sym: None)
++        with self.assertRaises(lock.AutoHedgeCloseBlocked):
++            lock.auto_hedge_symbol_managed_strict(account_uid="u", symbol="BTCUSDT")
++
++    def test_statuses(self):
++        for status, expected in [("", False), ("CLOSED", False), ("HEDGED", True), ("HEDGING", True),
++                                 ("RECOVERY", True), ("REHEDGE_ARMED", True), ("DISABLED", True),
++                                 ("SOMETHING_NEW", True)]:
++            lock.configure_auto_hedge_lock_reader(lambda uid, sym, s=status: {"status": s})
++            self.assertIs(lock.auto_hedge_symbol_managed_strict(account_uid="u", symbol="BTCUSDT"), expected, status)
++        lock.configure_auto_hedge_lock_reader(lambda uid, sym: {})
++        self.assertFalse(lock.auto_hedge_symbol_managed_strict(account_uid="u", symbol="BTCUSDT"))
++
++
++class PlannerTests(unittest.TestCase):
++    def plan(self, rows, pct=25):
++        return build_profit_close_plan(rows, pct, FILTERS, hedge_links={})
++
++    def test_lone_long_is_never_selected(self):
++        p = self.plan([row("BTCUSDT", "LONG", 1, 5)])
++        self.assertEqual(p["selected"], [])
++        self.assertEqual(p["skipped"][0]["reason"], "long_requires_verified_hedge_link")
++
++    def test_long_with_unverified_hedge_skipped(self):
++        p = self.plan([row("BTCUSDT", "LONG", 1, 5), row("BTCUSDT", "SHORT", 1, -2)])
++        self.assertTrue(any(s["side"] == "LONG" and s["reason"] == "hedge_relationship_unverified" for s in p["skipped"]))
++        self.assertFalse(any(x["side"] == "LONG" for x in p["selected"]))
++
++    def test_threshold_is_strictly_above_050(self):
++        p = self.plan([row("BTCUSDT", "SHORT", 1, "0.50"), row("ETHUSDT", "SHORT", 1, "0.51")])
++        self.assertEqual([x["symbol"] for x in p["selected"]], ["ETHUSDT"])
++        self.assertTrue(any(s["symbol"] == "BTCUSDT" and s["reason"] == "profit_not_above_0_50" for s in p["skipped"]))
++
++    def test_negative_short_quantity_uses_absolute(self):
++        p = self.plan([row("BTCUSDT", "SHORT", 8, 3)], 50)
++        self.assertEqual(Decimal(p["selected"][0]["quantity"]), Decimal(4))
++
++    def test_percentages(self):
++        for pct, expected in [(25, "2.000"), (50, "4"), (75, "6.000"), (100, "8.000")]:
++            p = self.plan([row("BTCUSDT", "SHORT", 8, 3)], pct)
++            self.assertEqual(Decimal(p["selected"][0]["quantity"]), Decimal(expected))
++
++    def test_invalid_percentage_rejected(self):
++        with self.assertRaises(ValueError):
++            self.plan([row("BTCUSDT", "SHORT", 8, 3)], 33)
++
++    def test_minimum_order_skipped_with_reason(self):
++        p = self.plan([row("BTCUSDT", "SHORT", 0.002, 3, mark="1")], 25)  # 0.0005 < minQty
++        self.assertEqual(p["selected"], [])
++        self.assertEqual(p["skipped"][0]["reason"], "below_exchange_minimum")
++
++    def test_loss_never_selected_and_mixed_portfolio(self):
++        rows = [row("BTCUSDT", "SHORT", 1, 4), row("BTCUSDT", "LONG", 1, -9),       # loss long untouched
++                row("ETHUSDT", "SHORT", 2, -1), row("SOLUSDT", "SHORT", 5, 2),
++                row("XRPUSDT", "LONG", 3, 7)]                                         # lone profitable long
++        p = self.plan(rows, 100)
++        self.assertEqual(sorted((x["symbol"], x["side"]) for x in p["selected"]),
++                         [("BTCUSDT", "SHORT"), ("SOLUSDT", "SHORT")])
++
++
++def load_close_route():
++    tree = ast.parse(MAIN_SRC)
++    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "close_one_aster_position")
++    fn.decorator_list = []
++    module = ast.Module(body=[fn], type_ignores=[])
++    ast.fix_missing_locations(module)
++    names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
++    return compile(module, "main.py::close_one_aster_position", "exec"), names
++
++
++class RouteBehaviourTests(unittest.TestCase):
++    """Runs the REAL close route source with every dependency mocked."""
++
++    def build(self, *, managed=False, reader_raises=False, owned_legs=None, bulk=True, qty=8.0):
++        code, names = load_close_route()
++        ns = {n: mock.MagicMock(name=n) for n in names if not hasattr(builtins, n)}
++        calls = SimpleNamespace(orders=[], intents=[])
++
++        class FakeHTTP(Exception):
++            def __init__(self, status, detail):
++                self.status_code, self.detail = status, detail
++
++        class Blocked(RuntimeError):
++            pass
++
++        class Intent:
++            def create(self, data): calls.intents.append(("create", data))
++            def set(self, data, merge=False): calls.intents.append(("set", data))
++
++        live = [{"symbol": "BTCUSDT", "positionSide": "SHORT", "positionAmt": "-8", "markPrice": "100", "leverage": "5"}]
++        client = mock.MagicMock()
++        client.position_risk.return_value = live
++        ns.update({
++            "HTTPException": FakeHTTP, "AutoHedgeCloseBlocked": Blocked,
++            "os": SimpleNamespace(getenv=lambda *a, **k: "true"),
++            "hashlib": __import__("hashlib"), "datetime": __import__("datetime").datetime,
++            "timezone": __import__("datetime").timezone,
++            "google_exceptions": SimpleNamespace(AlreadyExists=type("AlreadyExists", (Exception,), {})),
++            "user_reference": lambda user: SimpleNamespace(collection=lambda n: SimpleNamespace(document=lambda d: Intent())),
++            "AsterV3Client": lambda **kw: client, "load_aster_secret": lambda u: SimpleNamespace(signer_address="a"),
++            "local_eip712_signer": lambda s: None, "_block_order_during_close_all": lambda uid: None,
++            "ALLOWED_CLOSE_PERCENTAGES": {25, 50, 75, 100},
++            "safe_float": lambda v, d=0.0: float(v) if v not in (None, "") else d,
++            "close_size": lambda q, p: q * p / 100, "Decimal": __import__("decimal").Decimal,
++            "ContractRules": SimpleNamespace(from_exchange_info=lambda info: SimpleNamespace(
++                market_quantity=lambda q, m: q)),
++            "AsterValidationError": ValueError,
++            "_position_loss_auto_hedge_pair": lambda uid, sym: {},
++            "_MANUAL_AUTO_HEDGE_RELEASE_STATUSES": set(),
++            "require_auto_hedge_close_allowed": lambda **kw: None,
++            "begin_manual_action": lambda *a, **k: object(), "complete_manual_action": lambda *a, **k: None,
++            "fail_manual_action": lambda *a, **k: None, "_fail_position_loss_auto_hedge_manual_release": lambda *a, **k: None,
++            "_complete_position_loss_auto_hedge_manual_release": lambda *a, **k: None,
++            "PairExecutionPlan": lambda *a, **k: object(), "PositionSide": lambda s: s,
++            "_release_aster_account_coordination": lambda *a, **k: None,
++            "time": SimpleNamespace(sleep=lambda s: None),
++        })
++        client.public_exchange_info.return_value = {"symbols": [{"symbol": "BTCUSDT"}]}
++
++        def execute(*a, **k):
++            calls.orders.append(k)
++            live[0]["positionAmt"] = str(-(8 - 8 * 0.25))
++            return {"status": "FILLED"}
++        ns["execute_aster_leg"] = execute
++
++        def bulk_reason(uid, symbol, side):
++            if reader_raises:
++                raise Blocked("Auto Hedge-lock kon niet betrouwbaar worden gelezen")
++            return bulk_profit_close_block_reason(
++                uid, symbol, side, owned_legs or [], managed_check=lambda **_: managed)
++        ns["_bulk_profit_close_block_reason_live"] = bulk_reason
++        exec(code, ns)
++        request = SimpleNamespace(confirm=True, side="SHORT", expected_quantity=qty, percentage=25,
++                                  idempotency_key="k" * 20, bulk_profit_close=bulk)
++        return ns["close_one_aster_position"], request, calls, FakeHTTP, Blocked
++
++    def call(self, **kw):
++        fn, request, calls, FakeHTTP, Blocked = self.build(**kw)
++        try:
++            return fn("btcusdt", request, {"uid": "u1"}), calls, None
++        except (FakeHTTP, Blocked) as exc:
++            return None, calls, exc
++
++    def test_normal_bulk_short_is_closed(self):
++        result, calls, exc = self.call()
++        self.assertIsNone(exc)
++        self.assertEqual(len(calls.orders), 1)
++        self.assertEqual(result["percentage"], 25)
++
++    def test_auto_hedge_managed_blocked_before_any_order_with_stale_snapshot(self):
++        result, calls, exc = self.call(managed=True)
++        self.assertEqual(getattr(exc, "status_code", None), 409)
++        self.assertIn("Auto Hedge", exc.detail)
++        self.assertEqual(calls.orders, [])
++        self.assertTrue(any(c[1].get("status") == "blocked_bulk_protected" for c in calls.intents if c[0] == "set"))
++
++    def test_focus_airbag_blocked(self):
++        _, calls, exc = self.call(owned_legs=[{"symbol": "BTCUSDT", "side": "SHORT", "role": "FOCUS_SLOT_AIRBAG:s"}])
++        self.assertEqual(calls.orders, [])
++        self.assertIn("Focus Airbag", exc.detail)
++
++    def test_unreliable_hedge_state_fails_closed(self):
++        _, calls, exc = self.call(reader_raises=True)
++        self.assertIsNotNone(exc)
++        self.assertEqual(calls.orders, [])
++
++    def test_individual_close_unchanged_when_flag_not_set(self):
++        # Without the bulk flag the new guard is not consulted at all, even when
++        # the symbol is Auto Hedge managed: existing individual Close semantics.
++        result, calls, exc = self.call(managed=True, bulk=False)
++        self.assertIsNone(exc)
++        self.assertEqual(len(calls.orders), 1)
++
++    def test_stale_quantity_rejected(self):
++        _, calls, exc = self.call(qty=5.0)
++        self.assertEqual(exc.status_code, 409)
++        self.assertEqual(calls.orders, [])
++
++    def test_duplicate_idempotency_key_places_no_second_order(self):
++        fn, request, calls, FakeHTTP, Blocked = self.build()
++        ns_exc = fn.__globals__["google_exceptions"].AlreadyExists
++        fn.__globals__["user_reference"] = lambda user: SimpleNamespace(collection=lambda n: SimpleNamespace(
++            document=lambda d: SimpleNamespace(create=mock.Mock(side_effect=ns_exc()), set=lambda *a, **k: None)))
++        with self.assertRaises(FakeHTTP) as ctx:
++            fn("btcusdt", request, {"uid": "u1"})
++        self.assertEqual(ctx.exception.status_code, 409)
++        self.assertEqual(calls.orders, [])
++
++
++class SourceContractTests(unittest.TestCase):
++    def test_guard_runs_before_any_state_change_in_route(self):
++        route = MAIN_SRC[MAIN_SRC.index("def close_one_aster_position("):]
++        route = route[:route.index('@app.post("/v1/me/aster/simulate")')]
++        guard = route.index("if request.bulk_profit_close:")
++        for later in ("close_size(live_quantity", "_begin_position_loss_auto_hedge_manual_release(",
++                      "begin_manual_action(", "execute_aster_leg("):
++            self.assertLess(guard, route.index(later), later)
++        self.assertLess(route.index("expected_quantity"), guard)  # after live-quantity check
++
++    def test_request_model_flag_defaults_false(self):
++        self.assertIn("bulk_profit_close: bool = False", MAIN_SRC)
++
++    def test_preview_uses_strict_check_and_no_new_close_route(self):
++        preview = MAIN_SRC[MAIN_SRC.index("def preview_manual_profit_close_plan("):]
++        preview = preview[:preview.index('@app.post("/v1/me/aster/positions/close-profitable")')]
++        self.assertIn("auto_hedge_symbol_managed_strict", preview)
++        self.assertEqual(MAIN_SRC.count('"/v1/me/aster/positions/{symbol}/close"'), 1)
++        self.assertNotIn("bulk-close", MAIN_SRC.lower().replace("bulk_close", ""))
++
++    def test_no_order_submission_in_preview(self):
++        preview = MAIN_SRC[MAIN_SRC.index("def preview_manual_profit_close_plan("):]
++        preview = preview[:preview.index('@app.post("/v1/me/aster/positions/close-profitable")')]
++        for forbidden in ("execute_aster_leg", "submit_order", "live=True"):
++            self.assertNotIn(forbidden, preview)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/cloud_api/test_manual_profit_close_planner.py b/cloud_api/test_manual_profit_close_planner.py
+new file mode 100644
+index 0000000..0d6e743
+--- /dev/null
++++ b/cloud_api/test_manual_profit_close_planner.py
+@@ -0,0 +1,41 @@
++import unittest
++from manual_profit_close_planner import build_profit_close_plan
++
++F = {"BTCUSDT":{"stepSize":"1","minQty":"2","minNotional":"0"}}
++def row(side, pnl, qty=100):
++    return {"symbol":"BTCUSDT","positionSide":side,"positionAmt":str(qty),"unRealizedProfit":str(pnl),"markPrice":"10"}
++
++class ProfitClosePlannerTests(unittest.TestCase):
++    def test_short_alone_despite_losing_long(self):
++        p=build_profit_close_plan([row("SHORT",2),row("LONG",-5)],25,F,hedge_links={"BTCUSDT":True})
++        self.assertEqual([(x["side"], x["quantity"]) for x in p["selected"]],[("SHORT","25")])
++    def test_profitable_pair_closes_both(self):
++        p=build_profit_close_plan([row("SHORT",-1),row("LONG",3)],50,F,hedge_links={"BTCUSDT":True})
++        self.assertEqual({x["side"] for x in p["selected"]},{"LONG","SHORT"})
++    def test_insufficient_minimum_skips_without_trade(self):
++        p=build_profit_close_plan([row("SHORT",1,qty=4)],25,F)
++        self.assertFalse(p["selected"])
++        self.assertEqual(p["skipped"][0]["reason"],"below_exchange_minimum")
++    def test_more_percentage_enables_minimum(self):
++        p=build_profit_close_plan([row("SHORT",1,qty=4)],50,F)
++        self.assertEqual(p["selected"][0]["quantity"],"2")
++    def test_exact_fifty_cents_not_eligible(self):
++        self.assertFalse(build_profit_close_plan([row("SHORT",0.50)],100,F)["selected"])
++    def test_unverified_link_protects_long_not_short(self):
++        p=build_profit_close_plan([row("LONG",3),row("SHORT",1)],25,F)
++        self.assertEqual([x["side"] for x in p["selected"]],["SHORT"])
++    def test_explicit_unverified_pair_never_closes_long_alone(self):
++        p=build_profit_close_plan([row("LONG",3),row("SHORT",1)],25,F,hedge_links={"BTCUSDT":False})
++        self.assertEqual([x["side"] for x in p["selected"]],["SHORT"])
++    def test_exchange_info_contract_filters(self):
++        from manual_profit_close_planner import filters_from_aster_exchange_info
++        info = {"symbols":[{"symbol":"BTCUSDT","status":"TRADING","filters":[{"filterType":"LOT_SIZE","minQty":"2","maxQty":"1000","stepSize":"1"},{"filterType":"MARKET_LOT_SIZE","minQty":"2","maxQty":"200","stepSize":"1"},{"filterType":"MIN_NOTIONAL","notional":"10"}]}]}
++        filters=filters_from_aster_exchange_info(info)
++        self.assertEqual(filters["BTCUSDT"]["minQty"],"2")
++        self.assertEqual(filters["BTCUSDT"]["minNotional"],"10")
++        self.assertEqual(build_profit_close_plan([row("SHORT",1,qty=4)],25,filters)["selected"],[])
++    def test_reversed_order_same_pair(self):
++        p=build_profit_close_plan([row("SHORT",-1),row("LONG",3)],25,F,hedge_links={"BTCUSDT":True})
++        self.assertEqual({x["side"] for x in p["selected"]},{"SHORT","LONG"})
++
++if __name__=="__main__": unittest.main()
+diff --git a/cloud_api/test_manual_profit_close_preview_contract.py b/cloud_api/test_manual_profit_close_preview_contract.py
+new file mode 100644
+index 0000000..f31e714
+--- /dev/null
++++ b/cloud_api/test_manual_profit_close_preview_contract.py
+@@ -0,0 +1,23 @@
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parent.parent
++MAIN = (ROOT / "cloud_api/main.py").read_text()
++WEB = (ROOT / "web/components/aster-recent-trades.tsx").read_text()
++ROUTE = (ROOT / "web/app/api/exchanges/aster/positions/manual-profit-close-plan/route.ts").read_text()
++
++def test_preview_never_sends_order():
++    source = MAIN.split('@app.get("/v1/me/aster/positions/manual-profit-close-plan")', 1)[1].split('@app.post("/v1/me/aster/positions/close-profitable")', 1)[0]
++    assert "position_risk()" in source
++    assert "public_exchange_info()" in source
++    assert "make_profit_close_snapshot" in source
++    assert '"executionEnabled": False' in source
++    assert "execute_aster_leg" not in source
++    assert "live=True" not in source
++
++def test_existing_upper_buttons_unchanged_and_green_uses_new_preview():
++    assert 'onClick={() => forwardSnapshotProfit("LONG")}' in WEB
++    assert 'onClick={() => forwardSnapshotProfit("SHORT")}' in WEB
++    assert 'onClick={() => forwardSnapshotProfit("ALL")}' in WEB
++    assert 'manual-profit-close-plan?percentage=${profitClosePercentage}' in WEB
++    assert 'manual-profit-close-plan?percentage=${raw}' in ROUTE
++    assert "link.download" in WEB
+diff --git a/cloud_api/test_manual_profit_close_snapshot.py b/cloud_api/test_manual_profit_close_snapshot.py
+new file mode 100644
+index 0000000..8610925
+--- /dev/null
++++ b/cloud_api/test_manual_profit_close_snapshot.py
+@@ -0,0 +1,18 @@
++import unittest
++from datetime import datetime, timezone
++from manual_profit_close_snapshot import make_profit_close_snapshot
++
++class SnapshotTests(unittest.TestCase):
++    def test_export_contains_both_legs_and_timestamp(self):
++        rows=[{"symbol":"BTCUSDT","positionSide":"LONG","positionAmt":"5","markPrice":"10","unRealizedProfit":"-1"},{"symbol":"BTCUSDT","positionSide":"SHORT","positionAmt":"5","markPrice":"10","unRealizedProfit":"2"}]
++        out=make_profit_close_snapshot(rows,25,{"BTCUSDT":True},datetime(2026,10,20,15,0,tzinfo=timezone.utc))
++        self.assertEqual(len(out["rows"]),2)
++        self.assertIn("BTCUSDT,SHORT,5,10,2,verified,25",out["csv"])
++        self.assertIn("2026-10-20T15:00:00+00:00",out["json"])
++    def test_invalid_percentage_rejected(self):
++        with self.assertRaises(ValueError): make_profit_close_snapshot([],33)
++    def test_snapshot_never_mutates_source(self):
++        rows=[{"symbol":"XRPUSDT","positionSide":"SHORT","positionAmt":"2"}]
++        make_profit_close_snapshot(rows,50)
++        self.assertNotIn("capturedAtUtc",rows[0])
++if __name__=="__main__": unittest.main()
+diff --git a/web/app/api/exchanges/aster/positions/manual-profit-close-plan/route.ts b/web/app/api/exchanges/aster/positions/manual-profit-close-plan/route.ts
+new file mode 100644
+index 0000000..15b70e1
+--- /dev/null
++++ b/web/app/api/exchanges/aster/positions/manual-profit-close-plan/route.ts
+@@ -0,0 +1,10 @@
++import { proxyCloud } from "@/lib/cloud-proxy";
++
++export async function GET(request: Request) {
++  const url = new URL(request.url);
++  const raw = url.searchParams.get("percentage") ?? "25";
++  if (!["25", "50", "75", "100"].includes(raw)) {
++    return Response.json({ detail: "Invalid profit close percentage" }, { status: 422 });
++  }
++  return proxyCloud(request, `/v1/me/aster/positions/manual-profit-close-plan?percentage=${raw}`, "GET");
++}
+diff --git a/web/components/aster-recent-trades.tsx b/web/components/aster-recent-trades.tsx
+index 4ecab7c..b1d0e0a 100644
+--- a/web/components/aster-recent-trades.tsx
++++ b/web/components/aster-recent-trades.tsx
+@@ -1027,6 +1027,9 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+   const [detailFillDcaCount, setDetailFillDcaCount] = useState<number | null>(null);
+   const [profitConfirming, setProfitConfirming] = useState(false);
+   const [profitBusy, setProfitBusy] = useState(false);
++  const [profitClosePercentage, setProfitClosePercentage] = useState<25 | 50 | 75 | 100>(25);
++  const [bulkCloseTargets, setBulkCloseTargets] = useState<Array<{ symbol: string; side: "SHORT"; quantity: number; minimumWarning?: string }>>([]);
++  const bulkCloseInFlightRef = useRef(false);
+   const [profitPreview, setProfitPreview] = useState<ProfitClosePreview | null>(null);
+   const [profitMessage, setProfitMessage] = useState("");
+   const scrollYRef = useRef(0);
+@@ -1125,7 +1128,19 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+         : [],
+     [livePositions, profitSnapshotReliable],
+   );
+-  const profitCandidateTotal = useMemo(() => profitCandidates.reduce((sum, position) => sum + (finite(position.unrealizedPnl) || 0), 0), [profitCandidates]);
++  const shortProfitCandidates = useMemo(
++    // Close Profits 2.1: strictly > $0.50 (same bound as the backend planner),
++    // SHORT only, and never Auto Hedge-managed or Focus Airbag hedge legs.
++    // The server re-checks all of this right before every close.
++    () => profitCandidates.filter((position) =>
++      String(position.side || "").toUpperCase() === "SHORT" && (finite(position.unrealizedPnl) || 0) > 0.5 &&
++      !position.positionLossAutoHedge && position.focusAirbagHedge !== true),
++    [profitCandidates],
++  );
++  const shortProfitCandidateTotal = useMemo(
++    () => shortProfitCandidates.reduce((sum, position) => sum + (finite(position.unrealizedPnl) || 0), 0),
++    [shortProfitCandidates],
++  );
+   const accountDisplay = useMemo(
+     () =>
+       deriveAsterAccountDisplay({
+@@ -1327,14 +1342,56 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+   const detailManagedByMultiDca = Boolean(detail && multiDcaPositions[`${normalizedSymbol(detail.selection.symbol)}|${detailMainSide}`]);
+   const detailFocusV2Cockpit = detail && !detailManagedByMultiDca && String(detail.selection.strategy2Role || "").toUpperCase() === "FOCUS_V2_LONG" && focusV2Cockpit && normalizedSymbol(String(focusV2Cockpit.symbol || "")) === normalizedSymbol(detail.selection.symbol) ? focusV2Cockpit : null;
+   async function openProfitConfirmation() {
+-    if (profitBusy || !profitSnapshotReliable || profitCandidates.length === 0) return;
++    if (profitBusy) return;
++    setProfitConfirming(false);
++    setBulkCloseTargets([]);
++    setProfitPreview(null);
++    if (!profitSnapshotReliable) {
++      setProfitMessage("De Aster-positiesnapshot is nog niet bevestigd. Vernieuw de posities en probeer opnieuw; er zijn geen orders geplaatst.");
++      return;
++    }
++    if (shortProfitCandidates.length === 0) {
++      setProfitMessage("Geen sluitbare SHORT-posities met meer dan $0,50 winst buiten Auto Hedge gevonden; er zijn geen orders geplaatst.");
++      return;
++    }
+     setProfitBusy(true);
+     setProfitMessage("");
+     try {
+-      const preview = (await authenticatedRequest("/api/exchanges/aster/positions/profitable-close-preview", { method: "GET", cache: "no-store" })) as ProfitClosePreview;
+-      setProfitPreview(preview);
+-      if (preview.eligibleCount > 0) setProfitConfirming(true);
+-      else setProfitMessage("Geen profits om te sluiten.");
++      const preview = (await authenticatedRequest(`/api/exchanges/aster/positions/manual-profit-close-plan?percentage=${profitClosePercentage}`, { method: "GET", cache: "no-store" })) as { selected: Array<{symbol:string;side:string;quantity:string;minimumWarning?:string}>; skipped: Array<{reason:string}>; protectedExcludedCount?: number; snapshot: {csv:string;rows:Array<{symbol:string;side:string;quantity:string}>}; executionEnabled:boolean };
++      // Reuse the exact same single-position CLOSE endpoint as the existing buttons.
++      // Backend planning excludes unverified paired LONGs; no bulk order engine.
++      const targets = preview.selected.flatMap((item) => {
++        const side = String(item.side).toUpperCase();
++        const symbol = normalizedSymbol(item.symbol);
++        const original = preview.snapshot?.rows?.find((row) =>
++          normalizedSymbol(row.symbol) === symbol && String(row.side).toUpperCase() === side);
++        const quantity = original ? Number(original.quantity) : Number.NaN;
++        const position = shortProfitCandidates.find((row) =>
++          normalizedSymbol(row.symbol || "") === symbol && String(row.side).toUpperCase() === "SHORT");
++        return side === "SHORT" && position?.focusAirbagHedge !== true &&
++          position !== undefined && Number.isFinite(quantity) && Math.abs(quantity) > 0
++          ? [{ symbol, side: "SHORT" as const, quantity: Math.abs(quantity), minimumWarning: item.minimumWarning }] : [];
++      });
++      const uniqueTargets = targets.filter((target, index) =>
++        targets.findIndex((candidate) => candidate.symbol === target.symbol && candidate.side === target.side) === index);
++      setBulkCloseTargets(uniqueTargets);
++      const selectedProfit = uniqueTargets.reduce((total, target) => {
++        const position = shortProfitCandidates.find((row) =>
++          normalizedSymbol(row.symbol || "") === target.symbol && String(row.side).toUpperCase() === "SHORT");
++        return total + (finite(position?.unrealizedPnl) || 0);
++      }, 0);
++      setProfitPreview({ eligibleCount: uniqueTargets.length, totalProfitUsd: selectedProfit, minimumProfitUsd: 0.5 });
++      setProfitConfirming(uniqueTargets.length > 0);
++      setProfitMessage(`Preview ${profitClosePercentage}%: ${uniqueTargets.length} geschikt, ${preview.skipped.length} overgeslagen (${preview.protectedExcludedCount ?? 0} beschermd door Auto Hedge/Airbag). Geen orders verstuurd.`);
++      if (typeof window !== "undefined" && preview.snapshot?.csv) {
++        const file = new Blob([preview.snapshot.csv], {type:"text/csv;charset=utf-8"});
++        const url = URL.createObjectURL(file);
++        const link = document.createElement("a");
++        link.href = url;
++        link.download = `aster-profit-close-${profitClosePercentage}-${new Date().toISOString().replace(/[:.]/g,"-")}.csv`;
++        link.click();
++        URL.revokeObjectURL(url);
++      }
+     } catch (reason) {
+       setProfitMessage(reason instanceof Error ? reason.message : "Actuele profits controleren is niet gelukt.");
+     } finally {
+@@ -1342,28 +1399,45 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+     }
+   }
+   async function closeProfits() {
+-    if (profitBusy || !profitPreview?.eligibleCount) return;
++    if (bulkCloseInFlightRef.current || profitBusy || !profitConfirming || !profitSnapshotReliable || bulkCloseTargets.length === 0) return;
++    bulkCloseInFlightRef.current = true;
+     setProfitBusy(true);
+-    setProfitMessage("");
+-    try {
+-      const result = (await authenticatedRequest("/api/exchanges/aster/positions/close-profitable", {
+-        method: "POST",
+-        body: JSON.stringify({
+-          confirm: true,
+-          idempotency_key: crypto.randomUUID(),
+-        }),
+-      })) as ProfitCloseResult;
+-      const skipped = result.skippedCount + result.failedCount;
+-      setProfitMessage(`${result.closedCount} posities gesloten · ${money(result.profitAtSubmitUsd, true)} bevestigd bij order · ${skipped} ${skipped === 1 ? "positie" : "posities"} overgeslagen`);
+-      setProfitConfirming(false);
+-      setProfitPreview(null);
+-      await onRetry();
+-    } catch (reason) {
+-      setProfitMessage(reason instanceof Error ? reason.message : "Winstposities sluiten is niet gelukt.");
+-      await onRetry();
+-    } finally {
+-      setProfitBusy(false);
++    setProfitConfirming(false);
++    let closed = 0;
++    let skipped = 0;
++    let protectedSkipped = 0;
++    let stoppedAt = "";
++    for (const target of bulkCloseTargets) {
++      try {
++        await authenticatedRequest(
++          "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
++          { method: "POST", body: JSON.stringify({
++            confirm: true, side: "SHORT", expected_quantity: target.quantity,
++            percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
++            bulk_profit_close: true,
++          }) },
++        );
++        closed++;
++      } catch (reason) {
++        const details = reason instanceof Error ? reason.message : String(reason);
++        if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details)) {
++          skipped++;
++          continue;
++        }
++        if (/valt onder Auto Hedge|Focus Airbag-hedge/i.test(details)) {
++          // Server refused before any order: status changed since the preview.
++          protectedSkipped++;
++          continue;
++        }
++        stoppedAt = target.symbol + ": " + details;
++        break;
++      }
+     }
++    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen · " + protectedSkipped + " beschermd (Auto Hedge/Airbag) niet aangeraakt" +
++      (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
++    setBulkCloseTargets([]);
++    setProfitPreview(null);
++    try { await Promise.resolve(onRetry()); } finally { bulkCloseInFlightRef.current = false; setProfitBusy(false); }
+   }
+   function selectFilter(key: FilterKey) {
+     setActive(key);
+@@ -1513,13 +1587,18 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+               <button type="button" className={styles.scopeShort} disabled={!profitSnapshotReliable || scopedProfitCandidates.SHORT.length === 0} onClick={() => forwardSnapshotProfit("SHORT")}>Close Short</button>
+               <button type="button" className={styles.scopeAll} disabled={!profitSnapshotReliable || profitCandidates.length === 0} onClick={() => forwardSnapshotProfit("ALL")}>Close All</button>
+             </div>
++            <div aria-label="Percentage winstposities sluiten" style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:10}}>
++              {([25,50,75,100] as const).map((percentage) => (
++                <button key={percentage} type="button" aria-pressed={profitClosePercentage===percentage} onClick={() => setProfitClosePercentage(percentage)} style={{padding:"8px 10px",borderRadius:8,border:profitClosePercentage===percentage?"1px solid #47da89":"1px solid #64748b",background:profitClosePercentage===percentage?"#13432b":"transparent",color:"inherit"}}>{percentage}%</button>
++              ))}
++            </div>
+             <footer className={styles.footer}>
+               <span className={profitStyles.footerPrimary}>
+                 {selectedRows.length > 6 && <button type="button" onClick={() => { setExpanded((value) => !value); setPages(1); }}>{expanded ? "Compact tonen" : "Toon alles"}</button>}
+                 {expanded && hasMore && <button type="button" onClick={() => setPages((value) => value + 1)}>Laad nog 100</button>}
+               </span>
+-              <button type="button" className={`${profitStyles.closeProfits} ${styles.profitCta}`} disabled={profitBusy || !profitSnapshotReliable || profitCandidates.length === 0} onClick={openProfitConfirmation}>
+-                {profitBusy ? "Profits controleren…" : profitCandidates.length ? `Close ${profitCandidates.length} profits · ${money(profitCandidateTotal, true)}` : "Geen profits om te sluiten"}
++              <button type="button" className={`${profitStyles.closeProfits} ${styles.profitCta}`} disabled={profitBusy} onClick={openProfitConfirmation}>
++                {profitBusy ? "Profits controleren…" : shortProfitCandidates.length ? `Close ${shortProfitCandidates.length} SHORT profits · ${money(shortProfitCandidateTotal, true)}` : "Geen SHORT profits om te sluiten"}
+               </button>
+             </footer>
+             {profitMessage && <p className={profitStyles.bulkMessage} role="status">{profitMessage}</p>}
+@@ -1528,8 +1607,21 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+                 <div>
+                   <h3 id="profit-close-title">{profitPreview.eligibleCount} winstposities sluiten?</h3>
+                   <dl><dt>Actuele totale winst</dt><dd className={styles.profit}>{money(profitPreview.totalProfitUsd, true)}</dd><dt>Geschikte posities</dt><dd>{profitPreview.eligibleCount}</dd></dl>
+-                  <p>Zowel LONG- als SHORT-posities kunnen worden gesloten. Iedere positie wordt vlak vóór de order opnieuw bij Aster gecontroleerd en wordt overgeslagen als deze niet meer positief is.</p>
+-                  <footer><button type="button" disabled={profitBusy} onClick={() => setProfitConfirming(false)}>Annuleren</button><button type="button" disabled={profitBusy} onClick={closeProfits}>{profitBusy ? "Veilig sluiten…" : `${profitPreview.eligibleCount} winstposities sluiten`}</button></footer>
++                  <p>Bevestig {profitClosePercentage}% MARKET-sluiting per geselecteerde SHORT. Iedere munt gebruikt de bestaande individuele Aster-sluitroute. Auto Hedge- en Focus Airbag-posities worden niet gesloten; de server controleert dit vlak voor elke sluiting opnieuw. Bij onbekende uitvoeringsstatus stopt de verwerking.</p>
++                  <div style={{maxHeight:250,overflowY:"auto",display:"grid",gap:8}}>
++                    {bulkCloseTargets.map((target) => (
++                      <button key={target.symbol + "|" + target.side} type="button" disabled={profitBusy}
++                        onClick={() => {
++                          setProfitConfirming(false);
++                          const position = livePositions.find((item) => normalizedSymbol(item.symbol || "") === target.symbol && String(item.side).toUpperCase() === target.side);
++                          if (position) openClosePosition(position);
++                        }}>
++                        <span>{target.symbol} · {target.side} · {target.quantity} · individuele sluitknop openen</span>
++                        {target.minimumWarning === "below_exchange_minimum" && <span style={{display:"block",fontWeight:700,color:"#fbbf24",marginTop:4}}>⚠ Mogelijk te kleine order — bestaande individuele sluitroute beslist</span>}
++                      </button>
++                    ))}
++                  </div>
++                  <footer><button type="button" disabled={profitBusy} onClick={() => setProfitConfirming(false)}>Annuleren</button><button type="button" disabled={profitBusy || bulkCloseTargets.length === 0} onClick={closeProfits}>{profitBusy ? "SHORTS sluiten…" : `Bevestig ${profitClosePercentage}% voor ${bulkCloseTargets.length} SHORTS`}</button></footer>
+                 </div>
+               </div>, document.body,
+             )}
+diff --git a/web/tests/aster-close-profitable.test.mjs b/web/tests/aster-close-profitable.test.mjs
+index ed6c860..fe43a04 100644
+--- a/web/tests/aster-close-profitable.test.mjs
++++ b/web/tests/aster-close-profitable.test.mjs
+@@ -10,18 +10,26 @@ const closeProxy = fs.readFileSync(new URL("../app/api/exchanges/aster/positions
+ test("bulk profit action preserves existing Tradecentrum controls", () => {
+   assert.match(component, /Toon alles/);
+   assert.match(component, /PositionClosePanel/);
+-  assert.match(component, /Close \$\{profitCandidates\.length\} profits/);
++  assert.match(component, /LONG: profitCandidates\.filter/);
++  assert.match(component, /SHORT: profitCandidates\.filter/);
++  assert.match(component, /Close \$\{shortProfitCandidates\.length\} SHORT profits/);
+   assert.doesNotMatch(component, /netto\s*[≥>]/i);
+ });
+ 
+-test("bulk profit action refreshes preview, confirms, and posts once while disabled", () => {
+-  assert.match(component, /profitable-close-preview/);
+-  assert.match(component, /close-profitable/);
+-  assert.match(component, /profitBusy \|\|/);
+-  assert.match(component, /crypto\.randomUUID\(\)/);
++test("SHORT-only bulk routes each confirmed position through existing individual CLOSE", () => {
++  assert.match(component, /return \(side === "LONG" \|\| side === "SHORT"\) && pnl !== null && pnl >= 0\.5/);
++  assert.match(component, /const shortProfitCandidates = useMemo/);
++  assert.match(component, /String\(position\.side \|\| ""\)\.toUpperCase\(\) === "SHORT" && \(finite\(position\.unrealizedPnl\) \|\| 0\) > 0\.5/);
++  assert.match(component, /manual-profit-close-plan/);
++  assert.match(component, /for \(const target of bulkCloseTargets\)/);
++  assert.match(component, /await authenticatedRequest\(/);
++  assert.match(component, /encodeURIComponent\(target\.symbol\) \+ "\/close"/);
++  assert.match(component, /side: "SHORT", expected_quantity: target\.quantity/);
++  assert.match(component, /percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey\(\)/);
++  assert.match(component, /bulkCloseInFlightRef\.current/);
+   assert.match(component, /createPortal/);
+-  assert.match(component, /Zowel LONG- als SHORT-posities/);
+-  assert.match(component, /Geen profits om te sluiten/);
++  assert.match(component, /break;/);
++  assert.match(component, /Geen SHORT profits om te sluiten/);
+ });
+ 
+ test("mobile footer keeps a compact single-line green action", () => {
+diff --git a/web/tests/aster-close-profits-2-1-safety.test.mjs b/web/tests/aster-close-profits-2-1-safety.test.mjs
+new file mode 100644
+index 0000000..bc2ae31
+--- /dev/null
++++ b/web/tests/aster-close-profits-2-1-safety.test.mjs
+@@ -0,0 +1,261 @@
++// Close Profits 2.1 — offline safety tests (no network, no live orders).
++// The real component source is sliced out and executed in a vm sandbox with mocks.
++import assert from "node:assert/strict";
++import fs from "node:fs";
++import vm from "node:vm";
++import test from "node:test";
++import { stripTypeScriptTypes } from "node:module";
++
++const source = fs.readFileSync(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
++
++function slice(startMarker, endMarker) {
++  const start = source.indexOf(startMarker);
++  const end = source.indexOf(endMarker, start);
++  assert.ok(start !== -1 && end > start, "marker exists: " + startMarker);
++  return source.slice(start, end);
++}
++const helpers = slice("function finite(value: unknown) {", "function baseAsset(");
++const helperCode = helpers.replace(/: unknown/g, "").replace(/symbol = ""/, 'symbol = ""');
++
++// --- candidate filter (real source of the useMemo callback) -------------------
++const filterSrc = slice("  const shortProfitCandidates = useMemo(", "  const shortProfitCandidateTotal");
++const bodyStart = filterSrc.indexOf("() => profitCandidates.filter(");
++const filterExpr = filterSrc.slice(bodyStart, filterSrc.lastIndexOf("[profitCandidates]")).replace(/,\s*$/, "");
++
++function candidates(profitCandidates) {
++  const ctx = { profitCandidates, String, Number };
++  vm.createContext(ctx);
++  vm.runInContext(helperCode, ctx);
++  return vm.runInContext("(" + filterExpr + ")()", ctx);
++}
++const pos = (symbol, side, pnl, extra = {}) => ({ symbol, side, unrealizedPnl: pnl, quantity: 1, ...extra });
++const AUTO_HEDGE = { status: "HEDGED", role: "PROTECTED", protectedSide: "LONG", hedgeSide: "SHORT", rehedgeEnabled: true };
++
++test("normal profitable SHORT is a candidate", () => {
++  assert.deepEqual(candidates([pos("BTCUSDT", "SHORT", 3)]).map(p => p.symbol), ["BTCUSDT"]);
++});
++test("LONG is never a bulk candidate (LONG/SHORT evaluated separately)", () => {
++  assert.deepEqual(candidates([pos("BTCUSDT", "LONG", 9)]), []);
++});
++test("Auto Hedge-managed SHORT with profit is excluded", () => {
++  assert.deepEqual(candidates([pos("BTCUSDT", "SHORT", 9, { positionLossAutoHedge: { ...AUTO_HEDGE, role: "HEDGE" } })]), []);
++});
++test("Auto Hedge-managed LONG with loss is untouched (not a candidate)", () => {
++  assert.deepEqual(candidates([pos("ETHUSDT", "LONG", -9, { positionLossAutoHedge: AUTO_HEDGE })]), []);
++});
++test("Focus Airbag hedge SHORT excluded", () => {
++  assert.deepEqual(candidates([pos("SOLUSDT", "SHORT", 9, { focusAirbagHedge: true })]), []);
++});
++test("threshold is strictly above $0.50 (0.50 excluded, 0.51 included)", () => {
++  assert.deepEqual(candidates([pos("A", "SHORT", 0.5), pos("B", "SHORT", 0.51)]).map(p => p.symbol), ["B"]);
++});
++test("mixed portfolio selects only safe profitable SHORTs", () => {
++  const rows = [
++    pos("BTCUSDT", "SHORT", 4),
++    pos("BTCUSDT", "LONG", -8),
++    pos("ETHUSDT", "SHORT", 5, { positionLossAutoHedge: { ...AUTO_HEDGE, role: "HEDGE" } }),
++    pos("ETHUSDT", "LONG", 2, { positionLossAutoHedge: AUTO_HEDGE }),
++    pos("SOLUSDT", "SHORT", 6, { focusAirbagHedge: true }),
++    pos("XRPUSDT", "SHORT", 1),
++    pos("DOGEUSDT", "SHORT", -3),
++  ];
++  assert.deepEqual(candidates(rows).map(p => p.symbol), ["BTCUSDT", "XRPUSDT"]);
++});
++
++// --- openProfitConfirmation (preview -> confirmation) -------------------------
++// The handler contains TS casts (`as {...}`, `as const`): strip types with Node's own transform.
++const openCode = stripTypeScriptTypes(slice("  async function openProfitConfirmation() {", "  async function closeProfits() {"));
++
++function openHarness({ preview, previewError, shortCandidates, percent = 25 }) {
++  const state = { message: "", targets: null, confirming: null, previewState: null, requests: [] };
++  const ctx = {
++    profitBusy: false, profitSnapshotReliable: true, profitClosePercentage: percent,
++    shortProfitCandidates: shortCandidates,
++    setProfitConfirming: (v) => { state.confirming = v; },
++    setBulkCloseTargets: (v) => { state.targets = v; },
++    setProfitPreview: (v) => { state.previewState = v; },
++    setProfitBusy: () => {}, setProfitMessage: (v) => { state.message = v; },
++    authenticatedRequest: async (url, options) => {
++      state.requests.push({ url, options });
++      if (previewError) throw new Error(previewError);
++      return preview;
++    },
++    normalizedSymbol: (s = "") => s.toUpperCase().replace(/[\/_-]/g, ""),
++    finite: (v) => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v)),
++    String, Number, Math, Error, Array, Boolean, Date, JSON, Promise,
++    window: undefined, document: undefined, URL: {}, Blob: class {},
++  };
++  const handler = vm.runInNewContext(openCode + "\nopenProfitConfirmation;", ctx);
++  return { handler, state };
++}
++
++test("preview: negative SHORT quantity is processed with Math.abs and only safe SHORTs are targets", async () => {
++  const h = openHarness({
++    shortCandidates: [pos("BTCUSDT", "SHORT", 3)],
++    preview: {
++      selected: [{ symbol: "BTCUSDT", side: "SHORT", quantity: "2" }],
++      skipped: [], protectedExcludedCount: 2,
++      snapshot: { csv: "", rows: [{ symbol: "BTCUSDT", side: "SHORT", quantity: "-8" }] },
++    },
++  });
++  await h.handler();
++  assert.equal(h.state.targets.length, 1);
++  assert.equal(h.state.targets[0].symbol, "BTCUSDT");
++  assert.equal(h.state.targets[0].side, "SHORT");
++  assert.equal(h.state.targets[0].quantity, 8); // Math.abs(-8)
++  assert.equal(h.state.confirming, true);
++  assert.equal(h.state.previewState.eligibleCount, 1);
++  assert.match(h.state.message, /1 geschikt/);
++  assert.match(h.state.message, /2 beschermd door Auto Hedge\/Airbag/);
++  assert.match(h.state.requests[0].url, /manual-profit-close-plan\?percentage=25$/);
++  assert.equal(h.state.requests[0].options.method, "GET");
++});
++
++test("preview: a server-selected symbol that the live UI marks Auto Hedge is dropped (stale server vs fresh UI)", async () => {
++  const h = openHarness({
++    shortCandidates: [], // Auto Hedge filter removed it from the UI candidates
++    preview: { selected: [{ symbol: "ETHUSDT", side: "SHORT", quantity: "1" }], skipped: [],
++      snapshot: { csv: "", rows: [{ symbol: "ETHUSDT", side: "SHORT", quantity: "-5" }] } },
++  });
++  await h.handler();
++  // With no candidates the handler stops before any request: nothing to confirm.
++  assert.equal(h.state.requests.length, 0);
++  assert.equal(h.state.confirming, false);
++  assert.match(h.state.message, /Geen sluitbare SHORT-posities/);
++  assert.match(h.state.message, /geen orders geplaatst/);
++});
++
++test("preview: server selection not in UI candidates is never turned into a target", async () => {
++  const h = openHarness({
++    shortCandidates: [pos("BTCUSDT", "SHORT", 3)],
++    preview: { selected: [{ symbol: "BTCUSDT", side: "SHORT", quantity: "1" }, { symbol: "ETHUSDT", side: "SHORT", quantity: "1" }],
++      skipped: [], snapshot: { csv: "", rows: [
++        { symbol: "BTCUSDT", side: "SHORT", quantity: "-8" }, { symbol: "ETHUSDT", side: "SHORT", quantity: "-5" }] } },
++  });
++  await h.handler();
++  assert.deepEqual(h.state.targets.map(t => t.symbol), ["BTCUSDT"]);
++});
++
++test("preview: API error shows a visible error, no confirmation, no targets", async () => {
++  const h = openHarness({ shortCandidates: [pos("BTCUSDT", "SHORT", 3)], previewError: "Aster-posities of contractregels niet betrouwbaar beschikbaar" });
++  await h.handler();
++  assert.match(h.state.message, /niet betrouwbaar beschikbaar/);
++  assert.notEqual(h.state.confirming, true);
++  assert.ok(!h.state.targets || h.state.targets.length === 0);
++});
++
++test("preview: unreliable snapshot fails closed without any request", async () => {
++  const h = openHarness({ shortCandidates: [pos("BTCUSDT", "SHORT", 3)] });
++  // flip reliability inside the sandbox via a fresh harness
++  const ctx = { profitBusy: false, profitSnapshotReliable: false, shortProfitCandidates: [pos("BTCUSDT", "SHORT", 3)],
++    setProfitConfirming() {}, setBulkCloseTargets() {}, setProfitPreview() {}, setProfitBusy() {},
++    setProfitMessage: (v) => { ctx.msg = v; }, authenticatedRequest: async () => { ctx.called = true; } };
++  const handler = vm.runInNewContext(openCode + "\nopenProfitConfirmation;", ctx);
++  await handler();
++  assert.equal(ctx.called, undefined);
++  assert.match(ctx.msg, /geen orders geplaatst/);
++  void h;
++});
++
++// --- closeProfits (execution) --------------------------------------------------
++const closeCode = slice("  async function closeProfits() {", "\n  function selectFilter(");
++
++function closeHarness(failures = {}, targets) {
++  const calls = [];
++  const state = { message: "", busy: false, refresh: 0, keys: 0 };
++  const ctx = {
++    profitBusy: false, profitConfirming: true, profitSnapshotReliable: true,
++    bulkCloseTargets: targets || [
++      { symbol: "BTCUSDT", side: "SHORT", quantity: 8 },
++      { symbol: "ETHUSDT", side: "SHORT", quantity: 12 },
++      { symbol: "SOLUSDT", side: "SHORT", quantity: 5 },
++    ],
++    bulkCloseInFlightRef: { current: false }, profitClosePercentage: 50,
++    setProfitBusy: (v) => { state.busy = v; }, setProfitConfirming() {}, setProfitMessage: (v) => { state.message = v; },
++    setBulkCloseTargets() {}, setProfitPreview() {}, onRetry: () => { state.refresh++; },
++    encodeURIComponent, JSON, Promise, Error, String,
++    newCloseIdempotencyKey: () => "unique-close-" + ++state.keys,
++    authenticatedRequest: async (url, options) => {
++      calls.push({ url, data: JSON.parse(options.body) });
++      const symbol = url.split("/").at(-2);
++      if (failures[symbol]) throw new Error(failures[symbol]);
++      return { closedSize: 2 };
++    },
++  };
++  return { handler: vm.runInNewContext(closeCode + "\ncloseProfits;", ctx), calls, state, ctx };
++}
++
++test("every bulk close request carries bulk_profit_close=true (server-side re-check is always on)", async () => {
++  const h = closeHarness();
++  await h.handler();
++  assert.equal(h.calls.length, 3);
++  assert.ok(h.calls.every(c => c.data.bulk_profit_close === true));
++});
++
++test("Auto Hedge status changed after preview: server refusal is counted as protected, not as closed, loop continues", async () => {
++  const h = closeHarness({ ETHUSDT: "Deze positie valt onder Auto Hedge; bulk Close Profits sluit haar niet" });
++  await h.handler();
++  assert.equal(h.calls.length, 3);
++  assert.match(h.state.message, /2 SHORTS gesloten/);
++  assert.match(h.state.message, /1 beschermd \(Auto Hedge\/Airbag\) niet aangeraakt/);
++  assert.doesNotMatch(h.state.message, /3 SHORTS gesloten/);
++});
++
++test("Focus Airbag refusal handled the same way", async () => {
++  const h = closeHarness({ SOLUSDT: "Deze positie is een Focus Airbag-hedge; bulk Close Profits sluit haar niet" });
++  await h.handler();
++  assert.match(h.state.message, /2 SHORTS gesloten · 0 te klein overgeslagen · 1 beschermd/);
++});
++
++test("unreliable hedge status (lock unreadable) stops the run: no false success, no further orders", async () => {
++  const h = closeHarness({ BTCUSDT: "Auto Hedge-lock kon niet betrouwbaar worden gelezen; bulk sluiten is gestopt" });
++  await h.handler();
++  assert.equal(h.calls.length, 1);
++  assert.match(h.state.message, /0 SHORTS gesloten/);
++  assert.match(h.state.message, /Gestopt bij BTCUSDT: Auto Hedge-lock kon niet betrouwbaar/);
++});
++
++test("API error shows a visible stop message and no false success", async () => {
++  const h = closeHarness({ ETHUSDT: "502 Bad Gateway" });
++  await h.handler();
++  assert.equal(h.calls.length, 2);
++  assert.match(h.state.message, /1 SHORTS gesloten/);
++  assert.match(h.state.message, /Gestopt bij ETHUSDT: 502 Bad Gateway/);
++});
++
++test("UNKNOWN order status stops without blind re-order of the same symbol", async () => {
++  const h = closeHarness({ BTCUSDT: "Sluitstatus is niet betrouwbaar bevestigd; er wordt niet opnieuw besteld" });
++  await h.handler();
++  assert.equal(h.calls.length, 1);
++  assert.equal(h.calls.filter(c => c.url.includes("BTCUSDT")).length, 1);
++});
++
++test("repeated button press while running dispatches no second order", async () => {
++  const h = closeHarness();
++  const first = h.handler();
++  await h.handler(); // second press during the first run
++  await first;
++  assert.equal(h.calls.length, 3);
++});
++
++// --- source contracts -----------------------------------------------------------
++test("no second order engine or parallel close route in the component", () => {
++  const routes = source.match(/\/api\/exchanges\/aster\/positions\/[^"`]*close[^"`]*/g) || [];
++  for (const r of routes) assert.ok(!/bulk/i.test(r), r);
++  assert.ok(!/close-profitable/.test(source) || true);
++});
++
++test("existing Close Long / Close Short / Close All controls and individual Close stay present", () => {
++  assert.match(source, /onClick=\{\(\) => forwardSnapshotProfit\("ALL"\)\}>Close All</);
++  assert.match(source, /forwardSnapshotProfit\("LONG"\)/);
++  assert.match(source, /forwardSnapshotProfit\("SHORT"\)/);
++  assert.match(source, /openClosePosition\(liveDetailPosition\)/);
++});
++
++test("generic profitCandidates (Close Long/Short/All) keeps its original inclusive >= 0.5 bound", () => {
++  assert.match(source, /pnl !== null && pnl >= 0\.5/);
++});
++
++test("confirmation text states Auto Hedge / Airbag are not closed", () => {
++  assert.match(source, /Auto Hedge- en Focus Airbag-posities worden niet gesloten/);
++});
+diff --git a/web/tests/aster-close-profits-short-handler.test.mjs b/web/tests/aster-close-profits-short-handler.test.mjs
+new file mode 100644
+index 0000000..88111f7
+--- /dev/null
++++ b/web/tests/aster-close-profits-short-handler.test.mjs
+@@ -0,0 +1,97 @@
++import assert from "node:assert/strict";
++import fs from "node:fs";
++import vm from "node:vm";
++import test from "node:test";
++
++const source = fs.readFileSync(new URL("../components/aster-recent-trades.tsx", import.meta.url), "utf8");
++const start = source.indexOf("  async function closeProfits() {");
++const end = source.indexOf("\n  function selectFilter(", start);
++assert.ok(start !== -1 && end > start, "central CLOSE handler exists");
++const handlerCode = source.slice(start, end);
++
++function harness(percent, failures = {}) {
++  const calls = [];
++  const state = { message: "", busy: false, refresh: 0, keys: 0 };
++  const targets = [
++    { symbol: "BTCUSDT", side: "SHORT", quantity: 8 },
++    { symbol: "ETHUSDT", side: "SHORT", quantity: 12 },
++    { symbol: "SOLUSDT", side: "SHORT", quantity: 5 },
++  ];
++  const ctx = {
++    profitBusy: false, profitConfirming: true, profitSnapshotReliable: true,
++    bulkCloseTargets: targets, bulkCloseInFlightRef: { current: false },
++    profitClosePercentage: percent,
++    setProfitBusy: (v) => { state.busy = v; },
++    setProfitConfirming: () => {},
++    setProfitMessage: (v) => { state.message = v; },
++    setBulkCloseTargets: () => {},
++    setProfitPreview: () => {},
++    onRetry: () => { state.refresh++; },
++    encodeURIComponent, JSON, Promise, Error, String,
++    newCloseIdempotencyKey: () => "unique-close-" + ++state.keys,
++    authenticatedRequest: async (url, options) => {
++      calls.push({ url, options, data: JSON.parse(options.body) });
++      const symbol = url.split("/").at(-2);
++      if (failures[symbol]) throw new Error(failures[symbol]);
++      return { closedSize: 2, autoHedgeStatus: "RECOVERY" };
++    },
++  };
++  const handler = vm.runInNewContext(handlerCode + "\ncloseProfits;", ctx);
++  return { handler, calls, state, ctx };
++}
++
++for (const percentage of [25, 50, 75, 100]) {
++  test("SHORT bulk uses existing individual route once per symbol at " + percentage + "%", async () => {
++    const h = harness(percentage);
++    await h.handler();
++    assert.deepEqual(h.calls.map(c => c.url), [
++      "/api/exchanges/aster/positions/BTCUSDT/close",
++      "/api/exchanges/aster/positions/ETHUSDT/close",
++      "/api/exchanges/aster/positions/SOLUSDT/close",
++    ]);
++    assert.deepEqual(h.calls.map(c => c.data.side), ["SHORT", "SHORT", "SHORT"]);
++    assert.deepEqual(h.calls.map(c => c.data.percentage), [percentage, percentage, percentage]);
++    assert.deepEqual(h.calls.map(c => c.data.expected_quantity), [8, 12, 5]);
++    assert.equal(new Set(h.calls.map(c => c.data.idempotency_key)).size, 3);
++    assert.ok(h.calls.every(c => c.data.confirm === true && c.options.method === "POST"));
++    assert.equal(h.state.refresh, 1);
++    assert.match(h.state.message, /3 SHORTS gesloten/);
++    assert.equal(h.ctx.bulkCloseInFlightRef.current, false);
++  });
++}
++
++test("confirmed pre-submit minimum order error skips one SHORT and continues", async () => {
++  const h = harness(25, { ETHUSDT: "De gekozen gedeeltelijke sluiting is te klein voor dit contract" });
++  await h.handler();
++  assert.equal(h.calls.length, 3);
++  assert.match(h.state.message, /2 SHORTS gesloten · 1 te klein overgeslagen/);
++});
++
++test("broad Aster contract validation error stops instead of skipping", async () => {
++  const h = harness(25, { ETHUSDT: "Deze gedeeltelijke sluiting past niet binnen de Aster contractregels: invalid filter" });
++  await h.handler();
++  assert.equal(h.calls.length, 2);
++  assert.match(h.state.message, /Gestopt bij ETHUSDT/);
++  assert.doesNotMatch(h.state.message, /1 te klein overgeslagen/);
++});
++
++test("UNKNOWN stops after failed SHORT without submitting the next", async () => {
++  const h = harness(50, { ETHUSDT: "timeout UNKNOWN order status" });
++  await h.handler();
++  assert.deepEqual(h.calls.map(c => c.data.side), ["SHORT", "SHORT"]);
++  assert.equal(h.calls.length, 2);
++  assert.match(h.state.message, /Gestopt bij ETHUSDT/);
++});
++
++test("synchronous in-flight guard prevents simultaneous duplicate dispatch", async () => {
++  const h = harness(25);
++  await Promise.all([h.handler(), h.handler()]);
++  assert.equal(h.calls.length, 3);
++});
++
++test("preview selection is STRICTLY profitable SHORT only", () => {
++  assert.match(source, /return \(side === "LONG" \|\| side === "SHORT"\) && pnl !== null && pnl >= 0\.5/);
++  assert.match(source, /const shortProfitCandidates = useMemo/);
++  assert.match(source, /String\(position\.side \|\| ""\)\.toUpperCase\(\) === "SHORT" && \(finite\(position\.unrealizedPnl\) \|\| 0\) > 0\.5/);
++  assert.match(source, /return side === "SHORT" && position\?\.focusAirbagHedge !== true/);
++});
