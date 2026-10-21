@@ -31,8 +31,8 @@ function harness(percent, failures = {}) {
     newCloseIdempotencyKey: () => "unique-close-" + ++state.keys,
     authenticatedRequest: async (url, options) => {
       if (url.includes("manual-profit-close-plan")) {
-        return { selected: targets.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
-                 snapshot: { rows: targets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(t.quantity) })) } };
+        return { reliable: true, selected: targets.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
+                 snapshot: { rows: targets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(t.quantity), unrealizedPnl: "1.25" })) } };
       }
       calls.push({ url, options, data: JSON.parse(options.body) });
       const symbol = url.split("/").at(-2);

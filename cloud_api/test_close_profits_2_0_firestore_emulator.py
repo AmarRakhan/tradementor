@@ -12,6 +12,7 @@ import unittest
 import uuid
 
 import test_close_profits_2_0_integration as scenarios
+import test_close_profits_2_0_round6 as round6
 
 EMULATOR = bool(os.environ.get("FIRESTORE_EMULATOR_HOST"))
 try:
@@ -26,6 +27,9 @@ class EmulatorMixin:
     EMULATOR = True
 
     def make_store(self):
+        host = os.environ.get("FIRESTORE_EMULATOR_HOST", "")
+        if not host.startswith(("127.0.0.1:", "localhost:")) or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            raise RuntimeError("refusing to run: emulator on localhost only, and no service-account credentials in the env")
         self.uid = "u-" + uuid.uuid4().hex[:12]                 # unique account per test: no cross-test state
         db = firestore.Client(project=os.environ.get("GCLOUD_PROJECT", "close-profits-test-only"))
         return db, (firestore, google_exceptions)
@@ -40,6 +44,9 @@ EmulatorSequentialBulkTests = _make(scenarios.SequentialBulkTests)
 EmulatorUnknownOutcomeTests = _make(scenarios.UnknownOutcomeTests)
 EmulatorAutoHedgeConcurrencyTests = _make(scenarios.AutoHedgeConcurrencyTests)
 EmulatorPlainShortBecomesAutoHedgeTests = _make(scenarios.PlainShortBecomesAutoHedgeTests)
+EmulatorExchangeEdgeCaseTests = _make(round6.ExchangeEdgeCaseTests)
+EmulatorLeaseExpiryTests = _make(round6.LeaseExpiryTests)
+EmulatorClockModelTests = _make(round6.ClockModelTests)
 
 if __name__ == "__main__":
     unittest.main()

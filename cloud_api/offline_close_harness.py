@@ -93,15 +93,35 @@ class Ledger:
         self.modes = {}          # symbol -> "ok" | "drop_after_accept" | "reject_before"
         self.on_before_order = None
         self.on_before_read = None
+        self.order_log = {}      # client order id -> {"symbol","side","qty","executed","status"}  (REAL-leg mode)
+        self.reflection_lag = {} # symbol -> number of position_risk() reads that still show the OLD size
+        self._pending = []       # [(reads_left, symbol, side, new_qty)]
+        self.partial_ratio = 0.4
+        self.query_fails = set() # symbols for which the read-only order query errors
 
     def add(self, symbol, side, qty, mark=100.0, entry=None, minimum=0.001, step=0.001):
         self.pos[(symbol, side)] = float(qty); self.mark[symbol] = float(mark)
         self.entry[(symbol, side)] = entry if entry is not None else (mark + 5 if side == "SHORT" else mark - 5)
         self.min_qty[symbol] = minimum; self.step[symbol] = step
 
+    def reduce(self, symbol, side, qty, lag=0):
+        """Apply a fill to the exchange position; with lag>0 the position endpoint keeps showing the old size."""
+        new_qty = max(0.0, self.pos[(symbol, side)] - qty)
+        if lag:
+            self._pending.append([lag, symbol, side, self.pos[(symbol, side)], new_qty])
+        self.pos[(symbol, side)] = new_qty
+
     def rows(self):
+        shown = dict(self.pos)
+        still = []
+        for item in self._pending:
+            if item[0] > 0:
+                shown[(item[1], item[2])] = item[3]          # lagging reflection: old size still visible
+                item[0] -= 1
+                still.append(item)
+        self._pending = still
         out = []
-        for (symbol, side), qty in self.pos.items():
+        for (symbol, side), qty in shown.items():
             if qty <= 0:
                 continue
             mark = self.mark[symbol]
@@ -117,7 +137,7 @@ class Ledger:
             {"filterType": "MIN_NOTIONAL", "notional": "5"}]} for s in self.mark]}
 
 
-def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra=(), real=None):
+def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra=(), real=None, real_leg=False):
     """`real=(firestore_module, google_exceptions_module)` binds the SAME route/lease/helper source to a real
     Firestore client `fs` (emulator) instead of the in-memory model."""
     """Returns (close_route, ns). `ns` exposes the lease + lock plumbing for worker-side models."""
@@ -144,6 +164,19 @@ def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra
     module = ast.Module(body=nodes, type_ignores=[])
     ast.fix_missing_locations(module)
 
+    clock = SimpleNamespace(offset=timedelta(0))          # advance to simulate slow exchange calls / lease expiry
+
+    class _AnyDatetime(type):
+        # Firestore returns its own datetime subclass: isinstance() in the route must accept every datetime.
+        def __instancecheck__(cls, obj):
+            return isinstance(obj, datetime)
+
+    class FakeDT(datetime, metaclass=_AnyDatetime):
+        @classmethod
+        def now(cls, tz=None):
+            base = datetime.now(tz) + clock.offset
+            return cls(base.year, base.month, base.day, base.hour, base.minute, base.second, base.microsecond, base.tzinfo)
+
     class HTTPException(Exception):
         def __init__(self, status_code, detail):
             super().__init__(detail); self.status_code, self.detail = status_code, detail
@@ -159,6 +192,46 @@ def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra
             if ledger.on_before_read: ledger.on_before_read()
             return ledger.rows()
         def public_exchange_info(self): return ledger.exchange_info()
+        # --- REAL-leg mode: the real aster_execution.execute_leg_once talks to these two methods ----------
+        def submit_order_once(self, intent, *, config, confirm, hedge_mode_confirmed, risk_approved):
+            from aster_gateway import AsterSubmissionUncertain
+            sym, side_v, qty = intent.symbol, intent.position_side.value, float(intent.quantity)
+            mode = ledger.modes.get(sym, "ok")
+            if ledger.on_before_order:
+                ledger.on_before_order(sym)
+            if mode == "reject_before":
+                raise RuntimeError("exchange rejected before accept")
+            ledger.orders.append((sym, side_v, qty, intent.intent_id))
+            lag = ledger.reflection_lag.get(sym, 0)
+            if mode == "ack_new":                                 # acknowledged, not (yet) filled; stays NEW on every query
+                ledger.order_log[intent.intent_id] = {"symbol": sym, "executed": 0.0, "status": "NEW"}
+                return {"orderId": 1, "status": "NEW"}, False
+            if mode == "ack_new_then_filled":                     # ack NEW, the confirmation query already sees FILLED
+                ledger.reduce(sym, side_v, qty, lag)
+                ledger.order_log[intent.intent_id] = {"symbol": sym, "executed": qty, "status": "FILLED"}
+                return {"orderId": 1, "status": "NEW"}, False
+            if mode == "partial_fill":
+                done = qty * ledger.partial_ratio
+                ledger.reduce(sym, side_v, done, lag)
+                ledger.order_log[intent.intent_id] = {"symbol": sym, "executed": done, "status": "PARTIALLY_FILLED"}
+                return {"orderId": 1, "status": "PARTIALLY_FILLED", "executedQty": str(done)}, False
+            ledger.reduce(sym, side_v, qty, lag)
+            ledger.order_log[intent.intent_id] = {"symbol": sym, "executed": qty, "status": "FILLED"}
+            if mode == "drop_after_accept":
+                raise ConnectionError("connection lost after Aster accepted the order")
+            if mode == "timeout_after_accept":                    # read timeout; the gateway then does ONE read-only query
+                if sym in ledger.query_fails:
+                    raise AsterSubmissionUncertain("Aster-order blijft onzeker")
+                return {"orderId": 1, "status": "FILLED"}, True
+            if mode == "late_response":                           # the answer arrives very late (lease may have expired)
+                clock.offset += timedelta(seconds=60)
+            return {"orderId": 1, "status": "FILLED"}, False
+        def query_order(self, symbol, intent_id):
+            if symbol in ledger.query_fails:
+                from aster_gateway import AsterApiError
+                raise AsterApiError("query failed")
+            row = ledger.order_log.get(intent_id)
+            return {"orderId": 1, "status": row["status"] if row else "UNKNOWN"}
 
     def execute_aster_leg(client, plan, *, side, action, id_prefix, confirm, manual_loss_confirmation):
         sym, side_v = plan.symbol, side.value if hasattr(side, "value") else side
@@ -176,9 +249,13 @@ def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra
             raise ConnectionError("connection lost after Aster accepted the order")   # UNKNOWN to the caller
         return {"status": "FILLED"}
 
+    if real_leg:
+        from aster_execution import execute_leg_once
+        execute_aster_leg = execute_leg_once  # noqa: F811  (REAL code path: no double POST, fill confirmation, fail-closed)
     ns = {
+        "clock": clock,
         "db": fs, "firestore": real[0] if real else SimpleNamespace(transactional=lambda f: (lambda txn: _locked(fs, f, txn))),
-        "datetime": datetime, "timezone": timezone, "timedelta": timedelta, "python_secrets": secrets,
+        "datetime": FakeDT, "timezone": timezone, "timedelta": timedelta, "python_secrets": secrets,
         "hashlib": __import__("hashlib"), "os": SimpleNamespace(getenv=lambda *a, **k: "true"), "time": SimpleNamespace(sleep=lambda x: None),
         "HTTPException": HTTPException, "google_exceptions": real[1] if real else SimpleNamespace(AlreadyExists=AlreadyExists),
         "AutoHedgeCloseBlocked": lock.AutoHedgeCloseBlocked, "require_auto_hedge_close_allowed": lock.require_auto_hedge_close_allowed,

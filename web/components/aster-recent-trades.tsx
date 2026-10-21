@@ -1413,31 +1413,47 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     for (const target of bulkCloseTargets) {
       let busyRetries = 0;
       let done = false;
-      // Re-check immediately before this close (read-only): the SHORT must still exist with the same full
-      // quantity and still be strictly above the $0,50 profit threshold. Unreliable read -> stop the series.
-      try {
-        const fresh = await authenticatedRequest(
-          "/api/exchanges/aster/positions/manual-profit-close-plan?percentage=" + profitClosePercentage,
-          { method: "GET", cache: "no-store" },
-        );
-        let stillSelected = false;
-        for (const item of (fresh.selected || [])) {
-          if (String(item.symbol || "").toUpperCase() === target.symbol && String(item.side || "").toUpperCase() === "SHORT") stillSelected = true;
+      // Fresh read-only check, run before EVERY close attempt (first try and each account-busy retry).
+      // Fail-closed: the SHORT must appear exactly once in a reliable snapshot, with the same full quantity,
+      // a readable profit strictly above $0,50, and still be selected by the backend planner.
+      // Returns "ok", "gone" (no longer eligible -> skip, no order) or a stop reason string.
+      const freshCheck = async () => {
+        try {
+          const fresh = await authenticatedRequest(
+            "/api/exchanges/aster/positions/manual-profit-close-plan?percentage=" + profitClosePercentage,
+            { method: "GET", cache: "no-store" },
+          );
+          if (!fresh || fresh.reliable !== true || !Array.isArray(fresh.selected) || !fresh.snapshot || !Array.isArray(fresh.snapshot.rows)) {
+            return target.symbol + ": actuele positiegegevens zijn niet betrouwbaar";
+          }
+          let selectedCount = 0;
+          for (const item of fresh.selected) {
+            if (String(item.symbol || "").toUpperCase() === target.symbol && String(item.side || "").toUpperCase() === "SHORT") selectedCount++;
+          }
+          let rowCount = 0;
+          let liveRow = null;
+          for (const row of fresh.snapshot.rows) {
+            if (String(row.symbol || "").toUpperCase() === target.symbol && String(row.side || "").toUpperCase() === "SHORT") { rowCount++; liveRow = row; }
+          }
+          if (rowCount !== 1 || selectedCount > 1) return target.symbol + ": positie ontbreekt of is niet eenduidig in de actuele gegevens";
+          const liveQuantity = Math.abs(Number(liveRow.quantity));
+          if (!(liveQuantity > 0) || Math.abs(liveQuantity - target.quantity) > Math.max(1e-12, target.quantity * 1e-9)) {
+            return target.symbol + ": positiegrootte is gewijzigd sinds de preview";
+          }
+          if (selectedCount === 0) return "gone";
+          const livePnl = Number(liveRow.unrealizedPnl);
+          if (liveRow.unrealizedPnl === null || liveRow.unrealizedPnl === undefined || liveRow.unrealizedPnl === "" || !Number.isFinite(livePnl) || !(livePnl > 0.5)) {
+            return target.symbol + ": winstgegevens zijn tegenstrijdig of onleesbaar";
+          }
+          return "ok";
+        } catch (reason) {
+          return target.symbol + ": actuele winstcontrole mislukt (" + (reason instanceof Error ? reason.message : String(reason)) + ")";
         }
-        let liveRow = null;
-        for (const row of (fresh.snapshot?.rows || [])) {
-          if (String(row.symbol || "").toUpperCase() === target.symbol && String(row.side || "").toUpperCase() === "SHORT") liveRow = row;
-        }
-        if (liveRow && Math.abs(Math.abs(Number(liveRow.quantity)) - target.quantity) > Math.max(1e-12, target.quantity * 1e-9)) {
-          stoppedAt = target.symbol + ": positiegrootte is gewijzigd sinds de preview";
-          break;
-        }
-        if (!stillSelected) { noLongerEligible++; continue; }
-      } catch (reason) {
-        stoppedAt = target.symbol + ": actuele winstcontrole mislukt (" + (reason instanceof Error ? reason.message : String(reason)) + ")";
-        break;
       }
       while (!done) {
+        const checked = await freshCheck();
+        if (checked === "gone") { noLongerEligible++; done = true; continue; }
+        if (checked !== "ok") { stoppedAt = checked; done = true; continue; }
         try {
           await authenticatedRequest(
             "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",

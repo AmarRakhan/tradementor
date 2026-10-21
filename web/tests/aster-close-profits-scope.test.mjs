@@ -22,8 +22,8 @@ function run(failures = {}) {
       if (url.includes("manual-profit-close-plan")) {            // fresh read-only re-check before every close
         ctx.previews++;
         const live = ctx.bulkCloseTargets.filter((t) => !ctx.eligible || ctx.eligible.includes(t.symbol));
-        return { selected: live.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
-                 snapshot: { rows: ctx.bulkCloseTargets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(ctx.liveQty?.[t.symbol] ?? t.quantity) })) } };
+        return { reliable: true, selected: live.map((t) => ({ symbol: t.symbol, side: "SHORT" })),
+                 snapshot: { rows: ctx.bulkCloseTargets.map((t) => ({ symbol: t.symbol, side: "SHORT", quantity: String(ctx.liveQty?.[t.symbol] ?? t.quantity), unrealizedPnl: "1.25" })) } };
       }
       calls.push({ url, body: JSON.parse(options.body), method: options.method });
       const symbol = url.split("/").at(-2);
