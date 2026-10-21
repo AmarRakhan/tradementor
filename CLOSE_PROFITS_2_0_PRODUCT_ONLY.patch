@@ -1,0 +1,262 @@
+diff --git a/cloud_api/aster_position_loss_auto_hedge_extension.py b/cloud_api/aster_position_loss_auto_hedge_extension.py
+index cb0ac025..556a690b 100644
+--- a/cloud_api/aster_position_loss_auto_hedge_extension.py
++++ b/cloud_api/aster_position_loss_auto_hedge_extension.py
+@@ -560,6 +560,23 @@ def _run_uid(
+                 "actions": []}
+     coordination_token: str | None = None
+     try:
++        if execute:
++            # Take the account lease BEFORE reading positions/pair state: the individual manual
++            # Close holds the same lease across its pair freeze + order, so a worker run can no
++            # longer act on a pre-close snapshot right after the manual close released the lease.
++            coordination_token = main._acquire_aster_account_coordination(
++                uid, "AUTO_HEDGE", "POSITION_LOSS_EXACT_1_TO_1",
++            )
++            if not coordination_token:
++                report = {
++                    "mode": "LIVE", "ordersSent": 0, "status": "PENDING",
++                    "reason": "ACCOUNT_COORDINATION_BUSY", "actions": [],
++                }
++                _doc(uid).set({
++                    "lastReport": report,
++                    "lastCheckedAt": datetime.now(timezone.utc),
++                }, merge=True)
++                return report
+         client = _client(uid, live=execute)
+         positions = list(client.position_risk() or [])
+         open_orders = list(client.open_orders() or [])
+@@ -593,21 +610,6 @@ def _run_uid(
+             }, merge=True)
+             return report
+ 
+-        if execute:
+-            coordination_token = main._acquire_aster_account_coordination(
+-                uid, "AUTO_HEDGE", "POSITION_LOSS_EXACT_1_TO_1",
+-            )
+-            if not coordination_token:
+-                report = {
+-                    "mode": "LIVE", "ordersSent": 0, "status": "PENDING",
+-                    "reason": "ACCOUNT_COORDINATION_BUSY", "actions": [],
+-                }
+-                _doc(uid).set({
+-                    "lastReport": report,
+-                    "lastCheckedAt": datetime.now(timezone.utc),
+-                }, merge=True)
+-                return report
+-
+         contexts = {}
+         for symbol, side in protected_sides.items():
+             state = states.get(symbol) or {}
+diff --git a/cloud_api/main.py b/cloud_api/main.py
+index a6fb8736..43495634 100644
+--- a/cloud_api/main.py
++++ b/cloud_api/main.py
+@@ -8883,7 +8883,22 @@ def close_one_aster_position(
+             pair_status in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
+             and request.side in {pair_protected_side, pair_hedge_side}
+         )
+-        if needs_manual_auto_hedge_release:
++        # A plain SHORT with a same-symbol LONG can become an Auto Hedge pair at any moment while Auto
++        # Hedge is on (the worker creates the pair under the account lease). Take the lease in that case
++        # too and decide on the pair state read UNDER the lease; Auto Hedge off / no opposite leg: unchanged.
++        auto_hedge_may_start = False
++        if not needs_manual_auto_hedge_release and any(
++            str(row.get("symbol", "")).upper() == normalized_symbol
++            and str(row.get("positionSide", "")).upper() not in {request.side, ""}
++            and abs(safe_float(row.get("positionAmt"))) > 0 for row in live_rows
++        ):
++            try:
++                auto_hedge_may_start = (
++                    db.collection("asterPositionLossAutoHedge").document(uid).get().to_dict() or {}
++                ).get("enabled") is True
++            except Exception:
++                auto_hedge_may_start = True        # unreadable setting is not proof that Auto Hedge is off
++        if needs_manual_auto_hedge_release or auto_hedge_may_start:
+             for _ in range(20):
+                 account_token = _acquire_aster_account_coordination(
+                     uid, "MANUAL_POSITION_CLOSE", "AUTO_HEDGE_LEG_RELEASE",
+@@ -8893,15 +8908,30 @@ def close_one_aster_position(
+                 time.sleep(.05)
+             if not account_token:
+                 raise HTTPException(409, "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw")
+-            auto_hedge_manual_guard = _begin_position_loss_auto_hedge_manual_release(
+-                uid=uid,
+-                symbol=normalized_symbol,
+-                side=request.side,
+-                percentage=request.percentage,
+-                close_quantity=close_quantity,
+-                live_rows=live_rows,
+-                intent_hash=intent_hash,
+-            )
++            # Positions and pair were read before the lease: Auto Hedge may have acted in between. Re-read
++            # both under the lease and re-validate the confirmed quantity before anything is frozen or ordered.
++            live_rows = client.position_risk()
++            fresh = next((row for row in live_rows
++                if str(row.get("symbol", "")).upper() == normalized_symbol
++                and str(row.get("positionSide", "")).upper() == request.side
++                and abs(safe_float(row.get("positionAmt"))) > 0), None)
++            if fresh is None or abs(abs(safe_float(fresh.get("positionAmt"))) - request.expected_quantity) > tolerance:
++                raise HTTPException(409, "De positiegrootte is gewijzigd; controleer de actuele positie en bevestig opnieuw")
++            pair_before_close = _position_loss_auto_hedge_pair(uid, normalized_symbol)
++            if (
++                str(pair_before_close.get("status", "")).upper() in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
++                and request.side in {str(pair_before_close.get("protectedSide", "")).upper(),
++                                     str(pair_before_close.get("hedgeSide", "")).upper()}
++            ):
++                auto_hedge_manual_guard = _begin_position_loss_auto_hedge_manual_release(
++                    uid=uid,
++                    symbol=normalized_symbol,
++                    side=request.side,
++                    percentage=request.percentage,
++                    close_quantity=close_quantity,
++                    live_rows=live_rows,
++                    intent_hash=intent_hash,
++                )
+ 
+         require_auto_hedge_close_allowed(
+             account_uid=uid,
+diff --git a/web/components/aster-recent-trades.tsx b/web/components/aster-recent-trades.tsx
+index 221e1e01..4d9f0f71 100644
+--- a/web/components/aster-recent-trades.tsx
++++ b/web/components/aster-recent-trades.tsx
+@@ -1394,6 +1394,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+       setProfitBusy(false);
+     }
+   }
++  const bulkAutoHedgeTargets = bulkCloseTargets
++    .filter((target) => {
++      const position = livePositions.find((item) => normalizedSymbol(item.symbol || "") === target.symbol && String(item.side).toUpperCase() === target.side);
++      return Boolean(position?.positionLossAutoHedge);
++    })
++    .map((target) => target.symbol);
+   async function closeProfits() {
+     if (bulkCloseInFlightRef.current || profitBusy || !profitConfirming || !profitSnapshotReliable || bulkCloseTargets.length === 0) return;
+     bulkCloseInFlightRef.current = true;
+@@ -1401,28 +1407,90 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+     setProfitConfirming(false);
+     let closed = 0;
+     let skipped = 0;
++    let coverageRefused = 0;
++    let noLongerEligible = 0;
+     let stoppedAt = "";
+     for (const target of bulkCloseTargets) {
+-      try {
+-        await authenticatedRequest(
+-          "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
+-          { method: "POST", body: JSON.stringify({
+-            confirm: true, side: "SHORT", expected_quantity: target.quantity,
+-            percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
+-          }) },
+-        );
+-        closed++;
+-      } catch (reason) {
+-        const details = reason instanceof Error ? reason.message : String(reason);
+-        if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details)) {
+-          skipped++;
+-          continue;
++      let busyRetries = 0;
++      let done = false;
++      // Fresh read-only check, run before EVERY close attempt (first try and each account-busy retry).
++      // Fail-closed: the SHORT must appear exactly once in a reliable snapshot, with the same full quantity,
++      // a readable profit strictly above $0,50, and still be selected by the backend planner.
++      // Returns "ok", "gone" (no longer eligible -> skip, no order) or a stop reason string.
++      const freshCheck = async () => {
++        try {
++          const fresh = await authenticatedRequest(
++            "/api/exchanges/aster/positions/manual-profit-close-plan?percentage=" + profitClosePercentage,
++            { method: "GET", cache: "no-store" },
++          );
++          if (!fresh || fresh.reliable !== true || !Array.isArray(fresh.selected) || !fresh.snapshot || !Array.isArray(fresh.snapshot.rows)) {
++            return target.symbol + ": actuele positiegegevens zijn niet betrouwbaar";
++          }
++          let selectedCount = 0;
++          for (const item of fresh.selected) {
++            if (String(item.symbol || "").toUpperCase() === target.symbol && String(item.side || "").toUpperCase() === "SHORT") selectedCount++;
++          }
++          let rowCount = 0;
++          let liveRow = null;
++          for (const row of fresh.snapshot.rows) {
++            if (String(row.symbol || "").toUpperCase() === target.symbol && String(row.side || "").toUpperCase() === "SHORT") { rowCount++; liveRow = row; }
++          }
++          if (rowCount !== 1 || selectedCount > 1) return target.symbol + ": positie ontbreekt of is niet eenduidig in de actuele gegevens";
++          const liveQuantity = Math.abs(Number(liveRow.quantity));
++          if (!(liveQuantity > 0) || Math.abs(liveQuantity - target.quantity) > Math.max(1e-12, target.quantity * 1e-9)) {
++            return target.symbol + ": positiegrootte is gewijzigd sinds de preview";
++          }
++          if (selectedCount === 0) return "gone";
++          const livePnl = Number(liveRow.unrealizedPnl);
++          if (liveRow.unrealizedPnl === null || liveRow.unrealizedPnl === undefined || liveRow.unrealizedPnl === "" || !Number.isFinite(livePnl) || !(livePnl > 0.5)) {
++            return target.symbol + ": winstgegevens zijn tegenstrijdig of onleesbaar";
++          }
++          return "ok";
++        } catch (reason) {
++          return target.symbol + ": actuele winstcontrole mislukt (" + (reason instanceof Error ? reason.message : String(reason)) + ")";
+         }
+-        stoppedAt = target.symbol + ": " + details;
+-        break;
+       }
++      while (!done) {
++        const checked = await freshCheck();
++        if (checked === "gone") { noLongerEligible++; done = true; continue; }
++        if (checked !== "ok") { stoppedAt = checked; done = true; continue; }
++        try {
++          await authenticatedRequest(
++            "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
++            { method: "POST", body: JSON.stringify({
++              confirm: true, side: "SHORT", expected_quantity: target.quantity,
++              percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
++            }) },
++          );
++          closed++;
++          done = true;
++        } catch (reason) {
++          const details = reason instanceof Error ? reason.message : String(reason);
++          // Only refusals the existing route raises BEFORE any order is sent are handled; anything else
++          // (UNKNOWN, network loss, HTTP 5xx, changed quantity, ...) stops the whole series.
++          // "Too small" = the exact pre-submit refusals of the existing route / ContractRules (no order was sent).
++          if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details) ||
++              /past niet binnen de Aster contractregels: (Order ligt onder de minimale Aster-(hoeveelheid|orderwaarde)|Hoeveelheid en marktprijs moeten positief zijn)\s*$/i.test(details)) {
++            skipped++;
++            done = true;
++          } else if (/^[A-Z0-9]+: sluiting van [0-9.eE+-]+ SHORT zou Auto Hedge-dekking onder de gereserveerde [0-9.eE+-]+ brengen$/.test(details)) {
++            coverageRefused++;
++            done = true;
++          } else if (details === "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw" && busyRetries < 3) {
++            // Account busy (coordination): nothing was ordered. Wait, then ask again with a NEW idempotency key
++            // (expected_quantity is re-validated by the backend).
++            busyRetries++;
++            await new Promise((resolve) => setTimeout(resolve, 1500));
++          } else {
++            stoppedAt = target.symbol + ": " + details;
++            done = true;
++          }
++        }
++      }
++      if (stoppedAt) break;
+     }
+-    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen" +
++    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen" + (coverageRefused ? " · " + coverageRefused + " geweigerd door Auto Hedge-dekking (niet gesloten)" : "") +
++      (noLongerEligible ? " · " + noLongerEligible + " niet meer boven $0,50 winst (overgeslagen)" : "") +
+       (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
+     setBulkCloseTargets([]);
+     setProfitPreview(null);
+@@ -1597,6 +1665,9 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+                   <h3 id="profit-close-title">{profitPreview.eligibleCount} winstposities sluiten?</h3>
+                   <dl><dt>Actuele totale winst</dt><dd className={styles.profit}>{money(profitPreview.totalProfitUsd, true)}</dd><dt>Geschikte posities</dt><dd>{profitPreview.eligibleCount}</dd></dl>
+                   <p>Bevestig {profitClosePercentage}% MARKET-sluiting per geselecteerde SHORT. Iedere munt gebruikt de bestaande individuele Aster-sluitroute. Bij onbekende uitvoeringsstatus stopt de verwerking.</p>
++                  {bulkAutoHedgeTargets.length > 0 && (
++                    <div className={styles.closeNotice} data-testid="bulk-auto-hedge-warning"><span aria-hidden="true">i</span><p><strong>{bulkAutoHedgeTargets.length} van deze SHORTS {bulkAutoHedgeTargets.length === 1 ? "valt" : "vallen"} onder Auto Hedge.</strong><br />Dit is exact hetzelfde als de individuele Close-knop: het paar gaat daarna in Recovery, de verkleinde SHORT wordt niet automatisch teruggevuld en re-hedge blijft UIT totdat je die zelf weer inschakelt. Er wordt niets aan de hedge-logica gewijzigd. ({bulkAutoHedgeTargets.join(", ")})</p></div>
++                  )}
+                   <div style={{maxHeight:250,overflowY:"auto",display:"grid",gap:8}}>
+                     {bulkCloseTargets.map((target) => (
+                       <button key={target.symbol + "|" + target.side} type="button" disabled={profitBusy}
+@@ -1605,7 +1676,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
+                           const position = livePositions.find((item) => normalizedSymbol(item.symbol || "") === target.symbol && String(item.side).toUpperCase() === target.side);
+                           if (position) openClosePosition(position);
+                         }}>
+-                        <span>{target.symbol} · {target.side} · {target.quantity} · individuele sluitknop openen</span>
++                        <span>{target.symbol} · {target.side} · {target.quantity}{bulkAutoHedgeTargets.includes(target.symbol) ? " · Auto Hedge" : ""} · individuele sluitknop openen</span>
+                         {target.minimumWarning === "below_exchange_minimum" && <span style={{display:"block",fontWeight:700,color:"#fbbf24",marginTop:4}}>⚠ Mogelijk te kleine order — bestaande individuele sluitroute beslist</span>}
+                       </button>
+                     ))}

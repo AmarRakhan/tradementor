@@ -1,3 +1,44 @@
+# Close Profits 2.0 — EINDRONDE: echte infrastructuur via GitHub Actions + productiedossier (21 okt 2026)
+
+Branch `review/close-profits-2-0-minimal-20261021`. Productiecode t.o.v. PR #783-head f8cd2af: **3 bestanden** (`cloud_api/main.py`, `cloud_api/aster_position_loss_auto_hedge_extension.py`, `web/components/aster-recent-trades.tsx`). Rest = tests/harness/CI/docs. Niets gedeployed, niet gemerged, geen productie, geen live-orders, 2.1-branch onaangetast.
+
+## Infrastructuur (echt, geïsoleerd, geen secrets)
+GitHub Actions-workflow `.github/workflows/close-profits-2-0-integration.yml` (publieke repo, gratis): Firestore-emulator (firebase-tools 14.21.0, Java 21, project `close-profits-test-only`), echte FastAPI-app, echte gateway/`execute_leg_once`, echte worker-code `_run_uid`, Playwright-Chromium. Aster = HTTP-fake via httpx-transport (nooit het echte Aster; socketguard actief). Dit is **geen** test tegen echt Aster of productie-Firestore.
+
+## Resultaten (laatste run, SHA a1171aa9)
+| Onderdeel | Resultaat |
+|---|---|
+| Firestore-emulator (echte SDK/transacties/leases) | PASS 33/33 |
+| Echte FastAPI + gateway e2e (25 SHORTs × 25/50/75/100 %, uitzonderingen, worker-races, simultane requests) | PASS 20/20 |
+| Frontend → Next-proxy-pad → echte FastAPI → emulator | PASS 11/11 |
+| Echte Chromium UI-check (knop, dialoog, percentages, falen, overflow) | PASS 12/12 |
+| Volledige web-suite | PASS (exit 0) |
+| Next production build | PASS |
+| Backend regressie | 1 FAIL, **bestaand**: `test_every_production_aster_close_is_forced_through_shared_executor` faalt ook op PR-head en productiebasis |
+| TypeScript | 39 fouten, **identiek op alle refs** (bestaand); geen nieuwe |
+| Baselines (PR-head, productiebasis) | draaien groen op dezelfde workflow |
+
+## Gemeten, NIET opgelost (KNOWN_RESIDUAL)
+1. Winst kan in het ms-venster tussen verse controle en order dalen; de bestaande route controleert geen winst.
+2. Gewone SHORT zonder tegenleg: twee gelijktijdige individuele closes → 2 orders mogelijk (bestaand; groene knop stuurt nooit twee tegelijk).
+3. Handmatig opnieuw klikken met nieuwe sleutel tijdens vertraagde Aster-positiereflectie kan een 2e MARKET plaatsen (bestaand; individuele route ongewijzigd).
+4. Lease-TTL 45 s zonder verlenging: bij exchange-/Firestore-stilstand > 45 s kan een nieuw Auto Hedge-paar op HEDGED blijven (altijd nog precies 1 order).
+5. Meer "account bezig" op hedged symbolen; extra GET per positie/retry.
+6. Echt Aster en productiedata nooit getest (bewust).
+
+## Release-lineage (beslissing eigenaar vereist)
+Canonieke branch `amar-crypto-bot-2026-cloud` (0eb6a58) is voorouder van deze branch (290 voor, 0 achter). Mergen fast-forwardt ~267 SHORT-Recovery-integratiecommits + Close Profits en triggert web-autodeploy (`deploy-shared-v44-testapp.yml`, push op `web/**`; vereist app-version/release-history-wijziging). "Build 601" vs bestandsbuild 603 onverklaard. Aanbeveling: minimale productiebranch vanaf de daadwerkelijk live commit + cherry-pick van uitsluitend de 3 productiebestanden (patch: `CLOSE_PROFITS_2_0_PRODUCT_ONLY.patch`).
+
+## Deploy (alleen na toestemming)
+1. Bepaal live commit/build; maak `release/close-profits-2-0` daarvan; pas product-patch toe; bump app-version + release-history.
+2. Draai de workflow opnieuw op die branch (alles groen behalve het bestaande backend-falen).
+3. Backend: `deploy-cloud-production.yml` (handmatig). Web: push naar `amar-crypto-bot-2026-cloud` (auto) of `deploy-shared-v44-testapp.yml`.
+4. Rook: knop zichtbaar; individuele Close werkt; géén echte bulk-run zonder bewuste gebruikersactie.
+## Rollback
+Web: vorige Cloud Run-revisie/commit heractiveren (revert van de 3-bestanden-commit). Backend: vorige revisie 100 % verkeer. Er is geen datamigratie; idempotency-docs `asterManualCloseIntents` blijven onschadelijk.
+
+---
+
 # Close Profits 2.0 — handoff, REVIEWRONDE 6 (bovenaan; ronde 1–5 hieronder ongewijzigd als historie)
 
 Code-commit ronde 6: `013b470427e3dce01f09a5e804edd6b60087a41f`. Start ronde 6: `dd70d3fe2356e0f9d9aa5f18ecc49bf7502f1367`. Geen live-orders, geen deploy/Cloud Build/workflow, geen merge, 2.1-branch en build 601 onaangetast.
