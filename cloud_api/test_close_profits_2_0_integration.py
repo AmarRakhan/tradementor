@@ -373,8 +373,22 @@ class RetrySafetyProofTests(unittest.TestCase):
 
     def test_frontend_matches_only_the_full_exact_message(self):
         source = (Path(__file__).parent.parent / "web/components/aster-recent-trades.tsx").read_text()
-        self.assertIn('details === "' + self.MSG + '" && busyRetries < 3', source)
+        lease_msg = "De account-lease is verlopen voordat de sluiting kon starten; er is niets geplaatst, probeer opnieuw"
+        self.assertIn('(details === "' + self.MSG + '" ||', source)
+        self.assertIn('details === "' + lease_msg + '") && busyRetries < 3', source)   # both refusals are pre-order, exact text
         self.assertEqual(source.count("busyRetries++"), 1)
+
+    def test_release_guards_run_before_any_freeze_or_order(self):
+        route = (Path(__file__).parent / "main.py").read_text()
+        route = route[route.index('def close_one_aster_position('):]
+        route = route[:route.index('@app.post("/v1/me/aster/simulate")')]
+        order = route.index("execute_aster_leg(")
+        freeze = route.index("_begin_position_loss_auto_hedge_manual_release(")
+        for needle in ("_refuse_if_recent_close_unconfirmed(", "_enforce_min_open_pnl(position, request)",
+                       "_enforce_min_open_pnl(fresh, request)", "_renew_aster_account_coordination("):
+            self.assertLess(route.index(needle), freeze, needle)
+        self.assertLess(route.index('"orderMayHaveBeenSent": True'), order)      # durable marker precedes the single order
+        self.assertEqual(route.count("execute_aster_leg("), 1)                    # still exactly one order call site
 
 
 @unittest.skipUnless(HAVE, "needs aster_gateway (httpx)")

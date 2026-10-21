@@ -49,6 +49,24 @@ class _Col:
     def document(self, doc_id): return _Doc(self.fs, self.path + (str(doc_id),))
     def add(self, data):
         doc = self.document(secrets.token_hex(8)); doc.set(data); return None, doc
+    def where(self, field, op, value):
+        assert op == "==", "model supports equality filters only"
+        return _Query(self, [(field, value)])
+    def stream(self): return _Query(self, []).stream()
+
+
+class _Query:
+    def __init__(self, col, filters): self.col, self.filters = col, filters
+    def where(self, field, op, value):
+        assert op == "==", "model supports equality filters only"
+        return _Query(self.col, self.filters + [(field, value)])
+    def stream(self):
+        n = len(self.col.path)
+        with self.col.fs.mutex:
+            rows = [(path, data) for path, data in self.col.fs.docs.items()
+                    if len(path) == n + 1 and path[:n] == self.col.path
+                    and all(data.get(f) == v for f, v in self.filters)]
+        return [_Snap(path[-1], data) for path, data in rows]
 
 
 class _Snap:
@@ -151,13 +169,15 @@ def build_backend(ledger: Ledger, fs, *, uid="u1", src: str | None = None, extra
               "_complete_position_loss_auto_hedge_manual_release", "_fail_position_loss_auto_hedge_manual_release",
               "_manual_auto_hedge_leg_view", "_position_loss_auto_hedge_pair_ref", "_position_loss_auto_hedge_pair",
               "user_reference", "aster_account_coordination_reference", "_acquire_aster_account_coordination",
-              "_release_aster_account_coordination"}
+              "_release_aster_account_coordination", "_renew_aster_account_coordination", "_open_pnl_check",
+              "_enforce_min_open_pnl", "_refuse_if_recent_close_unconfirmed"}
     wanted = wanted | set(extra)
     tree = ast.parse(src if src is not None else MAIN_SRC)
     nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
     nodes += [n for n in tree.body if isinstance(n, ast.Assign)
-              and any(getattr(t, "id", "") == "_MANUAL_AUTO_HEDGE_RELEASE_STATUSES" for t in n.targets)]
-    assert len(nodes) == len(wanted) + 1, sorted(getattr(n, "name", "assign") for n in nodes)
+              and any(getattr(t, "id", "") in ("_MANUAL_AUTO_HEDGE_RELEASE_STATUSES", "_BULK_UNCONFIRMED_CLOSE_WINDOW")
+                      for t in n.targets)]
+    assert len(nodes) == len(wanted) + 2, sorted(getattr(n, "name", "assign") for n in nodes)
     for n in nodes:
         if isinstance(n, ast.FunctionDef):
             n.decorator_list = []
@@ -279,5 +299,6 @@ def _locked(fs, fn, txn):
         return fn(txn)
 
 
-def request(symbol_qty, *, percentage, key, side="SHORT"):
-    return SimpleNamespace(confirm=True, side=side, expected_quantity=symbol_qty, percentage=percentage, idempotency_key=key)
+def request(symbol_qty, *, percentage, key, side="SHORT", min_open_pnl_usd=None, bulk_series=False):
+    return SimpleNamespace(confirm=True, side=side, expected_quantity=symbol_qty, percentage=percentage, idempotency_key=key,
+                           min_open_pnl_usd=min_open_pnl_usd, bulk_series=bulk_series)

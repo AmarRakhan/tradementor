@@ -104,10 +104,12 @@ class E2E(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()
 
-    def close(self, symbol, qty, pct, key=None):
-        return self.http.post(f"/v1/me/aster/positions/{symbol}/close", json={
-            "confirm": True, "side": "SHORT", "expected_quantity": qty, "percentage": pct,
-            "idempotency_key": key or ("e2e-key-" + uuid.uuid4().hex)})
+    def close(self, symbol, qty, pct, key=None, bulk=False):
+        body = {"confirm": True, "side": "SHORT", "expected_quantity": qty, "percentage": pct,
+                "idempotency_key": key or ("e2e-key-" + uuid.uuid4().hex)}
+        if bulk:                                           # what the green button sends in addition (frontend closeProfits)
+            body.update({"min_open_pnl_usd": 0.5, "bulk_series": True})
+        return self.http.post(f"/v1/me/aster/positions/{symbol}/close", json=body)
 
     def targets(self, pct):
         data = self.preview(pct)
@@ -125,7 +127,7 @@ class E2E(unittest.TestCase):
             fresh = self.preview(pct)
             if not any(s["symbol"] == symbol for s in fresh["selected"]):
                 result["skipped"].append(symbol); continue
-            r = self.close(symbol, qty, pct)
+            r = self.close(symbol, qty, pct, bulk=True)
             if r.status_code == 200:
                 result["closed"].append(symbol)
             else:
@@ -390,16 +392,14 @@ class SimultaneousRequests(E2E):
         print("INFO-simul-plain orders=", orders, out)
         self.assertIn(orders, (1, 2))
 
-    def test_KNOWN_RESIDUAL_price_drop_between_the_fresh_check_and_the_order_is_not_caught(self):
-        """The existing individual route checks the quantity, not the profit. The fresh check shortens the window to
-        the latency of one request; a drop inside that window still closes. Measured, not fixed."""
+    def test_plain_manual_close_has_no_profit_check_unchanged(self):
+        """The plain individual Close (no green-series fields) is unchanged: it checks the quantity, not the profit.
+        The green series adds the server-side profit check (see test_close_profits_2_0_release_guards)."""
         self.seed_world(n=3, hedged=0)
         self.db.collection("asterPositionLossAutoHedge").document(self.uid).set({"enabled": False})
-        fresh = self.preview(50)
-        self.assertIn("S01USDT", [s["symbol"] for s in fresh["selected"]])
-        self.fake.on_order_start = lambda sym: self.fake.mark.__setitem__("S01USDT", 120.0) if sym == "S01USDT" else None
+        self.fake.mark["S01USDT"] = 120.0                          # SHORT now loses money
         r = self.close("S01USDT", self.expected["S01USDT"], 50)
-        self.assertEqual(r.status_code, 200)                       # the window exists: profit was positive at the check
+        self.assertEqual(r.status_code, 200)
         self.assertEqual(len(self.fake.accepted(symbol="S01USDT")), 1)
 
 

@@ -40,7 +40,7 @@ test("each SHORT goes through the existing individual close route with exactly t
   assert.deepEqual(h.calls.map((c) => c.url), [
     "/api/exchanges/aster/positions/BTCUSDT/close", "/api/exchanges/aster/positions/ETHUSDT/close"]);
   for (const [i, call] of h.calls.entries()) {
-    assert.deepEqual(Object.keys(call.body).sort(), ["confirm", "expected_quantity", "idempotency_key", "percentage", "side"]);
+    assert.deepEqual(Object.keys(call.body).sort(), ["bulk_series", "confirm", "expected_quantity", "idempotency_key", "min_open_pnl_usd", "percentage", "side"]);
     assert.equal(call.body.side, "SHORT");
     assert.equal(call.body.percentage, 25);
     assert.equal(call.body.expected_quantity, [8, 12][i]);       // full live quantity, backend computes the partial
@@ -66,7 +66,7 @@ test("too-small order is skipped, unknown outcome stops the series", async () =>
 });
 
 test("handler has no hedge/Recovery/Auto Hedge logic of its own", () => {
-  assert.doesNotMatch(handlerCode, /Recovery|rehedge|bulk_profit_close|lease|firestore/i);
+  assert.doesNotMatch(handlerCode, /Recovery|rehedge|bulk_profit_close|firestore|acquire|renew/i);
   assert.equal((handlerCode.match(/Auto Hedge/g) || []).length, 3);   // only comment + the two pre-order refusal patterns
 });
 

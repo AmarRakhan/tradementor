@@ -83,7 +83,8 @@ class Handler(BaseHTTPRequestHandler):
         if parts[:4] == ["v1", "me", "aster", "positions"] and parts[-1] == "close":
             request_log.append({"symbol": parts[-2], "body": data})
             try:
-                req = h.request(data["expected_quantity"], percentage=data["percentage"], key=data["idempotency_key"], side=data["side"])
+                req = h.request(data["expected_quantity"], percentage=data["percentage"], key=data["idempotency_key"], side=data["side"],
+                                min_open_pnl_usd=data.get("min_open_pnl_usd"), bulk_series=bool(data.get("bulk_series")))
                 if not data.get("confirm"):
                     raise HTTPException(422, "Bevestiging voor market sluiten ontbreekt")
                 return self._send(200, route(parts[-2], req, USER))
