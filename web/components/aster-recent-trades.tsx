@@ -1409,6 +1409,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     let skipped = 0;
     let coverageRefused = 0;
     let noLongerEligible = 0;
+    let unconfirmedEarlier = 0;
     let stoppedAt = "";
     for (const target of bulkCloseTargets) {
       let busyRetries = 0;
@@ -1460,6 +1461,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
             { method: "POST", body: JSON.stringify({
               confirm: true, side: "SHORT", expected_quantity: target.quantity,
               percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
+              min_open_pnl_usd: 0.5, bulk_series: true,
             }) },
           );
           closed++;
@@ -1476,7 +1478,16 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
           } else if (/^[A-Z0-9]+: sluiting van [0-9.eE+-]+ SHORT zou Auto Hedge-dekking onder de gereserveerde [0-9.eE+-]+ brengen$/.test(details)) {
             coverageRefused++;
             done = true;
-          } else if (details === "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw" && busyRetries < 3) {
+          } else if (details === "Open winst is niet meer boven de ingestelde grens; geen order geplaatst") {
+            // Server-side profit check right before the order: the SHORT fell to $0,50 or less. No order was sent.
+            noLongerEligible++;
+            done = true;
+          } else if (details === "Vorige sluiting van dit symbool is nog niet bevestigd; controleer Aster en gebruik de individuele Close-knop") {
+            // An earlier close of this very SHORT may have reached Aster but was never confirmed. No order was sent.
+            unconfirmedEarlier++;
+            done = true;
+          } else if ((details === "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw" ||
+                      details === "De account-lease is verlopen voordat de sluiting kon starten; er is niets geplaatst, probeer opnieuw") && busyRetries < 3) {
             // Account busy (coordination): nothing was ordered. Wait, then ask again with a NEW idempotency key
             // (expected_quantity is re-validated by the backend).
             busyRetries++;
@@ -1491,6 +1502,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     }
     setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen" + (coverageRefused ? " · " + coverageRefused + " geweigerd door Auto Hedge-dekking (niet gesloten)" : "") +
       (noLongerEligible ? " · " + noLongerEligible + " niet meer boven $0,50 winst (overgeslagen)" : "") +
+      (unconfirmedEarlier ? " · " + unconfirmedEarlier + " overgeslagen: eerdere sluiting nog niet bevestigd (controleer Aster)" : "") +
       (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
     setBulkCloseTargets([]);
     setProfitPreview(null);
