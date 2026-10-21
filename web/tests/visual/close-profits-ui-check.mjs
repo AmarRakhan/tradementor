@@ -70,7 +70,8 @@ for (const width of [390, 1280]) {
   const full = { BTCUSDT: 2, ETHUSDT: 10, SOLUSDT: 100, XRPUSDT: 500 };
   assert.ok(posts.every((c) => c.body.expected_quantity === full[c.path.split("/").at(-2)]), "expected_quantity is the FULL live quantity");
   const order = made.map((c) => (c.method === "GET" ? "G" : "P")).join("");
-  assert.equal(order, "GGPGPGPGP", "preview, then (fresh check, close) per SHORT, strictly sequential");
+  // history = preview of the cancelled dialog (G) + preview of this confirmation (G) + per SHORT: fresh check (G) then close (P)
+  assert.equal(order, "GG" + "GP".repeat(4), "preview, then (fresh check, close) per SHORT, strictly sequential");
   assert.match(await page.getByRole("status").innerText(), /4 SHORTS gesloten/);
   assert.equal(await page.evaluate(() => window.__refreshCount), 1);
   await page.screenshot({ path: `artifacts/close-profits-ui/done-${width}.png`, fullPage: true });
