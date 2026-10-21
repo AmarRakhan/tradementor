@@ -93,6 +93,35 @@ jobs:
       - name: Full web test suite
         working-directory: web
         run: ../tools/ci_report.sh "web full suite" 40 node --test tests/*.test.mjs
+  e2e-stack:
+    # REAL FastAPI app + REAL Firestore SDK/emulator + REAL gateway/execute_leg_once; Aster is an HTTP-level fake.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install emulator and backend dependencies
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+      - name: End-to-end on the real stack
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
+          tools/ci_report.sh "e2e real stack" 150 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -m unittest -v test_close_profits_2_0_e2e_stack'
   baseline:
     # Same checks on the original PR head and on the production-601 base, to separate pre-existing failures.
     runs-on: ubuntu-latest
