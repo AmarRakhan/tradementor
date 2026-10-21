@@ -95,7 +95,8 @@ class E2E(unittest.TestCase):
 
     def tearDown(self):
         self.assertEqual(S.blocked, [], "outbound network attempt detected")
-        self.assertEqual(self.fake.unmocked, [], "unexpected Aster endpoint called")
+        if not getattr(self, "allow_unmocked", False):
+            self.assertEqual(self.fake.unmocked, [], "unexpected Aster endpoint called")
 
     # ---- what the frontend does, step by step (aster-recent-trades.tsx closeProfits) ----------------------
     def preview(self, pct):
@@ -212,8 +213,8 @@ class ExchangeFailures(E2E):
 
     def test_duplicate_click_same_key_places_exactly_one_order(self):
         self.seed_world(n=3, hedged=1)
-        self.assertEqual(self.close("S01USDT", self.expected["S01USDT"], 50, key="k-dup").status_code, 200)
-        again = self.close("S01USDT", self.expected["S01USDT"], 50, key="k-dup")
+        self.assertEqual(self.close("S01USDT", self.expected["S01USDT"], 50, key="idempotency-key-dup-0001").status_code, 200)
+        again = self.close("S01USDT", self.expected["S01USDT"], 50, key="idempotency-key-dup-0001")
         self.assertEqual(again.status_code, 409)
         self.assertEqual(len(self.fake.accepted()), 1)
 
@@ -227,7 +228,7 @@ class ExchangeFailures(E2E):
         self.assertEqual(result["stopped"][0], "S02USDT"); self.assertEqual(result["stopped"][1], 502)
         self.assertIn("niet opnieuw besteld", result["stopped"][2])
         self.assertEqual([o["symbol"] for o in self.fake.accepted()], ["S00USDT", "S01USDT", "S02USDT"])
-        for key in ("k-replay",):                                    # replays / stale-quantity retries never reorder
+        for key in ("idempotency-key-replay-0001",):                                    # replays / stale-quantity retries never reorder
             r = self.close("S02USDT", self.expected["S02USDT"], 50, key=key)
             self.assertEqual(r.status_code, 409)
         self.assertEqual(len(self.fake.accepted()), 3)
@@ -269,6 +270,85 @@ class ExchangeFailures(E2E):
         self.assertNotIn("S01USDT", [s["symbol"] for s in fresh["selected"]])
         self.assertEqual(len(self.fake.accepted()), 0)
         self.assertEqual([t[0] for t in targets], ["S00USDT", "S01USDT", "S02USDT"])
+
+
+class WorkerConcurrency(E2E):
+    """The REAL Auto Hedge worker entry (`_run_uid`) racing the REAL close route on the real Firestore emulator."""
+    allow_unmocked = True          # the worker may reach Aster endpoints this fake does not model after the point under test
+
+    def setUp(self):
+        super().setUp()
+        import aster_position_loss_auto_hedge_extension as ext
+        self.ext = ext
+        self.old = (ext.EXECUTION_ENABLED, S.main._release_feature_enabled_for_uid)
+        ext.EXECUTION_ENABLED = True
+        S.main._release_feature_enabled_for_uid = lambda uid, key: True
+        self.db.collection("asterPositionLossAutoHedge").document(self.uid).set({"enabled": True, "thresholdUsd": 10.0})
+        self.fake.add("BTCUSDT", "SHORT", 100.0, mark=90.0, entry=105.0)    # profitable SHORT (+1500)
+        self.fake.add("BTCUSDT", "LONG", 100.0, mark=90.0, entry=100.0)     # losing LONG (-1000) beyond the threshold
+
+    def tearDown(self):
+        self.ext.EXECUTION_ENABLED, S.main._release_feature_enabled_for_uid = self.old
+        super().tearDown()
+
+    def lease_token(self):
+        return ((self.db.collection("asterAccountCoordination").document(self.uid).get().to_dict() or {}).get("lease") or {}).get("token")
+
+    def test_worker_run_during_an_ordering_close_is_deferred_and_places_nothing(self):
+        started, out = threading.Event(), {}
+        self.fake.delay["BTCUSDT"] = 0.8
+        self.fake.on_order_start = lambda sym: started.set()
+
+        def closer():
+            from fastapi.testclient import TestClient
+            r = TestClient(S.main.app, raise_server_exceptions=False).post(
+                "/v1/me/aster/positions/BTCUSDT/close",
+                json={"confirm": True, "side": "SHORT", "expected_quantity": 100.0, "percentage": 50,
+                      "idempotency_key": "idempotency-key-race-0001"})
+            out["close"] = (r.status_code, r.text[:200])
+        t = threading.Thread(target=closer); t.start()
+        self.assertTrue(started.wait(10))
+        report = self.ext._run_uid(self.uid)                                  # worker tick while the close holds the order
+        t.join(20)
+        self.assertEqual(out["close"][0], 200, out)
+        self.assertEqual((report.get("status"), report.get("reason"), report.get("ordersSent")), ("PENDING", "ACCOUNT_COORDINATION_BUSY", 0), report)
+        self.assertEqual([(o["positionSide"], o["side"]) for o in self.fake.accepted()], [("SHORT", "BUY")])   # only the close
+        self.assertEqual(self.fake.accepted()[0]["qty"], 50.0)
+        self.assertFalse(self.lease_token())
+        print("INFO-W1 close", out["close"][0], "worker", report.get("status"), report.get("reason"))
+
+    def test_close_arriving_while_the_worker_holds_the_lease_is_refused_before_any_order(self):
+        in_worker, release, out = threading.Event(), threading.Event(), {}
+        holder = {}
+
+        def hook():
+            if threading.current_thread() is holder.get("t") and not in_worker.is_set():
+                in_worker.set()
+                release.wait(30)                                              # worker stalls while holding its lease
+        self.fake.on_position_read = hook
+
+        def worker():
+            try:
+                out["report"] = self.ext._run_uid(self.uid)
+            except BaseException as exc:                                      # what the worker does after our point is not under test
+                out["error"] = repr(exc)[:200]
+        holder["t"] = t = threading.Thread(target=worker); t.start()
+        self.assertTrue(in_worker.wait(10))
+        r = self.close("BTCUSDT", 100.0, 50, key="idempotency-key-busy-0001")
+        release.set(); t.join(30)
+        self.assertEqual(r.status_code, 409, r.text)
+        self.assertEqual(r.json()["detail"], BUSY)
+        self.assertEqual([o for o in self.fake.accepted() if o["side"] == "BUY" and o["positionSide"] == "SHORT"], [])   # no close order
+        self.assertFalse(self.lease_token())
+        print("INFO-W2 close", r.status_code, "worker", out.get("report", {}).get("status"), out.get("error"), "unmocked", sorted(set(self.fake.unmocked)))
+
+    def test_busy_close_retried_with_a_new_key_after_the_worker_finished_succeeds_once(self):
+        r1 = self.close("BTCUSDT", 100.0, 50, key="idempotency-key-first-0001")
+        self.assertEqual(r1.status_code, 200, r1.text)
+        self.assertEqual(len([o for o in self.fake.accepted() if o["positionSide"] == "SHORT"]), 1)
+        again = self.close("BTCUSDT", 100.0, 50, key="idempotency-key-first-0001")
+        self.assertEqual(again.status_code, 409)
+        self.assertEqual(len([o for o in self.fake.accepted() if o["positionSide"] == "SHORT"]), 1)
 
 
 class ImportSmoke(E2E):
