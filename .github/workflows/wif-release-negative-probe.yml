@@ -1,0 +1,43 @@
+# Negative authentication probe for the temporary release pool. It is NOT an allow-listed workflow, so Google must refuse it.
+# No checkout, no gcloud, no deploy: it only attempts authentication and asserts that the attempt was REFUSED.
+name: WIF release pool negative probe (must be refused)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: none
+  id-token: write
+
+concurrency:
+  group: tradementor-wif-release-probe
+  cancel-in-progress: false
+
+env:
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/gh-release-20261021/providers/github-main
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 3
+    steps:
+      - name: Attempt authentication (refusal expected)
+        id: auth
+        continue-on-error: true
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+          create_credentials_file: false
+
+      - name: Assert refusal
+        shell: bash
+        env:
+          AUTH_OUTCOME: ${{ steps.auth.outcome }}
+        run: |
+          if [ "$AUTH_OUTCOME" = "success" ]; then
+            echo "FAIL (SECURITY): an unauthorised workflow obtained Google credentials"; exit 1
+          fi
+          echo "PASS: authentication was refused for a non-allow-listed workflow (outcome=$AUTH_OUTCOME)"

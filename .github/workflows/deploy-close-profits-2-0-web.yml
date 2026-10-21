@@ -7,13 +7,21 @@ name: Deploy Close Profits 2.0 Web (exact release commit)
 on:
   workflow_dispatch:
     inputs:
-      confirmation:
-        description: "Type DEPLOY_CLOSE_PROFITS_2_0_WEB"
+      mode:
+        description: "auth_only (default: authentication and read-only checks, no mutation) or deploy"
         required: true
+        default: auth_only
+        type: choice
+        options: [auth_only, deploy]
+      confirmation:
+        description: "Type DEPLOY_CLOSE_PROFITS_2_0_WEB (only needed for mode=deploy)"
+        required: false
+        default: ""
         type: string
       source_commit:
-        description: "Exact 40-character commit; must equal ALLOWED_RELEASE_COMMIT"
-        required: true
+        description: "Exact 40-character commit; must equal ALLOWED_RELEASE_COMMIT (only needed for mode=deploy)"
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -29,7 +37,7 @@ env:
   GCP_REGION: europe-west4
   CLOUD_RUN_SERVICE: amar-bot-v44-direct-install
   ARTIFACT_REPOSITORY: tradementor
-  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/gh-release-20261021/providers/github-main
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
   # The web commit this release was built on (live build 601) and the backend that must already serve the release.
   LIVE_WEB_SOURCE_COMMIT: 89ab74a0cc488979b1dc6231ffa27fc8e293a627
@@ -37,7 +45,64 @@ env:
   ALLOWED_RELEASE_COMMIT: aebf12391bc0975dc0a7b30249cc930295066ab9
 
 jobs:
+  auth-only:
+    # Authentication proof ONLY. Contains no checkout, build, push, deploy, traffic, config or data-changing step.
+    if: inputs.mode == 'auth_only'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    permissions:
+      contents: none
+      id-token: write
+    steps:
+      - name: Report OIDC claims (claim values only, never the token)
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESP="$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://iam.googleapis.com/$WIF_PROVIDER")"
+          RESP="$RESP" python3 - <<'PY'
+          import base64, json, os
+          tok = json.loads(os.environ["RESP"])["value"]
+          print("::add-mask::" + tok)
+          p = tok.split(".")[1]; p += "=" * (-len(p) % 4)
+          c = json.loads(base64.urlsafe_b64decode(p))
+          for k in ("repository","repository_id","repository_owner_id","ref","ref_type","event_name","environment","workflow_ref","job_workflow_ref","workflow_sha","job_workflow_sha","sha","sub","run_id"):
+              print(f"CLAIM {k}={c.get(k)}")
+          gh = os.environ
+          checks = {
+            "repository_id": c.get("repository_id") == "1324367697",
+            "repository_owner_id": c.get("repository_owner_id") == "313542222",
+            "ref": c.get("ref") == "refs/heads/main",
+            "event_name": c.get("event_name") == "workflow_dispatch",
+            "environment": c.get("environment") == "production",
+            "workflow_ref_matches_run": c.get("workflow_ref") == gh["GITHUB_WORKFLOW_REF"],
+            "job_workflow_ref_equals_workflow_ref": c.get("job_workflow_ref") == c.get("workflow_ref"),
+            "workflow_sha_equals_GITHUB_SHA": c.get("workflow_sha") == gh["GITHUB_SHA"],
+          }
+          for k, v in checks.items(): print(("PASS " if v else "FAIL ") + "claim-check " + k)
+          raise SystemExit(0 if all(checks.values()) else 1)
+          PY
+      - name: Authenticate deploy identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read-only check of "$CLOUD_RUN_SERVICE"
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud auth list --format='value(account)'
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.latestReadyRevisionName)'
+
+      - name: Auth-only complete
+        run: echo "AUTH_ONLY_COMPLETE - no production mutation was executed"
+
   verify-build-deploy:
+    if: inputs.mode == 'deploy'
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
