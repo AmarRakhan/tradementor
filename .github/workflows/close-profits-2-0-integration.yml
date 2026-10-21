@@ -1,0 +1,309 @@
+name: Close Profits 2.0 integration (isolated, no secrets, no orders)
+# Test-only. Runs ONLY on the Close Profits 2.0 release CI branch (release/close-profits-2-0 + this workflow) (and manually). No secrets, no id-token, no deploy,
+# no Aster access, no production Firebase project: Firestore is the local emulator (project close-profits-test-only).
+on:
+  push:
+    branches: [release/close-profits-2-0-ci]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: close-profits-2-0-integration-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies (real fastapi, httpx, firestore client)
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Close Profits model tests with REAL dependencies
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend model tests (real deps)" 40 python -m unittest -v test_close_profits_2_0_integration test_close_profits_2_0_round6
+      - name: Full backend regression (same as Cloud Backend CI)
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install emulator and backend dependencies
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+      - name: Same scenarios on the REAL Firestore emulator (transactions, leases, AlreadyExists)
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
+          tools/ci_report.sh "firestore emulator tests" 60 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -m unittest -v test_close_profits_2_0_firestore_emulator'
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: TypeScript typecheck (normalised error set for comparison with baseline)
+        working-directory: web
+        continue-on-error: true
+        run: ../tools/ci_report.sh "typescript errors (normalised)" 400 bash -c "npx tsc --noEmit -p tsconfig.json | sed -E 's/\\([0-9]+,[0-9]+\\)//' | sort | uniq -c | sort -rn; exit \${PIPESTATUS[0]}"
+      - name: Production build
+        working-directory: web
+        run: ../tools/ci_report.sh "next production build" 30 npm run build
+      - name: Close Profits web tests (handlers, scope, frontend -> real Next proxy code -> backend)
+        working-directory: web
+        run: |
+          pip install -r ../cloud_api/requirements.txt
+          ../tools/ci_report.sh "web close-profits tests" 25 node --test tests/aster-close-profits-*.test.mjs tests/aster-close-profitable.test.mjs
+      - name: Full web test suite
+        working-directory: web
+        run: ../tools/ci_report.sh "web full suite" 40 node --test tests/*.test.mjs
+  e2e-stack:
+    # REAL FastAPI app + REAL Firestore SDK/emulator + REAL gateway/execute_leg_once; Aster is an HTTP-level fake.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install emulator and backend dependencies
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+      - name: End-to-end on the real stack
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
+          tools/ci_report.sh "e2e real stack" 120 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -W ignore -m unittest -v test_close_profits_2_0_e2e_stack test_close_profits_2_0_release_guards'
+  e2e-web-real-backend:
+    # Frontend handlers -> REAL Next proxy code -> REAL FastAPI app (uvicorn) -> REAL Firestore emulator -> fake Aster HTTP.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+          (cd web && npm ci)
+      - name: Frontend -> proxy -> real FastAPI -> Firestore emulator
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
+          tools/ci_report.sh "e2e web real backend" 120 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
+            'cd web && CP20_BACKEND=real node --test tests/aster-close-profits-integration.test.mjs'
+  ui-browser:
+    # The REAL AsterRecentTrades component in Chromium (only lib/cloud-client is replaced by an in-page fake).
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies and Chromium
+        working-directory: web
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Start the UI harness and run the browser checks
+        working-directory: web
+        run: |
+          npx vite --config tests/visual/close-profits-ui-vite.config.ts >/tmp/cp-ui-vite.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:4175/tests/visual/close-profits-ui.html >/dev/null; then break; fi
+            sleep 1
+          done
+          ../tools/ci_report.sh "ui browser checks" 60 node tests/visual/close-profits-ui-check.mjs
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: close-profits-ui
+          path: web/artifacts/close-profits-ui
+          if-no-files-found: warn
+  baseline:
+    # Same checks on the live production source f87d6b20 (build 601 backend source), to separate pre-existing failures.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [f87d6b201790d612f970355f3b8c4c8766938941]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tools_src
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          path: base
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Baseline backend pytest
+        working-directory: base/cloud_api
+        run: |
+          pip install -r requirements.txt pytest
+          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} backend pytest" 40 pytest -q -rfE -p no:cacheprovider
+        continue-on-error: true
+      - name: Baseline TypeScript errors (normalised)
+        working-directory: base/web
+        continue-on-error: true
+        run: |
+          npm ci
+          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} typescript errors (normalised)" 400 bash -c "npx tsc --noEmit -p tsconfig.json | sed -E 's/\\([0-9]+,[0-9]+\\)//' | sort | uniq -c | sort -rn; exit \${PIPESTATUS[0]}"
+      - name: Baseline web tests
+        working-directory: base/web
+        continue-on-error: true
+        run: |
+          pip install -r ../cloud_api/requirements.txt
+          ../../tools_src/tools/ci_report.sh "BASELINE ${{ matrix.ref }} web node tests" 30 node --test tests/*.test.mjs
+  release-guards:
+    # The exact-commit deploy workflows: (1) are the proven production workflows plus the documented guard changes,
+    # (2) only accept live + Close Profits 2.0 files: the unfinished work (SHORT Recovery, Spike, 602/603) is refused.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch comparison refs
+        run: |
+          git fetch origin release/close-profits-2-0 amar-crypto-bot-2026-cloud --quiet
+          git fetch origin release/close-profits-2-0-integration --quiet || true
+      - name: Workflows == proven original + documented guard changes, dispatch-only
+        run: |
+          set -euo pipefail
+          pip install -q pyyaml
+          git checkout -q --detach origin/release/close-profits-2-0
+          python3 tools/gen_close_profits_deploy_workflows.py --check
+          python3 - <<'PY'
+          import yaml
+          rb = yaml.safe_load(open(".github/workflows/rollback-close-profits-2-0.yml", encoding="utf-8"))
+          assert set(rb.get(True) or rb.get("on")) == {"workflow_dispatch"}
+          assert "refs/heads/release/close-profits-2-0" in open(".github/workflows/rollback-close-profits-2-0.yml", encoding="utf-8").read()
+          for name in ("backend", "web"):
+              doc = yaml.safe_load(open(f".github/workflows/deploy-close-profits-2-0-{name}.yml", encoding="utf-8"))
+              triggers = doc.get(True) or doc.get("on")
+              assert set(triggers) == {"workflow_dispatch"}, triggers
+              assert {"confirmation", "source_commit"} <= set(triggers["workflow_dispatch"]["inputs"])
+              text = open(f".github/workflows/deploy-close-profits-2-0-{name}.yml", encoding="utf-8").read()
+              assert "verify_close_profits_release.sh" in text and "refs/heads/release/close-profits-2-0" in text
+              print("OK", name, sorted(triggers))
+          PY
+      - name: Allow-list verifier accepts the release and refuses everything else
+        run: |
+          cp tools/ci_release_guards.sh "$RUNNER_TEMP/guards.sh"; cp tools/ci_report.sh "$RUNNER_TEMP/report.sh"
+          "$RUNNER_TEMP/report.sh" "release guards" 40 bash "$RUNNER_TEMP/guards.sh"
+
+  deploy-gates:
+    # Reproduces what the production deploy workflows run on the exact source: web `npm test` (build + regression suite)
+    # and the mandatory runtime-contract tests selected for the delta live-source -> release tip.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install
+        run: |
+          pip install -r cloud_api/requirements.txt pytest
+          (cd web && npm ci)
+      - name: Mandatory contract selection for the exact production delta
+        run: |
+          set -euo pipefail
+          git diff --name-only f87d6b201790d612f970355f3b8c4c8766938941 origin/release/close-profits-2-0 | sort -u > "$RUNNER_TEMP/changed.txt" || git diff --name-only f87d6b201790d612f970355f3b8c4c8766938941 HEAD | sort -u > "$RUNNER_TEMP/changed.txt"
+          cat "$RUNNER_TEMP/changed.txt"
+          python tools/runtime_contract_impact.py --files-file "$RUNNER_TEMP/changed.txt" --backend-tests-file "$RUNNER_TEMP/be.txt" --web-tests-file "$RUNNER_TEMP/web.txt" --summary "$RUNNER_TEMP/sum.md" --json || true
+          echo "--- backend contracts"; cat "$RUNNER_TEMP/be.txt" 2>/dev/null || true
+          echo "--- web contracts"; cat "$RUNNER_TEMP/web.txt" 2>/dev/null || true
+      - name: Mandatory backend contracts
+        working-directory: cloud_api
+        run: |
+          if [ -s "$RUNNER_TEMP/be.txt" ]; then mapfile -t T < <(sed 's#^cloud_api/##' "$RUNNER_TEMP/be.txt"); ../tools/ci_report.sh "mandatory backend contracts" 40 pytest -q "${T[@]}"; else echo "SUMMARY mandatory backend contracts: none selected"; fi
+      - name: Mandatory web contracts
+        working-directory: web
+        run: |
+          if [ -s "$RUNNER_TEMP/web.txt" ]; then mapfile -t T < <(sed 's#^web/##' "$RUNNER_TEMP/web.txt"); ../tools/ci_report.sh "mandatory web contracts" 40 node --test "${T[@]}"; else echo "SUMMARY mandatory web contracts: none selected"; fi
+      - name: Web deploy gate (npm test = build + regression suite)
+        working-directory: web
+        run: ../tools/ci_report.sh "web deploy gate npm test" 40 npm test
