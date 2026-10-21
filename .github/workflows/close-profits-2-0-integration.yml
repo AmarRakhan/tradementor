@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 concurrency:
   group: close-profits-2-0-integration-${{ github.ref }}
   cancel-in-progress: true
@@ -27,10 +30,10 @@ jobs:
         run: pip install -r cloud_api/requirements.txt pytest
       - name: Close Profits model tests with REAL dependencies
         working-directory: cloud_api
-        run: python -m unittest -v test_close_profits_2_0_integration test_close_profits_2_0_round6
+        run: ../tools/ci_report.sh "backend model tests (real deps)" 40 python -m unittest -v test_close_profits_2_0_integration test_close_profits_2_0_round6
       - name: Full backend regression (same as Cloud Backend CI)
         working-directory: cloud_api
-        run: pytest -q -p no:cacheprovider 2>&1 | tail -60
+        run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider
   firestore-emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -57,7 +60,7 @@ jobs:
       - name: Same scenarios on the REAL Firestore emulator (transactions, leases, AlreadyExists)
         run: |
           printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp20-firebase.json
-          npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
+          tools/ci_report.sh "firestore emulator tests" 60 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project close-profits-test-only \
             'cd cloud_api && python -m unittest -v test_close_profits_2_0_firestore_emulator'
   web:
     runs-on: ubuntu-latest
@@ -77,15 +80,15 @@ jobs:
         run: npm ci
       - name: TypeScript typecheck
         working-directory: web
-        run: npx tsc --noEmit -p tsconfig.json 2>&1 | tail -80
+        run: ../tools/ci_report.sh "typescript typecheck" 80 npx tsc --noEmit -p tsconfig.json
       - name: Production build
         working-directory: web
-        run: npm run build
+        run: ../tools/ci_report.sh "next production build" 30 npm run build
       - name: Close Profits web tests (handlers, scope, frontend -> real Next proxy code -> backend)
         working-directory: web
         run: |
           pip install -r ../cloud_api/requirements.txt
-          node --test tests/aster-close-profits-*.test.mjs tests/aster-close-profitable.test.mjs
+          ../tools/ci_report.sh "web close-profits tests" 25 node --test tests/aster-close-profits-*.test.mjs tests/aster-close-profitable.test.mjs
       - name: Full web test suite
         working-directory: web
-        run: node --test tests/*.test.mjs 2>&1 | tail -40
+        run: ../tools/ci_report.sh "web full suite" 40 node --test tests/*.test.mjs
