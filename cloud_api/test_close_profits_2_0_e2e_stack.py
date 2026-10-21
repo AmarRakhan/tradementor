@@ -354,6 +354,55 @@ class WorkerConcurrency(E2E):
         self.assertEqual(len([o for o in self.fake.accepted() if o["positionSide"] == "SHORT"]), 1)
 
 
+class SimultaneousRequests(E2E):
+    def two_at_once(self, symbol, qty):
+        from fastapi.testclient import TestClient
+        gate, out = threading.Barrier(2), []
+
+        def go(n):
+            client = TestClient(S.main.app, raise_server_exceptions=False)
+            gate.wait(10)
+            r = client.post(f"/v1/me/aster/positions/{symbol}/close", json={
+                "confirm": True, "side": "SHORT", "expected_quantity": qty, "percentage": 50,
+                "idempotency_key": f"idempotency-key-simul-{n}-{uuid.uuid4().hex[:8]}"})
+            out.append((r.status_code, r.json().get("detail")))
+        threads = [threading.Thread(target=go, args=(n,)) for n in (1, 2)]
+        [t.start() for t in threads]; [t.join(30) for t in threads]
+        return out
+
+    def test_two_simultaneous_closes_on_an_auto_hedge_short_place_exactly_one_order(self):
+        self.seed_world(n=3, hedged=3)
+        self.fake.delay["S01USDT"] = 0.5
+        out = self.two_at_once("S01USDT", self.expected["S01USDT"])
+        self.assertEqual(sorted(code for code, _ in out)[0], 200, out)
+        self.assertNotEqual(sorted(code for code, _ in out)[1], 200, out)
+        self.assertEqual(len(self.fake.accepted(symbol="S01USDT")), 1)
+        print("INFO-simul-hedged", out)
+
+    def test_KNOWN_RESIDUAL_two_simultaneous_closes_on_a_plain_short_without_opposite_leg(self):
+        """Pre-existing: the individual route takes no lease for a plain SHORT (and the green button never sends two at
+        once). Measured, not fixed."""
+        self.seed_world(n=3, hedged=0)
+        self.db.collection("asterPositionLossAutoHedge").document(self.uid).set({"enabled": False})
+        self.fake.delay["S01USDT"] = 0.5
+        out = self.two_at_once("S01USDT", self.expected["S01USDT"])
+        orders = len(self.fake.accepted(symbol="S01USDT"))
+        print("INFO-simul-plain orders=", orders, out)
+        self.assertIn(orders, (1, 2))
+
+    def test_KNOWN_RESIDUAL_price_drop_between_the_fresh_check_and_the_order_is_not_caught(self):
+        """The existing individual route checks the quantity, not the profit. The fresh check shortens the window to
+        the latency of one request; a drop inside that window still closes. Measured, not fixed."""
+        self.seed_world(n=3, hedged=0)
+        self.db.collection("asterPositionLossAutoHedge").document(self.uid).set({"enabled": False})
+        fresh = self.preview(50)
+        self.assertIn("S01USDT", [s["symbol"] for s in fresh["selected"]])
+        self.fake.on_order_start = lambda sym: self.fake.mark.__setitem__("S01USDT", 120.0) if sym == "S01USDT" else None
+        r = self.close("S01USDT", self.expected["S01USDT"], 50)
+        self.assertEqual(r.status_code, 200)                       # the window exists: profit was positive at the check
+        self.assertEqual(len(self.fake.accepted(symbol="S01USDT")), 1)
+
+
 class ImportSmoke(E2E):
     def test_real_app_imports_and_preview_route_answers_on_real_firestore(self):
         self.seed_world(n=3, hedged=1)
