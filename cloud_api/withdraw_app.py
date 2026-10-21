@@ -7,6 +7,7 @@ import profit_sweep_live_extension  # noqa: F401 - fail-closed confirmed-close F
 import aster_position_loss_auto_hedge_extension  # noqa: F401 - isolated per-position 1:1 Auto Hedge
 import aster_legacy_hedge_scale_extension  # noqa: F401 - owner-only manual Legacy Hedge Recovery
 from snapshot_profit_close_extension import router as snapshot_profit_close_router
+from profit_close_rounds_extension import router as profit_close_rounds_router  # Close Profits 2.1 rounds
 
 # P0 2026-09-16: Portfolio Noodhedge is globally disabled.
 # Do NOT register its API, background worker, margin hook or order guard.
@@ -15,4 +16,5 @@ from snapshot_profit_close_extension import router as snapshot_profit_close_rout
 # Existing exchange positions are deliberately left untouched.
 
 main.app.include_router(snapshot_profit_close_router)
+main.app.include_router(profit_close_rounds_router)
 app = main.app

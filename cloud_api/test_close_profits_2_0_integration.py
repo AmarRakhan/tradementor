@@ -372,11 +372,18 @@ class RetrySafetyProofTests(unittest.TestCase):
         self.assertLess(route.index("auto_hedge_manual_guard = None"), site)
 
     def test_frontend_matches_only_the_full_exact_message(self):
-        source = (Path(__file__).parent.parent / "web/components/aster-recent-trades.tsx").read_text()
+        # Close Profits 2.1: the busy retry moved from the browser loop to the server round engine. It still matches
+        # ONLY the two exact pre-order texts (set membership = exact equality), at most MAX_BUSY_RETRIES times, and the
+        # browser no longer classifies route messages at all.
+        import profit_close_rounds as rounds
         lease_msg = "De account-lease is verlopen voordat de sluiting kon starten; er is niets geplaatst, probeer opnieuw"
-        self.assertIn('(details === "' + self.MSG + '" ||', source)
-        self.assertIn('details === "' + lease_msg + '") && busyRetries < 3', source)   # both refusals are pre-order, exact text
-        self.assertEqual(source.count("busyRetries++"), 1)
+        self.assertEqual(rounds._BUSY, {self.MSG, lease_msg})
+        self.assertEqual(rounds.MAX_BUSY_RETRIES, 3)
+        engine = (Path(__file__).parent / "profit_close_rounds.py").read_text()
+        self.assertEqual(engine.count("if detail in _BUSY:"), 1)
+        source = (Path(__file__).parent.parent / "web/components/aster-recent-trades.tsx").read_text()
+        self.assertNotIn(self.MSG, source)
+        self.assertNotIn("busyRetries", source)
 
     def test_release_guards_run_before_any_freeze_or_order(self):
         route = (Path(__file__).parent / "main.py").read_text()

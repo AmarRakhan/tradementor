@@ -29,6 +29,55 @@ export async function authenticatedRequest(path: string, init: RequestInit = {})
       snapshot: { rows: rows.map((p) => ({ symbol: p.symbol, side: p.side, quantity: String(p.qty), unrealizedPnl: String(pnl(p)) })), csv: "symbol,side\n" },
     };
   }
+  // Close Profits 2.1: in-page model of the SERVER round (one active round, one item per advance). The per-item close
+  // uses the same in-page close model as the individual route below. __offline makes requests fail like a phone that
+  // lost its connection (nothing reaches the "server").
+  if (path.startsWith("/api/exchanges/aster/profit-close-rounds")) {
+    if (w.__offline) throw new TypeError("Failed to fetch");
+    w.__rounds = w.__rounds || {};
+    const view = (r: any) => {
+      const c = { total: r.items.length, done: 0, skipped: 0, needsCheck: 0, remaining: 0 };
+      for (const i of r.items) {
+        if (i.status === "DONE") c.done++; else if (i.status === "SKIPPED") c.skipped++;
+        else if (i.status === "NEEDS_CHECK") c.needsCheck++; else c.remaining++;
+      }
+      return JSON.parse(JSON.stringify({ ...r, counts: c }));
+    };
+    const open = (r: any) => r && (r.status === "RUNNING" || r.status === "PAUSED");
+    if (path.endsWith("/active")) return { round: open(w.__rounds[w.__activeRound]) ? view(w.__rounds[w.__activeRound]) : null };
+    if (path === "/api/exchanges/aster/profit-close-rounds" && method === "POST") {
+      if (open(w.__rounds[w.__activeRound])) throw new Error("Er loopt nog een Close Profits-ronde; hervat of sluit die eerst af");
+      const id = ("a" + Object.keys(w.__rounds).length).padEnd(24, "0");
+      w.__rounds[id] = { roundId: id, status: "RUNNING", percentage: body.percentage,
+        items: body.targets.map((t: any) => ({ symbol: t.symbol, side: "SHORT", expectedQuantity: t.quantity, status: "PENDING", attempt: 0 })) };
+      w.__activeRound = id;
+      return { created: true, round: view(w.__rounds[id]) };
+    }
+    const m = path.match(/profit-close-rounds\/([a-f0-9]+)\/(advance|resume|abandon)$/);
+    const r = m && w.__rounds[m[1]];
+    if (!r) throw new Error("Ronde niet gevonden");
+    if (m![2] === "abandon") { r.status = "ABANDONED"; w.__activeRound = ""; return { round: view(r), pending: false }; }
+    if (m![2] === "resume") { if (r.status === "PAUSED") r.status = "RUNNING"; return { round: view(r) }; }
+    const item = r.items.find((i: any) => !["DONE", "SKIPPED", "NEEDS_CHECK"].includes(i.status));
+    if (r.status === "RUNNING" && item) {
+      const pos = (w.__world as Pos[]).find((p) => p.symbol === item.symbol && p.side === "SHORT");
+      if (w.__fail[item.symbol]) item.status = "NEEDS_CHECK";
+      else if (!pos || Math.abs(pos.qty - item.expectedQuantity) > 1e-9) item.status = "SKIPPED";
+      else if (!(pnl(pos) > 0.5)) item.status = "SKIPPED";
+      else {
+        const closed = pos.qty * r.percentage / 100;
+        pos.qty -= closed;
+        item.status = "DONE";
+        w.__closes = w.__closes || [];
+        w.__closes.push({ symbol: item.symbol, closed, expected: item.expectedQuantity, percentage: r.percentage });
+      }
+      if (typeof w.__offlineAfterCloses === "number" && (w.__closes || []).length >= w.__offlineAfterCloses) w.__offline = true;
+    }
+    if (!r.items.some((i: any) => !["DONE", "SKIPPED", "NEEDS_CHECK"].includes(i.status)) && r.status === "RUNNING") {
+      r.status = "FINISHED"; w.__activeRound = "";
+    }
+    return { round: view(r), busy: false, waiting: false };
+  }
   const match = path.match(/\/positions\/([^/]+)\/close$/);
   if (match && method === "POST") {
     const symbol = decodeURIComponent(match[1]);

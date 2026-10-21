@@ -146,6 +146,16 @@ type TradeCenterRow = {
   action?: ScanAction | null;
 };
 
+type ProfitRoundItem = { symbol: string; side: "SHORT"; status: string; reason?: string | null; detail?: string | null; attempt?: number };
+type ProfitRound = {
+  roundId: string;
+  status: "RUNNING" | "PAUSED" | "FINISHED" | "ABANDONED" | string;
+  percentage: number;
+  items: ProfitRoundItem[];
+  counts: { total: number; done: number; skipped: number; needsCheck: number; remaining: number };
+  pauseReason?: string | null;
+};
+
 type ProfitClosePreview = {
   eligibleCount: number;
   totalProfitUsd: number;
@@ -1032,6 +1042,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
   const bulkCloseInFlightRef = useRef(false);
   const [profitPreview, setProfitPreview] = useState<ProfitClosePreview | null>(null);
   const [profitMessage, setProfitMessage] = useState("");
+  const [activeProfitRound, setActiveProfitRound] = useState<ProfitRound | null>(null);
   const scrollYRef = useRef(0);
   const detailTapRef = useRef({ at: 0, x: 0, y: 0 });
   const detailTouchRef = useRef({ valid: false, x: 0, y: 0 });
@@ -1400,114 +1411,133 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
       return Boolean(position?.positionLossAutoHedge);
     })
     .map((target) => target.symbol);
+  // Close Profits 2.1: a round lives on the SERVER (one per account). The phone only asks the server to advance it
+  // and shows the progress. A lost connection never loses the round and never closes a SHORT twice: every item has a
+  // fixed key per attempt and an unknown outcome is first checked against Aster by the server.
+  function profitRoundMessage(round: ProfitRound | null) {
+    if (!round) return "";
+    const c = round.counts;
+    const needsCheck = round.items.filter((item) => item.status === "NEEDS_CHECK").map((item) => item.symbol);
+    const parts = [c.done + " SHORTS gesloten", c.skipped + " overgeslagen"];
+    if (needsCheck.length) parts.push(needsCheck.length + " te controleren in Aster (" + needsCheck.join(", ") + ")");
+    if (round.status === "RUNNING" && c.remaining) parts.push(c.remaining + " resterend");
+    const tail = round.status === "FINISHED" ? "Ronde voltooid." :
+      round.status === "ABANDONED" ? "Ronde afgesloten." :
+      round.status === "PAUSED" ? "Ronde gepauzeerd: Aster of de verbinding was niet betrouwbaar. Tik op Hervat ronde." :
+      "Ronde bezig…";
+    return parts.join(" · ") + " · " + tail;
+  }
+  async function loadActiveProfitRound() {
+    try {
+      const out = await authenticatedRequest("/api/exchanges/aster/profit-close-rounds/active", { method: "GET", cache: "no-store" });
+      const round = (out && out.round) || null;
+      setActiveProfitRound(round);
+      return round as ProfitRound | null;
+    } catch {
+      return null;
+    }
+  }
+  async function driveProfitRound(roundId: string) {
+    let current: ProfitRound | null = null;
+    let failures = 0;
+    for (let step = 0; step < 2000; step++) {
+      try {
+        const out = await authenticatedRequest(
+          "/api/exchanges/aster/profit-close-rounds/" + encodeURIComponent(roundId) + "/advance",
+          { method: "POST", body: "{}" },
+        );
+        failures = 0;
+        current = (out && out.round) || null;
+        setActiveProfitRound(current && (current.status === "RUNNING" || current.status === "PAUSED") ? current : null);
+        setProfitMessage(profitRoundMessage(current));
+        if (!current || current.status !== "RUNNING") break;
+        if (out.busy || out.waiting) await new Promise((resolve) => setTimeout(resolve, 1500));
+      } catch {
+        // The answer was lost (network switch, proxy). The server still has the round and decides on its own whether
+        // that step happened; never resend anything ourselves. Ask again a few times, then hand over to the user.
+        failures++;
+        if (failures >= 3) {
+          setProfitMessage("Verbinding onderbroken. De ronde staat veilig op de server; tik op Hervat ronde om verder te gaan.");
+          await loadActiveProfitRound();
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+    return current;
+  }
+  async function resumeProfitRound() {
+    if (bulkCloseInFlightRef.current || profitBusy || !activeProfitRound) return;
+    bulkCloseInFlightRef.current = true;
+    setProfitBusy(true);
+    try {
+      if (activeProfitRound.status === "PAUSED") {
+        await authenticatedRequest("/api/exchanges/aster/profit-close-rounds/" + encodeURIComponent(activeProfitRound.roundId) + "/resume", { method: "POST", body: "{}" });
+      }
+      await driveProfitRound(activeProfitRound.roundId);
+    } catch (reason) {
+      setProfitMessage(reason instanceof Error ? reason.message : "Hervatten is niet gelukt; er is niets extra gesloten.");
+    } finally {
+      try { await Promise.resolve(onRetry()); } finally { bulkCloseInFlightRef.current = false; setProfitBusy(false); }
+    }
+  }
+  async function abandonProfitRound() {
+    if (bulkCloseInFlightRef.current || profitBusy || !activeProfitRound) return;
+    bulkCloseInFlightRef.current = true;
+    setProfitBusy(true);
+    try {
+      const out = await authenticatedRequest("/api/exchanges/aster/profit-close-rounds/" + encodeURIComponent(activeProfitRound.roundId) + "/abandon", { method: "POST", body: "{}" });
+      const round = (out && out.round) || null;
+      setProfitMessage(out && out.pending ? "Ronde wordt afgesloten na de lopende stap." : profitRoundMessage(round));
+      setActiveProfitRound(out && out.pending ? round : null);
+    } catch (reason) {
+      setProfitMessage(reason instanceof Error ? reason.message : "Ronde afsluiten is niet gelukt.");
+    } finally {
+      bulkCloseInFlightRef.current = false;
+      setProfitBusy(false);
+    }
+  }
   async function closeProfits() {
     if (bulkCloseInFlightRef.current || profitBusy || !profitConfirming || !profitSnapshotReliable || bulkCloseTargets.length === 0) return;
     bulkCloseInFlightRef.current = true;
     setProfitBusy(true);
     setProfitConfirming(false);
-    let closed = 0;
-    let skipped = 0;
-    let coverageRefused = 0;
-    let noLongerEligible = 0;
-    let unconfirmedEarlier = 0;
-    let stoppedAt = "";
-    for (const target of bulkCloseTargets) {
-      let busyRetries = 0;
-      let done = false;
-      // Fresh read-only check, run before EVERY close attempt (first try and each account-busy retry).
-      // Fail-closed: the SHORT must appear exactly once in a reliable snapshot, with the same full quantity,
-      // a readable profit strictly above $0,50, and still be selected by the backend planner.
-      // Returns "ok", "gone" (no longer eligible -> skip, no order) or a stop reason string.
-      const freshCheck = async () => {
-        try {
-          const fresh = await authenticatedRequest(
-            "/api/exchanges/aster/positions/manual-profit-close-plan?percentage=" + profitClosePercentage,
-            { method: "GET", cache: "no-store" },
-          );
-          if (!fresh || fresh.reliable !== true || !Array.isArray(fresh.selected) || !fresh.snapshot || !Array.isArray(fresh.snapshot.rows)) {
-            return target.symbol + ": actuele positiegegevens zijn niet betrouwbaar";
-          }
-          let selectedCount = 0;
-          for (const item of fresh.selected) {
-            if (String(item.symbol || "").toUpperCase() === target.symbol && String(item.side || "").toUpperCase() === "SHORT") selectedCount++;
-          }
-          let rowCount = 0;
-          let liveRow = null;
-          for (const row of fresh.snapshot.rows) {
-            if (String(row.symbol || "").toUpperCase() === target.symbol && String(row.side || "").toUpperCase() === "SHORT") { rowCount++; liveRow = row; }
-          }
-          if (rowCount !== 1 || selectedCount > 1) return target.symbol + ": positie ontbreekt of is niet eenduidig in de actuele gegevens";
-          const liveQuantity = Math.abs(Number(liveRow.quantity));
-          if (!(liveQuantity > 0) || Math.abs(liveQuantity - target.quantity) > Math.max(1e-12, target.quantity * 1e-9)) {
-            return target.symbol + ": positiegrootte is gewijzigd sinds de preview";
-          }
-          if (selectedCount === 0) return "gone";
-          const livePnl = Number(liveRow.unrealizedPnl);
-          if (liveRow.unrealizedPnl === null || liveRow.unrealizedPnl === undefined || liveRow.unrealizedPnl === "" || !Number.isFinite(livePnl) || !(livePnl > 0.5)) {
-            return target.symbol + ": winstgegevens zijn tegenstrijdig of onleesbaar";
-          }
-          return "ok";
-        } catch (reason) {
-          return target.symbol + ": actuele winstcontrole mislukt (" + (reason instanceof Error ? reason.message : String(reason)) + ")";
+    try {
+      let round: ProfitRound | null = null;
+      try {
+        const created = await authenticatedRequest("/api/exchanges/aster/profit-close-rounds", {
+          method: "POST",
+          body: JSON.stringify({
+            confirm: true, percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
+            targets: bulkCloseTargets.map((target) => ({ symbol: target.symbol, side: "SHORT", quantity: target.quantity })),
+          }),
+        });
+        round = (created && created.round) || null;
+      } catch (reason) {
+        // Refused (a round is still open) or the answer was lost: never guess, ask the server for the active round.
+        round = await loadActiveProfitRound();
+        if (!round) {
+          setProfitMessage(reason instanceof Error ? reason.message : "Close Profits starten is niet gelukt; er is niets gesloten.");
+          return;
         }
+        setProfitMessage("Er loopt nog een ronde. " + profitRoundMessage(round));
+        return;
       }
-      while (!done) {
-        const checked = await freshCheck();
-        if (checked === "gone") { noLongerEligible++; done = true; continue; }
-        if (checked !== "ok") { stoppedAt = checked; done = true; continue; }
-        try {
-          await authenticatedRequest(
-            "/api/exchanges/aster/positions/" + encodeURIComponent(target.symbol) + "/close",
-            { method: "POST", body: JSON.stringify({
-              confirm: true, side: "SHORT", expected_quantity: target.quantity,
-              percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey(),
-              min_open_pnl_usd: 0.5, bulk_series: true,
-            }) },
-          );
-          closed++;
-          done = true;
-        } catch (reason) {
-          const details = reason instanceof Error ? reason.message : String(reason);
-          // Only refusals the existing route raises BEFORE any order is sent are handled; anything else
-          // (UNKNOWN, network loss, HTTP 5xx, changed quantity, ...) stops the whole series.
-          // "Too small" = the exact pre-submit refusals of the existing route / ContractRules (no order was sent).
-          if (/de gekozen gedeeltelijke sluiting is te klein voor dit contract/i.test(details) ||
-              /past niet binnen de Aster contractregels: (Order ligt onder de minimale Aster-(hoeveelheid|orderwaarde)|Hoeveelheid en marktprijs moeten positief zijn)\s*$/i.test(details)) {
-            skipped++;
-            done = true;
-          } else if (/^[A-Z0-9]+: sluiting van [0-9.eE+-]+ SHORT zou Auto Hedge-dekking onder de gereserveerde [0-9.eE+-]+ brengen$/.test(details)) {
-            coverageRefused++;
-            done = true;
-          } else if (details === "Open winst is niet meer boven de ingestelde grens; geen order geplaatst") {
-            // Server-side profit check right before the order: the SHORT fell to $0,50 or less. No order was sent.
-            noLongerEligible++;
-            done = true;
-          } else if (details === "Vorige sluiting van dit symbool is nog niet bevestigd; controleer Aster en gebruik de individuele Close-knop") {
-            // An earlier close of this very SHORT may have reached Aster but was never confirmed. No order was sent.
-            unconfirmedEarlier++;
-            done = true;
-          } else if ((details === "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw" ||
-                      details === "De account-lease is verlopen voordat de sluiting kon starten; er is niets geplaatst, probeer opnieuw") && busyRetries < 3) {
-            // Account busy (coordination): nothing was ordered. Wait, then ask again with a NEW idempotency key
-            // (expected_quantity is re-validated by the backend).
-            busyRetries++;
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-          } else {
-            stoppedAt = target.symbol + ": " + details;
-            done = true;
-          }
-        }
+      if (round) {
+        setActiveProfitRound(round.status === "RUNNING" || round.status === "PAUSED" ? round : null);
+        setProfitMessage(profitRoundMessage(round));
+        if (round.status === "RUNNING") await driveProfitRound(round.roundId);
       }
-      if (stoppedAt) break;
+    } finally {
+      setBulkCloseTargets([]);
+      setProfitPreview(null);
+      try { await Promise.resolve(onRetry()); } finally { bulkCloseInFlightRef.current = false; setProfitBusy(false); }
     }
-    setProfitMessage(closed + " SHORTS gesloten · " + skipped + " te klein overgeslagen" + (coverageRefused ? " · " + coverageRefused + " geweigerd door Auto Hedge-dekking (niet gesloten)" : "") +
-      (noLongerEligible ? " · " + noLongerEligible + " niet meer boven $0,50 winst (overgeslagen)" : "") +
-      (unconfirmedEarlier ? " · " + unconfirmedEarlier + " overgeslagen: eerdere sluiting nog niet bevestigd (controleer Aster)" : "") +
-      (stoppedAt ? " · Gestopt bij " + stoppedAt + ". Controleer Aster voor een nieuwe poging." : " · Verwerking voltooid."));
-    setBulkCloseTargets([]);
-    setProfitPreview(null);
-    try { await Promise.resolve(onRetry()); } finally { bulkCloseInFlightRef.current = false; setProfitBusy(false); }
   }
+  useEffect(() => {
+    void loadActiveProfitRound();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   function selectFilter(key: FilterKey) {
     setActive(key);
     setExpanded(false);
@@ -1666,9 +1696,20 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 {selectedRows.length > 6 && <button type="button" onClick={() => { setExpanded((value) => !value); setPages(1); }}>{expanded ? "Compact tonen" : "Toon alles"}</button>}
                 {expanded && hasMore && <button type="button" onClick={() => setPages((value) => value + 1)}>Laad nog 100</button>}
               </span>
+              {activeProfitRound ? (
+                <span style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}} data-testid="profit-round-actions">
+                  <button type="button" className={`${profitStyles.closeProfits} ${styles.profitCta}`} disabled={profitBusy} onClick={resumeProfitRound}>
+                    {profitBusy ? "Ronde bezig…" : `Hervat ronde · ${activeProfitRound.counts.remaining} resterend`}
+                  </button>
+                  <button type="button" disabled={profitBusy} onClick={abandonProfitRound} style={{padding:"8px 12px",borderRadius:8,border:"1px solid #64748b",background:"transparent",color:"inherit"}}>
+                    Ronde afsluiten
+                  </button>
+                </span>
+              ) : (
               <button type="button" className={`${profitStyles.closeProfits} ${styles.profitCta}`} disabled={profitBusy} onClick={openProfitConfirmation}>
                 {profitBusy ? "Profits controleren…" : shortProfitCandidates.length ? `Close ${shortProfitCandidates.length} SHORT profits · ${money(shortProfitCandidateTotal, true)}` : "Geen SHORT profits om te sluiten"}
               </button>
+              )}
             </footer>
             {profitMessage && <p className={profitStyles.bulkMessage} role="status">{profitMessage}</p>}
             {profitConfirming && profitPreview && typeof document !== "undefined" && createPortal(
@@ -1676,7 +1717,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
                 <div>
                   <h3 id="profit-close-title">{profitPreview.eligibleCount} winstposities sluiten?</h3>
                   <dl><dt>Actuele totale winst</dt><dd className={styles.profit}>{money(profitPreview.totalProfitUsd, true)}</dd><dt>Geschikte posities</dt><dd>{profitPreview.eligibleCount}</dd></dl>
-                  <p>Bevestig {profitClosePercentage}% MARKET-sluiting per geselecteerde SHORT. Iedere munt gebruikt de bestaande individuele Aster-sluitroute. Bij onbekende uitvoeringsstatus stopt de verwerking.</p>
+                  <p>Bevestig {profitClosePercentage}% MARKET-sluiting per geselecteerde SHORT. Iedere munt gebruikt de bestaande individuele Aster-sluitroute. De ronde wordt op de server bewaard: wordt hij onderbroken, dan hervat je hem zonder dat een munt twee keer wordt verkleind. Bij een onbekende uitkomst controleert de server eerst Aster.</p>
                   {bulkAutoHedgeTargets.length > 0 && (
                     <div className={styles.closeNotice} data-testid="bulk-auto-hedge-warning"><span aria-hidden="true">i</span><p><strong>{bulkAutoHedgeTargets.length} van deze SHORTS {bulkAutoHedgeTargets.length === 1 ? "valt" : "vallen"} onder Auto Hedge.</strong><br />Dit is exact hetzelfde als de individuele Close-knop: het paar gaat daarna in Recovery, de verkleinde SHORT wordt niet automatisch teruggevuld en re-hedge blijft UIT totdat je die zelf weer inschakelt. Er wordt niets aan de hedge-logica gewijzigd. ({bulkAutoHedgeTargets.join(", ")})</p></div>
                   )}

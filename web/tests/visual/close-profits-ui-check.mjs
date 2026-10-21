@@ -55,52 +55,59 @@ for (const width of [390, 1280]) {
   assert.equal((await calls(page)).filter((c) => c.method === "POST").length, 0, "cancel places no order");
   ok(`${width}px dialog shows percentage + Auto Hedge consequence; cancel places nothing`);
 
-  // 3. confirm with a synchronous double click: one series, sequential, full quantity, fresh check before each close
+  // 3. confirm with a synchronous double click: ONE server round, every SHORT closed exactly once at 50% of the FULL size
   await page.evaluate(() => { window.__delay = 40; });
   await green.click();
   await page.getByRole("dialog").waitFor();
+  assert.match(await page.getByRole("dialog").innerText(), /hervat je hem zonder dat een munt twee keer wordt verkleind/);
   await page.getByRole("dialog").locator("footer button").last().evaluate((el) => { el.click(); el.click(); });
-  await page.getByRole("status").filter({ hasText: /Verwerking voltooid/ }).waitFor({ timeout: 20000 });
-  const made = await calls(page);
-  const posts = made.filter((c) => c.method === "POST");
-  assert.deepEqual(posts.map((c) => c.path.split("/").at(-2)), ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"].filter((s) => posts.some((p) => p.path.includes(s))).length === 4 ? posts.map((c) => c.path.split("/").at(-2)) : []);
-  assert.equal(posts.length, 4, "double click did not duplicate the series");
-  assert.equal(new Set(posts.map((c) => c.body.idempotency_key)).size, 4);
-  assert.ok(posts.every((c) => c.body.side === "SHORT" && c.body.percentage === 50 && c.body.confirm === true));
+  await page.getByRole("status").filter({ hasText: /Ronde voltooid/ }).waitFor({ timeout: 20000 });
+  const creates = (await calls(page)).filter((c) => c.method === "POST" && c.path === "/api/exchanges/aster/profit-close-rounds");
+  assert.equal(creates.length, 1, "double click created one round");
+  assert.ok(creates[0].body.confirm === true && creates[0].body.percentage === 50);
   const full = { BTCUSDT: 2, ETHUSDT: 10, SOLUSDT: 100, XRPUSDT: 500 };
-  assert.ok(posts.every((c) => c.body.expected_quantity === full[c.path.split("/").at(-2)]), "expected_quantity is the FULL live quantity");
-  const order = made.map((c) => (c.method === "GET" ? "G" : "P")).join("");
-  // history = preview of the cancelled dialog (G) + preview of this confirmation (G) + per SHORT: fresh check (G) then close (P)
-  assert.equal(order, "GG" + "GP".repeat(4), "preview, then (fresh check, close) per SHORT, strictly sequential");
-  assert.match(await page.getByRole("status").innerText(), /4 SHORTS gesloten/);
+  assert.deepEqual(creates[0].body.targets.map((t) => [t.symbol, t.quantity]).sort(), Object.entries(full).sort(), "targets carry the FULL live quantity");
+  const closes3 = await page.evaluate(() => window.__closes);
+  assert.deepEqual(closes3.map((c) => c.symbol).sort(), Object.keys(full).sort(), "each SHORT closed exactly once");
+  assert.ok(closes3.every((c) => Math.abs(c.closed - full[c.symbol] / 2) < 1e-9));
+  assert.equal((await calls(page)).filter((c) => c.method === "POST" && /\/close$/.test(c.path)).length, 0, "the phone never calls the per-symbol close");
+  assert.match(await page.getByRole("status").innerText(), /4 SHORTS gesloten · 0 overgeslagen · Ronde voltooid\./);
   assert.equal(await page.evaluate(() => window.__refreshCount), 1);
   await page.screenshot({ path: `artifacts/close-profits-ui/done-${width}.png`, fullPage: true });
-  ok(`${width}px confirm + double click: 4 sequential closes at 50% with full expected_quantity, summary shown, refresh once`);
+  ok(`${width}px confirm + double click: one server round, 4 closes at 50% of the full size, summary, refresh once`);
   await page.close();
 
-  // 4. UNKNOWN stops the series and says where
-  page = await open(width, () => { window.__fail.ETHUSDT = "Sluitstatus is niet betrouwbaar bevestigd; er wordt niet opnieuw besteld"; });
+  // 4. Amar's case: the connection drops after the first close -> the round stays on the server, the green button
+  //    becomes "Hervat ronde · 3 resterend"; resuming finishes the SAME round and never closes the first SHORT again
+  page = await open(width, () => { window.__offlineAfterCloses = 1; });
   await page.getByRole("button", { name: greenName }).click();
   await page.getByRole("dialog").locator("footer button").last().click();
-  await page.getByRole("status").filter({ hasText: /Gestopt bij ETHUSDT/ }).waitFor({ timeout: 20000 });
-  const stopped = (await calls(page)).filter((c) => c.method === "POST").map((c) => c.path.split("/").at(-2));
-  assert.deepEqual(stopped, ["BTCUSDT", "ETHUSDT"], "nothing is sent after the failing position");
-  assert.match(await page.getByRole("status").innerText(), /1 SHORTS gesloten/);
-  await page.screenshot({ path: `artifacts/close-profits-ui/stopped-${width}.png`, fullPage: true });
-  ok(`${width}px UNKNOWN stops at ETHUSDT, summary names the stop`);
+  await page.getByRole("status").filter({ hasText: /Verbinding onderbroken/ }).waitFor({ timeout: 30000 });
+  const resume = page.getByRole("button", { name: /Hervat ronde · 3 resterend/ });
+  await resume.waitFor({ timeout: 10000 });
+  await page.evaluate(() => { window.__offline = false; window.__offlineAfterCloses = undefined; });   // connection back
+  assert.ok(await page.getByRole("button", { name: /Ronde afsluiten/ }).isVisible());
+  await page.screenshot({ path: `artifacts/close-profits-ui/resume-${width}.png`, fullPage: true });
+  await resume.click();
+  await page.getByRole("status").filter({ hasText: /Ronde voltooid/ }).waitFor({ timeout: 20000 });
+  const closes4 = await page.evaluate(() => window.__closes);
+  assert.deepEqual(closes4.map((c) => c.symbol).sort(), ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"], "every SHORT exactly once over interruption + resume");
+  ok(`${width}px connection lost after 1 close: 'Hervat ronde · 3 resterend' finishes the same round, nothing twice`);
   await page.close();
 
-  // 5. profit gone for one SHORT between preview and confirmation: skipped, counted, series continues
-  page = await open(width);
+  // 5. one SHORT needs a check (unknown outcome on the server) and one fell below $0,50: both reported, rest closed
+  page = await open(width, () => { window.__fail.ETHUSDT = "unknown"; });
   await page.getByRole("button", { name: greenName }).click();
   await page.getByRole("dialog").waitFor();
   await page.evaluate(() => { window.__world.find((p) => p.symbol === "SOLUSDT").mark = 105.1; });
   await page.getByRole("dialog").locator("footer button").last().click();
-  await page.getByRole("status").filter({ hasText: /Verwerking voltooid/ }).waitFor({ timeout: 20000 });
-  const posts5 = (await calls(page)).filter((c) => c.method === "POST").map((c) => c.path.split("/").at(-2));
-  assert.deepEqual(posts5, ["BTCUSDT", "ETHUSDT", "XRPUSDT"]);
-  assert.match(await page.getByRole("status").innerText(), /1 niet meer boven \$0,50 winst/);
-  ok(`${width}px SHORT that fell below $0,50 is skipped without an order`);
+  await page.getByRole("status").filter({ hasText: /Ronde voltooid/ }).waitFor({ timeout: 20000 });
+  const closes5 = (await page.evaluate(() => window.__closes)).map((c) => c.symbol);
+  assert.deepEqual(closes5, ["BTCUSDT", "XRPUSDT"]);
+  const status5 = await page.getByRole("status").innerText();
+  assert.match(status5, /2 SHORTS gesloten · 1 overgeslagen · 1 te controleren in Aster \(ETHUSDT\)/);
+  await page.screenshot({ path: `artifacts/close-profits-ui/needs-check-${width}.png`, fullPage: true });
+  ok(`${width}px NEEDS_CHECK and below-$0,50 are reported, the rest of the round continues`);
   await page.close();
 
   // 6. the existing individual close button still opens the individual close panel

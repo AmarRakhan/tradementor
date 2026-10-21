@@ -16,20 +16,21 @@ test("bulk profit action preserves existing Tradecentrum controls", () => {
   assert.doesNotMatch(component, /netto\s*[≥>]/i);
 });
 
-test("SHORT-only bulk routes each confirmed position through existing individual CLOSE", () => {
+test("SHORT-only bulk sends the confirmed positions as ONE server round (2.1); the server uses the individual CLOSE", () => {
   assert.match(component, /return \(side === "LONG" \|\| side === "SHORT"\) && pnl !== null && pnl >= 0\.5/);
   assert.match(component, /const shortProfitCandidates = useMemo/);
   assert.match(component, /String\(position\.side \|\| ""\)\.toUpperCase\(\) === "SHORT" && \(finite\(position\.unrealizedPnl\) \|\| 0\) > 0\.5/);
   assert.match(component, /manual-profit-close-plan/);
-  assert.match(component, /for \(const target of bulkCloseTargets\)/);
   assert.match(component, /await authenticatedRequest\(/);
-  assert.match(component, /encodeURIComponent\(target\.symbol\) \+ "\/close"/);
-  assert.match(component, /side: "SHORT", expected_quantity: target\.quantity/);
+  assert.match(component, /"\/api\/exchanges\/aster\/profit-close-rounds"/);
+  assert.match(component, /targets: bulkCloseTargets\.map\(\(target\) => \(\{ symbol: target\.symbol, side: "SHORT", quantity: target\.quantity \}\)\)/);
   assert.match(component, /percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey\(\)/);
   assert.match(component, /bulkCloseInFlightRef\.current/);
   assert.match(component, /createPortal/);
   assert.match(component, /break;/);
   assert.match(component, /Geen SHORT profits om te sluiten/);
+  assert.match(component, /Hervat ronde · \$\{activeProfitRound\.counts\.remaining\} resterend/);
+  assert.match(component, /Ronde afsluiten/);
 });
 
 test("mobile footer keeps a compact single-line green action", () => {

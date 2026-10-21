@@ -25,9 +25,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-10-21",
-  title: "Close Profits 2.0: SHORTS veilig sluiten · build 604",
+  releasedAt: "2026-10-22",
+  title: "Close Profits 2.1: hervatbare ronde · build 605",
   newItems: [
+    "Build 605: de groene Close Profits-ronde wordt op de server bewaard. Valt de verbinding weg, dan wordt de knop 'Hervat ronde · N resterend' en gaat dezelfde ronde verder; een SHORT die in deze ronde al gesloten is, wordt nooit nog eens verkleind. Bij een onbekende uitkomst controleert de server eerst Aster; een positie die gecontroleerd moet worden, stopt de rest niet. 'Ronde afsluiten' beëindigt een ronde bewust.",
     "Build 604: de groene Close Profits-knop sluit uitsluitend SHORTS met strikt meer dan $0,50 open winst (25/50/75/100%), na één bevestiging, ieder afzonderlijk en achter elkaar via de bestaande individuele Close-route; bij onzekere uitvoering stopt de reeks en er volgt nooit een automatische tweede order.",
     "Build 601 probeert ontbrekende historische TP-details opnieuw op te halen via de bestaande beveiligde closed-trades route; alleen bevestigde PnL wordt getoond, trading blijft ongewijzigd.",
     "Build 600 werkt historische TP-winstzakjes bij vanuit bestaande bevestigde tradeactiviteit, en behandelt niet-eenduidige clusters conservatief; historische entrymargin behoudt de orderidentificatie voor bewijsgebaseerde matching.",

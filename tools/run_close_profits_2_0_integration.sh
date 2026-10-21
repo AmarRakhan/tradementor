@@ -17,6 +17,10 @@ printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /
 npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project "$GCLOUD_PROJECT" \
   'cd cloud_api && python -m unittest -v test_close_profits_2_0_firestore_emulator'
 # 3) frontend handlers -> real Next proxy code -> local backend wrapper (real httpx, model Firestore)
-( cd web && node --test tests/aster-close-profits-integration.test.mjs tests/aster-close-profits-scope.test.mjs tests/aster-close-profits-short-handler.test.mjs tests/aster-close-profits-round6.test.mjs )
+( cd web && node --test tests/aster-close-profits-rounds.test.mjs tests/aster-close-profitable.test.mjs )
+# 3b) Close Profits 2.1 rounds: model, emulator, real stack, and frontend -> proxy -> real FastAPI -> emulator
+( cd cloud_api && python -m unittest -v test_close_profits_2_1_rounds )
+npx firebase emulators:exec --config /tmp/cp20-firebase.json --only firestore --project "$GCLOUD_PROJECT" \
+  'cd cloud_api && python -m unittest -v test_close_profits_2_1_rounds_emulator test_close_profits_2_1_e2e_stack && cd ../web && CP20_BACKEND=real node --test tests/aster-close-profits-rounds-e2e.test.mjs'
 # 4) full backend regression with real dependencies, like cloud-backend-ci.yml
 ( cd cloud_api && python -m pytest -q )
