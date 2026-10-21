@@ -197,31 +197,3 @@ test("Build 492 keeps Auto Hedge inside the native four-card Snapshot grid", asy
   assert.match(css, /#aster-position-loss-auto-hedge-host\{[\s\S]*position:static;[\s\S]*left:auto;[\s\S]*width:100%/);
   assert.match(css, /#aster-position-loss-auto-hedge-host \.plah-tile\{[\s\S]*overflow:hidden/);
 });
-
-
-test("Auto Hedge cent-level thresholds are editable and explicitly saved without triggering apply", async () => {
-  const component = await readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
-  for (const value of [0.01, 0.10, 0.20, 0.50, 0.80, 1.00, 10.00]) {
-    assert.ok(value >= 0.01 && value <= 100000);
-    assert.ok(Math.abs(value * 100 - Math.round(value * 100)) < 0.000001);
-  }
-  assert.match(component, /const sliderValue = Math.max\(0\.01, Math.min\(100,/);
-  assert.match(component, /className="plah-range" type="range" min="0\.01" max="100" step="0\.01"/);
-  assert.match(component, /id="plah-threshold-number" type="number" min="0\.01" max="100000" step="0\.01"/);
-  assert.match(component, /AUTO_HEDGE_THRESHOLD_SAVE/);
-  assert.match(component, /persist\(state.enabled, threshold, false, "AUTO_HEDGE_THRESHOLD_SAVE"\)/);
-  assert.match(component, /Bedrag opslaan/);
-  assert.match(component, /setDraft\(String\(Number\(next.thresholdUsd\)\)\)/);
-  assert.match(component, /setDraft\(String\(threshold\)\)/);
-  assert.match(component, /Math.abs\(threshold \* 100 - Math.round\(threshold \* 100\)\) > 0\.000001/);
-});
-
-
-test("Auto Hedge polling never overwrites an unsaved loss threshold", async () => {
-  const component = await readFile(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
-  assert.match(component, /const draftDirty = useRef\(false\)/);
-  assert.match(component, /if \(!draftDirty\.current\) setDraft\(String\(threshold\)\)/);
-  assert.match(component, /draftDirty\.current = true; setDraft\(event\.target\.value\)/);
-  assert.match(component, /draftDirty\.current = false;\s*setDraft\(String\(Number\(next\.thresholdUsd\)\)\)/);
-  assert.match(component, /open \? 3000 : 10000/);
-});

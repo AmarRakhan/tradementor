@@ -412,6 +412,12 @@ class AsterManualCloseRequest(BaseModel):
     expected_quantity: float = Field(gt=0)
     percentage: int = Field(default=100, ge=25, le=100)
     idempotency_key: str = Field(min_length=16, max_length=120)
+    # Optional safeguards used ONLY by the green Close Profits series (None/False = the plain manual Close,
+    # behaviour unchanged): open profit of the whole position must still be strictly above this USD amount when the
+    # order is about to be placed, and a symbol/side whose previous close may have been sent but is not confirmed
+    # is not closed again by a series.
+    min_open_pnl_usd: float | None = Field(default=None, ge=0, le=100000)
+    bulk_series: bool = False
 
 
 class AsterProfitableCloseRequest(BaseModel):
@@ -1595,6 +1601,22 @@ def _release_aster_account_coordination(uid:str,token:str)->None:
         now=datetime.now(timezone.utc);txn.set(ref,{"lease":{"token":"","until":now,"releasedAt":now},"updatedAt":now},merge=True)
         return True
     release(transaction)
+
+
+def _renew_aster_account_coordination(uid:str,token:str,seconds:int=45)->bool:
+    """Extend OUR still-valid lease. False (nothing changed) when it expired or belongs to someone else."""
+    ref=aster_account_coordination_reference(uid);transaction=db.transaction()
+    @firestore.transactional
+    def renew(txn):
+        value=ref.get(transaction=txn).to_dict() or {};now=datetime.now(timezone.utc)
+        lease=value.get("lease") if isinstance(value.get("lease"),dict) else {}
+        until=lease.get("until")
+        if isinstance(until,datetime):
+            until=until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+        if str(lease.get("token",""))!=token or not isinstance(until,datetime) or until<=now:return False
+        txn.set(ref,{"lease":{**lease,"until":now+timedelta(seconds=seconds),"renewedAt":now},"updatedAt":now},merge=True)
+        return True
+    return renew(transaction)
 
 
 def _acquire_sniper_execution_lease(reference)->str|None:
@@ -8635,6 +8657,36 @@ def preview_profitable_aster_positions(
     }
 
 
+@app.get("/v1/me/aster/positions/manual-profit-close-plan")
+def preview_manual_profit_close_plan(
+    percentage: int = 25,
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Account-scoped, read-only exchange snapshot and percentage plan; never submits orders."""
+    from manual_profit_close_planner import build_profit_close_plan, filters_from_aster_exchange_info
+    from manual_profit_close_snapshot import make_profit_close_snapshot
+    if percentage not in {25, 50, 75, 100}:
+        raise HTTPException(422, "Sluitpercentage moet 25, 50, 75 of 100 zijn")
+    try:
+        client = _portfolio_growth_client(user, live=False)
+        rows = list(client.position_risk())
+        exchange_info = client.public_exchange_info()
+        filters = filters_from_aster_exchange_info(exchange_info)
+        # Hedge relationships must be established from canonical account state;
+        # never infer a paired LONG close from the exchange symbol alone.
+        plan = build_profit_close_plan(rows, percentage, filters, hedge_links={}, include_short_below_minimum=True)
+        snapshot = make_profit_close_snapshot(rows, percentage)
+        return {
+            **plan, "snapshot": snapshot, "reliable": True,
+            "executionEnabled": False,
+            "message": "Alleen preview: gekoppelde LONG-posities vereisen geverifieerde hedgekoppeling",
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, "Aster-posities of contractregels niet betrouwbaar beschikbaar") from exc
+
+
 @app.post("/v1/me/aster/positions/close-profitable")
 def close_profitable_aster_positions(
     request: AsterProfitableCloseRequest,
@@ -8774,6 +8826,51 @@ def close_profitable_aster_positions(
         _release_strategy2_queue_lease(strategy_ref, queue_token)
 
 
+_BULK_UNCONFIRMED_CLOSE_WINDOW = timedelta(minutes=10)
+
+
+def _open_pnl_check(row: dict[str, Any], minimum: float) -> str:
+    """'ok' | 'below' | 'unreadable' for the open PnL of one position row; missing/non-finite is never 'ok'."""
+    raw = row.get("unRealizedProfit", row.get("unrealizedPnl"))
+    if raw is None or isinstance(raw, bool):
+        return "unreadable"
+    try:
+        value = Decimal(str(raw))
+    except Exception:
+        return "unreadable"
+    if not value.is_finite():
+        return "unreadable"
+    return "ok" if value > Decimal(str(minimum)) else "below"
+
+
+def _enforce_min_open_pnl(row: dict[str, Any], request: "AsterManualCloseRequest") -> None:
+    if request.min_open_pnl_usd is None:
+        return
+    state = _open_pnl_check(row, request.min_open_pnl_usd)
+    if state == "unreadable":
+        raise HTTPException(409, "Open winst is niet betrouwbaar leesbaar; sluiten is gestopt")
+    if state == "below":
+        raise HTTPException(409, "Open winst is niet meer boven de ingestelde grens; geen order geplaatst")
+
+
+def _refuse_if_recent_close_unconfirmed(user_ref: Any, symbol: str, side: str, current_hash: str) -> None:
+    """Green series only: a previous close of the same symbol/side that may have reached Aster but was never
+    confirmed (e.g. delayed position data) must be checked by a human first; the series skips it."""
+    now = datetime.now(timezone.utc)
+    for doc in user_ref.collection("asterManualCloseIntents").where("symbol", "==", symbol).where("side", "==", side).stream():
+        if doc.id == current_hash:
+            continue
+        data = doc.to_dict() or {}
+        if data.get("orderMayHaveBeenSent") is not True or data.get("status") == "confirmed_closed":
+            continue
+        created = data.get("createdAt")
+        if isinstance(created, datetime):
+            created = created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created.astimezone(timezone.utc)
+            if now - created > _BULK_UNCONFIRMED_CLOSE_WINDOW:
+                continue
+        raise HTTPException(409, "Vorige sluiting van dit symbool is nog niet bevestigd; controleer Aster en gebruik de individuele Close-knop")
+
+
 @app.post("/v1/me/aster/positions/{symbol}/close")
 def close_one_aster_position(
     symbol: str, request: AsterManualCloseRequest,
@@ -8794,7 +8891,7 @@ def close_one_aster_position(
         intent_ref.create({
             "status": "prepared", "symbol": normalized_symbol, "side": request.side,
             "expectedQuantity": request.expected_quantity, "percentage": request.percentage,
-            "createdAt": datetime.now(timezone.utc),
+            "bulkSeries": bool(request.bulk_series), "createdAt": datetime.now(timezone.utc),
         })
     except google_exceptions.AlreadyExists as exc:
         raise HTTPException(409, "Deze sluitopdracht is al ontvangen; er wordt geen tweede order geplaatst") from exc
@@ -8810,6 +8907,8 @@ def close_one_aster_position(
     auto_hedge_release = None
     account_token = None
     try:
+        if request.bulk_series:
+            _refuse_if_recent_close_unconfirmed(user_reference(user), normalized_symbol, request.side, intent_hash)
         live_rows = client.position_risk()
         position = next((row for row in live_rows
             if str(row.get("symbol", "")).upper() == normalized_symbol
@@ -8824,6 +8923,7 @@ def close_one_aster_position(
         mark = safe_float(position.get("markPrice"))
         if mark <= 0:
             raise HTTPException(409, "Aster gaf geen betrouwbare actuele marktprijs; sluiten is gestopt")
+        _enforce_min_open_pnl(position, request)
 
         requested_close_quantity = close_size(live_quantity, request.percentage)
         close_quantity = live_quantity
@@ -8853,7 +8953,22 @@ def close_one_aster_position(
             pair_status in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
             and request.side in {pair_protected_side, pair_hedge_side}
         )
-        if needs_manual_auto_hedge_release:
+        # A plain SHORT with a same-symbol LONG can become an Auto Hedge pair at any moment while Auto
+        # Hedge is on (the worker creates the pair under the account lease). Take the lease in that case
+        # too and decide on the pair state read UNDER the lease; Auto Hedge off / no opposite leg: unchanged.
+        auto_hedge_may_start = False
+        if not needs_manual_auto_hedge_release and any(
+            str(row.get("symbol", "")).upper() == normalized_symbol
+            and str(row.get("positionSide", "")).upper() not in {request.side, ""}
+            and abs(safe_float(row.get("positionAmt"))) > 0 for row in live_rows
+        ):
+            try:
+                auto_hedge_may_start = (
+                    db.collection("asterPositionLossAutoHedge").document(uid).get().to_dict() or {}
+                ).get("enabled") is True
+            except Exception:
+                auto_hedge_may_start = True        # unreadable setting is not proof that Auto Hedge is off
+        if needs_manual_auto_hedge_release or auto_hedge_may_start:
             for _ in range(20):
                 account_token = _acquire_aster_account_coordination(
                     uid, "MANUAL_POSITION_CLOSE", "AUTO_HEDGE_LEG_RELEASE",
@@ -8863,15 +8978,35 @@ def close_one_aster_position(
                 time.sleep(.05)
             if not account_token:
                 raise HTTPException(409, "Auto Hedge verwerkt momenteel dezelfde accountstatus; probeer de sluiting zo opnieuw")
-            auto_hedge_manual_guard = _begin_position_loss_auto_hedge_manual_release(
-                uid=uid,
-                symbol=normalized_symbol,
-                side=request.side,
-                percentage=request.percentage,
-                close_quantity=close_quantity,
-                live_rows=live_rows,
-                intent_hash=intent_hash,
-            )
+            # Positions and pair were read before the lease: Auto Hedge may have acted in between. Re-read
+            # both under the lease and re-validate the confirmed quantity before anything is frozen or ordered.
+            live_rows = client.position_risk()
+            fresh = next((row for row in live_rows
+                if str(row.get("symbol", "")).upper() == normalized_symbol
+                and str(row.get("positionSide", "")).upper() == request.side
+                and abs(safe_float(row.get("positionAmt"))) > 0), None)
+            if fresh is None or abs(abs(safe_float(fresh.get("positionAmt"))) - request.expected_quantity) > tolerance:
+                raise HTTPException(409, "De positiegrootte is gewijzigd; controleer de actuele positie en bevestig opnieuw")
+            _enforce_min_open_pnl(fresh, request)
+            pair_before_close = _position_loss_auto_hedge_pair(uid, normalized_symbol)
+            # The reads above can be slow: extend OUR lease now (a lease that already expired is NOT revived,
+            # nothing has been frozen or ordered yet) so the freeze + order below run under a valid lease.
+            if not _renew_aster_account_coordination(uid, str(account_token)):
+                raise HTTPException(409, "De account-lease is verlopen voordat de sluiting kon starten; er is niets geplaatst, probeer opnieuw")
+            if (
+                str(pair_before_close.get("status", "")).upper() in _MANUAL_AUTO_HEDGE_RELEASE_STATUSES
+                and request.side in {str(pair_before_close.get("protectedSide", "")).upper(),
+                                     str(pair_before_close.get("hedgeSide", "")).upper()}
+            ):
+                auto_hedge_manual_guard = _begin_position_loss_auto_hedge_manual_release(
+                    uid=uid,
+                    symbol=normalized_symbol,
+                    side=request.side,
+                    percentage=request.percentage,
+                    close_quantity=close_quantity,
+                    live_rows=live_rows,
+                    intent_hash=intent_hash,
+                )
 
         require_auto_hedge_close_allowed(
             account_uid=uid,
@@ -8887,6 +9022,8 @@ def close_one_aster_position(
             max(1, int(safe_float(position.get("leverage")) or 1)),
         )
         id_prefix = f"tm-manual-{intent_hash[:18]}"
+        # Durable marker written BEFORE the single order: from here on the order may have reached Aster.
+        intent_ref.set({"orderMayHaveBeenSent": True, "orderStartedAt": datetime.now(timezone.utc)}, merge=True)
         result = execute_aster_leg(
             client, plan, side=PositionSide(request.side), action="CLOSE", id_prefix=id_prefix,
             confirm=True, manual_loss_confirmation=True,

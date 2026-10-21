@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { AsterBollingerEntryFilter15mCard, type BollingerEntryTimeframe } from "./aster-bollinger-entry-filter-15m-card";
-import { AsterExtremeSpikeEntryCard, type EntryFilterMode, type SpikeLevel, type SpikeTimeframe } from "./aster-extreme-spike-entry-card";
 import {
   AsterProfitLockLadderPanel,
   DEFAULT_PROFIT_LOCK_LEVELS,
@@ -85,10 +84,6 @@ export function AsterProfitLockLadderBridge() {
   const [bbShortTimeframe, setBbShortTimeframe] = useState<BollingerEntryTimeframe>("15m");
   const [bbBusy, setBbBusy] = useState(false);
   const [bbMessage, setBbMessage] = useState("");
-  const [entryMode,setEntryMode] = useState<EntryFilterMode>("OFF");
-  const [spikeLevel,setSpikeLevel] = useState<SpikeLevel>("5-6");
-  const [spikeLongTf,setSpikeLongTf] = useState<SpikeTimeframe>("1m");
-  const [spikeShortTf,setSpikeShortTf] = useState<SpikeTimeframe>("1m");
   const bbWriteInFlight = useRef(false);
   const bbReadEpoch = useRef(0);
 
@@ -103,10 +98,6 @@ export function AsterProfitLockLadderBridge() {
       setSummary(next.summary);
       if (!bbWriteInFlight.current && readEpoch === bbReadEpoch.current) {
         setBbEnabled(next.settings.bollingerEntryFilter15mEnabled === true);
-        setEntryMode(next.settings.entryFilterMode === "EXTREME_SPIKE" ? "EXTREME_SPIKE" : next.settings.entryFilterMode === "OFF" ? "OFF" : next.settings.entryFilterMode === "BOLLINGER" ? "BOLLINGER" : next.settings.bollingerEntryFilter15mEnabled === true ? "BOLLINGER" : "OFF");
-        setSpikeLevel((["2-3","3-4","4-5","5-6","6-7","7+"].includes(String(next.settings.extremeSpikeLevel)) ? next.settings.extremeSpikeLevel : "5-6") as SpikeLevel);
-        setSpikeLongTf(normalizeBollingerTimeframe(next.settings.extremeSpikeLongTimeframe ?? "1m"));
-        setSpikeShortTf(normalizeBollingerTimeframe(next.settings.extremeSpikeShortTimeframe ?? "1m"));
         const legacyTimeframe = next.settings.bollingerEntryFilterTimeframe;
         setBbLongTimeframe(normalizeBollingerTimeframe(next.settings.directionalBollingerEnabled === true ? (next.settings.bollingerLongTimeframe ?? legacyTimeframe) : legacyTimeframe));
         setBbShortTimeframe(normalizeBollingerTimeframe(next.settings.directionalBollingerEnabled === true ? (next.settings.bollingerShortTimeframe ?? legacyTimeframe) : legacyTimeframe));
@@ -186,7 +177,7 @@ export function AsterProfitLockLadderBridge() {
     try {
       const latestSnapshot = await authenticatedRequest("/api/exchanges/aster", { cache: "no-store" }) as Record<string, unknown>;
       const latestSettings = extract(latestSnapshot).settings;
-      const nextSettings = { ...latestSettings, bollingerEntryFilter15mEnabled: next, entryFilterMode: next ? "BOLLINGER" : "OFF" };
+      const nextSettings = { ...latestSettings, bollingerEntryFilter15mEnabled: next };
       const response = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", {
         method: "PUT",
         body: JSON.stringify({ settings: nextSettings }),
@@ -194,56 +185,13 @@ export function AsterProfitLockLadderBridge() {
       const strategy2 = response.strategy2 && typeof response.strategy2 === "object" ? response.strategy2 as Record<string, unknown> : {};
       const saved = strategy2.settings && typeof strategy2.settings === "object" ? strategy2.settings as Record<string, unknown> : nextSettings;
       const confirmed = saved.bollingerEntryFilter15mEnabled === true;
-      if (saved.entryFilterMode !== (next ? "BOLLINGER" : "OFF")) throw new Error("Filtermodus niet bevestigd door backend.");
-      setSettings(saved); setBbEnabled(confirmed); setEntryMode(next ? "BOLLINGER" : "OFF");
+      setSettings(saved); setBbEnabled(confirmed);
       setBbMessage(confirmed ? "ON · nieuwe primaire stoelen worden gefilterd." : "OFF · bestaande entrylogica blijft ongewijzigd.");
       window.dispatchEvent(new Event("aster-strategy2-settings-changed"));
     } catch (error) {
       setBbEnabled(previous);
       setBbMessage(error instanceof Error ? error.message : "Bollinger instapfilter kon niet worden opgeslagen.");
     } finally { bbWriteInFlight.current = false; setBbBusy(false); }
-  }
-
-  async function updateEntryFilter(next: {mode:EntryFilterMode;level:SpikeLevel;longTimeframe:SpikeTimeframe;shortTimeframe:SpikeTimeframe}) {
-    if (bbWriteInFlight.current || !settingsVerified) return;
-    bbWriteInFlight.current = true;
-    bbReadEpoch.current += 1;
-    setBbBusy(true);setBbMessage("Filterinstellingen opslaan…");
-    try {
-      const snapshot = await authenticatedRequest("/api/exchanges/aster", {cache:"no-store"}) as Record<string,unknown>;
-      const latestSettings = extract(snapshot).settings;
-      const payload = {...latestSettings,
-        entryFilterMode:next.mode,
-        bollingerEntryFilter15mEnabled:next.mode==="BOLLINGER",
-        extremeSpikeLevel:next.level,
-        extremeSpikeLongTimeframe:next.longTimeframe,
-        extremeSpikeShortTimeframe:next.shortTimeframe
-      };
-      const response = await authenticatedRequest("/api/exchanges/aster/strategy2/settings", {method:"PUT",body:JSON.stringify({settings:payload})}) as Record<string,unknown>;
-      const strategy2 = response.strategy2 && typeof response.strategy2==="object" ? response.strategy2 as Record<string,unknown> : {};
-      const saved = strategy2.settings && typeof strategy2.settings==="object" ? strategy2.settings as Record<string,unknown> : {};
-      if (saved.entryFilterMode!==next.mode || saved.bollingerEntryFilter15mEnabled !== (next.mode==="BOLLINGER") ||
-          saved.extremeSpikeLevel!==next.level ||
-          saved.extremeSpikeLongTimeframe!==next.longTimeframe || saved.extremeSpikeShortTimeframe!==next.shortTimeframe) {
-        throw new Error("Server heeft de volledige Extreme Spike-configuratie niet bevestigd.");
-      }
-      // Verify independently persisted server state, not just PUT response echo.
-      const readbackSnapshot = await authenticatedRequest("/api/exchanges/aster", {cache:"no-store"}) as Record<string,unknown>;
-      const readback = extract(readbackSnapshot).settings;
-      if (readback.entryFilterMode!==next.mode || readback.bollingerEntryFilter15mEnabled !== (next.mode==="BOLLINGER") ||
-          readback.extremeSpikeLevel!==next.level ||
-          readback.extremeSpikeLongTimeframe!==next.longTimeframe ||
-          readback.extremeSpikeShortTimeframe!==next.shortTimeframe) {
-        throw new Error("Opgeslagen filterinstellingen komen niet overeen met de server; opnieuw laden vereist.");
-      }
-      setSettings(readback);setEntryMode(next.mode);setBbEnabled(next.mode==="BOLLINGER");
-      setSpikeLevel(next.level);setSpikeLongTf(next.longTimeframe);setSpikeShortTf(next.shortTimeframe);
-      setBbMessage("Instapfilter opgeslagen.");
-      window.dispatchEvent(new Event("aster-strategy2-settings-changed"));
-    } catch(error) {
-      setBbMessage(error instanceof Error? error.message:"Extreme Spike-instellingen niet opgeslagen.");
-      await refresh();
-    } finally {bbWriteInFlight.current=false;setBbBusy(false);}
   }
 
   async function changeBollingerTimeframe(side: "LONG" | "SHORT", next: BollingerEntryTimeframe) {
@@ -330,12 +278,10 @@ export function AsterProfitLockLadderBridge() {
   }
 
   const settingsUi = settingsHost ? createPortal(<div className="pll-bridge-wrap" data-reference={REFERENCE}>
-    <AsterExtremeSpikeEntryCard mode={entryMode} level={spikeLevel} longTimeframe={spikeLongTf} shortTimeframe={spikeShortTf} disabled={bbBusy || !settingsVerified} onChange={(next)=>void updateEntryFilter(next)} />
-    {entryMode !== "BOLLINGER" && bbMessage ? <p role="status" aria-live="polite" className="es-save-feedback">{bbMessage}</p> : null}
-    {entryMode === "BOLLINGER" ? <AsterBollingerEntryFilter15mCard enabled={bbEnabled} busy={bbBusy} longTimeframe={bbLongTimeframe} shortTimeframe={bbShortTimeframe} message={bbMessage} onToggle={(next) => void toggleBollingerEntryFilter(next)} onTimeframeChange={(side, next) => void changeBollingerTimeframe(side, next)} /> : null}
+    <AsterBollingerEntryFilter15mCard enabled={bbEnabled} busy={bbBusy} longTimeframe={bbLongTimeframe} shortTimeframe={bbShortTimeframe} message={bbMessage} onToggle={(next) => void toggleBollingerEntryFilter(next)} onTimeframeChange={(side, next) => void changeBollingerTimeframe(side, next)} />
     <AsterProfitLockLadderPanel enabled={enabled} levels={levels} conflictCount={conflictCount} onEnabledChange={setMode} onLevelsChange={setLadder} />
     {(dirty || enabled) ? <div className="pll-save-row"><span>{message || (dirty ? "Wijzigingen nog niet opgeslagen." : "Profit Lock Ladder actief in opgeslagen configuratie.")}</span><button type="button" disabled={busy || !dirty || !settingsVerified} onClick={save}>{busy ? "Opslaan…" : "Profit Lock opslaan"}</button></div> : null}
-    <style>{`.pll-bridge-wrap{display:contents}.es-save-feedback{grid-column:1/-1;margin:0;padding:7px 10px;border:1px solid rgba(33,214,154,.3);border-radius:9px;color:#d1e9db;background:#06251a;font-size:11px;overflow-wrap:anywhere}.pll-save-row{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:-1px;padding:6px 8px;border:1px solid rgba(33,214,154,.16);border-radius:9px;background:rgba(3,17,13,.72)}.pll-save-row span{color:#8fa39a;font-size:8px;line-height:1.3}.pll-save-row button{min-height:30px;padding:0 10px;border:1px solid rgba(33,214,154,.52);border-radius:8px;background:rgba(19,115,78,.25);color:#8ff4c6;font-size:8px;font-weight:900;white-space:nowrap}.pll-save-row button:disabled{opacity:.38}@media(max-width:430px){.pll-save-row{align-items:stretch;flex-direction:column}.pll-save-row button{width:100%}}`}</style>
+    <style>{`.pll-bridge-wrap{display:contents}.pll-save-row{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:-1px;padding:6px 8px;border:1px solid rgba(33,214,154,.16);border-radius:9px;background:rgba(3,17,13,.72)}.pll-save-row span{color:#8fa39a;font-size:8px;line-height:1.3}.pll-save-row button{min-height:30px;padding:0 10px;border:1px solid rgba(33,214,154,.52);border-radius:8px;background:rgba(19,115,78,.25);color:#8ff4c6;font-size:8px;font-weight:900;white-space:nowrap}.pll-save-row button:disabled{opacity:.38}@media(max-width:430px){.pll-save-row{align-items:stretch;flex-direction:column}.pll-save-row button{width:100%}}`}</style>
   </div>, settingsHost) : null;
 
   const snapshotUi = snapshotHost && enabled ? createPortal(<>
