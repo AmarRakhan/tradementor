@@ -10,18 +10,26 @@ const closeProxy = fs.readFileSync(new URL("../app/api/exchanges/aster/positions
 test("bulk profit action preserves existing Tradecentrum controls", () => {
   assert.match(component, /Toon alles/);
   assert.match(component, /PositionClosePanel/);
-  assert.match(component, /Close \$\{profitCandidates\.length\} profits/);
+  assert.match(component, /LONG: profitCandidates\.filter/);
+  assert.match(component, /SHORT: profitCandidates\.filter/);
+  assert.match(component, /Close \$\{shortProfitCandidates\.length\} SHORT profits/);
   assert.doesNotMatch(component, /netto\s*[≥>]/i);
 });
 
-test("bulk profit action refreshes preview, confirms, and posts once while disabled", () => {
-  assert.match(component, /profitable-close-preview/);
-  assert.match(component, /close-profitable/);
-  assert.match(component, /profitBusy \|\|/);
-  assert.match(component, /crypto\.randomUUID\(\)/);
+test("SHORT-only bulk routes each confirmed position through existing individual CLOSE", () => {
+  assert.match(component, /return \(side === "LONG" \|\| side === "SHORT"\) && pnl !== null && pnl >= 0\.5/);
+  assert.match(component, /const shortProfitCandidates = useMemo/);
+  assert.match(component, /String\(position\.side \|\| ""\)\.toUpperCase\(\) === "SHORT" && \(finite\(position\.unrealizedPnl\) \|\| 0\) > 0\.5/);
+  assert.match(component, /manual-profit-close-plan/);
+  assert.match(component, /for \(const target of bulkCloseTargets\)/);
+  assert.match(component, /await authenticatedRequest\(/);
+  assert.match(component, /encodeURIComponent\(target\.symbol\) \+ "\/close"/);
+  assert.match(component, /side: "SHORT", expected_quantity: target\.quantity/);
+  assert.match(component, /percentage: profitClosePercentage, idempotency_key: newCloseIdempotencyKey\(\)/);
+  assert.match(component, /bulkCloseInFlightRef\.current/);
   assert.match(component, /createPortal/);
-  assert.match(component, /Zowel LONG- als SHORT-posities/);
-  assert.match(component, /Geen profits om te sluiten/);
+  assert.match(component, /break;/);
+  assert.match(component, /Geen SHORT profits om te sluiten/);
 });
 
 test("mobile footer keeps a compact single-line green action", () => {
