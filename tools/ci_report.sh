@@ -13,5 +13,10 @@ if [ "$code" -eq 0 ]; then echo "::notice title=${title}::${text:0:60000}"; else
 sumtext="exit=${code}"$'\n'"$(grep -E '^(Ran |OK|FAILED|[0-9]+ (passed|failed)|=+ .*(passed|failed)|ℹ (tests|pass|fail|skipped|cancelled))|[0-9]+ passed|[0-9]+ failed' "$out" | tail -n 12)"
 sumtext="${sumtext//'%'/'%25'}"; sumtext="${sumtext//$'\r'/'%0D'}"; sumtext="${sumtext//$'\n'/'%0A'}"
 echo "::notice title=SUMMARY ${title}::${sumtext:0:3000}"
+if [ "$code" -ne 0 ]; then
+  ftext="$(grep -E '^(FAIL|ERROR): |^[A-Za-z_.]*(Error|Exception)[:(]|^AssertionError|^E  |line [0-9]+, in test_|^- |^\+ ' "$out" | cut -c1-230 | head -n 45)"
+  ftext="${ftext//'%'/'%25'}"; ftext="${ftext//$'\r'/'%0D'}"; ftext="${ftext//$'\n'/'%0A'}"
+  echo "::error title=FAILURES ${title}::${ftext:0:3500}"
+fi
 tail -n 40 "$out"
 exit "$code"
