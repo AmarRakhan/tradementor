@@ -154,7 +154,9 @@ class LeaseExpiryTests(RealLeg):
         self.assertEqual(lease.get("token"), worker[0])                            # route's release did NOT clobber the worker's lease
         self.others_untouched()
 
-    def test_lease_expiring_during_the_exchange_reread_still_freezes_a_pair_created_meanwhile(self):
+    def test_lease_expiring_during_the_exchange_reread_is_refused_before_any_freeze_or_order(self):
+        """Was a model of the pre-release route (pair frozen after the worker created it). The release renews OUR lease
+        before the freeze and refuses (409, nothing frozen or ordered) when it had already expired."""
         self.L.add("BTCUSDT", "SHORT", 8.0); self.L.add("BTCUSDT", "LONG", 8.0)
         self.put("asterPositionLossAutoHedge", self.uid, {"enabled": True})
         done = {"v": False}
@@ -170,10 +172,12 @@ class LeaseExpiryTests(RealLeg):
                 self.seed_pair("BTCUSDT", pair())                                  # worker creates the pair after expiry
                 self.ns._release_aster_account_coordination(self.uid, token)
         self.L.on_before_read = on_read
-        self.close("BTCUSDT", 8.0, 25)
-        self.assertEqual(self.pair_doc("BTCUSDT")["status"], "RECOVERY")           # pair is re-read AFTER the exchange read
-        self.assertFalse(self.pair_doc("BTCUSDT")["rehedgeEnabled"])
-        self.assertEqual(len(self.L.orders), 1)
+        with self.assertRaises(self.HTTP) as ctx:
+            self.close("BTCUSDT", 8.0, 25)
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertIn("account-lease is verlopen", ctx.exception.detail)
+        self.assertEqual(self.L.orders, [])
+        self.assertEqual(self.pair_doc("BTCUSDT")["status"], "HEDGED")             # nothing frozen, the worker's pair untouched
 
     def test_KNOWN_RESIDUAL_plain_short_pair_created_after_lease_expiry_while_the_order_is_in_flight(self):
         """Only reachable if the exchange POST (or a Firestore stall) outlives the 45 s lease: the worker then creates

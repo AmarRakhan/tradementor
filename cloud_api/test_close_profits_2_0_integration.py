@@ -242,7 +242,7 @@ class AutoHedgeConcurrencyTests(Base):
         marker = "            live_rows = client.position_risk()\n            fresh = next("
         self.assertIn(marker, MAIN_SRC)
         start = MAIN_SRC.index("            # Positions and pair were read before the lease")
-        end = MAIN_SRC.index("            pair_before_close = _position_loss_auto_hedge_pair(uid, normalized_symbol)\n            if (")
+        end = MAIN_SRC.index("            pair_before_close = _position_loss_auto_hedge_pair(uid, normalized_symbol)\n            # The reads above can be slow")
         self.setUp(src=MAIN_SRC[:start] + MAIN_SRC[end:])                     # route as it was before this change
         self.L.add("BTCUSDT", "SHORT", 8.0); self.L.add("BTCUSDT", "LONG", 8.0)
         self.seed_pair("BTCUSDT", pair())

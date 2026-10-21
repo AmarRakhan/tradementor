@@ -163,7 +163,7 @@ for (const percentage of [25, 50, 75, 100]) {
     assert.match(ui.messages.at(-1), /Verwerking voltooid/);
     // sequential: the backend saw the requests one after another in the preview order
     assert.deepEqual(state.requests.map((r) => r.symbol), ui.targets.map((t) => t.symbol));
-    assert.ok(state.requests.every((r) => Object.keys(r.body).sort().join() === "confirm,expected_quantity,idempotency_key,percentage,side"));
+    assert.ok(state.requests.every((r) => Object.keys(r.body).sort().join() === "bulk_series,confirm,expected_quantity,idempotency_key,min_open_pnl_usd,percentage,side"));
   });
 }
 

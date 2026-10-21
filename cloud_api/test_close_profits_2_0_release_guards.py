@@ -123,7 +123,7 @@ class SeriesLock(base.E2E):
         refs = self.db.collection("users").document(self.uid).collection("asterManualCloseIntents")
         for doc in refs.stream():
             doc.reference.set({"createdAt": datetime.now(timezone.utc) - timedelta(minutes=11)}, merge=True)
-        self.fake._position_rows()                                                   # burn the delayed reflection
+        self.fake.lag["S00USDT"] = 0                                                 # Aster has caught up
         live = self.fake.pos[("S00USDT", "SHORT")]
         again = self.close("S00USDT", live, 50, bulk=True)
         self.assertEqual(again.status_code, 200, again.text)
