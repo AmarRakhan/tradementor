@@ -82,3 +82,11 @@ test("gekozen tijdframe licht op (Amar 23-10 00:32, build 612)", async () => {
   assert.ok(base > 0 && lit > base, "oplicht-regel na basisregel");
   assert.match(card.slice(lit, lit + 220), /background:#0af291/);
 });
+
+test("Instapfilter springt niet terug bij elke refresh (Amar 23-10 00:43, build 613)", async () => {
+  const card = await readFile(new URL("../components/aster-extreme-spike-entry-card.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(card, /useEffect\(\(\) => \{ setDraft\(config\); \}, \[config\]\)/);
+  assert.match(card, /const configKey = JSON\.stringify\(config\)/);
+  assert.match(card, /if \(previous === configKey\) return;/);
+  assert.match(card, /currentKey === previous \|\| currentKey === configKey \? config : current/);
+});

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Extreme Spike 1.1 (besluiten Amar 22-10-2026)
 // - Een wijde Bollinger-filter: BB(20,k). Een niveau betekent "vanaf k" (k en verder).
@@ -49,8 +49,21 @@ function SideEditor({ label, value, disabled, onChange }: { label: "LONG" | "SHO
 export function AsterExtremeSpikeEntryCard({ config, disabled, message, onSave }: Props) {
   const [draft, setDraft] = useState<SpikeConfig>(config);
   const [expanded, setExpanded] = useState(false);
-  useEffect(() => { setDraft(config); }, [config]);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(config);
+  // Build 613: het scherm leest de instellingen elke paar seconden opnieuw; dat gaf telkens een nieuw config-object
+  // en wiste wat je net had aangeklikt. Nu alleen bijwerken als de opgeslagen inhoud echt verandert, en een
+  // niet-opgeslagen keuze blijft staan (behalve als de server precies jouw keuze terugmeldt).
+  const configKey = JSON.stringify(config);
+  const lastKey = useRef(configKey);
+  useEffect(() => {
+    const previous = lastKey.current;
+    if (previous === configKey) return;
+    lastKey.current = configKey;
+    setDraft((current) => {
+      const currentKey = JSON.stringify(current);
+      return currentKey === previous || currentKey === configKey ? config : current;
+    });
+  }, [configKey, config]);
+  const dirty = JSON.stringify(draft) !== configKey;
   const error = spikeValidationError(draft);
   const patch = (value: Partial<SpikeConfig>) => setDraft({ ...draft, ...value });
   return <section className="extreme-entry-card" aria-label="Instapfilter" data-testid="extreme-spike-entry">
