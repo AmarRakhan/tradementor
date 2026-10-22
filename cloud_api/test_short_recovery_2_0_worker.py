@@ -224,6 +224,34 @@ class JointExit(Recovery):
         self.assertEqual(pair_exit.long_tp_gate(account_uid=self.uid, symbol="SOLUSDT", short_qty=10)[0], "ALLOW")
 
 
+class SettingsRoute(Recovery):
+    def save(self, **kw):
+        from fastapi import Response
+        body = {"enabled": True, "steps": 10, "stepPct": "0.2", **kw}
+        return self.ext.put_position_loss_auto_hedge_short_recovery(
+            self.ext.ShortRecoverySettingsRequest(**body), Response(), {"uid": self.uid})
+
+    def test_free_settings_saved_and_public(self):
+        out = self.save()
+        self.assertEqual(out["shortRecoveryPlan"], {"enabled": True, "steps": 10, "stepPct": "0.2"})
+        self.assertEqual(self.get("asterPositionLossAutoHedge", self.uid)["shortRecoveryPlan"]["steps"], 10)
+        self.assertEqual(self.L.hedge_orders, [])                    # saving never places an order
+
+    def test_invalid_combination_rejected(self):
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            self.save(steps=10, stepPct="10")
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_requires_auto_hedge_on(self):
+        from fastapi import HTTPException
+        self.put("asterPositionLossAutoHedge", self.uid, {"enabled": False, "thresholdUsd": 0.25})
+        with self.assertRaises(HTTPException) as ctx:
+            self.save()
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.save(enabled=False)                                     # switching off is always allowed
+
+
 class Shadow(Recovery):
     LIVE = False
 

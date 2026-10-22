@@ -27,6 +27,7 @@ from aster_position_loss_auto_hedge import (
 )
 from aster_gateway import ContractRules
 from short_recovery_runtime import decide as short_recovery_decide
+from short_recovery_ladder import normalize_settings as normalize_short_recovery_settings
 import short_recovery_pair_exit
 
 WORKER_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER", "true").lower() == "true"
@@ -153,8 +154,17 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         "quantityBasis": "COIN_QUANTITY",
         "comparison": "openPnl <= -thresholdUsd",
         "targetInvariant": "ABS(LONG_QTY)==ABS(SHORT_QTY)",
+        "shortRecoveryPlan": _public_short_recovery(row),
+        "shortRecoveryExecutionEnabled": SHORT_RECOVERY_EXECUTION_ENABLED,
         "referenceId": "file_00000000ecd08246bd1b15532fb478d6",
     })
+
+
+def _public_short_recovery(row: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return normalize_short_recovery_settings(row.get("shortRecoveryPlan") if isinstance(row.get("shortRecoveryPlan"), dict) else {})
+    except ValueError:
+        return normalize_short_recovery_settings({})
 
 
 def _audit(uid: str, payload: dict[str, Any]) -> None:
@@ -1079,6 +1089,37 @@ def put_position_loss_auto_hedge_rehedge(
     report = _run_uid(uid, force_shadow=not EXECUTION_ENABLED)
     response.headers["Cache-Control"] = "no-store"
     return {**_public(uid), "lastReport": _serialize(report)}
+
+
+class ShortRecoverySettingsRequest(BaseModel):
+    enabled: bool
+    steps: int = Field(ge=1, le=100)
+    stepPct: str = Field(min_length=1, max_length=16)
+    clientBuild: str = Field(default="", max_length=32)
+
+
+@main.app.put("/v1/me/aster/position-loss-auto-hedge/short-recovery")
+def put_position_loss_auto_hedge_short_recovery(
+    request: ShortRecoverySettingsRequest,
+    response: Response,
+    user: dict[str, Any] = Depends(main.authenticated_user),
+) -> dict[str, Any]:
+    """Save SHORT Recovery 2.0 settings. Never places an order itself; the worker applies them."""
+    uid = main.require_release_feature(user, "auto_hedge_v2")
+    try:
+        plan = normalize_short_recovery_settings(
+            {"enabled": request.enabled, "steps": request.steps, "stepPct": request.stepPct})
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    if plan["enabled"] and _current(uid).get("enabled") is not True:
+        raise HTTPException(409, "Zet Auto Hedge eerst AAN; SHORT Recovery bouwt alleen Auto Hedge-SHORTs af")
+    now = datetime.now(timezone.utc)
+    previous = _public_short_recovery(_current(uid))
+    _doc(uid).set({"shortRecoveryPlan": {**plan, "updatedAt": now}, "updatedAt": now}, merge=True)
+    _audit(uid, {"eventType": "SHORT_RECOVERY_SETTINGS_CHANGED", "previous": previous, "next": plan,
+                 "clientBuild": request.clientBuild})
+    response.headers["Cache-Control"] = "no-store"
+    return _public(uid)
 
 
 class RehedgeAllRequest(BaseModel):
