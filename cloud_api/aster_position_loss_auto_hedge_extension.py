@@ -614,8 +614,8 @@ def _sync_pair_views(
 
 
 
-PAIR_EXIT_REQUEST_MAX_AGE_SECONDS = 60
-PAIR_EXIT_MAX_SECONDS = 120
+PAIR_EXIT_REQUEST_MAX_AGE_SECONDS = 120
+PAIR_EXIT_MAX_SECONDS = 180
 
 
 def _as_utc(value: Any) -> datetime | None:
@@ -664,6 +664,8 @@ def _short_recovery_pair_exit(
         long_notional=long_qty * price, short_notional=short_qty * price, funding_paid=funding,
     )
     if not verdict["allowed"]:
+        # Evaluate a request once: Multi-BB asks again on its next tick (avoids an income read every 3 s).
+        _pair_doc(uid, symbol).set({"pairExitRequestedAt": None}, merge=True)
         _audit(uid, {"eventType": "SHORT_RECOVERY_JOINT_EXIT_WAIT", "symbol": symbol,
                      "reason": verdict["reason"], "net": None if verdict["net"] is None else str(verdict["net"])})
         return None  # normal ladder continues; the LONG keeps waiting

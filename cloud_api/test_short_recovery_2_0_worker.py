@@ -111,6 +111,21 @@ class LiveLadder(Recovery):
         self.at("SOLUSDT", 98)                                       # old record ignored -> legacy 1:1 first
         self.assertAlmostEqual(self.short("SOLUSDT"), 10.0)
 
+    def test_concurrent_ticks_place_one_step_order(self):
+        import threading
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.L.mark["SOLUSDT"] = 98.0
+        threads = [threading.Thread(target=self.worker_tick) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.worker_tick()
+        self.check_invariant()
+        self.assertEqual(self.orders(), [("CLOSE", 2.5)])
+        self.assertAlmostEqual(self.short("SOLUSDT"), 7.5)
+
     def test_one_failing_symbol_never_blocks_the_others(self):
         self.open_pair("AAAUSDT")
         self.open_pair("BBBUSDT")
