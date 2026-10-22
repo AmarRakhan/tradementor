@@ -3,7 +3,7 @@ name: Close Profits 2.1 CI (isolated, no secrets, no orders)
 # access, no production Firebase project: Firestore is the local emulator (project close-profits-test-only).
 on:
   push:
-    branches: [claude/close-profits-2-1, claude/chart-markers-warmup, claude/cost-chart-reads-20261022, claude/chart-labels-live-refresh]
+    branches: [claude/close-profits-2-1, claude/chart-markers-warmup, claude/cost-chart-reads-20261022, claude/chart-labels-live-refresh, claude/rehedge-all-606-on-live]
   workflow_dispatch:
 permissions:
   contents: read

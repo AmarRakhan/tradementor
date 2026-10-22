@@ -3,7 +3,7 @@ name: Re-Hedge All 1.0 CI (isolated, no secrets, no orders)
 # access, no production Firebase project: Firestore is the local emulator (project close-profits-test-only).
 on:
   push:
-    branches: [claude/bulk-rehedge-recovery-1-0]
+    branches: [claude/bulk-rehedge-recovery-1-0, claude/rehedge-all-606-on-live]
   workflow_dispatch:
 permissions:
   contents: read
