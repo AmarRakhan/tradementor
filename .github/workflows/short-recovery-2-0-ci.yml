@@ -30,7 +30,7 @@ jobs:
         run: pip install -r cloud_api/requirements.txt pytest
       - name: SHORT Recovery 2.0 ladder + engine
         working-directory: cloud_api
-        run: python -m unittest -v test_short_recovery_ladder test_short_recovery_2_0_engine test_short_recovery_runtime
+        run: python -m unittest -v test_short_recovery_ladder test_short_recovery_2_0_engine test_short_recovery_runtime test_short_recovery_2_0_worker
       - name: Auto Hedge engine + lifecycle regression
         working-directory: cloud_api
         run: pytest -q -rfE -p no:cacheprovider test_aster_position_loss_auto_hedge.py test_aster_position_loss_auto_hedge_lifecycle_contract.py test_aster_position_loss_auto_hedge_lock.py test_aster_position_loss_auto_hedge_owner_gate.py

@@ -25,9 +25,13 @@ from aster_position_loss_auto_hedge import (
     position_quantity,
     reconcile_auto_hedge,
 )
+from aster_gateway import ContractRules
+from short_recovery_runtime import decide as short_recovery_decide
 
 WORKER_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER", "true").lower() == "true"
 EXECUTION_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED", "false").lower() == "true"
+# SHORT Recovery 2.0: OFF = shadow only (decisions recorded, no target change, no orders).
+SHORT_RECOVERY_EXECUTION_ENABLED = os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "false").lower() == "true"
 WORKER_INTERVAL = max(1.0, float(os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_INTERVAL_SECONDS", "3")))
 _worker_stop = threading.Event()
 _worker_thread: threading.Thread | None = None
@@ -597,6 +601,109 @@ def _sync_pair_views(
         })
 
 
+
+def _short_recovery_targets(
+    *,
+    uid: str,
+    settings: dict[str, Any],
+    states: dict[str, dict[str, Any]],
+    protected_sides: dict[str, str],
+    positions: list[dict[str, Any]],
+    open_orders: list[dict[str, Any]],
+    client: Any,
+    execute: bool,
+) -> tuple[dict[str, float], list[dict[str, Any]]]:
+    """SHORT Recovery 2.0: per-symbol SHORT targets for the existing engine.
+
+    Live targets are returned only when ASTER_SHORT_RECOVERY_EXECUTION_ENABLED=true AND this is a live run.
+    Otherwise the decisions are recorded under ``shortRecoveryShadow`` and the engine keeps legacy 1:1.
+    A symbol whose inputs cannot be read keeps its last confirmed target (never a blind top-up or cut).
+    """
+    plan_settings = settings.get("shortRecoveryPlan") if isinstance(settings.get("shortRecoveryPlan"), dict) else {}
+    live = bool(SHORT_RECOVERY_EXECUTION_ENABLED and execute)
+    field = "shortRecovery" if live else "shortRecoveryShadow"
+    symbols = [s for s, side in protected_sides.items() if side == "LONG"]
+    if not symbols or plan_settings.get("enabled") is not True:
+        # Feature off: clear any live record so the engine restores the legacy 1:1 hedge.
+        if execute:
+            for symbol in symbols:
+                if (states.get(symbol) or {}).get(field):
+                    _pair_doc(uid, symbol).set({field: None}, merge=True)
+        return {}, []
+    pmap = _position_map(positions)
+    try:
+        info = client.public_exchange_info() or {}
+        rules = {
+            str(row.get("symbol", "")).upper(): ContractRules.from_exchange_info(row)
+            for row in (info.get("symbols", []) if isinstance(info, dict) else [])
+            if isinstance(row, dict)
+        }
+    except Exception:
+        rules = {}
+    try:
+        available = (client.account_information() or {}).get("availableBalance")
+    except Exception:
+        available = None
+    pending = {
+        str(o.get("symbol", "")).upper()
+        for o in open_orders or []
+        if isinstance(o, dict) and str(o.get("positionSide", "")).upper() == "SHORT"
+        and str(o.get("status", "NEW")).upper() not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
+    }
+    overrides: dict[str, float] = {}
+    rows: list[dict[str, Any]] = []
+    now = datetime.now(timezone.utc)
+    for symbol in symbols:
+        state = states.get(symbol) or {}
+        if str(state.get("status", "")).upper() not in ACTIVE_STATUSES:
+            continue
+        prior = state.get(field) if isinstance(state.get(field), dict) else None
+        generation = str(state.get("generationId") or "")
+        if prior and str(prior.get("generationId") or "") != generation:
+            prior = None  # a new Auto Hedge generation never inherits an old ladder
+        long_row = pmap.get((symbol, "LONG")) or {}
+        short_row = pmap.get((symbol, "SHORT")) or {}
+        rule = rules.get(symbol)
+        if rule is None:
+            last = prior.get("lastTarget") if prior else None
+            if live and last is not None:
+                overrides[symbol] = float(last)
+            rows.append({"symbol": symbol, "event": "RULES_UNAVAILABLE_HOLD", "mode": field})
+            continue
+        mark = long_row.get("markPrice") or short_row.get("markPrice") or 0
+        short_qty: Any = position_quantity(short_row)
+        short_entry: Any = short_row.get("entryPrice") or 0
+        if not live and prior and prior.get("lastTarget") is not None:
+            # Shadow simulates its own SHORT: the real SHORT stays legacy 1:1, so the simulated
+            # quantity is the last target and a simulated (re)open fills at the current mark.
+            virtual = float(prior["lastTarget"])
+            if abs(virtual - float(short_qty)) > 1e-12:
+                short_qty, short_entry = virtual, mark
+        result = short_recovery_decide(
+            record=prior, settings=plan_settings,
+            long_qty=position_quantity(long_row), short_qty=short_qty,
+            short_entry=short_entry,
+            mark=mark,
+            has_pending_short_order=symbol in pending,
+            qty_step=rule.market_quantity_step, min_qty=rule.market_min_quantity,
+            min_notional=rule.min_notional, available_balance=available,
+            leverage=long_row.get("leverage") or 1,
+        )
+        record = result["record"]
+        if record is not None:
+            record = {**record, "generationId": generation, "lastEvent": result["event"], "evaluatedAt": now}
+        if live and result["override"] is not None:
+            overrides[symbol] = float(result["override"])
+        if execute:
+            _pair_doc(uid, symbol).set({field: record}, merge=True)
+        rows.append({
+            "symbol": symbol, "mode": field, "event": result["event"],
+            "targetShort": None if result["override"] is None else float(result["override"]),
+            "stepsReached": (record or {}).get("stepsReached"), "phase": (record or {}).get("phase"),
+        })
+    return overrides, rows
+
+
 def _run_uid(
     uid: str,
     *,
@@ -689,6 +796,10 @@ def _run_uid(
                 "revision": int(float(state.get("intentRevision") or 0)),
             }
 
+        recovery_targets, recovery_rows = _short_recovery_targets(
+            uid=uid, settings=settings, states=states, protected_sides=protected_sides,
+            positions=positions, open_orders=open_orders, client=client, execute=execute,
+        )
         report = reconcile_auto_hedge(
             client=client,
             uid=uid,
@@ -698,9 +809,12 @@ def _run_uid(
             protected_sides=protected_sides or None,
             skip_symbols=skip_symbols,
             intent_context=contexts,
+            target_overrides=recovery_targets or None,
             positions=positions,
             open_orders=open_orders,
         )
+        if recovery_rows:
+            report["shortRecovery"] = recovery_rows
         report["createdCycles"] = [
             {"symbol": row.get("symbol"), "generationId": row.get("generationId")}
             for row in created

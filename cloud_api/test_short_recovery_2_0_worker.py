@@ -1,0 +1,182 @@
+"""SHORT Recovery 2.0 — the REAL Auto Hedge worker tick (_run_uid) with the ladder wired in.
+
+Real: aster_position_loss_auto_hedge_extension, the engine, ContractRules, account lease.
+Mocked: Firestore (in-memory model), Aster (ledger). No network, no credentials, no real orders.
+"""
+from __future__ import annotations
+
+import unittest
+
+from test_rehedge_all_1_0 import HAVE, Base
+
+PLAN = {"enabled": True, "steps": 4, "stepPct": "2"}
+
+
+def hedged_pair(symbol, generation="g1"):
+    return {"symbol": symbol, "status": "HEDGED", "protectedSide": "LONG", "hedgeSide": "SHORT",
+            "generation": 1, "generationId": generation, "intentRevision": 0, "rehedgeEnabled": False}
+
+
+@unittest.skipUnless(HAVE, "needs fastapi + aster_gateway deps")
+class Recovery(Base):
+    LIVE = True
+
+    def setUp(self):
+        super().setUp()
+        self.ext.SHORT_RECOVERY_EXECUTION_ENABLED = self.LIVE
+        self.settings(PLAN)
+
+    def settings(self, plan):
+        self.put("asterPositionLossAutoHedge", self.uid,
+                 {"enabled": True, "thresholdUsd": 0.25, "shortRecoveryPlan": plan})
+
+    def open_pair(self, symbol, qty=10.0, mark=100.0, minimum=0.001, step=0.001):
+        self.L.add(symbol, "LONG", qty, mark=mark, entry=mark + 1, minimum=minimum, step=step)
+        self.L.pos[(symbol, "SHORT")] = float(qty)
+        self.L.entry[(symbol, "SHORT")] = mark
+        self.put("asterPositionLossAutoHedge", self.uid, "pairs", symbol, hedged_pair(symbol))
+
+    def at(self, symbol, mark):
+        self.L.mark[symbol] = float(mark)
+        report = self.worker_tick()
+        self.check_invariant()
+        return report
+
+    def orders(self, symbol=None):
+        return [(o["action"], round(o["qty"], 9)) for o in self.L.hedge_orders if symbol in (None, o["symbol"])]
+
+    def rec(self, symbol, field="shortRecovery"):
+        return self.pair(symbol).get(field) or {}
+
+    def check_invariant(self):
+        for (symbol, side), qty in self.L.pos.items():
+            if side == "SHORT":
+                self.assertLessEqual(qty, self.long(symbol) + 1e-9, f"{symbol}: SHORT {qty} > LONG")
+        for order in self.L.hedge_orders:
+            self.assertEqual(order["positionSide"], "SHORT", order)      # never a LONG order
+        self.assertTrue(self.lease_free())
+
+
+class LiveLadder(Recovery):
+    def test_four_steps_no_topup_then_refill_and_new_cycle(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.assertEqual(self.orders(), [])
+        self.assertEqual(self.rec("SOLUSDT")["anchor"], "100")
+        self.at("SOLUSDT", 98)
+        self.assertEqual(self.orders(), [("CLOSE", 2.5)])
+        self.at("SOLUSDT", 99.5)                                     # bounce: no top-up, no re-short
+        self.at("SOLUSDT", 99.5)
+        self.assertEqual(self.orders(), [("CLOSE", 2.5)])
+        self.assertAlmostEqual(self.short("SOLUSDT"), 7.5)
+        self.assertEqual(self.pair("SOLUSDT")["status"], "HEDGED")
+        for mark in (96, 94, 92):
+            self.at("SOLUSDT", mark)
+        self.assertAlmostEqual(self.short("SOLUSDT"), 0.0)
+        self.assertEqual(self.long("SOLUSDT"), 10.0)                  # LONG never touched
+        self.at("SOLUSDT", 92)                                       # ladder done -> 100% refill
+        self.assertAlmostEqual(self.short("SOLUSDT"), 10.0)
+        self.L.entry[("SOLUSDT", "SHORT")] = 92.0                    # Aster reports the new average entry
+        self.at("SOLUSDT", 92)
+        rec = self.rec("SOLUSDT")
+        self.assertEqual((rec["phase"], rec["anchor"], rec["cycleId"]), ("LADDER", "92", 2))
+        self.at("SOLUSDT", "90.16")                                   # first step of the NEW ladder (92 * 0.98)
+        self.assertEqual(self.orders()[-1], ("CLOSE", 2.5))
+
+    def test_gap_down_combines_steps_in_one_order(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.at("SOLUSDT", 95)
+        self.assertEqual(self.orders(), [("CLOSE", 5.0)])
+
+    def test_switching_off_restores_full_hedge(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.at("SOLUSDT", 96)
+        self.assertAlmostEqual(self.short("SOLUSDT"), 5.0)
+        self.settings({**PLAN, "enabled": False})
+        self.at("SOLUSDT", 96)
+        self.assertAlmostEqual(self.short("SOLUSDT"), 10.0)
+        self.assertEqual(self.rec("SOLUSDT"), {})
+
+    def test_new_auto_hedge_generation_never_inherits_old_ladder(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.at("SOLUSDT", 98)
+        doc = self.pair("SOLUSDT")
+        self.put("asterPositionLossAutoHedge", self.uid, "pairs", "SOLUSDT", {**doc, "generationId": "g2"})
+        self.at("SOLUSDT", 98)                                       # old record ignored -> legacy 1:1 first
+        self.assertAlmostEqual(self.short("SOLUSDT"), 10.0)
+
+    def test_one_failing_symbol_never_blocks_the_others(self):
+        self.open_pair("AAAUSDT")
+        self.open_pair("BBBUSDT")
+        self.at("AAAUSDT", 100)
+        self.L.hedge_modes["AAAUSDT"] = "reject"
+        self.L.mark["AAAUSDT"] = 98.0
+        self.L.mark["BBBUSDT"] = 98.0
+        self.worker_tick()
+        self.check_invariant()
+        self.assertEqual(self.orders("BBBUSDT"), [("CLOSE", 2.5)])
+        self.assertAlmostEqual(self.short("AAAUSDT"), 10.0)
+
+
+class LiveReopenNinety(Recovery):
+    def test_too_small_step_closes_all_and_reopens_90(self):
+        self.open_pair("PEPEUSDT", qty=10.0, minimum=3, step=1)
+        self.at("PEPEUSDT", 100)
+        self.at("PEPEUSDT", 98)
+        self.assertEqual(self.orders(), [("CLOSE", 10.0)])
+        self.at("PEPEUSDT", 98)
+        self.assertEqual(self.orders()[-1], ("OPEN", 9.0))
+        self.assertAlmostEqual(self.short("PEPEUSDT"), 9.0)
+        self.L.entry[("PEPEUSDT", "SHORT")] = 98.0
+        self.at("PEPEUSDT", 98)
+        self.assertEqual(self.rec("PEPEUSDT")["base"], "9")
+        self.at("PEPEUSDT", 99)                                      # the 10% gap is kept
+        self.at("PEPEUSDT", 99)
+        self.assertAlmostEqual(self.short("PEPEUSDT"), 9.0)
+        self.assertEqual(len(self.orders()), 2)
+
+    def test_no_margin_for_reopen_never_closes_all(self):
+        self.open_pair("PEPEUSDT", qty=10.0, minimum=3, step=1)
+        self.at("PEPEUSDT", 100)
+        self.L.available = 0.0
+        self.at("PEPEUSDT", 98)
+        self.assertEqual(self.orders(), [])
+        self.assertAlmostEqual(self.short("PEPEUSDT"), 10.0)
+
+    def test_reopen_below_minimum_is_skipped(self):
+        self.open_pair("PEPEUSDT", qty=10.0, minimum=10, step=1)
+        self.at("PEPEUSDT", 100)
+        self.at("PEPEUSDT", 98)
+        self.assertEqual(self.orders(), [])
+        self.assertEqual(self.rec("PEPEUSDT")["lastEvent"], "SKIPPED_BELOW_MINIMUM")
+
+
+class Shadow(Recovery):
+    LIVE = False
+
+    def test_shadow_records_ladder_and_sends_no_recovery_order(self):
+        self.open_pair("SOLUSDT")
+        for mark in (100, 98, 99, 96, 94, 92, 92):
+            self.at("SOLUSDT", mark)
+        self.assertEqual(self.orders(), [])                         # legacy 1:1 already exact
+        self.assertAlmostEqual(self.short("SOLUSDT"), 10.0)
+        self.assertEqual(self.rec("SOLUSDT"), {})
+        shadow = self.rec("SOLUSDT", "shortRecoveryShadow")
+        self.assertEqual(shadow["phase"], "REFILL")
+        self.at("SOLUSDT", 92)
+        shadow = self.rec("SOLUSDT", "shortRecoveryShadow")
+        self.assertEqual((shadow["phase"], shadow["cycleId"], shadow["anchor"]), ("LADDER", 2, "92.0"))
+
+    def test_shadow_reports_decisions(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        report = self.at("SOLUSDT", 98)
+        row = report["shortRecovery"][0]
+        self.assertEqual((row["event"], row["targetShort"], row["mode"]), ("STEP_REDUCE", 7.5, "shortRecoveryShadow"))
+
+
+if __name__ == "__main__":
+    unittest.main()
