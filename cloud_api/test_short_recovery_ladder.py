@@ -73,15 +73,25 @@ class Plan(unittest.TestCase):
         r = run(mark=95)
         self.assertEqual(r["quantity"], D(50))
 
-    def test_small_step_carries_then_combines(self):
+    def test_small_step_closes_all_and_reopens_90(self):
         r = run(mark=98, min_qty=40)
-        self.assertEqual((r["action"], r["reason"]), ("HOLD", "BELOW_MINIMUM_CARRY_TO_NEXT_STEP"))
-        r = run(mark=96, previous_steps=r["stepsReached"], min_qty=40)
-        self.assertEqual((r["action"], r["quantity"]), ("REDUCE_SHORT", D(50)))
+        self.assertEqual((r["action"], r["quantity"], r["reopenQuantity"]), ("FULL_CLOSE_REOPEN", D(100), D(90)))
 
-    def test_min_notional_carry(self):
+    def test_no_carry_over(self):
+        r = run(mark=98, min_qty=40)
+        self.assertNotEqual(r["action"], "HOLD")
+
+    def test_min_notional_triggers_reopen(self):
         r = run(mark=98, min_notional=5000)
-        self.assertEqual(r["reason"], "BELOW_MINIMUM_CARRY_TO_NEXT_STEP")
+        self.assertEqual((r["action"], r["reopenQuantity"]), ("FULL_CLOSE_REOPEN", D(90)))
+
+    def test_reopen_below_minimum_skips(self):
+        r = run(mark=98, min_qty=95)
+        self.assertEqual((r["action"], r["reason"], r["quantity"]), ("HOLD", "BELOW_MINIMUM_EVEN_FOR_REOPEN_SKIP", D(0)))
+
+    def test_reopen_floored_to_step(self):
+        r = run(mark=98, long_qty=7, short_qty=7, base=7, min_qty=3)
+        self.assertEqual(r["reopenQuantity"], D(6))
 
     def test_cycle_complete_triggers_refill(self):
         r = run(mark=92, short_qty=0, previous_steps=4)

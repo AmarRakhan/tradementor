@@ -12,9 +12,13 @@ Model (per symbol = per position; the bot never holds two LONGs in one symbol):
   step it is the whole ``base``.
 * Desired SHORT = max(0, LONG - released). SHORT can therefore never exceed the
   LONG, and new LONG quantity (DCA) stays fully hedged.
-* A reduction below the exchange minimum is not sent: it carries into the next
-  step. At the final step an unsendable remainder does not block the cycle: the
-  refill simply opens the gap up to the LONG, which ends in the same 1:1 state.
+* A step reduction below the exchange minimum is NOT carried to the next step
+  (decision Amar 22-10 17:03). Instead the whole SHORT is closed and 90% of it is
+  reopened (``FULL_CLOSE_REOPEN``): the SHORT ends 10% below its previous size and
+  a new cycle starts on that reopened SHORT. If the 90% reopen is itself below the
+  exchange minimum, the symbol is skipped (no order).
+* At the final step an unsendable remainder does not block the cycle: the refill
+  opens the gap up to the LONG, which ends in the same 1:1 state.
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ from typing import Any, Mapping
 DEFAULT_STEPS = 4
 DEFAULT_STEP_PCT = Decimal("2")
 MAX_STEPS = 100
+REOPEN_FRACTION = Decimal("0.9")
 
 
 def _dec(value: Any, name: str) -> Decimal:
@@ -112,6 +117,12 @@ def desired_short(long_qty: Any, base: Any, k: int, n: int, qty_step: Any) -> De
     return max(Decimal(0), long_q - released_quantity(base, k, n, qty_step))
 
 
+def _below_minimum(qty: Decimal, price: Decimal, min_qty: Any, min_notional: Any) -> bool:
+    mq = _dec(min_qty, "minimum")
+    mn = _dec(min_notional, "minimum orderwaarde")
+    return qty <= 0 or (mq > 0 and qty < mq) or (mn > 0 and qty * price < mn)
+
+
 def plan(
     *,
     long_qty: Any,
@@ -155,15 +166,18 @@ def plan(
         )
         return result
     qty = _floor(gap, step)
-    too_small = (_dec(min_qty, "minimum") > 0 and qty < _dec(min_qty, "minimum")) or (
-        _dec(min_notional, "minimum orderwaarde") > 0 and qty * price < _dec(min_notional, "minimum orderwaarde")
-    )
+    too_small = _below_minimum(qty, price, min_qty, min_notional)
     if too_small:
         if k >= n:
             # Final step: the refill opens up to the LONG, which yields the same 1:1 end state.
             result.update(action="CYCLE_COMPLETE", reason="FINAL_REMAINDER_BELOW_MINIMUM_REFILL", quantity=Decimal(0))
-        else:
-            result.update(action="HOLD", reason="BELOW_MINIMUM_CARRY_TO_NEXT_STEP", quantity=Decimal(0))
+            return result
+        reopen = _floor(short_q * REOPEN_FRACTION, step)
+        if _below_minimum(short_q, price, min_qty, min_notional) or _below_minimum(reopen, price, min_qty, min_notional):
+            result.update(action="HOLD", reason="BELOW_MINIMUM_EVEN_FOR_REOPEN_SKIP", quantity=Decimal(0))
+            return result
+        result.update(action="FULL_CLOSE_REOPEN", reason=f"STEP_{k}_BELOW_MINIMUM_CLOSE_ALL_REOPEN_90",
+                      quantity=short_q, reopenQuantity=reopen)
         return result
     result.update(action="REDUCE_SHORT", reason=f"STEP_{k}_OF_{n}", quantity=qty)
     return result
