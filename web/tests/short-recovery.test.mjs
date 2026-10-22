@@ -30,13 +30,22 @@ test("rows read the live or shadow record", () => {
   assert.deepEqual(recoveryRows(pairs, false).map((r) => r.symbol), ["ETHUSDT"]);
 });
 
-test("UNWIND badge replaces HEDGED only once a step is done", () => {
+test("partly unwound pair shows HEDGED x% (Amar 22:04)", () => {
   const base = { status: "HEDGED", currentProtectedQty: 10 };
   assert.equal(unwindBadge(base), null);
   assert.equal(unwindBadge({ ...base, shortRecovery: { phase: "LADDER", stepsReached: 0, steps: 4, lastTarget: "10" } }), null);
   assert.deepEqual(unwindBadge({ ...base, shortRecovery: { phase: "LADDER", stepsReached: 2, steps: 4, lastTarget: "5" } }),
-    { label: "UNWIND 2/4 · 50%", cls: "unwind" });
+    { label: "HEDGED 50%", detail: "HEDGED 50% · stap 2/4", cls: "unwind" });
   assert.deepEqual(unwindBadge({ ...base, shortRecoveryShadow: { phase: "LADDER", stepsReached: 1, steps: 4, lastTarget: "7.5" } }),
-    { label: "UNWIND 1/4 · 75% · TEST", cls: "unwind test" });
-  assert.equal(unwindBadge({ ...base, shortRecovery: { phase: "REOPEN_OPEN", stepsReached: 1, steps: 4, lastTarget: "9" } }).label, "UNWIND · 90%");
+    { label: "HEDGED 75%", detail: "HEDGED 75% · stap 1/4 · TEST", cls: "unwind test" });
+  assert.equal(unwindBadge({ ...base, shortRecovery: { phase: "REOPEN_OPEN", stepsReached: 1, steps: 4, lastTarget: "9" } }).label, "HEDGED 90%");
+  assert.equal(unwindBadge({ ...base, shortRecovery: { phase: "PAIR_EXIT", stepsReached: 1, steps: 4, lastTarget: "0" } }).label, "HEDGED · TP");
+});
+
+test("no partial label for RECOVERY pairs or skipped (100%) ladders (Amar 23:54)", () => {
+  const rec = { phase: "LADDER", stepsReached: 1, steps: 4, lastTarget: "15.1" };
+  // XRP: user closed 25% of the SHORT manually -> RECOVERY; the stale record must not show HEDGED 100%.
+  assert.equal(unwindBadge({ status: "RECOVERY", currentProtectedQty: 15.1, shortRecoveryShadow: rec }), null);
+  // DELL: step too small for Aster, skipped -> still 100% -> plain HEDGED.
+  assert.equal(unwindBadge({ status: "HEDGED", currentProtectedQty: 0.02, shortRecoveryShadow: { ...rec, lastTarget: "0.02" } }), null);
 });
