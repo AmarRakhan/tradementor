@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import math
 from typing import Any
 import hashlib
+import threading
 
 # Spike 1.1 (besluit Amar 22-10): elk niveau betekent "vanaf k sigma" — BB(20,k) en
 # alles daarbuiten. Geen bovengrens meer: een sprong voorbij het volgende niveau
@@ -98,6 +99,42 @@ def evaluate_spike(*, side: str, level: str, timeframe: str,
     overshoot = (band-wick)/band if side == "LONG" else (wick-band)/band
     return SpikeSnapshot(side,level,timeframe,wick,band,score,100*overshoot,candle_close_ms)
 
+INTERVAL_MS = {"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}
+
+# Referentie-cache: de 20 afgesloten closes veranderen niet binnen een candle.
+# Sleutel (symbol, timeframe) -> (vorige 20 closes, sluittijd lopende candle).
+# Alleen in het geheugen van dit proces: geen Firestore, en per munt hooguit één
+# klines-aanroep per candle in plaats van één per scan of realtime-evaluatie.
+_REFERENCE_CACHE: dict[tuple[str, str], tuple[tuple[float, ...], int]] = {}
+_REFERENCE_LOCK = threading.Lock()
+_REFERENCE_CACHE_MAX = 6000
+
+
+def cached_spike_reference(symbol: str, timeframe: str, now_ms: int) -> tuple[tuple[float, ...], int] | None:
+    """Gecachte referentie als die nog voor de lopende candle geldt, anders None."""
+    key = (str(symbol).upper(), timeframe)
+    with _REFERENCE_LOCK:
+        hit = _REFERENCE_CACHE.get(key)
+    if hit is None or timeframe not in INTERVAL_MS:
+        return None
+    closes, live_close_ms = hit
+    if not (live_close_ms - INTERVAL_MS[timeframe] < now_ms <= live_close_ms):
+        return None
+    return hit
+
+
+def _store_reference(symbol: str, timeframe: str, closes: list[float], live_close_ms: int) -> None:
+    with _REFERENCE_LOCK:
+        if len(_REFERENCE_CACHE) >= _REFERENCE_CACHE_MAX:
+            _REFERENCE_CACHE.clear()
+        _REFERENCE_CACHE[(str(symbol).upper(), timeframe)] = (tuple(closes), int(live_close_ms))
+
+
+def clear_reference_cache() -> None:
+    with _REFERENCE_LOCK:
+        _REFERENCE_CACHE.clear()
+
+
 def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: str,
                                 timeframe: str, now_ms: int, live_price: float | None = None) -> SpikeSnapshot:
     """Fail-closed adapter: use fresh ticker price when supplied by scanner.
@@ -107,33 +144,41 @@ def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: s
     """
     if timeframe not in TIMEFRAMES:
         raise SpikeFilterRejected("SPIKE_INVALID_TIMEFRAME")
+    interval_ms = INTERVAL_MS[timeframe]
     try:
-        rows = client.klines(symbol=str(symbol).upper(), interval=timeframe, limit=23)
-        if not isinstance(rows, list) or len(rows) < 22:
-            raise SpikeFilterRejected("SPIKE_INSUFFICIENT_CANDLES")
-        def close_ms(row: Any) -> int:
-            return int(row[6] if isinstance(row, (list, tuple)) else row["closeTime"])
-        def value(row: Any, position: int, key: str) -> float:
-            return float(row[position] if isinstance(row, (list, tuple)) else row[key])
-        # Reference is fixed to 20 completed candles. Evaluate the latest
-        # in-progress candle's CURRENT traded/last price, not its historical wick:
-        # a wick could have hit the level and already reversed before this scan.
-        completed = [row for row in rows if close_ms(row) < now_ms]
-        live = [row for row in rows if close_ms(row) >= now_ms]
-        if len(completed) < 20 or not live:
-            raise SpikeFilterRejected("SPIKE_INSUFFICIENT_LIVE_CANDLES")
-        signal = live[-1]
-        previous = completed[-20:]
-        current_price = float(live_price) if live_price is not None else value(signal, 4, "close")
+        cached = cached_spike_reference(symbol, timeframe, now_ms) if live_price is not None else None
+        if cached is not None:
+            previous_closes, live_close_ms = list(cached[0]), cached[1]
+            current_price = float(live_price)
+        else:
+            rows = client.klines(symbol=str(symbol).upper(), interval=timeframe, limit=23)
+            if not isinstance(rows, list) or len(rows) < 22:
+                raise SpikeFilterRejected("SPIKE_INSUFFICIENT_CANDLES")
+            def close_ms(row: Any) -> int:
+                return int(row[6] if isinstance(row, (list, tuple)) else row["closeTime"])
+            def value(row: Any, position: int, key: str) -> float:
+                return float(row[position] if isinstance(row, (list, tuple)) else row[key])
+            # Reference is fixed to 20 completed candles. Evaluate the latest
+            # in-progress candle's CURRENT traded/last price, not its historical wick:
+            # a wick could have hit the level and already reversed before this scan.
+            completed = [row for row in rows if close_ms(row) < now_ms]
+            live = [row for row in rows if close_ms(row) >= now_ms]
+            if len(completed) < 20 or not live:
+                raise SpikeFilterRejected("SPIKE_INSUFFICIENT_LIVE_CANDLES")
+            signal = live[-1]
+            previous_closes = [value(row,4,"close") for row in completed[-20:]]
+            live_close_ms = close_ms(signal)
+            if live_close_ms - now_ms > interval_ms:
+                raise SpikeFilterRejected("SPIKE_INVALID_LIVE_CANDLE")
+            current_price = float(live_price) if live_price is not None else value(signal, 4, "close")
+            if all(math.isfinite(v) and v > 0 for v in previous_closes):
+                _store_reference(symbol, timeframe, previous_closes, live_close_ms)
         if not math.isfinite(current_price) or current_price <= 0:
             raise SpikeFilterRejected("SPIKE_INVALID_LIVE_PRICE")
-        interval_ms={"1m":60000,"5m":300000,"15m":900000,"1h":3600000,"4h":14400000,"1d":86400000}[timeframe]
-        if close_ms(signal) - now_ms > interval_ms:
-            raise SpikeFilterRejected("SPIKE_INVALID_LIVE_CANDLE")
         return evaluate_spike(side=side,level=level,timeframe=timeframe,
-            previous_closes=[value(row,4,"close") for row in previous],
+            previous_closes=previous_closes,
             candle_high=current_price,candle_low=current_price,
-            candle_close_ms=close_ms(signal),now_ms=now_ms,
+            candle_close_ms=live_close_ms,now_ms=now_ms,
             max_staleness_ms=interval_ms+300000)
     except SpikeFilterRejected:
         raise
@@ -283,3 +328,21 @@ def effective_entry_filter_mode(raw: dict[str, Any] | None) -> str:
     if mode == "EXTREME_SPIKE" and version == SPIKE_SETTINGS_VERSION:
         return "EXTREME_SPIKE"
     return "OFF"
+
+
+def warm_spike_reference(client: Any, *, symbol: str, timeframe: str, now_ms: int) -> bool:
+    """Vul de referentie-cache voor de lopende candle (realtime-watcher op een ander proces).
+
+    Gebruikt dezelfde klines-lezing als de scanner. Geeft False bij elk probleem;
+    de watcher triggert dan simpelweg niet (fail-closed), de minuut-scan blijft werken.
+    """
+    if cached_spike_reference(symbol, timeframe, now_ms) is not None:
+        return True
+    try:
+        # live_price is alleen nodig om de lezing te laten slagen; de beslissing
+        # valt hier niet, dus elke positieve prijs volstaat.
+        require_extreme_spike_entry(client, symbol=symbol, side="LONG", level="2",
+                                    timeframe=timeframe, now_ms=now_ms, live_price=1e-12)
+    except SpikeFilterRejected:
+        pass
+    return cached_spike_reference(symbol, timeframe, now_ms) is not None

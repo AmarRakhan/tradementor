@@ -2562,6 +2562,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
               "minimumOrderRejectedCount": len(minimum_margin_rejections),
               "nextRequiredEntryMarginUsd": next_required_margin,
               "entrySkipReasons": skip_reasons, "updatedAtMs": timestamp_ms}
+    if settings.entry_filter_mode == "EXTREME_SPIKE":
+        # Spike 1.1 realtime: de kandidaat-munten van deze scan gaan mee in het
+        # rapport dat toch al elke tick wordt geschreven. De realtime-watcher leest
+        # ze uit hetzelfde document dat hij al ophaalt: geen extra Firestore-reads.
+        report["spikeWatch"] = {
+            "symbols": [str(row.get("symbol", "")).upper() for row in candidates if row.get("symbol")][:400],
+            **{k: v for k, v in settings.spike_settings().items() if k in ("level", "longTimeframe", "shortTimeframe", "longEnabled", "shortEnabled")},
+            "updatedAtMs": timestamp_ms,
+        }
     if not dry_run:
         final_payload = {"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
                  "exposureRefillSide": exposure_refill.get("activeSide") or None,

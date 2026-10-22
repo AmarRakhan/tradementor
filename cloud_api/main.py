@@ -101,6 +101,8 @@ from aster_strategy2_focus_adapter import current_focus_markets
 from aster_strategy2_focus import FocusState, rank_focus_pairs, next_dca_trigger
 from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
+from aster_spike_realtime import MAX_CONNECTIONS as SPIKE_MAX_CONNECTIONS, SpikeTrigger, make_spike_evaluator, shard_mapping, watch_from_control
+from aster_extreme_spike_filter import warm_spike_reference
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
 from aster_multi_bb import ENGINE as MULTI_BB_ENGINE, MultiBbConfig, multi_bb_status_mapping, run_multi_bb_step, leverage_tier_preview
 from aster_zone_soldiers import canonical_display_zone_ladder, confirmed_zone_from_display_zones, prepare_zone_runtime
@@ -10385,6 +10387,8 @@ def _aster_realtime_subscription_mapping()->dict[str,set[str]]:
     global _aster_realtime_simple_uids,_aster_realtime_sniper_pairs
     mapping:dict[str,set[str]]={};simple_uids:set[str]=set();sniper_pairs:set[tuple[str,str]]=set()
     controls=list(db.collection("asterStrategy2").where("monitor","==",True).stream())
+    # Spike 1.1: watchlists uit dezelfde, al opgehaalde documenten (geen extra reads).
+    _refresh_spike_watches_from_controls(controls[:100])
     for item in controls[:100]:
         raw=item.to_dict() or {};uid=item.id;symbols:set[str]=set()
         settings_raw=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
@@ -10455,6 +10459,66 @@ def _run_aster_realtime_evaluation(uid:str,event:RealtimeMarketEvent)->dict[str,
         _release_strategy2_queue_lease(ref,str(token))
         _release_aster_account_coordination(uid,str(account_token))
 
+# --- Spike 1.1 realtime-trigger -------------------------------------------------
+_spike_trigger: SpikeTrigger | None = None
+_spike_shards: list[dict[str,set[str]]] = [dict() for _ in range(SPIKE_MAX_CONNECTIONS)]
+_spike_shards_lock = threading.Lock()
+_spike_workers: list[AsterRealtimeWorker] = []
+_spike_public_client: Any = None
+
+def _refresh_spike_watches_from_controls(controls:list[Any])->None:
+    global _spike_shards
+    if _spike_trigger is None:return
+    now_ms=int(time.time()*1000);watches=[]
+    for item in controls:
+        try:
+            watch=watch_from_control(item.id,item.to_dict() or {},now_ms=now_ms)
+        except Exception:
+            watch=None
+        if watch is not None:watches.append(watch)
+    _spike_trigger.replace_watches(watches)
+    shards=shard_mapping(watches)
+    with _spike_shards_lock:_spike_shards=shards
+
+def _spike_shard_loader(index:int):
+    def load()->dict[str,set[str]]:
+        with _spike_shards_lock:
+            return {symbol:set(uids) for symbol,uids in _spike_shards[index].items()}
+    return load
+
+def _spike_warm_reference(symbol:str,timeframe:str,now_ms:int)->bool:
+    global _spike_public_client
+    if _spike_public_client is None:
+        _spike_public_client=_public_aster_client()
+    return warm_spike_reference(_spike_public_client,symbol=symbol,timeframe=timeframe,now_ms=now_ms)
+
+def _run_spike_account_tick(uid:str,symbol:str)->dict[str,Any]:
+    """Volledige account-tick (alle bestaande gates) na een geraakte Spike-band."""
+    account_token=_acquire_aster_account_coordination(uid,"ASTER","REALTIME_SPIKE_ENTRY")
+    if not account_token:return {"status":"account-busy","ordersSent":0,"symbol":symbol}
+    ref=aster_strategy2_reference(uid);token=_acquire_strategy2_queue_lease(ref)
+    if not token:
+        _release_aster_account_coordination(uid,str(account_token))
+        return {"status":"lease-busy","ordersSent":0,"symbol":symbol}
+    try:
+        return _run_aster_strategy2_queue_scan(uid,maximum_orders=1,event_symbol=symbol)
+    finally:
+        _release_strategy2_queue_lease(ref,str(token))
+        _release_aster_account_coordination(uid,str(account_token))
+
+def _start_spike_realtime_workers()->None:
+    global _spike_trigger
+    if os.getenv("ASTER_REALTIME_WORKER","false").lower()!="true":return
+    if os.getenv("ASTER_SPIKE_REALTIME_WORKER","true").lower()!="true":return
+    _spike_trigger=SpikeTrigger(warm_reference=_spike_warm_reference)
+    evaluate=make_spike_evaluator(_spike_trigger,_run_spike_account_tick)
+    execution=os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true"
+    for index in range(SPIKE_MAX_CONNECTIONS):
+        worker=AsterRealtimeWorker(load_subscriptions=_spike_shard_loader(index),evaluate=evaluate,
+            execution_enabled=execution,force_evaluate=lambda uid,symbol:True)
+        _spike_workers.append(worker)
+        threading.Thread(target=lambda w=worker:asyncio.run(w.run()),name=f"aster-spike-{index}",daemon=True).start()
+
 def _persist_aster_realtime_health(payload:dict[str,Any])->None:
     db.collection("systemStatus").document("asterRealtime").set({**payload,"updatedAt":datetime.now(timezone.utc)},merge=True)
 
@@ -10470,16 +10534,22 @@ def start_aster_realtime_worker()->None:
     if os.getenv("ASTER_REALTIME_WORKER","false").lower()!="true":return
     if _aster_realtime_thread and _aster_realtime_thread.is_alive():return
     _aster_realtime_thread=threading.Thread(target=_start_aster_realtime_worker,name="aster-realtime",daemon=True);_aster_realtime_thread.start()
+    try:
+        _start_spike_realtime_workers()
+    except Exception:
+        print("SPIKE_REALTIME_START_FAILED",flush=True)
 
 @app.get("/internal/aster-realtime/health")
 def aster_realtime_health(authorization:str|None=Header(default=None))->dict[str,Any]:
     verify_internal_cloud_request(authorization);worker=_aster_realtime_worker
-    return {"workerEnabled":os.getenv("ASTER_REALTIME_WORKER","false").lower()=="true","executionEnabled":os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true",**(worker.health() if worker else {"connected":False,"subscriptions":0,"tenants":0})}
+    return {"workerEnabled":os.getenv("ASTER_REALTIME_WORKER","false").lower()=="true","executionEnabled":os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true",**(worker.health() if worker else {"connected":False,"subscriptions":0,"tenants":0}),
+        "spikeWorkers":[w.health() for w in _spike_workers]}
 
 @app.on_event("shutdown")
 def stop_aster_realtime_worker()->None:
     worker=_aster_realtime_worker
     if worker is not None:worker.stop()
+    for spike_worker in _spike_workers:spike_worker.stop()
 
 
 @app.get("/v1/me/aster/realtime/events")

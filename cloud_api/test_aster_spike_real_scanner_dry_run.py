@@ -40,6 +40,10 @@ class FakeClient:
         raise AssertionError("Unexpected exchange interaction: "+name)
 
 class ScannerDryRunTests(unittest.TestCase):
+    def setUp(self):
+        from aster_extreme_spike_filter import clear_reference_cache
+        clear_reference_cache()
+        if hasattr(super(), 'setUp'): super().setUp()
     def test_real_scanner_uses_saved_spike_settings_without_order(self):
         settings=MultiBbConfig.from_mapping({
            "universeTopN":1,"maximumPositions":1,"longSlots":1,"shortSlots":0,
@@ -103,6 +107,10 @@ class ScannerDryRunTests(unittest.TestCase):
 
 
 class SpikeSideToggleTests(unittest.TestCase):
+    def setUp(self):
+        from aster_extreme_spike_filter import clear_reference_cache
+        clear_reference_cache()
+        if hasattr(super(), 'setUp'): super().setUp()
     """Spike 1.1: LONG en SHORT apart aan/uit; een uitgezette kant opent niets."""
     def run_short(self, short_enabled):
         settings=MultiBbConfig.from_mapping({

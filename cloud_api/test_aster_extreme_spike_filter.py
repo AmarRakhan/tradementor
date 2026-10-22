@@ -6,6 +6,8 @@ from aster_execution import client_order_id
 from aster_extreme_spike_filter import evaluate_spike, SpikeFilterRejected, normalize_mode,validate_settings,require_extreme_spike_entry,spike_event_key,claim_spike_entry_once
 class SpikeTests(unittest.TestCase):
     def setUp(self):
+        from aster_extreme_spike_filter import clear_reference_cache
+        clear_reference_cache()
         self.closes=[100.0 + (i%2)*2 for i in range(20)]
         self.base=dict(side="LONG",level="5-6",timeframe="15m",previous_closes=self.closes,candle_high=102,candle_low=95.5,candle_close_ms=10000,now_ms=11000,max_staleness_ms=2000)
     def test_sigma_band(self):
@@ -166,3 +168,39 @@ class SpikeTests(unittest.TestCase):
         self.assertEqual(len(second.events),1)
 
 if __name__=="__main__": unittest.main()
+
+
+class ReferenceCacheTests(unittest.TestCase):
+    """Eén klines-aanroep per munt per candle; daarna alleen de live prijs."""
+    def setUp(self):
+        from aster_extreme_spike_filter import clear_reference_cache
+        clear_reference_cache()
+    def client(self):
+        calls=[]
+        class C:
+            def klines(self, **kw):
+                calls.append(kw)
+                rows=[[i*60000,100+(i%2)*2,102,100,100+(i%2)*2,0,(i+1)*60000-1] for i in range(22)]
+                rows.append([22*60000,101,102,90,101,0,23*60000-1])
+                return rows
+        return C(), calls
+    def test_same_candle_uses_cache(self):
+        c,calls=self.client()
+        for t in (22*60000+10, 22*60000+30000, 23*60000-2):
+            require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5",timeframe="1m",now_ms=t,live_price=95.5)
+        self.assertEqual(len(calls),1)
+    def test_new_candle_refetches(self):
+        c,calls=self.client()
+        require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5",timeframe="1m",now_ms=22*60000+10,live_price=95.5)
+        with self.assertRaises(SpikeFilterRejected):
+            # volgende candle: cache verlopen, nieuwe klines (fake geeft oude data -> geen live candle)
+            require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5",timeframe="1m",now_ms=23*60000+10,live_price=95.5)
+        self.assertEqual(len(calls),2)
+    def test_cached_reference_still_decides_on_live_price(self):
+        c,_=self.client()
+        require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5",timeframe="1m",now_ms=22*60000+10,live_price=95.5)
+        with self.assertRaises(SpikeFilterRejected):
+            require_extreme_spike_entry(c,symbol="BTCUSDT",side="LONG",level="5",timeframe="1m",now_ms=22*60000+20,live_price=101)
+
+
+if __name__=="__main__":unittest.main()

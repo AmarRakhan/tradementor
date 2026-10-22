@@ -6,6 +6,10 @@ from aster_multi_bb_core import MultiBbConfig
 from aster_extreme_spike_filter import require_extreme_spike_entry, SpikeFilterRejected
 
 class ScannerSavedSettingsTests(unittest.TestCase):
+    def setUp(self):
+        from aster_extreme_spike_filter import clear_reference_cache
+        clear_reference_cache()
+        if hasattr(super(), 'setUp'): super().setUp()
     def base(self):
         return {"universeTopN":350,"maximumPositions":125,"longSlots":63,"shortSlots":62,
                 "minimumLeverage":20,"maximumLeverage":20}

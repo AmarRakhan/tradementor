@@ -1,0 +1,102 @@
+name: Extreme Spike 1.1 CI (isolated, no secrets, no orders)
+# Test-only. Runs ONLY on the Extreme Spike 1.1 branch (and manually). No secrets, no id-token, no deploy,
+# no Aster access, no production Firebase project.
+on:
+  push:
+    branches: [claude/extreme-spike-1-1]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: extreme-spike-1-1-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GCLOUD_PROJECT: extreme-spike-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Extreme Spike 1.1 (filter, config, TP/trailing, realtime, scanner dry-run)
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "extreme spike" 40 python -m unittest -v test_aster_extreme_spike_filter test_aster_extreme_spike_config test_aster_spike_pre_mutation test_aster_spike_saved_settings_scanner test_aster_spike_real_scanner_dry_run test_aster_spike_take_profit test_aster_spike_realtime
+      - name: SHORT Recovery 2.0 pure modules
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "short recovery pure" 40 python -m unittest -v test_short_recovery_ladder test_short_recovery_runtime test_short_recovery_pair_exit
+      - name: SHORT Recovery 2.0 engine
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "short recovery engine" 40 python -m unittest -v test_short_recovery_2_0_engine
+      - name: SHORT Recovery 2.0 real worker tick
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "short recovery worker" 60 python -m unittest -v test_short_recovery_2_0_worker
+      - name: Auto Hedge engine + lifecycle regression
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "auto hedge regression" 20 pytest -q -rfE -p no:cacheprovider test_aster_position_loss_auto_hedge.py test_aster_position_loss_auto_hedge_lifecycle_contract.py test_aster_position_loss_auto_hedge_lock.py test_aster_position_loss_auto_hedge_owner_gate.py
+      - name: Re-Hedge All 1.0 regression
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "re-hedge all regression" 20 python -m unittest test_rehedge_all_1_0
+      - name: Full backend regression
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Web build + tests
+        working-directory: web
+        run: npm ci && ../tools/ci_report.sh "web build + tests" 40 npm test
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCLOUD_PROJECT: extreme-spike-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install emulator and backend dependencies
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+      - name: SHORT Recovery 2.0 worker on the REAL Firestore emulator
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/sr2-firebase.json
+          tools/ci_report.sh "firestore emulator short recovery" 60 npx firebase emulators:exec --config /tmp/sr2-firebase.json --only firestore --project short-recovery-test-only \
+            'cd cloud_api && python -m unittest -v test_short_recovery_2_0_worker_emulator'
+      - name: Extreme Spike claim on the REAL Firestore emulator
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/spike-firebase.json
+          tools/ci_report.sh "firestore emulator spike claim" 30 npx firebase emulators:exec --config /tmp/spike-firebase.json --only firestore --project extreme-spike-test-only \
+            'cd cloud_api && python -m unittest -v test_aster_spike_firestore_emulator'
