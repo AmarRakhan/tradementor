@@ -1101,7 +1101,7 @@ def put_position_loss_auto_hedge_rehedge(
 class ShortRecoverySettingsRequest(BaseModel):
     enabled: bool
     steps: int = Field(ge=1, le=100)
-    stepPct: str = Field(min_length=1, max_length=16)
+    totalPct: str = Field(min_length=1, max_length=16)
     clientBuild: str = Field(default="", max_length=32)
 
 
@@ -1115,7 +1115,7 @@ def put_position_loss_auto_hedge_short_recovery(
     uid = main.require_release_feature(user, "auto_hedge_v2")
     try:
         plan = normalize_short_recovery_settings(
-            {"enabled": request.enabled, "steps": request.steps, "stepPct": request.stepPct})
+            {"enabled": request.enabled, "steps": request.steps, "totalPct": request.totalPct})
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     if plan["enabled"] and _current(uid).get("enabled") is not True:

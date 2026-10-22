@@ -26,14 +26,14 @@ from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Any, Mapping
 
 DEFAULT_STEPS = 4
-DEFAULT_STEP_PCT = Decimal("2")
+DEFAULT_TOTAL_PCT = Decimal("8")
 MAX_STEPS = 100
 REOPEN_FRACTION = Decimal("0.9")
 
 
 def _dec(value: Any, name: str) -> Decimal:
     try:
-        result = Decimal(str(value))
+        result = Decimal(str(value).replace(",", "."))
     except (InvalidOperation, TypeError, ValueError):
         raise ValueError(f"{name} moet een getal zijn")
     if not result.is_finite():
@@ -41,8 +41,17 @@ def _dec(value: Any, name: str) -> Decimal:
     return result
 
 
+def _text(value: Decimal) -> str:
+    return format(value.normalize(), "f")
+
+
 def normalize_settings(raw: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Validate user settings. Fully free choice of steps and distance."""
+    """Validate user settings (decision Amar 18:02).
+
+    The user chooses ON/OFF, the TOTAL drop over which the SHORT is reduced (``totalPct``) and the
+    number of steps; the bot derives the distance per step (totalPct / steps). A legacy ``stepPct``
+    (distance per step) is still accepted and converted: totalPct = stepPct * steps.
+    """
     raw = raw or {}
     if not isinstance(raw, Mapping):
         raise ValueError("instellingen moeten een object zijn")
@@ -52,19 +61,26 @@ def normalize_settings(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     steps = raw.get("steps", DEFAULT_STEPS)
     if isinstance(steps, bool) or not isinstance(steps, int) or not 1 <= steps <= MAX_STEPS:
         raise ValueError(f"aantal stappen moet een geheel getal van 1 t/m {MAX_STEPS} zijn")
-    step_pct = _dec(raw.get("stepPct", DEFAULT_STEP_PCT), "stapafstand")
-    if step_pct <= 0:
-        raise ValueError("stapafstand moet groter dan 0% zijn")
-    if step_pct * steps >= 100:
-        raise ValueError("laatste afbouwniveau moet boven 0 liggen (stappen × afstand < 100%)")
-    return {"enabled": enabled, "steps": steps, "stepPct": format(step_pct.normalize(), "f")}
+    if raw.get("totalPct") is not None:
+        total = _dec(raw.get("totalPct"), "totale daling")
+    elif raw.get("stepPct") is not None:
+        total = _dec(raw.get("stepPct"), "stapafstand") * steps
+    else:
+        total = DEFAULT_TOTAL_PCT
+    if total <= 0:
+        raise ValueError("totale daling moet groter dan 0% zijn")
+    if total >= 100:
+        raise ValueError("totale daling moet onder 100% liggen")
+    return {"enabled": enabled, "steps": steps, "totalPct": _text(total),
+            "stepPct": _text((total / Decimal(steps)).quantize(Decimal("1e-8")))}
 
 
-def step_price(anchor: Any, k: int, step_pct: Any) -> Decimal:
+def step_price(anchor: Any, k: int, n: int, total_pct: Any) -> Decimal:
+    """Level of step k: anchor * (1 - total * k / n / 100), always from the same anchor."""
     a = _dec(anchor, "anker")
     if a <= 0:
         raise ValueError("anker moet positief zijn")
-    return a * (Decimal(1) - Decimal(k) * _dec(step_pct, "stapafstand") / Decimal(100))
+    return a * (Decimal(1) - _dec(total_pct, "totale daling") * Decimal(k) / Decimal(n) / Decimal(100))
 
 
 def ladder(anchor: Any, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -73,7 +89,7 @@ def ladder(anchor: Any, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "step": k,
-            "price": step_price(anchor, k, cfg["stepPct"]),
+            "price": step_price(anchor, k, n, cfg["totalPct"]),
             "remainingFraction": Decimal(n - k) / Decimal(n),
         }
         for k in range(1, n + 1)
@@ -90,7 +106,7 @@ def steps_reached(anchor: Any, mark: Any, settings: Mapping[str, Any], previous:
         return prior
     reached = 0
     for k in range(1, n + 1):
-        if price <= step_price(anchor, k, cfg["stepPct"]):
+        if price <= step_price(anchor, k, n, cfg["totalPct"]):
             reached = k
         else:
             break

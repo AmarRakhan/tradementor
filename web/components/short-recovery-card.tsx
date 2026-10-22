@@ -8,7 +8,7 @@ import { recoveryLadder, recoveryRows, validateRecoverySettings } from "@/lib/sh
 // SHORT Recovery 2.0 settings + status. Saving only stores settings; the server worker decides and
 // places every order through the existing Auto Hedge engine. This component holds no order logic.
 
-type Plan = { enabled: boolean; steps: number; stepPct: string };
+type Plan = { enabled: boolean; steps: number; totalPct: string; stepPct?: string };
 type AutoHedgeLike = {
   enabled: boolean;
   pairs?: Array<Record<string, unknown>>;
@@ -25,33 +25,37 @@ const field: React.CSSProperties = { width: "100%", padding: 8, borderRadius: 8,
 const button: React.CSSProperties = { border: "1px solid #bd9650", borderRadius: 10, padding: "9px 12px", color: "#e7c66b", background: "#17261d" };
 
 export function ShortRecoveryCard({ state, onSaved }: { state: AutoHedgeLike; onSaved: (next: AutoHedgeLike) => void }) {
-  const plan = state.shortRecoveryPlan ?? { enabled: false, steps: 4, stepPct: "2" };
+  const plan = state.shortRecoveryPlan ?? { enabled: false, steps: 4, totalPct: "8" };
   const live = state.shortRecoveryExecutionEnabled === true;
   const [flipped, setFlipped] = useState(false);
   const [enabled, setEnabled] = useState(plan.enabled);
   const [steps, setSteps] = useState(String(plan.steps));
-  const [stepPct, setStepPct] = useState(String(plan.stepPct));
+  const [totalPct, setTotalPct] = useState(String(plan.totalPct));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setEnabled(plan.enabled); setSteps(String(plan.steps)); setStepPct(String(plan.stepPct));
-  }, [plan.enabled, plan.steps, plan.stepPct]);
+    setEnabled(plan.enabled); setSteps(String(plan.steps)); setTotalPct(String(plan.totalPct));
+  }, [plan.enabled, plan.steps, plan.totalPct]);
 
-  const check = validateRecoverySettings(steps, stepPct);
-  const ladder = useMemo(() => recoveryLadder(steps, stepPct), [steps, stepPct]);
+  const check = validateRecoverySettings(steps, totalPct);
+  const ladder = useMemo(() => recoveryLadder(steps, totalPct), [steps, totalPct]);
   const rows = useMemo(() => recoveryRows(state.pairs, live), [state.pairs, live]);
-  const dirty = enabled !== plan.enabled || steps !== String(plan.steps) || stepPct !== String(plan.stepPct);
+  const dirty = enabled !== plan.enabled || steps !== String(plan.steps) || totalPct !== String(plan.totalPct);
 
   async function save() {
-    if (!check.ok) { setError(check.message); return; }
+    if (enabled && !check.ok) { setError(check.message); return; }
+    // Switching OFF always works, even with half-typed inputs: keep the last saved values.
+    const payload = check.ok
+      ? { enabled, steps: check.steps, totalPct: String(check.totalPct) }
+      : { enabled: false, steps: plan.steps, totalPct: String(plan.totalPct) };
     setSaving(true); setError(""); setMessage("");
     try {
       const next = await authenticatedRequest("/api/exchanges/aster/position-loss-auto-hedge/short-recovery", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled, steps: check.steps, stepPct: String(check.stepPct), clientBuild: String(WEBAPP_BUILD_NUMBER) }),
+        body: JSON.stringify({ ...payload, clientBuild: String(WEBAPP_BUILD_NUMBER) }),
       }) as AutoHedgeLike;
       onSaved(next);
       setMessage(enabled ? "Opgeslagen · de bot past dit toe vanaf de volgende cyclus." : "Opgeslagen · SHORT Recovery staat UIT; posities worden weer 1:1 gehedged.");
@@ -79,22 +83,24 @@ export function ShortRecoveryCard({ state, onSaved }: { state: AutoHedgeLike; on
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} disabled={saving || (!state.enabled && !enabled)} />
             <span>SHORT Recovery {enabled ? "AAN" : "UIT"}{!state.enabled ? " · zet eerst Auto Hedge aan" : ""}</span>
           </label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
-            <label style={{ fontSize: 12 }}>Aantal stappen
-              <input aria-label="Aantal afbouwstappen" type="number" min="1" max="100" step="1" inputMode="numeric" value={steps} onChange={(e) => setSteps(e.target.value)} style={field} disabled={saving} />
-            </label>
-            <label style={{ fontSize: 12 }}>Koersdaling per stap (%)
-              <input aria-label="Koersdaling per stap" type="text" inputMode="decimal" value={stepPct} onChange={(e) => setStepPct(e.target.value)} style={field} disabled={saving} />
-            </label>
-          </div>
-          {check.ok
-            ? <p style={{ marginTop: 10, fontSize: 13 }}>Per stap <b>{fmt(100 / check.steps, 4)}% SHORT</b> · leeg bij <b>−{fmt(check.steps * check.stepPct, 4)}%</b></p>
-            : <p role="alert" style={{ color: "#ff8f8f", fontSize: 13 }}>{check.message}</p>}
-          <p style={{ fontSize: 11, opacity: .75 }}>Stap te klein voor Aster? Dan sluit de bot de SHORT 100% en zet 90% terug.</p>
+          {enabled && <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+              <label style={{ fontSize: 12 }}>Afbouwen over totale daling (%)
+                <input aria-label="Totale daling voor afbouw" type="text" inputMode="decimal" value={totalPct} onChange={(e) => setTotalPct(e.target.value)} style={field} disabled={saving} />
+              </label>
+              <label style={{ fontSize: 12 }}>In hoeveel stappen
+                <input aria-label="Aantal afbouwstappen" type="number" min="1" max="100" step="1" inputMode="numeric" value={steps} onChange={(e) => setSteps(e.target.value)} style={field} disabled={saving} />
+              </label>
+            </div>
+            {check.ok
+              ? <p style={{ marginTop: 10, fontSize: 13 }}>Elke <b>{fmt(check.stepPct, 4)}% daling</b> verkoopt de bot <b>{fmt(check.sellPct, 4)}% van de SHORT</b> · leeg bij <b>−{fmt(check.totalPct, 4)}%</b>, daarna weer 100% hedgen</p>
+              : <p role="alert" style={{ color: "#ff8f8f", fontSize: 13 }}>{check.message}</p>}
+          </>}
+          {enabled && <p style={{ fontSize: 11, opacity: .75 }}>Stap te klein voor Aster? Dan sluit de bot de SHORT 100% en zet 90% van de LONG terug.</p>}
           {error && <p role="alert" style={{ color: "#ff8f8f", fontSize: 12 }}>{error}</p>}
           {message && <p style={{ color: "#9fe0a8", fontSize: 12 }}>{message}</p>}
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button type="button" style={button} onClick={() => void save()} disabled={saving || !dirty || !check.ok}>{saving ? "Opslaan…" : "Opslaan"}</button>
+            <button type="button" style={button} onClick={() => void save()} disabled={saving || !dirty || (enabled && !check.ok)}>{saving ? "Opslaan…" : "Opslaan"}</button>
             <button type="button" style={button} onClick={() => setFlipped(true)}>Draai kaart ↻</button>
           </div>
         </div>

@@ -1,23 +1,25 @@
 // SHORT Recovery 2.0 — display helpers only (no orders, no exchange logic).
 
-export function validateRecoverySettings(stepsRaw, stepPctRaw) {
+// Amar 18:02: the user chooses the TOTAL drop and the number of steps; distance per step = total / steps.
+export function validateRecoverySettings(stepsRaw, totalPctRaw) {
   const steps = Number(stepsRaw);
-  const stepPct = Number(String(stepPctRaw).replace(",", "."));
+  const totalPct = Number(String(totalPctRaw).replace(",", "."));
   if (!Number.isInteger(steps) || steps < 1 || steps > 100) return { ok: false, message: "Aantal stappen: geheel getal van 1 t/m 100." };
-  if (!Number.isFinite(stepPct) || stepPct <= 0) return { ok: false, message: "Koersdaling per stap moet groter dan 0% zijn." };
-  if (steps * stepPct >= 100) return { ok: false, message: "Stappen × afstand moet onder 100% blijven." };
-  return { ok: true, steps, stepPct };
+  if (!Number.isFinite(totalPct) || totalPct <= 0) return { ok: false, message: "Totale daling moet groter dan 0% zijn." };
+  if (totalPct >= 100) return { ok: false, message: "Totale daling moet onder 100% blijven." };
+  return { ok: true, steps, totalPct, stepPct: totalPct / steps, sellPct: 100 / steps };
 }
 
-export function recoveryLadder(stepsRaw, stepPctRaw, anchor = 100) {
-  const v = validateRecoverySettings(stepsRaw, stepPctRaw);
+export function recoveryLadder(stepsRaw, totalPctRaw, anchor = 100) {
+  const v = validateRecoverySettings(stepsRaw, totalPctRaw);
   if (!v.ok) return [];
   return Array.from({ length: v.steps }, (_, i) => {
     const k = i + 1;
+    const drop = (v.totalPct * k) / v.steps;
     return {
       step: k,
-      dropPct: Number((k * v.stepPct).toFixed(6)),
-      price: Number((anchor * (1 - (k * v.stepPct) / 100)).toFixed(8)),
+      dropPct: Number(drop.toFixed(6)),
+      price: Number((anchor * (1 - drop / 100)).toFixed(8)),
       remainingPct: Number((((v.steps - k) / v.steps) * 100).toFixed(4)),
     };
   });

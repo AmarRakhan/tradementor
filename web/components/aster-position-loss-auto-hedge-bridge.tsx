@@ -118,7 +118,7 @@ type AutoHedgeState = {
     final?: Array<Record<string, unknown>>;
   } | null;
   lastError?: string;
-  shortRecoveryPlan?: { enabled: boolean; steps: number; stepPct: string };
+  shortRecoveryPlan?: { enabled: boolean; steps: number; totalPct: string; stepPct?: string };
   shortRecoveryExecutionEnabled?: boolean;
 };
 
@@ -931,13 +931,13 @@ export function AsterPositionLossAutoHedgeBridge() {
           <p className="plah-info"><span>i</span> Bij -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager wordt de tegengestelde zijde aangepast tot exact 1:1 coin quantity.</p>
         </section>
 
+        <ShortRecoveryCard state={state as unknown as Parameters<typeof ShortRecoveryCard>[0]["state"]} onSaved={(next) => setState(next as unknown as AutoHedgeState)} />
+
         <div className="plah-scope-grid">
           <article><span>{layersIcon()}</span><div><small>Bestaande posities</small><strong>Inbegrepen</strong></div><b>✓</b></article>
           <article><span>{clockIcon()}</span><div><small>Nieuwe posities</small><strong>Realtime bewaakt</strong></div><b>✓</b></article>
           <article><span>{gearIcon()}</span><div><small>Controle-interval</small><strong>Elke 3 seconden</strong></div><b>✓</b></article>
         </div>
-
-        <ShortRecoveryCard state={state as unknown as Parameters<typeof ShortRecoveryCard>[0]["state"]} onSaved={(next) => setState(next as unknown as AutoHedgeState)} />
 
         {!state.executionEnabled && <div className="plah-test-mode">
           TESTMODUS · actuele Aster-posities worden exact 1:1 doorgerekend, maar Auto Hedge verstuurt nog geen orders.

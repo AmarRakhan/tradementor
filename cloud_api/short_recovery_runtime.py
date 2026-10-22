@@ -15,7 +15,7 @@ Phases of the per-pair ``shortRecovery`` record:
 * REOPEN_OPEN — target = reopenQty (90% of the LONG: always a 10% gap); once reached a new
   LADDER cycle starts on that reopened SHORT.
 
-Settings changes apply from the next cycle (steps/stepPct are snapshotted at cycle start).
+Settings changes apply from the next cycle (steps/totalPct are snapshotted at cycle start).
 Switching the feature off clears the record: the engine then restores the legacy 1:1 hedge.
 """
 from __future__ import annotations
@@ -59,6 +59,7 @@ def _start_cycle(prior: Mapping[str, Any] | None, *, long_q: Decimal, short_q: D
         "longAtStart": _txt(long_q),
         "stepsReached": 0,
         "steps": cfg["steps"],
+        "totalPct": cfg["totalPct"],
         "stepPct": cfg["stepPct"],
         "startReason": reason,
         "reopenQty": None,
@@ -133,8 +134,13 @@ def decide(
     base = _d(rec.get("base"))
     growth = max(Decimal(0), long_q - _d(rec.get("longAtStart")))
     cap = base + growth
-    snapshot = {"enabled": True, "steps": int(rec.get("steps") or cfg["steps"]),
-                "stepPct": str(rec.get("stepPct") or cfg["stepPct"])}
+    snap_steps = int(rec.get("steps") or cfg["steps"])
+    if rec.get("totalPct") is not None:
+        snapshot = {"enabled": True, "steps": snap_steps, "totalPct": str(rec["totalPct"])}
+    elif rec.get("stepPct") is not None:
+        snapshot = {"enabled": True, "steps": snap_steps, "stepPct": str(rec["stepPct"])}
+    else:
+        snapshot = {"enabled": True, "steps": cfg["steps"], "totalPct": cfg["totalPct"]}
     decision = plan(long_qty=cap, short_qty=min(short_q, cap), base=base, anchor=_d(rec.get("anchor")), mark=price,
                     settings=snapshot, previous_steps=int(rec.get("stepsReached") or 0), qty_step=step,
                     min_qty=min_qty, min_notional=min_notional, reopen_basis_qty=long_q)

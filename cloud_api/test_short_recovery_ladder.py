@@ -18,7 +18,18 @@ def run(**kw):
 
 class Settings(unittest.TestCase):
     def test_defaults_off(self):
-        self.assertEqual(normalize_settings(None), {"enabled": False, "steps": 4, "stepPct": "2"})
+        self.assertEqual(normalize_settings(None), {"enabled": False, "steps": 4, "totalPct": "8", "stepPct": "2"})
+
+    def test_total_drop_and_steps_amar_example(self):
+        # Amar 18:02: "20% daling in 10 stappen" -> every 2% sells 10%.
+        cfg = normalize_settings({"enabled": True, "steps": 10, "totalPct": "20"})
+        self.assertEqual((cfg["totalPct"], cfg["stepPct"]), ("20", "2"))
+        self.assertEqual([r["price"] for r in ladder(100, cfg)][:2], [D("98"), D("96")])
+        self.assertEqual(ladder(100, cfg)[-1]["price"], D("80"))
+
+    def test_uneven_division_keeps_exact_levels(self):
+        cfg = {"steps": 3, "totalPct": "10"}
+        self.assertEqual(ladder(300, cfg)[-1]["price"], D("270"))   # last level exactly -10%
 
     def test_free_choice(self):
         self.assertEqual(normalize_settings({"steps": 10, "stepPct": "0.1"})["steps"], 10)
@@ -27,6 +38,7 @@ class Settings(unittest.TestCase):
     def test_rejects_invalid(self):
         for bad in ({"steps": 0}, {"steps": 101}, {"steps": True}, {"steps": 2.5},
                     {"stepPct": 0}, {"stepPct": "-1"}, {"stepPct": "nan"}, {"steps": 4, "stepPct": 25},
+                    {"totalPct": 100}, {"totalPct": 0}, {"totalPct": "abc"},
                     {"enabled": "yes"}):
             with self.assertRaises(ValueError, msg=bad):
                 normalize_settings(bad)
