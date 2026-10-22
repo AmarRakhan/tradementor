@@ -215,7 +215,7 @@ export function PortfolioImpactBattle({ positions, equity, dataAvailable, update
     };
 
     void load(Boolean(cached));
-    const refresh = window.setInterval(() => { void load(true); }, REFRESH_MS[timeframe]);
+    const refresh = window.setInterval(() => { if (document.visibilityState==="visible") void load(true); }, REFRESH_MS[timeframe]);
     return () => { active = false; window.clearInterval(refresh); };
   }, [timeframe, marketPressureOverride]);
 

@@ -104,7 +104,7 @@ export function HomeTransferPage() {
   useEffect(() => {
     if (flow !== "status" || !intent?.id) return;
     void refreshIntent();
-    pollRef.current = window.setInterval(() => void refreshIntent().catch(() => undefined), 3000);
+    pollRef.current = window.setInterval(() => { if (document.visibilityState==="visible") void refreshIntent().catch(() => undefined); }, 3000);
     const visible = () => { if (document.visibilityState === "visible") void refreshIntent().catch(() => undefined); };
     document.addEventListener("visibilitychange", visible);
     window.addEventListener("pageshow", visible);

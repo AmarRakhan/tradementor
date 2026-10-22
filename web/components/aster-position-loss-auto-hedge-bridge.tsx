@@ -478,7 +478,7 @@ export function AsterPositionLossAutoHedgeBridge() {
   useEffect(() => {
     if (!tileHost) return;
     void load();
-    const timer = window.setInterval(() => { void load(); }, open ? 3000 : 10000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void load(); }, open ? 3000 : 10000);
     const onVisible = () => { if (document.visibilityState === "visible") void load(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {

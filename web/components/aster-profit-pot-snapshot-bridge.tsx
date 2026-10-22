@@ -117,7 +117,7 @@ export function AsterProfitPotSnapshotBridge() {
       }
     };
     void refreshCycle();
-    const timer = window.setInterval(refreshCycle, 10000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refreshCycle(); }, 10000);
     const onVisible = () => { if (document.visibilityState === "visible") void refreshCycle(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -147,7 +147,7 @@ export function AsterProfitPotSnapshotBridge() {
       }
     };
     void refreshProfitPot();
-    const timer = window.setInterval(refreshProfitPot, 10000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refreshProfitPot(); }, 10000);
     const onVisible = () => { if (document.visibilityState === "visible") void refreshProfitPot(); };
     const onUpdated = () => { void refreshProfitPot(); };
     document.addEventListener("visibilitychange", onVisible);

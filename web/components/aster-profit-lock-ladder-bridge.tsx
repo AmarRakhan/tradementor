@@ -150,7 +150,7 @@ export function AsterProfitLockLadderBridge() {
 
   useEffect(() => {
     const initial = window.setTimeout(() => { void refresh(); }, 0);
-    const timer = window.setInterval(() => void refresh(), 15000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refresh(); }, 15000);
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(timer);

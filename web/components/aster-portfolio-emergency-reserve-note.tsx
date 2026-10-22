@@ -71,7 +71,7 @@ export function AsterPortfolioEmergencyReserveNote() {
 
   useEffect(() => {
     const first = window.setTimeout(() => { void refresh(); }, 0);
-    const timer = window.setInterval(() => { void refresh(); }, 3000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refresh(); }, 3000);
     return () => {
       window.clearTimeout(first);
       window.clearInterval(timer);

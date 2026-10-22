@@ -1320,7 +1320,7 @@ export function AsterPortfolioSnapshotEnhancer() {
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 15000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refresh(); }, 15000);
     const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -1342,7 +1342,7 @@ export function AsterPortfolioSnapshotEnhancer() {
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 15000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refresh(); }, 15000);
     const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -1364,7 +1364,7 @@ export function AsterPortfolioSnapshotEnhancer() {
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 15000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refresh(); }, 15000);
     const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
@@ -1386,7 +1386,7 @@ export function AsterPortfolioSnapshotEnhancer() {
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 5000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refresh(); }, 5000);
     const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {

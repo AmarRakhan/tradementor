@@ -10,7 +10,7 @@ const pct=(x:unknown)=>`${(n(x)*100).toFixed(2)}%`;
 
 export function AsterStrategy2FocusShadow({enabled,manualPair,onSelect}:{enabled:boolean;manualPair?:string;onSelect?:(symbol:string)=>void}){
  const [report,setReport]=useState<Report|null>(null),[error,setError]=useState("");
- useEffect(()=>{if(!enabled)return;let active=true;const load=async()=>{try{const value=await authenticatedRequest("/api/exchanges/aster/strategy2/focus/shadow") as Report;if(active){setReport(value);setError("")}}catch(e){if(active)setError(e instanceof Error?e.message:"Focus Shadow kon niet worden geladen")}};void load();const timer=setInterval(()=>void load(),15000);return()=>{active=false;clearInterval(timer)}},[enabled]);
+ useEffect(()=>{if(!enabled)return;let active=true;const load=async()=>{try{const value=await authenticatedRequest("/api/exchanges/aster/strategy2/focus/shadow") as Report;if(active){setReport(value);setError("")}}catch(e){if(active)setError(e instanceof Error?e.message:"Focus Shadow kon niet worden geladen")}};void load();const timer=setInterval(()=>{if(document.visibilityState==="visible")void load()},15000);return()=>{active=false;clearInterval(timer)}},[enabled]);
  const state=report?.state||{};const performance=report?.performance||{};const rows=useMemo(()=>Array.isArray(report?.ranking)?report!.ranking!.slice(0,10):[],[report]);
  if(!enabled)return <small>Schakel Focus Shadow in om de actuele Aster-ranking te zien.</small>;
  if(error)return <p className="strategy-message">{error}</p>;

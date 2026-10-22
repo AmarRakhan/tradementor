@@ -153,7 +153,7 @@ export function TradeIntelligenceAdvisorCenter({
       }
     };
     void refresh();
-    const timer = window.setInterval(refresh, 15_000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refresh(); }, 15_000);
     const visible = () => { if (document.visibilityState === "visible") void refresh(); };
     document.addEventListener("visibilitychange", visible);
     return () => { alive = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };

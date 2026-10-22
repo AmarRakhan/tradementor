@@ -525,7 +525,7 @@ export function ProfitCelebration() {
   useEffect(() => {
     if (!user || !cloudReady) return;
     void poll();
-    const timer = window.setInterval(() => void poll(), 12_000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void poll(); }, 12_000);
     const onVisibility = () => { if (document.visibilityState === "visible") void poll(); };
     document.addEventListener("visibilitychange", onVisibility);
     return () => {

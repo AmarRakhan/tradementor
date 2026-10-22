@@ -163,7 +163,7 @@ export function SniperDashboard({ cloudReady }: { cloudReady: boolean }) {
 
   useEffect(() => {
     if (!data?.enabled && !data?.monitor) return;
-    const timer = window.setInterval(() => void refresh(), 4000);
+    const timer = window.setInterval(() => { if (document.visibilityState==="visible") void refresh(); }, 4000);
     return () => window.clearInterval(timer);
   }, [data?.enabled, data?.monitor, refresh]);
 
