@@ -769,6 +769,8 @@ def _short_recovery_targets(
         generation = str(state.get("generationId") or "")
         if prior and str(prior.get("generationId") or "") != generation:
             prior = None  # a new Auto Hedge generation never inherits an old ladder
+        if prior and prior.get("startReason") == "ANCHOR_AT_SWITCH_ON":
+            prior = None  # Amar 21:36: anchor = hedge moment (SHORT entry); restart cycles anchored at switch-on
         long_row = pmap.get((symbol, "LONG")) or {}
         short_row = pmap.get((symbol, "SHORT")) or {}
         rule = rules.get(symbol)
@@ -807,7 +809,7 @@ def _short_recovery_targets(
             short_entry=short_entry,
             mark=mark,
             has_pending_short_order=symbol in pending,
-            start_at_mark=_hedged_before_switch_on(state, plan_settings),
+            start_at_mark=False,  # Amar 21:36: always anchor at the hedge moment (confirmed SHORT entry)
             qty_step=rule.market_quantity_step, min_qty=rule.market_min_quantity,
             min_notional=rule.min_notional, available_balance=available,
             leverage=long_row.get("leverage") or 1,

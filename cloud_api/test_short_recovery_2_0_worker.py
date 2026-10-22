@@ -96,14 +96,23 @@ class LiveLadder(Recovery):
             self.at("SOLUSDT", "98.5")                                # nothing changes
         self.assertEqual(self.rec("SOLUSDT")["evaluatedAt"], first["evaluatedAt"])
 
-    def test_switch_on_with_old_hedge_starts_at_current_price(self):
+    def test_old_hedge_anchors_at_hedge_moment_and_catches_up(self):
+        # Amar 21:36: the ladder counts from the hedge moment (SHORT entry), also for hedges that existed
+        # before switching ON. A coin already 6% below the hedge price reduces 2 steps at once (one order).
         self.open_pair("SOLUSDT")                                      # SHORT entry 100
-        self.at("SOLUSDT", 85)                                       # already 15% lower when switched ON
-        self.at("SOLUSDT", 85)
-        self.assertEqual(self.orders(), [])                          # no catch-up burst
-        self.assertEqual(self.rec("SOLUSDT")["anchor"], "85")
-        self.at("SOLUSDT", "83.3")                                    # 85 * 0.98
-        self.assertEqual(self.orders(), [("CLOSE", 2.5)])
+        self.at("SOLUSDT", 94)
+        self.assertEqual(self.rec("SOLUSDT")["anchor"], "100")
+        self.at("SOLUSDT", 94)
+        self.assertEqual(self.orders(), [("CLOSE", 7.5)])            # steps 1-3 (98/96/94) in one order
+
+    def test_records_anchored_at_switch_on_are_restarted(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        doc = self.pair("SOLUSDT")
+        old = {**doc["shortRecovery"], "anchor": "90", "startReason": "ANCHOR_AT_SWITCH_ON"}
+        self.put("asterPositionLossAutoHedge", self.uid, "pairs", "SOLUSDT", {**doc, "shortRecovery": old})
+        self.at("SOLUSDT", 98)
+        self.assertEqual(self.rec("SOLUSDT")["anchor"], "100")
 
     def test_gap_down_combines_steps_in_one_order(self):
         self.open_pair("SOLUSDT")
