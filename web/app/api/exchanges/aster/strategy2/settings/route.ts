@@ -4,6 +4,21 @@ import { proxyStrategy2Live } from "@/lib/secure-strategy2-live";
 /** Fields unknown to older/global editors must survive their saves. */
 const preserveKeys = [
   "pairOverrides",
+  // Extreme Spike 1.1: een ouder formulier mag deze nooit wissen. De backend voegt
+  // instellingen ook zelf samen; dit is een extra vangnet, zonder 409-blokkade.
+  "entryFilterMode",
+  "extremeSpikeSettingsVersion",
+  "extremeSpikeLevel",
+  "extremeSpikeLongTimeframe",
+  "extremeSpikeShortTimeframe",
+  "extremeSpikeLongEnabled",
+  "extremeSpikeShortEnabled",
+  "extremeSpikeLongTakeProfitPct",
+  "extremeSpikeShortTakeProfitPct",
+  "extremeSpikeLongTrailingEnabled",
+  "extremeSpikeShortTrailingEnabled",
+  "extremeSpikeLongTrailingPct",
+  "extremeSpikeShortTrailingPct",
   "takeProfitMode",
   "portfolioTpPercent",
   "portfolioTpInputMode",
