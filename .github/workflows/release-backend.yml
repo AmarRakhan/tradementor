@@ -1,0 +1,312 @@
+name: Release backend (goedkeuring Amar, exacte commit)
+# Release-route zonder Workstation. Alleen workflow_dispatch vanaf main.
+# Job 'plan' (geen Google-toegang): invoer, environment-bescherming, voortbouwen op live, volledige backend-tests.
+# Job 'deploy' (environment 'release' = verplichte goedkeuring door Amar): image bouwen, nieuwe revisie ZONDER
+# verkeer, bewijzen dat alles behalve image en commit-variabelen gelijk is aan live, health + routes, verkeer om,
+# 10 minuten bewaken, bij elke fout na het omzetten automatisch terug naar de vorige revisie.
+# Google accepteert alleen tokens van dit bestand en release-backend-rollback.yml op main, met environment 'release'
+# (WIF-pool gh-deploy, zie tools/deploy/setup-github-deploy-identity.sh).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: "Exacte 40-teken commit die live moet"
+        required: true
+        type: string
+      expected_live_commit:
+        description: "40-teken commit die NU live staat (anders stopt de release)"
+        required: true
+        type: string
+      reason:
+        description: "Korte omschrijving (verschijnt in de samenvatting)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tradementor-production-backend
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  ARTIFACT_REPOSITORY: tradementor
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/gh-deploy/providers/github-main
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  RELEASE_REVIEWER: AmarRakhan
+  SOURCE_COMMIT: ${{ inputs.source_commit }}
+  EXPECTED_LIVE_COMMIT: ${{ inputs.expected_live_commit }}
+  RELEASE_REASON: ${{ inputs.reason }}
+
+jobs:
+  plan:
+    name: Controle en tests (geen Google-toegang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Control plane van main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+
+      - name: Invoer controleren
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 control/tools/deploy/release_checks.py inputs "$SOURCE_COMMIT" "$EXPECTED_LIVE_COMMIT" "$GITHUB_REF" "$GITHUB_REPOSITORY"
+
+      - name: Goedkeuring is verplicht (environment 'release')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY/environments/release"
+          if ! curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api" -o "$RUNNER_TEMP/env.json"; then
+            echo "STOP: environment 'release' bestaat niet of is niet leesbaar. Eerst instellen met Amar als verplichte reviewer." >&2
+            exit 1
+          fi
+          curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$api/deployment-branch-policies" -o "$RUNNER_TEMP/env-policies.json" || echo '{"branch_policies":[]}' > "$RUNNER_TEMP/env-policies.json"
+          python3 control/tools/deploy/release_checks.py environment "$RUNNER_TEMP/env.json" "$RUNNER_TEMP/env-policies.json" "$RELEASE_REVIEWER"
+
+      - name: Exacte broncode
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          path: src
+          fetch-depth: 0
+
+      - name: Release bouwt voort op wat live staat
+        id: lineage
+        shell: bash
+        working-directory: src
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          git cat-file -e "$EXPECTED_LIVE_COMMIT^{commit}" || { echo "STOP: live commit $EXPECTED_LIVE_COMMIT niet gevonden in de repository" >&2; exit 1; }
+          git merge-base --is-ancestor "$EXPECTED_LIVE_COMMIT" "$SOURCE_COMMIT" || {
+            echo "STOP: $SOURCE_COMMIT bevat de live versie $EXPECTED_LIVE_COMMIT niet. Eerst samenvoegen; terugrollen gaat via release-backend-rollback.yml." >&2; exit 1; }
+          COMMITS="$(git rev-list --count "$EXPECTED_LIVE_COMMIT..$SOURCE_COMMIT")"
+          {
+            echo "## Release backend — wacht op goedkeuring"
+            echo
+            echo "- **Wat:** ${RELEASE_REASON:-(geen omschrijving)}"
+            echo "- **Nieuwe commit:** \`$SOURCE_COMMIT\`"
+            echo "- **Nu live:** \`$EXPECTED_LIVE_COMMIT\` (wordt het rollback-punt)"
+            echo "- **Commits erbij:** $COMMITS"
+            echo
+            echo "### Commits"
+            git log --format='- `%h` %s' "$EXPECTED_LIVE_COMMIT..$SOURCE_COMMIT" | head -40
+            echo
+            echo "### Gewijzigde bestanden in het image (cloud_api/)"
+            git diff --stat "$EXPECTED_LIVE_COMMIT" "$SOURCE_COMMIT" -- cloud_api | tail -60 | sed 's/^/    /'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: src/cloud_api/requirements.txt
+
+      - name: Backend-afhankelijkheden
+        run: pip install -r src/cloud_api/requirements.txt pytest
+
+      - name: Volledige backend-suite
+        shell: bash
+        working-directory: src/cloud_api
+        run: |
+          set -euo pipefail
+          set +e
+          pytest -q -p no:cacheprovider 2>&1 | tee "$RUNNER_TEMP/pytest.txt"
+          code=${PIPESTATUS[0]}
+          set -e
+          { echo; echo "### Backend-tests"; echo; echo "    $(tail -1 "$RUNNER_TEMP/pytest.txt")"; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"
+
+  deploy:
+    name: Deploy (na goedkeuring)
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Control plane van main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+
+      - name: Exacte broncode
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          path: src
+
+      - name: Bron is exact de goedgekeurde commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 control/tools/deploy/release_checks.py inputs "$SOURCE_COMMIT" "$EXPECTED_LIVE_COMMIT" "$GITHUB_REF" "$GITHUB_REPOSITORY"
+          test "$(git -C src rev-parse HEAD)" = "$SOURCE_COMMIT"
+          echo "DEPLOY_PHASE=auth" >> "$GITHUB_ENV"
+
+      - name: Google Cloud (WIF, geen sleutels)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Vooraf (alleen lezen) — live revisie en rollback-punt
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=preflight" >> "$GITHUB_ENV"
+          R="$RUNNER_TEMP"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/service-before.json"
+          LIVE="$(python3 -c 'import json,sys; rows=[r for r in json.load(open(sys.argv[1]))["status"]["traffic"] if (r.get("percent") or 0)>0]; print(rows[0]["revisionName"] if len(rows)==1 else "")' "$R/service-before.json")"
+          test -n "$LIVE" || { echo "STOP: verkeer is gesplitst over meerdere revisies" >&2; exit 1; }
+          gcloud run revisions describe "$LIVE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/live-revision.json"
+          python3 control/tools/deploy/release_checks.py preflight "$R/service-before.json" "$R/live-revision.json" "$EXPECTED_LIVE_COMMIT" > "$R/preflight.env"
+          cat "$R/preflight.env" >> "$GITHUB_ENV"
+          . "$R/preflight.env"
+          curl -fsS --retry 4 --retry-delay 3 "$SERVICE_URL/health" -o "$R/live-health.json"
+          python3 control/tools/deploy/release_checks.py health "$R/live-health.json" "$EXPECTED_LIVE_COMMIT"
+          curl -fsS --retry 4 --retry-delay 3 "$SERVICE_URL/openapi.json" -o "$R/live-openapi.json"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/iam-before.json"
+          echo "Live: $PREVIOUS_REVISION ($PREVIOUS_SOURCE_COMMIT)"
+
+      - name: Image bouwen en pushen
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=build" >> "$GITHUB_ENV"
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/tradementor-api:$SOURCE_COMMIT"
+          docker build --build-arg "SOURCE_COMMIT=$SOURCE_COMMIT" --tag "$IMAGE" src/cloud_api
+          docker push "$IMAGE"
+          PINNED="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")"
+          [[ "$PINNED" == "${IMAGE%%:*}@sha256:"* ]] || { echo "STOP: geen digest na push" >&2; exit 1; }
+          echo "IMAGE=$PINNED" >> "$GITHUB_ENV"
+
+      - name: Nieuwe revisie ZONDER verkeer
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=candidate" >> "$GITHUB_ENV"
+          R="$RUNNER_TEMP"
+          SUFFIX="rel-${SOURCE_COMMIT:0:8}-${GITHUB_RUN_ID: -6}${GITHUB_RUN_ATTEMPT}"
+          TAG="rel-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ENV_ARGS=""
+          for key in $UPDATE_ENV_KEYS; do ENV_ARGS="${ENV_ARGS:+$ENV_ARGS,}$key=$SOURCE_COMMIT"; done
+          gcloud run services update "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$IMAGE" --revision-suffix "$SUFFIX" --update-env-vars "$ENV_ARGS" --no-traffic --tag "$TAG"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/service-candidate.json"
+          gcloud run revisions describe "$CLOUD_RUN_SERVICE-$SUFFIX" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/candidate-revision.json"
+          python3 control/tools/deploy/release_checks.py candidate "$R/live-revision.json" "$R/candidate-revision.json" "$R/service-candidate.json" "$SOURCE_COMMIT" "$TAG" "$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Kandidaat controleren (health en routes)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=verify-candidate" >> "$GITHUB_ENV"
+          R="$RUNNER_TEMP"
+          curl -fsS --retry 8 --retry-delay 5 --retry-all-errors "$CANDIDATE_URL/health" -o "$R/candidate-health.json"
+          python3 control/tools/deploy/release_checks.py health "$R/candidate-health.json" "$SOURCE_COMMIT"
+          curl -fsS --retry 4 --retry-delay 3 "$CANDIDATE_URL/openapi.json" -o "$R/candidate-openapi.json"
+          python3 control/tools/deploy/release_checks.py openapi "$R/live-openapi.json" "$R/candidate-openapi.json" | tee -a "$GITHUB_ENV"
+
+      - name: Verkeer naar de nieuwe revisie
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=promote" >> "$GITHUB_ENV"
+          echo "PROMOTION_ATTEMPTED=true" >> "$GITHUB_ENV"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --to-revisions "$CANDIDATE_REVISION=100"
+
+      - name: Productie bewaken (10 minuten)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=watch" >> "$GITHUB_ENV"
+          R="$RUNNER_TEMP"
+          for i in $(seq 1 20); do
+            curl -fsS --retry 3 --retry-delay 5 "$SERVICE_URL/health" -o "$R/prod-health.json"
+            python3 control/tools/deploy/release_checks.py health "$R/prod-health.json" "$SOURCE_COMMIT" > /dev/null
+            sleep 30
+          done
+          FILTER="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$CLOUD_RUN_SERVICE\" AND resource.labels.revision_name=\"$CANDIDATE_REVISION\" AND httpRequest.status>=500"
+          if gcloud logging read "$FILTER" --project "$GCP_PROJECT_ID" --freshness=20m --limit=100 --format=json > "$R/5xx.json" 2> "$R/5xx.err"; then
+            COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$R/5xx.json")"
+            echo "FIVEXX=$COUNT" >> "$GITHUB_ENV"
+            test "$COUNT" = "0" || { echo "STOP: $COUNT backend-5xx op de nieuwe revisie" >&2; exit 1; }
+          else
+            echo "FIVEXX=niet leesbaar (geen logging-recht)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Cloud Run-IAM ongewijzigd
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=iam" >> "$GITHUB_ENV"
+          gcloud run services get-iam-policy "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/iam-after.json"
+          python3 control/tools/deploy/release_checks.py equal "$RUNNER_TEMP/iam-before.json" "$RUNNER_TEMP/iam-after.json"
+
+      - name: Samenvatting (geslaagd)
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## Release backend — LIVE"
+            echo
+            echo "- **Live revisie:** \`$CANDIDATE_REVISION\` (commit \`$SOURCE_COMMIT\`)"
+            echo "- **Rollback-punt:** \`$PREVIOUS_REVISION\` (commit \`$PREVIOUS_SOURCE_COMMIT\`)"
+            echo "- **Health:** 20× ready in 10 minuten · **5xx:** ${FIVEXX:-?}"
+            echo "- **Routes:** alle ${OPENAPI_LIVE_PATHS:-?} bestaande routes aanwezig, ${OPENAPI_NEW_PATHS:-?} nieuw"
+            echo "- **Env, service account, resources:** gelijk aan live (alleen commit-variabelen gewijzigd)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Automatisch terug bij een fout na het omzetten
+        if: ${{ failure() && env.PROMOTION_ATTEMPTED == 'true' && env.PREVIOUS_REVISION != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fout in fase $DEPLOY_PHASE; verkeer terug naar $PREVIOUS_REVISION"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --to-revisions "$PREVIOUS_REVISION=100"
+          curl -fsS --retry 8 --retry-delay 5 "$SERVICE_URL/health" -o "$RUNNER_TEMP/rollback-health.json"
+          python3 control/tools/deploy/release_checks.py health "$RUNNER_TEMP/rollback-health.json" "$PREVIOUS_SOURCE_COMMIT"
+          {
+            echo "## Release backend — MISLUKT, TERUGGEZET"
+            echo
+            echo "- Fase: $DEPLOY_PHASE · verkeer weer op \`$PREVIOUS_REVISION\` (health ready)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Samenvatting (mislukt vóór het omzetten)
+        if: ${{ failure() && env.PROMOTION_ATTEMPTED != 'true' }}
+        shell: bash
+        run: |
+          {
+            echo "## Release backend — GESTOPT vóór het omzetten"
+            echo
+            echo "- Fase: ${DEPLOY_PHASE:-onbekend} · productie ongewijzigd${PREVIOUS_REVISION:+ (live: \`$PREVIOUS_REVISION\`)}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Bewust geen upload van service-/revisie-JSON: die bevat env-waarden en deze repo is publiek.

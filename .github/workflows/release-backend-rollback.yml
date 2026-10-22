@@ -1,0 +1,125 @@
+name: Rollback backend (goedkeuring Amar)
+# Zet 100% verkeer van tradementor-api terug naar een bestaande, gereede revisie. Bouwt en wijzigt verder niets.
+# Na goedkeuring in environment 'release'. Alleen workflow_dispatch vanaf main.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_revision:
+        description: "Bestaande revisie die weer 100% verkeer krijgt (bijv. tradementor-api-cp605-421f3452)"
+        required: true
+        type: string
+      reason:
+        description: "Korte reden"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tradementor-production-backend
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  CLOUD_RUN_SERVICE: tradementor-api
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/gh-deploy/providers/github-main
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  TARGET_REVISION: ${{ inputs.target_revision }}
+  ROLLBACK_REASON: ${{ inputs.reason }}
+  RELEASE_REVIEWER: AmarRakhan
+
+jobs:
+  guard:
+    name: Goedkeuring is verplicht
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+      - shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY/environments/release"
+          curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api" -o "$RUNNER_TEMP/env.json" \
+            || { echo "STOP: environment 'release' bestaat niet" >&2; exit 1; }
+          curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$api/deployment-branch-policies" -o "$RUNNER_TEMP/env-policies.json" || echo '{"branch_policies":[]}' > "$RUNNER_TEMP/env-policies.json"
+          python3 control/tools/deploy/release_checks.py environment "$RUNNER_TEMP/env.json" "$RUNNER_TEMP/env-policies.json" "$RELEASE_REVIEWER"
+
+  rollback:
+    needs: guard
+    name: Rollback (na goedkeuring)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Control plane van main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+
+      - name: Invoer controleren
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$TARGET_REVISION" =~ ^tradementor-api-[a-z0-9-]{1,47}$ ]] || { echo "STOP: ongeldige revisienaam" >&2; exit 1; }
+
+      - name: Google Cloud (WIF, geen sleutels)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Doel controleren (alleen lezen)
+        shell: bash
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/service.json"
+          gcloud run revisions describe "$TARGET_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/target.json"
+          python3 control/tools/deploy/release_checks.py rollback-target "$R/service.json" "$R/target.json" "$TARGET_REVISION" >> "$GITHUB_ENV"
+
+      - name: Verkeer terugzetten
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Van $CURRENT_REVISION naar $TARGET_REVISION"
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --to-revisions "$TARGET_REVISION=100"
+
+      - name: Controleren
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 6); do
+            curl -fsS --retry 6 --retry-delay 5 "$SERVICE_URL/health" -o "$RUNNER_TEMP/health.json"
+            python3 control/tools/deploy/release_checks.py health "$RUNNER_TEMP/health.json" "$TARGET_SOURCE_COMMIT" > /dev/null
+            sleep 20
+          done
+          {
+            echo "## Rollback backend — KLAAR"
+            echo
+            echo "- **Live:** \`$TARGET_REVISION\` (commit \`$TARGET_SOURCE_COMMIT\`), health 6× ready"
+            echo "- **Was:** \`$CURRENT_REVISION\` (blijft bestaan, 0% verkeer)"
+            echo "- **Reden:** ${ROLLBACK_REASON:--}"
+          } >> "$GITHUB_STEP_SUMMARY"
