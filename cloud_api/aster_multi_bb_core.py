@@ -819,6 +819,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     # duren dan een 1m-candle; de Spike-check moet de tijd van NU gebruiken, niet het tickbegin.
     _tick_started_monotonic = time.monotonic()
     def tick_now_ms() -> int:
+        # timestamp_ms wordt al vóór het ophalen van account/posities gezet (main: now=...), dus ook de
+        # meelopende klok kan nog achterlopen. Ligt timestamp_ms in de buurt van de echte klok (productie),
+        # gebruik dan gewoon de echte klok; anders (gesimuleerde tijd in tests) tickbegin + verstreken tijd.
+        real_ms = time.time() * 1000
+        if abs(real_ms - timestamp_ms) <= 15 * 60 * 1000:
+            return int(real_ms)
         return int(timestamp_ms + (time.monotonic() - _tick_started_monotonic) * 1000)
     state = dict(raw_state.get("multiBbPositions") or {}); pmap = _position_map(positions)
     # Zone-owned TP settlement is part of position management and therefore can

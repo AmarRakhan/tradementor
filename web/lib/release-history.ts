@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-23",
-  title: "Extreme Spike beoordeelt munten weer correct · build 614",
+  title: "Extreme Spike: klok helemaal goed · build 615",
   newItems: [
+    "Build 615: vervolg op 614. Na 614 werd nog ongeveer een kwart van de munten afgekeurd met 'ongeldige live candle', omdat het ophalen van je account en posities vóór de scan ook tijd kost. Nu gebruikt de Spike-check altijd de echte klok van dat moment. Alleen de Spike-beoordeling verandert; stoelen, zones en orderroute blijven gelijk.",
     "Build 614: Extreme Spike keurde vrijwel elke munt af met 'ongeldige live candle'. Oorzaak: de scanner gebruikte de tijd van het begin van de scanronde, en zo'n ronde duurt soms langer dan een minuut. Daardoor leek de lopende 1m-candle in de toekomst te liggen. Nu kijkt de bot bij elke munt op de klok van dat moment, zodat Spike echt elke munt beoordeelt. Ook licht het gekozen tijdframe nu groen op, ook met het app-thema aan.",
     "Build 613: het Instapfilter sprong na een paar seconden terug naar de opgeslagen keuze, omdat het scherm de instellingen telkens opnieuw ophaalt. Nu blijft wat je aanklikt (bijvoorbeeld Extreme Spike, een tijdframe of de TP) staan tot je op Instapfilter opslaan drukt. Alleen als de instelling ergens anders echt verandert, past de kaart zich aan. Alleen weergave; er verandert niets aan de bot.",
     "Build 612: in de Extreme Spike-kaart licht het gekozen tijdframe nu duidelijk op, apart voor LONG en SHORT: een volle groene knop met een vinkje. Zo zie je meteen welk tijdframe is ingesteld voordat je opslaat. De gekozen instapmodus (Geen extra filter, Bollinger Band of Extreme Spike) licht op dezelfde manier op. Alleen weergave; er verandert niets aan de bot.",

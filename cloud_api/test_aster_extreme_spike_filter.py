@@ -239,4 +239,6 @@ class SpikeFreshClockTests(unittest.TestCase):
         gate = src[src.index("spike_snapshot=require_extreme_spike_entry("):][:900]
         self.assertIn("now_ms=tick_now_ms()", gate)
         self.assertIn("timestamp_ms + (time.monotonic() - _tick_started_monotonic) * 1000", src)
+        # productie: timestamp_ms dicht bij de echte klok -> echte klok (ook voorwerk vóór de scan telt mee)
+        self.assertIn("if abs(real_ms - timestamp_ms) <= 15 * 60 * 1000:", src)
         self.assertNotIn("now_ms=timestamp_ms", gate)
