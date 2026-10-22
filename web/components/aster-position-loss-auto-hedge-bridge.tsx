@@ -934,7 +934,11 @@ export function AsterPositionLossAutoHedgeBridge() {
           <p className="plah-info"><span>i</span> Bij -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager wordt de tegengestelde zijde aangepast tot exact 1:1 coin quantity.</p>
         </section>
 
-        <ShortRecoveryCard state={state as unknown as Parameters<typeof ShortRecoveryCard>[0]["state"]} onSaved={(next) => setState(next as unknown as AutoHedgeState)} />
+        <ShortRecoveryCard
+          state={state as unknown as Parameters<typeof ShortRecoveryCard>[0]["state"]}
+          onSaved={(next) => setState(next as unknown as AutoHedgeState)}
+          renderToggle={(props) => <Toggle {...props} labelText />}
+        />
 
         <div className="plah-scope-grid">
           <article><span>{layersIcon()}</span><div><small>Bestaande posities</small><strong>Inbegrepen</strong></div><b>✓</b></article>
