@@ -80,9 +80,14 @@ class Environment(unittest.TestCase):
     def test_ok(self):
         self.assertEqual(run("environment", write(self.env()), write(self.pol("main")), "AmarRakhan")[0], 0)
 
-    def test_no_reviewer(self):
+    def test_no_reviewer_is_allowed(self):
         e = self.env(); e["protection_rules"] = []
-        self.assertEqual(run("environment", write(e), write(self.pol("main")), "AmarRakhan")[0], 1)
+        rc, out, _ = run("environment", write(e), write(self.pol("main")), "AmarRakhan")
+        self.assertEqual(rc, 0); self.assertIn("automatisch", out)
+
+    def test_no_reviewer_still_requires_main_only(self):
+        e = self.env(); e["protection_rules"] = []; e["deployment_branch_policy"] = None
+        self.assertEqual(run("environment", write(e), write(self.pol()), "AmarRakhan")[0], 1)
 
     def test_other_reviewer(self):
         self.assertEqual(run("environment", write(self.env(("someone",))), write(self.pol("main")), "AmarRakhan")[0], 1)

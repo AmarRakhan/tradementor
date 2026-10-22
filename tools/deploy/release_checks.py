@@ -92,7 +92,8 @@ def cmd_inputs(source: str, expected_live: str, ref: str, repo: str) -> None:
 
 
 def cmd_environment(path: str, policies_path: str, reviewer: str) -> None:
-    """Weigert als environment 'release' geen verplichte reviewer heeft of andere branches dan main toelaat."""
+    """Environment 'release' moet bestaan en alleen main toelaten. Een reviewer is optioneel
+    (keuze Amar, 22-10): is er een, dan moet Amar kunnen goedkeuren."""
     env = load(path)
     need(env.get("name") == "release", "environment 'release' bestaat niet")
     reviewers = []
@@ -104,8 +105,8 @@ def cmd_environment(path: str, policies_path: str, reviewer: str) -> None:
                     reviewers.append(login)
             need(not rule.get("prevent_self_review"),
                  "'Prevent self-review' staat aan; dan kan Amar zijn eigen release niet goedkeuren")
-    need(reviewer in reviewers,
-         f"environment 'release' heeft geen verplichte reviewer {reviewer} (nu: {reviewers or 'geen'})")
+    if reviewers:
+        need(reviewer in reviewers, f"reviewers zijn {reviewers}, maar {reviewer} ontbreekt")
     policy = env.get("deployment_branch_policy")
     need(isinstance(policy, dict) and policy.get("custom_branch_policies") is True,
          "environment 'release' moet 'Selected branches' gebruiken met alleen main")
@@ -113,6 +114,7 @@ def cmd_environment(path: str, policies_path: str, reviewer: str) -> None:
                    for p in (load(policies_path).get("branch_policies") or []))
     need(names == [("main", "branch")], f"toegestane branches moeten precies ['main'] zijn, nu {names}")
     print("ENVIRONMENT_OK=true")
+    print("APPROVAL=" + ("goedkeuring door " + ",".join(reviewers) if reviewers else "automatisch (geen reviewer)"))
 
 
 def cmd_preflight(service_path: str, live_rev_path: str, expected_live: str) -> None:

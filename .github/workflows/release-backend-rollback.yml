@@ -1,4 +1,4 @@
-name: Rollback backend (goedkeuring Amar)
+name: Rollback backend
 # Zet 100% verkeer van tradementor-api terug naar een bestaande, gereede revisie. Bouwt en wijzigt verder niets.
 # Na goedkeuring in environment 'release'. Alleen workflow_dispatch vanaf main.
 
@@ -34,7 +34,7 @@ env:
 
 jobs:
   guard:
-    name: Goedkeuring is verplicht
+    name: Environment controleren
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -55,11 +55,11 @@ jobs:
             || { echo "STOP: environment 'release' bestaat niet" >&2; exit 1; }
           curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             "$api/deployment-branch-policies" -o "$RUNNER_TEMP/env-policies.json" || echo '{"branch_policies":[]}' > "$RUNNER_TEMP/env-policies.json"
-          python3 control/tools/deploy/release_checks.py environment "$RUNNER_TEMP/env.json" "$RUNNER_TEMP/env-policies.json" "$RELEASE_REVIEWER"
+          python3 control/tools/deploy/release_checks.py environment "$RUNNER_TEMP/env.json" "$RUNNER_TEMP/env-policies.json" "$RELEASE_REVIEWER" | tee -a "$RUNNER_TEMP/env-check.txt"
 
   rollback:
     needs: guard
-    name: Rollback (na goedkeuring)
+    name: Rollback
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: release

@@ -1,7 +1,7 @@
-name: Release backend (goedkeuring Amar, exacte commit)
+name: Release backend (exacte commit)
 # Release-route zonder Workstation. Alleen workflow_dispatch vanaf main.
 # Job 'plan' (geen Google-toegang): invoer, environment-bescherming, voortbouwen op live, volledige backend-tests.
-# Job 'deploy' (environment 'release' = verplichte goedkeuring door Amar): image bouwen, nieuwe revisie ZONDER
+# Job 'deploy' (environment 'release', alleen main; goedkeuring optioneel): image bouwen, nieuwe revisie ZONDER
 # verkeer, bewijzen dat alles behalve image en commit-variabelen gelijk is aan live, health + routes, verkeer om,
 # 10 minuten bewaken, bij elke fout na het omzetten automatisch terug naar de vorige revisie.
 # Google accepteert alleen tokens van dit bestand en release-backend-rollback.yml op main, met environment 'release'
@@ -64,7 +64,7 @@ jobs:
           set -euo pipefail
           python3 control/tools/deploy/release_checks.py inputs "$SOURCE_COMMIT" "$EXPECTED_LIVE_COMMIT" "$GITHUB_REF" "$GITHUB_REPOSITORY"
 
-      - name: Goedkeuring is verplicht (environment 'release')
+      - name: Environment 'release' controleren (alleen main)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,12 +72,12 @@ jobs:
           set -euo pipefail
           api="https://api.github.com/repos/$GITHUB_REPOSITORY/environments/release"
           if ! curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api" -o "$RUNNER_TEMP/env.json"; then
-            echo "STOP: environment 'release' bestaat niet of is niet leesbaar. Eerst instellen met Amar als verplichte reviewer." >&2
+            echo "STOP: environment 'release' bestaat niet of is niet leesbaar.." >&2
             exit 1
           fi
           curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             "$api/deployment-branch-policies" -o "$RUNNER_TEMP/env-policies.json" || echo '{"branch_policies":[]}' > "$RUNNER_TEMP/env-policies.json"
-          python3 control/tools/deploy/release_checks.py environment "$RUNNER_TEMP/env.json" "$RUNNER_TEMP/env-policies.json" "$RELEASE_REVIEWER"
+          python3 control/tools/deploy/release_checks.py environment "$RUNNER_TEMP/env.json" "$RUNNER_TEMP/env-policies.json" "$RELEASE_REVIEWER" | tee -a "$RUNNER_TEMP/env-check.txt"
 
       - name: Exacte broncode
         uses: actions/checkout@v4
@@ -98,7 +98,7 @@ jobs:
             echo "STOP: $SOURCE_COMMIT bevat de live versie $EXPECTED_LIVE_COMMIT niet. Eerst samenvoegen; terugrollen gaat via release-backend-rollback.yml." >&2; exit 1; }
           COMMITS="$(git rev-list --count "$EXPECTED_LIVE_COMMIT..$SOURCE_COMMIT")"
           {
-            echo "## Release backend — wacht op goedkeuring"
+            echo "## Release backend — plan"
             echo
             echo "- **Wat:** ${RELEASE_REASON:-(geen omschrijving)}"
             echo "- **Nieuwe commit:** \`$SOURCE_COMMIT\`"
@@ -135,7 +135,7 @@ jobs:
           exit "$code"
 
   deploy:
-    name: Deploy (na goedkeuring)
+    name: Deploy
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 60
