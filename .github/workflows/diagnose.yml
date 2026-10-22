@@ -1,0 +1,119 @@
+name: Diagnose (alleen lezen, versleuteld)
+# Alleen-lezen diagnose door Claude zonder Workstation. Google-identiteit: claude-readonly@ (alleen viewer-rollen,
+# geen secrets, geen schrijfrechten), via WIF-pool gh-deploy; alleen dit bestand op main krijgt dat account.
+# De uitvoer wordt versleuteld met de publieke sleutel uit de invoer (RSA-OAEP + AES-256) en als bestand op de
+# branch diag-results gezet. De repo is publiek: zonder de privésleutel (alleen in Claude's sessie) is de uitvoer
+# onleesbaar. Logs van deze run bevatten bewust geen resultaten.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Taak"
+        required: true
+        type: choice
+        options: [overview, autohedge-pairs, firestore-collection, firestore-doc, logs]
+      arg1:
+        description: "Argument 1 (status, pad of logfilter)"
+        required: false
+        default: ""
+        type: string
+      arg2:
+        description: "Argument 2 (bijv. freshness 2h)"
+        required: false
+        default: ""
+        type: string
+      public_key:
+        description: "Publieke RSA-sleutel (PEM, base64) voor het versleutelen van de uitvoer"
+        required: true
+        type: string
+      request_id:
+        description: "Kenmerk van het verzoek (a-z0-9-)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/gh-deploy/providers/github-main
+  READ_SERVICE_ACCOUNT: claude-readonly@tradementor-production.iam.gserviceaccount.com
+  TASK: ${{ inputs.task }}
+  ARG1: ${{ inputs.arg1 }}
+  ARG2: ${{ inputs.arg2 }}
+  PUBLIC_KEY_B64: ${{ inputs.public_key }}
+  REQUEST_ID: ${{ inputs.request_id }}
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Control plane van main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+
+      - name: Invoer controleren
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$REQUEST_ID" =~ ^[a-z0-9][a-z0-9-]{3,60}$ ]] || { echo "STOP: ongeldig request_id" >&2; exit 1; }
+          printf '%s' "$PUBLIC_KEY_B64" | base64 -d > "$RUNNER_TEMP/pub.pem"
+          openssl pkey -pubin -in "$RUNNER_TEMP/pub.pem" -noout -text | head -1 | grep -Eq 'Public-Key: \((3072|4096) bit\)' \
+            || { echo "STOP: publieke sleutel moet RSA 3072 of 4096 bit zijn" >&2; exit 1; }
+
+      - name: Google Cloud (WIF, alleen-lezen account)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.READ_SERVICE_ACCOUNT }}
+
+      - name: Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Firestore-bibliotheek
+        if: startsWith(inputs.task, 'firestore') || inputs.task == 'autohedge-pairs'
+        run: pip install --quiet "google-cloud-firestore>=2.16,<3"
+
+      - name: Diagnose uitvoeren (uitvoer gaat niet naar de log)
+        shell: bash
+        run: |
+          set -uo pipefail
+          python3 control/tools/diagnose/diagnose.py "$TASK" "$ARG1" "$ARG2" > "$RUNNER_TEMP/result.json" 2> "$RUNNER_TEMP/stderr.txt"
+          echo "exit=$?" > "$RUNNER_TEMP/exit.txt"
+          tail -c 4000 "$RUNNER_TEMP/stderr.txt" >> "$RUNNER_TEMP/result.json" || true
+          echo "Uitvoer: $(wc -c < "$RUNNER_TEMP/result.json") bytes, $(cat "$RUNNER_TEMP/exit.txt")"
+
+      - name: Versleutelen en op branch diag-results zetten
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP"
+          openssl rand -out "$R/k.bin" 32
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -in "$R/result.json" -out "$R/data.enc" -pass "file:$R/k.bin"
+          openssl pkeyutl -encrypt -pubin -inkey "$R/pub.pem" -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -in "$R/k.bin" -out "$R/key.enc"
+          shred -u "$R/k.bin" "$R/result.json" 2>/dev/null || rm -f "$R/k.bin" "$R/result.json"
+          mkdir -p "$R/out"
+          { echo "task=$TASK"; echo "run=$GITHUB_RUN_ID"; cat "$R/exit.txt"; echo "key=$(base64 -w0 "$R/key.enc")"; echo "data=$(base64 -w0 "$R/data.enc")"; } > "$R/out/$REQUEST_ID.enc"
+          cd "$R/out"
+          git init -q
+          git config user.name "diagnose-bot"; git config user.email "noreply@github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth=1 origin diag-results 2>/dev/null; then git checkout -q -b diag-results FETCH_HEAD; cp "$R/out/$REQUEST_ID.enc" . 2>/dev/null || true; else git checkout -q --orphan diag-results; fi
+          git add "$REQUEST_ID.enc"
+          git commit -qm "diag $REQUEST_ID ($TASK) [skip ci]"
+          for i in 1 2 3; do git push -q origin HEAD:diag-results && break; sleep 3; git fetch -q --depth=1 origin diag-results && git rebase -q FETCH_HEAD; done
+          echo "Resultaat versleuteld opgeslagen als diag-results/$REQUEST_ID.enc"

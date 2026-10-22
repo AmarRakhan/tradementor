@@ -365,5 +365,70 @@ class WifCondition(unittest.TestCase):
             self.assertFalse(evaluate(condition(), claims), name)
 
 
+READONLY = os.path.join(HERE, "..", "setup-claude-readonly.sh")
+
+
+def readonly_vars():
+    script = ("set -e; eval \"$(grep -E '^(REPO_ID|OWNER_ID|WF|BASE|NEW_CONDITION|NEW_MAPPING)=' " + READONLY + ")\"; "
+              "printf '%s\\n%s' \"$NEW_CONDITION\" \"$NEW_MAPPING\"")
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+    cond, mapping = out.split("\n", 1)
+    return cond, mapping
+
+
+def map_workflow(claims):
+    # Emulatie van: assertion.workflow_ref.endsWith('/diagnose.yml@refs/heads/main') ? 'diagnose' : 'release'
+    return "diagnose" if claims["workflow_ref"].endswith("/diagnose.yml@refs/heads/main") else "release"
+
+
+class ReadonlyCondition(unittest.TestCase):
+    def claims(self, wf, env="release"):
+        ref = f"AmarRakhan/tradementor/.github/workflows/{wf}@refs/heads/main"
+        c = {"repository_id": "1324367697", "repository_owner_id": "313542222", "ref": "refs/heads/main",
+             "ref_type": "branch", "event_name": "workflow_dispatch", "environment": env,
+             "workflow_ref": ref, "job_workflow_ref": ref}
+        return c
+
+    def test_mapping_has_no_comma_or_equals_in_value(self):
+        _, mapping = readonly_vars()
+        items = mapping.split(",")
+        self.assertEqual(len(items), 2)
+        for item in items:
+            key, value = item.split("=", 1)
+            self.assertNotIn("=", value, item)
+
+    def test_allowed_and_mapped(self):
+        cond, _ = readonly_vars()
+        self.assertLess(len(cond), 4096)
+        for wf, env, want in [("release-backend.yml", "release", "release"),
+                              ("release-backend-rollback.yml", "release", "release"),
+                              ("diagnose.yml", None, "diagnose")]:
+            c = self.claims(wf, env)
+            self.assertTrue(evaluate(cond, c), wf)
+            self.assertEqual(map_workflow(c), want)
+
+    def test_refused(self):
+        cond, _ = readonly_vars()
+        cases = {
+            "release zonder environment": self.claims("release-backend.yml", None),
+            "diagnose andere branch": {**self.claims("diagnose.yml", None), "ref": "refs/heads/dev"},
+            "diagnose vanaf andere branch-workflow": {**self.claims("diagnose.yml", None),
+                "workflow_ref": "AmarRakhan/tradementor/.github/workflows/diagnose.yml@refs/heads/dev",
+                "job_workflow_ref": "AmarRakhan/tradementor/.github/workflows/diagnose.yml@refs/heads/dev"},
+            "ander bestand": self.claims("deploy-cloud-production.yml"),
+            "lookalike diagnose": self.claims("x-diagnose.yml", None),
+            "push-event": {**self.claims("diagnose.yml", None), "event_name": "push"},
+            "fork": {**self.claims("diagnose.yml", None), "repository_id": "9"},
+            "herbruikbare workflow": {**self.claims("diagnose.yml", None), "job_workflow_ref": "evil/x/.github/workflows/diagnose.yml@refs/heads/main"},
+        }
+        for name, c in cases.items():
+            self.assertFalse(evaluate(cond, c), name)
+
+    def test_lookalike_never_maps_to_diagnose_when_allowed(self):
+        # Alleen het exacte diagnose-bestand krijgt het read-account; release-bestanden nooit.
+        for wf in ("release-backend.yml", "release-backend-rollback.yml"):
+            self.assertEqual(map_workflow(self.claims(wf)), "release")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

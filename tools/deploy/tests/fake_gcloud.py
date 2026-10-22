@@ -55,7 +55,7 @@ def main():
     if len(flags.get("display-name", "")) > 32:
         die(1, "ERROR: (gcloud) INVALID_ARGUMENT: display name must be less than or equal to 32 characters.")
     allowed = {"project", "quiet", "format", "location", "display-name", "description", "workload-identity-pool",
-               "issuer-uri", "attribute-mapping", "attribute-condition", "role", "member"}
+               "issuer-uri", "attribute-mapping", "attribute-condition", "role", "member", "condition"}
     unknown = set(flags) - allowed
     if unknown:
         die(3, f"unknown flags {unknown}")
@@ -63,6 +63,28 @@ def main():
     if pos[:3] == ["config", "get-value", "account"]:
         print(st.get("account", ""))
         return
+    def edit_policy(pol, verb):
+        role, member = flags["role"], flags["member"]
+        binds = pol.setdefault("bindings", [])
+        b = next((x for x in binds if x["role"] == role and not x.get("condition")), None)
+        if verb.startswith("add"):
+            if b is None:
+                b = {"role": role, "members": []}; binds.append(b)
+            if member not in b["members"]:
+                b["members"].append(member)
+        else:
+            if b is None or member not in b["members"]:
+                die(1, "member not found")
+            b["members"].remove(member)
+            if not b["members"]:
+                binds.remove(b)
+        pol["etag"] = "e" + str(len(json.dumps(pol)))
+    if pos[:2] == ["projects", "get-iam-policy"]:
+        out(st.setdefault("project_policy", {"bindings": [{"role": "roles/owner", "members": ["user:amar"]}], "version": 1}))
+        return
+    if pos[:2] == ["projects", "add-iam-policy-binding"] or pos[:2] == ["projects", "remove-iam-policy-binding"]:
+        assert flags.get("condition") == "None", "condition=None verplicht"
+        edit_policy(st.setdefault("project_policy", {"bindings": []}), pos[1]); save(st); return
     if pos[:2] == ["projects", "describe"]:
         if pos[2] != st["project_id"]:
             die(1, "NOT_FOUND")
@@ -70,6 +92,15 @@ def main():
         return
     if "project" in flags and flags["project"] != st["project_id"]:
         die(1, "wrong project")
+    if pos[:3] == ["iam", "service-accounts", "create"]:
+        sa = pos[3] + "@" + st["project_id"] + ".iam.gserviceaccount.com"
+        if sa in st["service_accounts"]:
+            die(1, "ALREADY_EXISTS")
+        st["service_accounts"][sa] = {"policy": {}}; save(st); return
+    if pos[:3] == ["iam", "service-accounts", "delete"]:
+        if pos[3] not in st["service_accounts"]:
+            die(1, "NOT_FOUND")
+        del st["service_accounts"][pos[3]]; save(st); return
     if pos[:2] == ["iam", "service-accounts"]:
         verb, sa = pos[2], pos[3]
         if sa not in st["service_accounts"]:
@@ -122,6 +153,13 @@ def main():
                 p["providers"][name] = {"name": name, "displayName": flags.get("display-name"), "state": "ACTIVE",
                                         "attributeCondition": flags["attribute-condition"],
                                         "attributeMapping": mapping, "oidc": {"issuerUri": flags["issuer-uri"]}}
+                save(st)
+                return
+            if verb == "update-oidc":
+                if prov is None:
+                    die(1, "NOT_FOUND provider")
+                prov["attributeMapping"] = dict(kv.split("=", 1) for kv in flags["attribute-mapping"].split(","))
+                prov["attributeCondition"] = flags["attribute-condition"]
                 save(st)
                 return
             if verb == "delete":
