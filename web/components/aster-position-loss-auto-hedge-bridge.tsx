@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
+import { ShortRecoveryCard } from "./short-recovery-card";
 
 const TILE_HOST_ID = "aster-position-loss-auto-hedge-host";
 const SCREEN_HOST_ID = "aster-position-loss-auto-hedge-back-host";
@@ -117,6 +118,8 @@ type AutoHedgeState = {
     final?: Array<Record<string, unknown>>;
   } | null;
   lastError?: string;
+  shortRecoveryPlan?: { enabled: boolean; steps: number; stepPct: string };
+  shortRecoveryExecutionEnabled?: boolean;
 };
 
 const DEFAULT_STATE: AutoHedgeState = {
@@ -933,6 +936,8 @@ export function AsterPositionLossAutoHedgeBridge() {
           <article><span>{clockIcon()}</span><div><small>Nieuwe posities</small><strong>Realtime bewaakt</strong></div><b>✓</b></article>
           <article><span>{gearIcon()}</span><div><small>Controle-interval</small><strong>Elke 3 seconden</strong></div><b>✓</b></article>
         </div>
+
+        <ShortRecoveryCard state={state as unknown as Parameters<typeof ShortRecoveryCard>[0]["state"]} onSaved={(next) => setState(next as unknown as AutoHedgeState)} />
 
         {!state.executionEnabled && <div className="plah-test-mode">
           TESTMODUS · actuele Aster-posities worden exact 1:1 doorgerekend, maar Auto Hedge verstuurt nog geen orders.

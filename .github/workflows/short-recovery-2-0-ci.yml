@@ -52,3 +52,14 @@ jobs:
         if: always()
         working-directory: cloud_api
         run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Web build + tests
+        working-directory: web
+        run: npm ci && ../tools/ci_report.sh "web build + tests" 40 npm test
