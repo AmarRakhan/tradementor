@@ -44,20 +44,25 @@ def _same(a: Decimal, b: Decimal, step: Decimal) -> bool:
     return abs(a - b) <= tolerance
 
 
+def _txt(value: Decimal) -> str:
+    text = format(value.normalize(), "f")
+    return text if text not in {"-0", ""} else "0"
+
+
 def _start_cycle(prior: Mapping[str, Any] | None, *, long_q: Decimal, short_q: Decimal,
                  short_entry: Decimal, cfg: Mapping[str, Any], reason: str) -> dict[str, Any]:
     return {
         "cycleId": int(_d((prior or {}).get("cycleId"))) + 1,
         "phase": PHASE_LADDER,
-        "anchor": str(short_entry),
-        "base": str(short_q),
-        "longAtStart": str(long_q),
+        "anchor": _txt(short_entry),
+        "base": _txt(short_q),
+        "longAtStart": _txt(long_q),
         "stepsReached": 0,
         "steps": cfg["steps"],
         "stepPct": cfg["stepPct"],
         "startReason": reason,
         "reopenQty": None,
-        "lastTarget": str(short_q),
+        "lastTarget": _txt(short_q),
     }
 
 

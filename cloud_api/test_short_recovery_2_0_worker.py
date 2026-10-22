@@ -31,7 +31,7 @@ class Recovery(Base):
 
     def settings(self, plan):
         self.put("asterPositionLossAutoHedge", self.uid,
-                 {"enabled": True, "thresholdUsd": 0.25, "shortRecoveryPlan": plan})
+                 {"enabled": True, "thresholdUsd": 0.25, "shortRecoveryPlan": dict(plan)})  # copy: the model store merges in place
 
     def open_pair(self, symbol, qty=10.0, mark=100.0, minimum=0.001, step=0.001):
         self.L.add(symbol, "LONG", qty, mark=mark, entry=mark + 1, minimum=minimum, step=step)
@@ -281,7 +281,7 @@ class Shadow(Recovery):
         self.assertEqual(shadow["phase"], "REFILL")
         self.at("SOLUSDT", 92)
         shadow = self.rec("SOLUSDT", "shortRecoveryShadow")
-        self.assertEqual((shadow["phase"], shadow["cycleId"], shadow["anchor"]), ("LADDER", 2, "92.0"))
+        self.assertEqual((shadow["phase"], shadow["cycleId"], shadow["anchor"]), ("LADDER", 2, "92"))
 
     def test_shadow_reports_decisions(self):
         self.open_pair("SOLUSDT")

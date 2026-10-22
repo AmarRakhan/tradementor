@@ -777,7 +777,7 @@ def _short_recovery_targets(
             # Shadow simulates its own SHORT: the real SHORT stays legacy 1:1, so the simulated
             # quantity is the last target and a simulated (re)open fills at the current mark.
             virtual = float(prior["lastTarget"])
-            if abs(virtual - float(short_qty)) > 1e-12:
+            if abs(virtual - float(short_qty)) > 1e-12 or prior.get("phase") in {"REFILL", "REOPEN_OPEN"}:
                 short_qty, short_entry = virtual, mark
         result = short_recovery_decide(
             record=prior, settings=plan_settings,
