@@ -204,3 +204,38 @@ class ReferenceCacheTests(unittest.TestCase):
 
 
 if __name__=="__main__":unittest.main()
+
+
+class SpikeFreshClockTests(unittest.TestCase):
+    """Build 614 (live 23-10 01:14): de scanner gaf de begintijd van de tick mee. Duurde de scan langer
+    dan één candle, dan leek de live candle te ver in de toekomst en werd elke munt afgekeurd."""
+
+    def setUp(self):
+        from aster_extreme_spike_filter import clear_reference_cache
+        clear_reference_cache()
+
+    class Client:
+        def klines(self, **kwargs):
+            rows = []
+            for i in range(21):
+                price = 100 + (i % 2) * 2
+                rows.append([i * 60000, price, 102, 100, price, 0, (i + 1) * 60000 - 1])
+            rows.append([21 * 60000, 101, 102, 90, 95.5, 0, 22 * 60000 - 1])
+            return rows
+
+    def test_stale_tick_clock_rejects_and_fresh_clock_accepts(self):
+        stale_now = 20 * 60000 + 500  # tick begon ruim een candle eerder
+        with self.assertRaises(SpikeFilterRejected) as ctx:
+            require_extreme_spike_entry(self.Client(), symbol="BTCUSDT", side="LONG", level="5", timeframe="1m",
+                                        now_ms=stale_now, live_price=95.5)
+        self.assertEqual(str(ctx.exception), "SPIKE_INVALID_LIVE_CANDLE")
+        found = require_extreme_spike_entry(self.Client(), symbol="BTCUSDT", side="LONG", level="5", timeframe="1m",
+                                            now_ms=21 * 60000 + 10, live_price=95.5)
+        self.assertGreaterEqual(found.score, 5)
+
+    def test_scanner_candidate_gate_uses_fresh_clock(self):
+        import pathlib
+        src = (pathlib.Path(__file__).parent / "aster_multi_bb_core.py").read_text()
+        gate = src[src.index("spike_snapshot=require_extreme_spike_entry("):][:900]
+        self.assertIn("now_ms=int(time.time() * 1000)", gate)
+        self.assertNotIn("now_ms=timestamp_ms", gate)

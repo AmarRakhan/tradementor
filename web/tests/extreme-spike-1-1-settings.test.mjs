@@ -78,9 +78,9 @@ test("gekozen tijdframe licht op (Amar 23-10 00:32, build 612)", async () => {
   assert.match(card, /value\.timeframe === tf \? "✓ " : ""/);
   // De oplicht-regel staat NA de basisregel en is een volle groene vulling, niet donkergroen op donkergroen.
   const base = card.indexOf(".es-timeframe button{");
-  const lit = card.indexOf(".es-timeframe button.selected");
+  const lit = card.indexOf(".extreme-entry-card .es-timeframe button.selected");
   assert.ok(base > 0 && lit > base, "oplicht-regel na basisregel");
-  assert.match(card.slice(lit, lit + 220), /background:#0af291/);
+  assert.match(card.slice(lit, lit + 260), /background:#0af291!important/);
 });
 
 test("Instapfilter springt niet terug bij elke refresh (Amar 23-10 00:43, build 613)", async () => {

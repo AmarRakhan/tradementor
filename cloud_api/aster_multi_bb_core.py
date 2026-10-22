@@ -1794,7 +1794,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     spike_timeframe=(settings.extreme_spike_long_timeframe if candidate_side == "LONG" else settings.extreme_spike_short_timeframe)
                     spike_snapshot=require_extreme_spike_entry(
                         client, symbol=symbol, side=candidate_side, level=settings.extreme_spike_level,
-                        timeframe=spike_timeframe, now_ms=timestamp_ms, live_price=prices[symbol])
+                        # Build 614: verse klok. timestamp_ms is het begin van de tick; een scan duurt
+                        # soms minuten, waardoor de live 1m-candle "te ver in de toekomst" leek en vrijwel
+                        # elke munt werd afgekeurd met SPIKE_INVALID_LIVE_CANDLE (live 23-10 01:14).
+                        timeframe=spike_timeframe, now_ms=int(time.time() * 1000), live_price=prices[symbol])
                     spike_candidates[candidate_side]=spike_event_key(
                         symbol=symbol, side=candidate_side, timeframe=spike_timeframe,
                         candle_close_ms=spike_snapshot.candle_close_ms)

@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 614: Extreme Spike keurde vrijwel elke munt af (SPIKE_INVALID_LIVE_CANDLE) doordat de scanner de begintijd van de tick gebruikte; nu een verse klok. Gekozen tijdframe licht ook op onder het app-thema.
 // Build 613: Instapfilter springt niet meer terug na een paar seconden; een aangeklikte maar nog niet opgeslagen keuze blijft staan tot je opslaat; alleen weergave.
 // Build 612: Extreme Spike — het gekozen tijdframe (LONG en SHORT) en de gekozen instapmodus lichten nu duidelijk op (volle groene knop met ✓); alleen weergave.
 // Build 611: Extreme Spike 1.1 — instapfilter BB(20,k) "vanaf k" (20,2 t/m 20,7), exclusief met Bollinger; LONG/SHORT apart aan/uit met eigen tijdframe, Spike-TP en optionele trailing; realtime instap op de live prijs; na een Auto Hedge geldt de normale TP. Standaard UIT.
@@ -38,7 +39,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "613";
+export const WEBAPP_BUILD_NUMBER = "614";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
