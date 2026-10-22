@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-22",
-  title: "SHORT afbouwen: label HEDGED x% · build 609",
+  title: "SHORT afbouwen: geen HEDGED 100% meer · build 610",
   newItems: [
+    "Build 610: het label 'HEDGED x%' verschijnt alleen nog als de SHORT echt (in test) is afgebouwd, dus onder 100%. Munten waarvan de stap te klein was voor Aster en is overgeslagen, tonen gewoon 'HEDGED'. Munten waarvan je zelf een deel van de SHORT hebt gesloten, tonen weer 'RECOVERY' in plaats van een oud afbouwlabel. Alleen weergave.",
     "Build 609: een munt waarvan SHORT afbouwen een deel van de SHORT heeft afgebouwd, toont in het Tradecentrum nu het label 'HEDGED 75%' (het deel van de LONG dat nog gedekt is) in plaats van UNWIND. Volledig gehedged blijft 'HEDGED'. In testmodus is het label gestippeld. Bij Gehedgede posities staat erbij welke stap (bijv. 'stap 1/4') en of het een test is. Alleen weergave.",
     "Build 608: SHORT Recovery 2.0 in het Auto Hedge-scherm, direct onder het verliesbedrag. Met AAN/UIT kies je of een Auto Hedge-SHORT wordt afgebouwd; je kiest de totale daling en het aantal stappen (bijv. 20% in 10 stappen: elke 2% daling verkoopt de bot 10% van de SHORT, gerekend vanaf één vaste instapkoers). Is een stap te klein voor Aster, dan sluit de bot de SHORT 100% en zet 90% van de LONG terug. Is de SHORT leeg, dan hedgt de bot weer 100% met een nieuwe ladder. Haalt de LONG zijn take profit, dan gaan LONG en SHORT samen dicht, maar alleen als ze samen netto plus staan (fees en betaalde funding meegerekend). De SHORT wordt nooit groter dan de LONG. Deze build start in testmodus: de bot rekent mee op je echte posities maar plaatst nog geen Recovery-orders.",
     "Build 607: nieuwe rij in Portfolio Snapshot tussen Rendement vandaag en Close Long. Links staat de 24-uurs verandering van de totale crypto market cap, hetzelfde getal als linksboven op CoinMarketCap: groen met + bij een stijging, rood met − bij een daling. Wordt elke minuut ververst; de twee knoppen rechts zijn gereserveerd voor later. Alleen weergave, geen trading-wijzigingen.",

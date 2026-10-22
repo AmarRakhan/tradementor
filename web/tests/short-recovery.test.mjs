@@ -41,3 +41,11 @@ test("partly unwound pair shows HEDGED x% (Amar 22:04)", () => {
   assert.equal(unwindBadge({ ...base, shortRecovery: { phase: "REOPEN_OPEN", stepsReached: 1, steps: 4, lastTarget: "9" } }).label, "HEDGED 90%");
   assert.equal(unwindBadge({ ...base, shortRecovery: { phase: "PAIR_EXIT", stepsReached: 1, steps: 4, lastTarget: "0" } }).label, "HEDGED · TP");
 });
+
+test("no partial label for RECOVERY pairs or skipped (100%) ladders (Amar 23:54)", () => {
+  const rec = { phase: "LADDER", stepsReached: 1, steps: 4, lastTarget: "15.1" };
+  // XRP: user closed 25% of the SHORT manually -> RECOVERY; the stale record must not show HEDGED 100%.
+  assert.equal(unwindBadge({ status: "RECOVERY", currentProtectedQty: 15.1, shortRecoveryShadow: rec }), null);
+  // DELL: step too small for Aster, skipped -> still 100% -> plain HEDGED.
+  assert.equal(unwindBadge({ status: "HEDGED", currentProtectedQty: 0.02, shortRecoveryShadow: { ...rec, lastTarget: "0.02" } }), null);
+});

@@ -83,6 +83,9 @@ export function unwindBadge(pair) {
   const live = pair.shortRecovery && typeof pair.shortRecovery === "object" ? pair.shortRecovery : null;
   const rec = live || (pair.shortRecoveryShadow && typeof pair.shortRecoveryShadow === "object" ? pair.shortRecoveryShadow : null);
   if (!rec || !rec.phase) return null;
+  // Only for a pair that Auto Hedge still holds (not RECOVERY/manual release): a stale record never relabels it.
+  const status = String(pair.status || "").toUpperCase();
+  if (!["HEDGED", "HEDGING", "ADJUSTING"].includes(status)) return null;
   const phase = String(rec.phase);
   const reached = Number(rec.stepsReached) || 0;
   const steps = Number(rec.steps) || 0;
@@ -91,6 +94,8 @@ export function unwindBadge(pair) {
   const long = Number(pair.currentProtectedQty) || 0;
   const target = Number(rec.lastTarget);
   const pct = long > 0 && Number.isFinite(target) ? Math.round(Math.min(100, (target / long) * 100)) : null;
+  // Nothing reduced (e.g. step too small for Aster and skipped): keep the plain HEDGED label.
+  if (phase === "LADDER" && (pct === null || pct >= 100)) return null;
   const label = phase === "PAIR_EXIT" ? "HEDGED · TP" : pct === null ? "HEDGED" : `HEDGED ${pct}%`;
   const parts = [label];
   if (phase === "LADDER" && steps) parts.push(`stap ${Math.min(reached, steps)}/${steps}`);
