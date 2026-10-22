@@ -96,6 +96,15 @@ class LiveLadder(Recovery):
             self.at("SOLUSDT", "98.5")                                # nothing changes
         self.assertEqual(self.rec("SOLUSDT")["evaluatedAt"], first["evaluatedAt"])
 
+    def test_switch_on_with_old_hedge_starts_at_current_price(self):
+        self.open_pair("SOLUSDT")                                      # SHORT entry 100
+        self.at("SOLUSDT", 85)                                       # already 15% lower when switched ON
+        self.at("SOLUSDT", 85)
+        self.assertEqual(self.orders(), [])                          # no catch-up burst
+        self.assertEqual(self.rec("SOLUSDT")["anchor"], "85")
+        self.at("SOLUSDT", "83.3")                                    # 85 * 0.98
+        self.assertEqual(self.orders(), [("CLOSE", 2.5)])
+
     def test_gap_down_combines_steps_in_one_order(self):
         self.open_pair("SOLUSDT")
         self.at("SOLUSDT", 100)

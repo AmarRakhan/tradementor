@@ -26,6 +26,18 @@ class Lifecycle(unittest.TestCase):
         r = go(short_qty=0)
         self.assertEqual((r["override"], r["event"]), (None, "WAIT_FOR_1_TO_1"))
 
+    def test_existing_hedge_anchors_at_switch_on_mark(self):
+        # Amar 19:45: a pair hedged before switching ON starts at the current price, not the old entry.
+        r = go(short_entry=100, mark=85, start_at_mark=True)
+        self.assertEqual((r["record"]["anchor"], r["record"]["startReason"]), ("85", "ANCHOR_AT_SWITCH_ON"))
+        r2 = go(r["record"], mark=85, start_at_mark=True)
+        self.assertEqual((r2["event"], r2["record"]["stepsReached"]), ("LADDER_HOLD", 0))   # no catch-up burst
+
+    def test_refill_after_switch_on_uses_short_entry(self):
+        rec = {"cycleId": 1, "phase": "REFILL", "lastTarget": "100"}
+        r = go(rec, short_entry=80, mark=81, start_at_mark=True)
+        self.assertEqual(r["record"]["anchor"], "80")
+
     def test_starts_cycle_with_anchor(self):
         r = go()
         self.assertEqual(r["event"], "CYCLE_STARTED")

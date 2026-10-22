@@ -81,8 +81,13 @@ def decide(
     min_notional: Any = 0,
     available_balance: Any = None,
     leverage: Any = 1,
+    start_at_mark: bool = False,
 ) -> dict[str, Any]:
-    """Return {override, record, event}. ``override`` is a Decimal SHORT target or None (legacy 1:1)."""
+    """Return {override, record, event}.
+
+    ``start_at_mark``: for a pair that was already hedged before the user switched SHORT afbouwen ON, the
+    FIRST cycle anchors at the current mark instead of the old SHORT entry (decision Amar 22-10 19:45), so
+    switching ON never triggers a burst of catch-up reductions. Later cycles use the SHORT entry. ``override`` is a Decimal SHORT target or None (legacy 1:1)."""
     try:
         cfg = normalize_settings(settings or {})
     except ValueError:
@@ -109,8 +114,9 @@ def decide(
 
     if rec is None or phase == PHASE_REFILL:
         if _same(short_q, long_q, step) and _d(short_entry) > 0:
-            new = _start_cycle(rec, long_q=long_q, short_q=short_q, short_entry=_d(short_entry), cfg=cfg,
-                               reason="HEDGED_1_TO_1")
+            at_mark = start_at_mark and rec is None
+            new = _start_cycle(rec, long_q=long_q, short_q=short_q, short_entry=price if at_mark else _d(short_entry),
+                               cfg=cfg, reason="ANCHOR_AT_SWITCH_ON" if at_mark else "HEDGED_1_TO_1")
             return {"override": short_q, "record": new, "event": "CYCLE_STARTED"}
         return {"override": None, "record": rec, "event": "WAIT_FOR_1_TO_1"}
 

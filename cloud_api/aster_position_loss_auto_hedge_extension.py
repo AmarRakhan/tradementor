@@ -700,6 +700,15 @@ def _short_recovery_record_changed(prior: dict[str, Any] | None, record: dict[st
     return strip(prior) != strip(record)
 
 
+def _hedged_before_switch_on(state: dict[str, Any], plan_settings: dict[str, Any]) -> bool:
+    """True when this Auto Hedge cycle started before the user switched SHORT afbouwen ON (or the time is unknown)."""
+    enabled_at = _as_utc(plan_settings.get("enabledAt"))
+    trigger_at = _as_utc(state.get("triggerAt"))
+    if enabled_at is None or trigger_at is None:
+        return True   # unknown -> safe side: anchor at the current price, never a catch-up burst
+    return trigger_at <= enabled_at
+
+
 def _short_recovery_targets(
     *,
     uid: str,
@@ -798,6 +807,7 @@ def _short_recovery_targets(
             short_entry=short_entry,
             mark=mark,
             has_pending_short_order=symbol in pending,
+            start_at_mark=_hedged_before_switch_on(state, plan_settings),
             qty_step=rule.market_quantity_step, min_qty=rule.market_min_quantity,
             min_notional=rule.min_notional, available_balance=available,
             leverage=long_row.get("leverage") or 1,
@@ -1135,7 +1145,9 @@ def put_position_loss_auto_hedge_short_recovery(
         raise HTTPException(409, "Zet Auto Hedge eerst AAN; SHORT Recovery bouwt alleen Auto Hedge-SHORTs af")
     now = datetime.now(timezone.utc)
     previous = _public_short_recovery(_current(uid))
-    _doc(uid).set({"shortRecoveryPlan": {**plan, "updatedAt": now}, "updatedAt": now}, merge=True)
+    switched_on = plan["enabled"] and not previous.get("enabled")
+    enabled_at = now if switched_on else ((_current(uid).get("shortRecoveryPlan") or {}).get("enabledAt") if plan["enabled"] else None)
+    _doc(uid).set({"shortRecoveryPlan": {**plan, "updatedAt": now, "enabledAt": enabled_at}, "updatedAt": now}, merge=True)
     _audit(uid, {"eventType": "SHORT_RECOVERY_SETTINGS_CHANGED", "previous": previous, "next": plan,
                  "clientBuild": request.clientBuild})
     response.headers["Cache-Control"] = "no-store"
