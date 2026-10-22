@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import os
 import re
 import threading
+import time
 from typing import Any
 
 from fastapi import Depends, HTTPException, Response
@@ -34,6 +35,22 @@ WORKER_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER", "true").lowe
 EXECUTION_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED", "false").lower() == "true"
 # SHORT Recovery 2.0: OFF = shadow only (decisions recorded, no target change, no orders).
 SHORT_RECOVERY_EXECUTION_ENABLED = os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "false").lower() == "true"
+# Build 616: the env switch above is only the global master switch. Real SHORT Recovery orders run per
+# user, and only when the admin set shortRecoveryExecutionEnabled=true on that user's Auto Hedge doc.
+# User routes never write that field; every other user stays in test mode.
+SHORT_RECOVERY_EXECUTION_FIELD = "shortRecoveryExecutionEnabled"
+HEDGE_MODE_REQUIRED_MESSAGE = (
+    "Auto Hedge vereist Hedge Mode op je Aster-account. Je account staat nu op One-way mode. "
+    "Zet in Aster de positiemodus op Hedge Mode (dat kan alleen zonder open posities en open orders) "
+    "en probeer het daarna opnieuw. Er is niets gewijzigd."
+)
+HEDGE_MODE_UNKNOWN_MESSAGE = (
+    "De positiemodus van je Aster-account kon niet worden gecontroleerd. Er is niets gewijzigd; "
+    "probeer het over enkele seconden opnieuw."
+)
+HEDGE_MODE_CACHE_SECONDS = 300.0
+_hedge_mode_ok_at: dict[str, float] = {}
+_hedge_mode_lock = threading.Lock()
 WORKER_INTERVAL = max(1.0, float(os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_INTERVAL_SECONDS", "3")))
 _worker_stop = threading.Event()
 _worker_thread: threading.Thread | None = None
@@ -155,7 +172,7 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         "comparison": "openPnl <= -thresholdUsd",
         "targetInvariant": "ABS(LONG_QTY)==ABS(SHORT_QTY)",
         "shortRecoveryPlan": _public_short_recovery(row),
-        "shortRecoveryExecutionEnabled": SHORT_RECOVERY_EXECUTION_ENABLED,
+        "shortRecoveryExecutionEnabled": _short_recovery_live_for(row),
         "referenceId": "file_00000000ecd08246bd1b15532fb478d6",
     })
 
@@ -195,6 +212,43 @@ def _audit_global_setting_change(
         "sourceRoute": source_route,
         "result": result,
     })
+
+
+def _short_recovery_live_for(settings: dict[str, Any]) -> bool:
+    """Real SHORT Recovery orders only with the global master switch AND the per-user admin flag."""
+    return bool(SHORT_RECOVERY_EXECUTION_ENABLED and settings.get(SHORT_RECOVERY_EXECUTION_FIELD) is True)
+
+
+def _hedge_mode_ok(uid: str, client: Any = None) -> bool:
+    """True only when Aster confirms Hedge Mode (dualSidePosition). Errors propagate (fail closed).
+
+    A confirmed Hedge Mode is cached briefly (Aster only allows switching without open positions/orders);
+    a One-way answer is never cached, so switching to Hedge Mode works on the next try.
+    """
+    now = time.monotonic()
+    with _hedge_mode_lock:
+        stamp = _hedge_mode_ok_at.get(uid)
+    if stamp is not None and now - stamp < HEDGE_MODE_CACHE_SECONDS:
+        return True
+    ok = bool((client or _client(uid, live=False)).position_mode())
+    with _hedge_mode_lock:
+        if ok:
+            _hedge_mode_ok_at[uid] = now
+        else:
+            _hedge_mode_ok_at.pop(uid, None)
+    return ok
+
+
+def _require_hedge_mode(uid: str) -> None:
+    """Clean user-facing refusal before switching on anything that can place hedge orders."""
+    try:
+        ok = _hedge_mode_ok(uid)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, HEDGE_MODE_UNKNOWN_MESSAGE) from exc
+    if not ok:
+        raise HTTPException(409, HEDGE_MODE_REQUIRED_MESSAGE)
 
 
 def _client(uid: str, *, live: bool):
@@ -722,12 +776,13 @@ def _short_recovery_targets(
 ) -> tuple[dict[str, float], list[dict[str, Any]], set[str]]:
     """SHORT Recovery 2.0: per-symbol SHORT targets for the existing engine (+ symbols to hold this tick).
 
-    Live targets are returned only when ASTER_SHORT_RECOVERY_EXECUTION_ENABLED=true AND this is a live run.
+    Live targets are returned only when ASTER_SHORT_RECOVERY_EXECUTION_ENABLED=true AND the user's own
+    shortRecoveryExecutionEnabled flag is true AND this is a live run.
     Otherwise the decisions are recorded under ``shortRecoveryShadow`` and the engine keeps legacy 1:1.
     A symbol whose inputs cannot be read keeps its last confirmed target (never a blind top-up or cut).
     """
     plan_settings = settings.get("shortRecoveryPlan") if isinstance(settings.get("shortRecoveryPlan"), dict) else {}
-    live = bool(SHORT_RECOVERY_EXECUTION_ENABLED and execute)
+    live = bool(_short_recovery_live_for(settings) and execute)
     field = "shortRecovery" if live else "shortRecoveryShadow"
     symbols = [s for s, side in protected_sides.items() if side == "LONG"]
     if not symbols or plan_settings.get("enabled") is not True:
@@ -885,6 +940,18 @@ def _run_uid(
                 }, merge=True)
                 return report
         client = _client(uid, live=execute)
+        if execute and not _hedge_mode_ok(uid, client):
+            # Never send positionSide orders to a One-way account; existing state stays untouched.
+            report = {
+                "mode": "LIVE", "ordersSent": 0, "status": "BLOCKED",
+                "reason": "HEDGE_MODE_REQUIRED", "actions": [],
+            }
+            _doc(uid).set({
+                "lastReport": report,
+                "lastCheckedAt": datetime.now(timezone.utc),
+                "lastError": HEDGE_MODE_REQUIRED_MESSAGE,
+            }, merge=True)
+            return report
         positions = list(client.position_risk() or [])
         open_orders = list(client.open_orders() or [])
         protected_sides, skip_symbols, states, created = _prepare_lifecycle(
@@ -1017,6 +1084,8 @@ def put_position_loss_auto_hedge(
         threshold = normalize_threshold(request.thresholdUsd)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if request.enabled and not previous_enabled:
+        _require_hedge_mode(uid)
     now = datetime.now(timezone.utc)
     _doc(uid).set({
         "enabled": bool(request.enabled),
@@ -1063,6 +1132,8 @@ def apply_position_loss_auto_hedge(
         threshold = normalize_threshold(request.thresholdUsd)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if request.enabled and not previous_enabled:
+        _require_hedge_mode(uid)
     _doc(uid).set({
         "enabled": bool(request.enabled),
         "thresholdUsd": threshold,
@@ -1102,6 +1173,8 @@ def put_position_loss_auto_hedge_rehedge(
         raise HTTPException(409, "Zet Auto Hedge eerst AAN voordat je deze recovery opnieuw bewapent")
     if request.enabled and _dynamic_hedge_enabled(uid):
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
+    if request.enabled:
+        _require_hedge_mode(uid)
     now = datetime.now(timezone.utc)
     next_status = (
         "REHEDGE_ARMED" if request.enabled
@@ -1148,6 +1221,8 @@ def put_position_loss_auto_hedge_short_recovery(
     now = datetime.now(timezone.utc)
     previous = _public_short_recovery(_current(uid))
     switched_on = plan["enabled"] and not previous.get("enabled")
+    if switched_on:
+        _require_hedge_mode(uid)
     enabled_at = now if switched_on else ((_current(uid).get("shortRecoveryPlan") or {}).get("enabledAt") if plan["enabled"] else None)
     _doc(uid).set({"shortRecoveryPlan": {**plan, "updatedAt": now, "enabledAt": enabled_at}, "updatedAt": now}, merge=True)
     _audit(uid, {"eventType": "SHORT_RECOVERY_SETTINGS_CHANGED", "previous": previous, "next": plan,
@@ -1235,6 +1310,7 @@ def post_position_loss_auto_hedge_rehedge_all(
         raise HTTPException(409, "Zet Auto Hedge eerst AAN voordat je Recovery-posities opnieuw hedget")
     if _dynamic_hedge_enabled(uid):
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
+    _require_hedge_mode(uid)
     candidates = sorted(
         symbol for symbol, row in _pair_states(uid).items()
         if str(row.get("status", "")).upper() in RECOVERY_STATUSES
@@ -1276,6 +1352,51 @@ def post_position_loss_auto_hedge_rehedge_all(
             "counts": counts,
             "items": items,
         },
+    }
+
+
+class ShortRecoveryExecutionRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    enabled: bool
+    confirm: bool = False
+
+
+@main.app.put("/v1/admin/aster/short-recovery-execution")
+def put_admin_short_recovery_execution(
+    request: ShortRecoveryExecutionRequest,
+    response: Response,
+    user: dict[str, Any] = Depends(main.authenticated_user),
+) -> dict[str, Any]:
+    """Admin-only: real SHORT Recovery orders ON/OFF for ONE user. Never places an order itself."""
+    main.require_admin(user)
+    if request.confirm is not True:
+        raise HTTPException(422, "Bevestiging is verplicht")
+    email = request.email.strip().lower()
+    try:
+        record = main.auth.get_user_by_email(email, app=main.auth_app)
+    except Exception as exc:
+        raise HTTPException(404, "Geen gebruiker gevonden met dit e-mailadres") from exc
+    target_uid = str(record.uid)
+    previous = _current(target_uid).get(SHORT_RECOVERY_EXECUTION_FIELD) is True
+    now = datetime.now(timezone.utc)
+    _doc(target_uid).set({
+        SHORT_RECOVERY_EXECUTION_FIELD: bool(request.enabled),
+        "shortRecoveryExecutionUpdatedAt": now,
+        "shortRecoveryExecutionUpdatedBy": str(user["uid"]),
+    }, merge=True)
+    _audit(target_uid, {
+        "eventType": "SHORT_RECOVERY_EXECUTION_CHANGED",
+        "previous": previous,
+        "next": bool(request.enabled),
+        "byAdminUid": str(user["uid"]),
+    })
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "updated": True,
+        "uid": target_uid,
+        "userFlag": bool(request.enabled),
+        "globalSwitch": SHORT_RECOVERY_EXECUTION_ENABLED,
+        "realOrders": bool(request.enabled and SHORT_RECOVERY_EXECUTION_ENABLED),
     }
 
 

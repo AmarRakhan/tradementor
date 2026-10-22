@@ -31,7 +31,8 @@ class Recovery(Base):
 
     def settings(self, plan):
         self.put("asterPositionLossAutoHedge", self.uid,
-                 {"enabled": True, "thresholdUsd": 0.25, "shortRecoveryPlan": dict(plan)})  # copy: the model store merges in place
+                 {"enabled": True, "thresholdUsd": 0.25, "shortRecoveryPlan": dict(plan),  # copy: the model store merges in place
+                  "shortRecoveryExecutionEnabled": self.LIVE})                          # build 616: per-user flag
 
     def open_pair(self, symbol, qty=10.0, mark=100.0, minimum=0.001, step=0.001):
         self.L.add(symbol, "LONG", qty, mark=mark, entry=mark + 1, minimum=minimum, step=step)
