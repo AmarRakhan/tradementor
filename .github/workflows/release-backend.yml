@@ -72,7 +72,7 @@ jobs:
           set -euo pipefail
           api="https://api.github.com/repos/$GITHUB_REPOSITORY/environments/release"
           if ! curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api" -o "$RUNNER_TEMP/env.json"; then
-            echo "STOP: environment 'release' bestaat niet of is niet leesbaar.." >&2
+            echo "STOP: environment 'release' bestaat niet of is niet leesbaar." >&2
             exit 1
           fi
           curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
