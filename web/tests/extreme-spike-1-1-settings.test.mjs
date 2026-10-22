@@ -71,3 +71,14 @@ test("kaart en opslaan zijn aangesloten; route bewaart de Spike-velden", async (
   }
   assert.doesNotMatch(route, /status:409/);
 });
+
+test("gekozen tijdframe licht op (Amar 23-10 00:32, build 612)", async () => {
+  const card = await readFile(new URL("../components/aster-extreme-spike-entry-card.tsx", import.meta.url), "utf8");
+  assert.match(card, /className=\{value\.timeframe === tf \? "selected" : ""\}/);
+  assert.match(card, /value\.timeframe === tf \? "✓ " : ""/);
+  // De oplicht-regel staat NA de basisregel en is een volle groene vulling, niet donkergroen op donkergroen.
+  const base = card.indexOf(".es-timeframe button{");
+  const lit = card.indexOf(".es-timeframe button.selected");
+  assert.ok(base > 0 && lit > base, "oplicht-regel na basisregel");
+  assert.match(card.slice(lit, lit + 220), /background:#0af291/);
+});
