@@ -13,6 +13,7 @@ import { TradeIntelligenceAdvisorCenter } from "./trade-intelligence-advisor-cen
 import { PriceZoneCycleOverview } from "./price-zone-cycle-overview";
 import { ActiveZoneSeatBlock, resolveActiveZoneSeatState, type ActiveZoneSeatSummary } from "./active-zone-seat-block";
 import { PortfolioPerformanceDetail, type PerformanceInitialTab } from "./portfolio-performance-detail";
+import { formatMarketCapChange, formatMarketCapUsd, marketCapChangeTone } from "@/lib/market-cap-change.mjs";
 import { formatLiquidationRisk, liquidationNeedleDegrees, liquidationRiskRemaining, liquidationRiskTone, normalizeLiquidationRisk } from "@/lib/liquidation-gauge.mjs";
 
 type Tone = "positive" | "negative" | "neutral";
@@ -1028,8 +1029,32 @@ function ScannerStatusPage({ snapshot, onBack }: { snapshot: ScannerStatusSnapsh
   </section>;
 }
 
-function Snapshot({ values, snapshotLoadWarning, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner, onOpenPerformance, onOpenClosed }: {
+type MarketOverview = { changePercent: number | null; marketCapUsd: number | null; stale: boolean; error: boolean };
+
+// Build 607: rij "Markt" tussen Rendement vandaag en Close Long. Links de CoinMarketCap
+// 24u-verandering van de totale crypto market cap; twee plekken gereserveerd voor later.
+function MarketOverviewRow({ market }: { market: MarketOverview | null }) {
+  const value = market?.changePercent ?? null;
+  const tone = marketCapChangeTone(value);
+  const cap = formatMarketCapUsd(market?.marketCapUsd ?? null);
+  const detail = market?.error && value === null ? "Niet bereikbaar" : market?.stale ? "Verouderd · CoinMarketCap" : cap ? `${cap} · CoinMarketCap` : "CoinMarketCap";
+  return <div className="aps-market-row" aria-label="Markt">
+    <article className={`aps-market-card aps-market-cap aps-${tone}`} aria-label={`Market cap 24 uur: ${formatMarketCapChange(value)}`} data-market-cap-change={value === null ? "" : String(value)}>
+      <span className="aps-market-icon" aria-hidden="true">{tone === "negative" ? "↘" : tone === "positive" ? "↗" : "◎"}</span>
+      <span className="aps-market-copy">
+        <small>MARKET CAP 24U</small>
+        <strong>{formatMarketCapChange(value)}</strong>
+        <em>{detail}</em>
+      </span>
+    </article>
+    <article className="aps-market-card aps-market-placeholder" aria-label="Gereserveerd"><span className="aps-market-copy"><small>BINNENKORT</small><strong>—</strong><em>Gereserveerd</em></span></article>
+    <article className="aps-market-card aps-market-placeholder" aria-label="Gereserveerd"><span className="aps-market-copy"><small>BINNENKORT</small><strong>—</strong><em>Gereserveerd</em></span></article>
+  </div>;
+}
+
+function Snapshot({ values, market, snapshotLoadWarning, profitPreview, liquidationDiagnostics, profitBusy, onCloseAll, onCloseProfit, onOpenHedge, onOpenPriceZone, onOpenScanner, onOpenPerformance, onOpenClosed }: {
   values: SnapshotValues;
+  market: MarketOverview | null;
   snapshotLoadWarning: string;
   profitPreview: ProfitPreview | null;
   liquidationDiagnostics: LiquidationDiagnostics | null;
@@ -1081,6 +1106,7 @@ function Snapshot({ values, snapshotLoadWarning, profitPreview, liquidationDiagn
         available={values.available}
       />
     </div>
+    <MarketOverviewRow market={market} />
     <div className="aps-profit-row" aria-label="Winstposities sluiten">
       <ProfitAction scope="LONG" label="Close Long" bucket={profitPreview?.long ?? null} busy={profitBusy === "LONG"} onClick={onCloseProfit} />
       <ProfitAction scope="SHORT" label="Close Short" bucket={profitPreview?.short ?? null} busy={profitBusy === "SHORT"} onClick={onCloseProfit} />
@@ -1124,6 +1150,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [values, setValues] = useState<SnapshotValues>(EMPTY);
   const [snapshotLoadWarning, setSnapshotLoadWarning] = useState("Accountgegevens laden…");
   const [profitPreview, setProfitPreview] = useState<ProfitPreview | null>(null);
+  const [market, setMarket] = useState<MarketOverview | null>(null);
   const [liquidationDiagnostics, setLiquidationDiagnostics] = useState<LiquidationDiagnostics | null>(null);
   const [profitBusy, setProfitBusy] = useState<ProfitScope | null>(null);
   const [priceZoneSeats, setPriceZoneSeats] = useState<PriceZoneSeatSummary | null>(null);
@@ -1203,6 +1230,29 @@ export function AsterPortfolioSnapshotEnhancer() {
     document.addEventListener("visibilitychange",visible);
     return()=>{alive=false;window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
   },[]);
+
+  useEffect(() => {
+    // Build 607: CoinMarketCap market cap 24u, elke minuut zolang de app zichtbaar is.
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const response = await fetch("/api/market-overview", { cache: "no-store" });
+        const payload = await response.json() as { marketCap?: { changePercent?: unknown; marketCapUsd?: unknown }; stale?: unknown };
+        const change = typeof payload?.marketCap?.changePercent === "number" && Number.isFinite(payload.marketCap.changePercent) ? payload.marketCap.changePercent : null;
+        if (!response.ok || change === null) throw new Error("MARKET_OVERVIEW_UNAVAILABLE");
+        const cap = typeof payload.marketCap?.marketCapUsd === "number" && Number.isFinite(payload.marketCap.marketCapUsd) ? payload.marketCap.marketCapUsd : null;
+        if (alive) setMarket({ changePercent: change, marketCapUsd: cap, stale: payload.stale === true, error: false });
+      } catch {
+        // Laatste bekende waarde blijven tonen, maar als verouderd markeren.
+        if (alive) setMarket((previous) => previous ? { ...previous, stale: true, error: true } : { changePercent: null, marketCapUsd: null, stale: false, error: true });
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 60_000);
+    const visible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => { alive = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
+  }, []);
 
   useEffect(() => {
     let observer: MutationObserver | null = null;
@@ -1475,6 +1525,7 @@ export function AsterPortfolioSnapshotEnhancer() {
           />
           <Snapshot
             values={values}
+            market={market}
             snapshotLoadWarning={snapshotLoadWarning}
             profitPreview={profitPreview}
             liquidationDiagnostics={liquidationDiagnostics}
