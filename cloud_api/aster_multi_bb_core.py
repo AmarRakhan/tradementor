@@ -815,6 +815,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                       timestamp_ms: int, dry_run: bool = False, order_budget: int | None = None,
                       before_order: Any = None, zone_context: dict[str, Any] | None = None) -> dict[str, Any]:
     budget = max(0, 15 if order_budget is None else int(order_budget)); sent = 0
+    # Build 614: klok die meeloopt met de tick (begintijd + verstreken tijd). Een scan kan langer
+    # duren dan een 1m-candle; de Spike-check moet de tijd van NU gebruiken, niet het tickbegin.
+    _tick_started_monotonic = time.monotonic()
+    def tick_now_ms() -> int:
+        return int(timestamp_ms + (time.monotonic() - _tick_started_monotonic) * 1000)
     state = dict(raw_state.get("multiBbPositions") or {}); pmap = _position_map(positions)
     # Zone-owned TP settlement is part of position management and therefore can
     # run before the later entry-capacity reconciliation.  Initialize the zone
@@ -1794,10 +1799,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     spike_timeframe=(settings.extreme_spike_long_timeframe if candidate_side == "LONG" else settings.extreme_spike_short_timeframe)
                     spike_snapshot=require_extreme_spike_entry(
                         client, symbol=symbol, side=candidate_side, level=settings.extreme_spike_level,
-                        # Build 614: verse klok. timestamp_ms is het begin van de tick; een scan duurt
+                        # Build 614: meelopende klok. timestamp_ms is het begin van de tick; een scan duurt
                         # soms minuten, waardoor de live 1m-candle "te ver in de toekomst" leek en vrijwel
                         # elke munt werd afgekeurd met SPIKE_INVALID_LIVE_CANDLE (live 23-10 01:14).
-                        timeframe=spike_timeframe, now_ms=int(time.time() * 1000), live_price=prices[symbol])
+                        timeframe=spike_timeframe, now_ms=tick_now_ms(), live_price=prices[symbol])
                     spike_candidates[candidate_side]=spike_event_key(
                         symbol=symbol, side=candidate_side, timeframe=spike_timeframe,
                         candle_close_ms=spike_snapshot.candle_close_ms)

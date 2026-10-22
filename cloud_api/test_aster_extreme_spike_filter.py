@@ -237,5 +237,6 @@ class SpikeFreshClockTests(unittest.TestCase):
         import pathlib
         src = (pathlib.Path(__file__).parent / "aster_multi_bb_core.py").read_text()
         gate = src[src.index("spike_snapshot=require_extreme_spike_entry("):][:900]
-        self.assertIn("now_ms=int(time.time() * 1000)", gate)
+        self.assertIn("now_ms=tick_now_ms()", gate)
+        self.assertIn("timestamp_ms + (time.monotonic() - _tick_started_monotonic) * 1000", src)
         self.assertNotIn("now_ms=timestamp_ms", gate)
