@@ -1193,6 +1193,33 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             sent += 1; continue
         tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit)
         tp_due = settings.take_profit_enabled and not asym["blockLongTp"] and not asym["disableShortTp"] and (mark >= tp_price if side == "LONG" else mark <= tp_price)
+        spike_tp_active = False
+        if isinstance(st0.get("spikeEntry"), dict) and not st0.get("spikeHedgedAtMs"):
+            # Spike 1.1: eigen TP/trailing zolang de positie nooit gehedged is.
+            # Eenmaal gehedged (Auto Hedge-lock actief) geldt definitief de normale TP.
+            try:
+                spike_hedged = auto_hedge_symbol_managed(account_uid=uid, symbol=symbol)
+            except Exception:
+                spike_hedged = True  # onzeker = normale TP; nooit een snelle Spike-close op twijfel
+            if spike_hedged:
+                marked = dict(st0); marked["spikeHedgedAtMs"] = timestamp_ms; state[key] = marked; st0 = marked
+                actions.append({"kind": "SPIKE_TP_HANDOVER", "symbol": symbol, "side": side, "reason": "HEDGED_NORMAL_TP"})
+            else:
+                from aster_spike_take_profit import evaluate_spike_take_profit
+                side_key = "long" if side == "LONG" else "short"
+                spike_cfg = settings.spike_settings()
+                spike_tp = evaluate_spike_take_profit(
+                    side=side, entry=entry, mark=mark,
+                    tp_pct=float(spike_cfg[f"{side_key}TakeProfitPct"]),
+                    trailing_enabled=bool(spike_cfg[f"{side_key}TrailingEnabled"]),
+                    trailing_pct=float(spike_cfg[f"{side_key}TrailingPct"]),
+                    previous_peak_pct=(_f(st0.get("spikePeakPct")) if st0.get("spikePeakPct") is not None else None))
+                spike_tp_active = True
+                if spike_tp.peak_pct is not None and spike_tp.peak_pct != st0.get("spikePeakPct"):
+                    marked = dict(st0); marked["spikePeakPct"] = spike_tp.peak_pct; state[key] = marked; st0 = marked
+                tp_due = spike_tp.close and not asym["blockLongTp"] and not asym["disableShortTp"]
+                tp_price = mark
+                actions.append({"kind": "SPIKE_TP_CHECK", "symbol": symbol, "side": side, **spike_tp.public_dict()})
         if tp_due and side == "LONG":
             # SHORT Recovery 2.0: a recovery-managed pair with an open SHORT exits LONG+SHORT together and
             # only when net positive. Legacy pairs are ALLOW (unchanged behaviour).
@@ -1207,11 +1234,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 PositionActionContext(
                     uid=uid,symbol=symbol,side=side,action_type=ActionType.CLOSE_TP,
                     position_open=True,trigger_met=True,dca_count=_i(st0.get("dcaCount")),
-                    take_profit_enabled=bool(settings.take_profit_enabled),
+                    take_profit_enabled=bool(settings.take_profit_enabled) or spike_tp_active,
                 ),
             )
             require_position_action_allowed(tp_decision)
-            actions.append({"kind": "TP", "symbol": symbol, "side": side, "mark": mark, "entry": entry, "target": tp_price,
+            actions.append({"kind": "TP", "symbol": symbol, "side": side, "mark": mark, "entry": entry, "target": tp_price, "spikeTakeProfit": spike_tp_active,
                             "decision":tp_decision.public_dict()})
             if not dry_run:
                 plan = PairExecutionPlan(symbol, Decimal(str(qty)), Decimal(str(qty * mark)), max(1, _i(row.get("leverage"))))
@@ -2249,6 +2276,11 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             state[key] = {"cycleId": cycle_id, "dcaCount": 0, "lastBotFillPrice": fill_price, "lastKnownQty": fill_qty, "lastKnownEntry": fill_price, "leverage": plan.leverage,
                 "cycleStartedAtMs": timestamp_ms, "updatedAtMs": timestamp_ms, "botManaged": True,
                 "asymmetricHedge": paired, "pairedShortKey": f"{symbol}|SHORT" if paired else "", "pairedShortPending": paired, "pairedShortOpened": False, "longTpBlocked": paired}
+            if settings.entry_filter_mode == "EXTREME_SPIKE" and spike_candidates.get(side):
+                # Spike 1.1: markeert de positie voor de eigen Spike-TP (tot een eventuele hedge).
+                state[key]["spikeEntry"] = {"eventId": spike_candidates[side], "openedAtMs": timestamp_ms,
+                    "timeframe": settings.extreme_spike_long_timeframe if side == "LONG" else settings.extreme_spike_short_timeframe,
+                    "level": settings.extreme_spike_level}
             if zone_claim is not None:
                 state[key].update({
                     "originZone": zone_claim.get("originZone"), "originZoneCycleId": zone_claim.get("originZoneCycleId"),
