@@ -66,11 +66,19 @@ export function AsterExtremeSpikeEntryCard({ config, disabled, message, onSave }
   const dirty = JSON.stringify(draft) !== configKey;
   const error = spikeValidationError(draft);
   const patch = (value: Partial<SpikeConfig>) => setDraft({ ...draft, ...value });
+  // Build 615 (melding Amar 23-10 01:28): terug van Spike naar Bollinger (of Geen filter) moet direct werken.
+  // Die keuzes hebben geen extra velden in deze kaart, dus ze worden meteen opgeslagen; daarna verschijnt de
+  // Bollinger-kaart met zijn eigen schakelaar en tijdframes. Extreme Spike blijft een concept tot "opslaan".
+  const selectMode = (mode: SpikeConfig["mode"]) => {
+    const next = { ...draft, mode };
+    setDraft(next);
+    if (mode !== "EXTREME_SPIKE" && mode !== config.mode) onSave(next);
+  };
   return <section className="extreme-entry-card" aria-label="Instapfilter" data-testid="extreme-spike-entry">
     <div className="es-heading"><strong>Instapfilter</strong><small>Kies hoe de bot nieuwe instappen beoordeelt. Bestaande posities veranderen niet.</small></div>
     <div className="es-mode" role="radiogroup" aria-label="Instapmodus">
       {([["OFF", "Geen extra filter"], ["BOLLINGER", "Bollinger Band"], ["EXTREME_SPIKE", "Extreme Spike"]] as const).map(([mode, title]) =>
-        <button key={mode} type="button" role="radio" aria-checked={draft.mode === mode} disabled={disabled} className={draft.mode === mode ? "selected" : ""} onClick={() => patch({ mode })}><span aria-hidden="true">{draft.mode === mode ? "◉" : "○"}</span>{title}</button>)}
+        <button key={mode} type="button" role="radio" aria-checked={draft.mode === mode} disabled={disabled} className={draft.mode === mode ? "selected" : ""} onClick={() => selectMode(mode)}><span aria-hidden="true">{draft.mode === mode ? "◉" : "○"}</span>{title}</button>)}
     </div>
     <p className="es-note">Bollinger en Extreme Spike kunnen niet tegelijk aan staan.</p>
     {draft.mode === "EXTREME_SPIKE" && <div className="es-detail">

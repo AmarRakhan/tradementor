@@ -3,7 +3,7 @@ name: Extreme Spike 1.1 CI (isolated, no secrets, no orders)
 # no Aster access, no production Firebase project.
 on:
   push:
-    branches: [claude/extreme-spike-1-1]
+    branches: [claude/extreme-spike-1-1, claude/spike-timeframe-612, claude/spike-bollinger-switch-615]
   workflow_dispatch:
 permissions:
   contents: read
