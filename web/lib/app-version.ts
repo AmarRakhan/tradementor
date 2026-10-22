@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 607: Portfolio Snapshot krijgt de rij Markt met de CoinMarketCap market cap 24u-verandering (groen/rood, + of −); alleen weergave, geen trading-wijzigingen.
 // Build 606: Re-Hedge All 1.0 — één knop zet alle Recovery-LONG's via de bestaande Auto Hedge-route terug op 1:1 met hun actuele LONG; SHORT nooit groter dan LONG; geen andere trading- of strategiewijzigingen.
 // Build 605: Close Profits 2.1 — de groene Close Profits-ronde staat op de server: onderbroken ronde hervatten zonder dubbele sluiting, onbekende uitkomst eerst bij Aster gecontroleerd; geen andere trading- of strategiewijzigingen.
 // Build 604: Close Profits 2.0 — groene Close Profits-knop sluit alleen SHORTS met meer dan $0,50 open winst via de bestaande individuele Close-route; geen andere trading- of strategiewijzigingen.
@@ -31,7 +32,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "606";
+export const WEBAPP_BUILD_NUMBER = "607";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
