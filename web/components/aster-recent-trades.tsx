@@ -12,6 +12,7 @@ import { deriveDcaPresentation } from "@/lib/dca-presentation.mjs";
 import { liquidationDistancePercent, liquidationRiskTone } from "@/lib/liquidation-risk.mjs";
 import styles from "./aster-trade-center.module.css";
 import profitStyles from "./aster-profit-close.module.css";
+import { RehedgeAllButton } from "./aster-rehedge-all";
 
 type Activity = {
   id?: string;
@@ -1686,9 +1687,10 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
               <button type="button" className={styles.scopeShort} disabled={!profitSnapshotReliable || scopedProfitCandidates.SHORT.length === 0} onClick={() => forwardSnapshotProfit("SHORT")}>Close Short</button>
               <button type="button" className={styles.scopeAll} disabled={!profitSnapshotReliable || profitCandidates.length === 0} onClick={() => forwardSnapshotProfit("ALL")}>Close All</button>
             </div>
-            <div aria-label="Percentage winstposities sluiten" style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:10}}>
+            <div aria-label="Percentage winstposities sluiten" style={{display:"grid",gridTemplateColumns:"minmax(0,1.7fr) repeat(4,minmax(0,1fr))",gap:6,marginTop:10,padding:"0 12px"}}>
+              <RehedgeAllButton />
               {([25,50,75,100] as const).map((percentage) => (
-                <button key={percentage} type="button" aria-pressed={profitClosePercentage===percentage} onClick={() => setProfitClosePercentage(percentage)} style={{padding:"8px 10px",borderRadius:8,border:profitClosePercentage===percentage?"1px solid #47da89":"1px solid #64748b",background:profitClosePercentage===percentage?"#13432b":"transparent",color:"inherit"}}>{percentage}%</button>
+                <button key={percentage} type="button" aria-pressed={profitClosePercentage===percentage} onClick={() => setProfitClosePercentage(percentage)} style={{padding:"8px 4px",minWidth:0,borderRadius:8,border:profitClosePercentage===percentage?"1px solid #47da89":"1px solid #64748b",background:profitClosePercentage===percentage?"#13432b":"transparent",color:"inherit"}}>{percentage}%</button>
               ))}
             </div>
             <footer className={styles.footer}>

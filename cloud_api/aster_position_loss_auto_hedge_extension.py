@@ -304,6 +304,71 @@ def _transition_missing_protected(
     return next_state
 
 
+def _force_rehedge_cycle(
+    *,
+    uid: str,
+    symbol: str,
+    state: dict[str, Any],
+    status: str,
+    remaining_side: str,
+    remaining: dict[str, Any],
+    positions: list[dict[str, Any]],
+    open_orders: list[dict[str, Any]],
+    threshold: float,
+    execute: bool,
+    results: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Re-Hedge All: start the SAME new cycle the threshold path starts, but without waiting for a loss.
+
+    Only a surviving LONG gets a SHORT hedge. The hedge size is NOT decided here: the existing engine
+    (reconcile_auto_hedge) tops the SHORT up to exactly the live LONG quantity, counting the current SHORT and
+    pending SHORT orders, flooring to the contract step and never exceeding the LONG. Returns None to skip.
+    """
+    mark = float(remaining.get("markPrice") or remaining.get("entryPrice") or 0)
+    base = {"symbol": symbol, "markPrice": mark, "longQty": position_quantity(remaining)}
+    if status not in REHEDGEABLE_STATUSES:
+        results[symbol] = {**base, "result": "SKIPPED", "reason": "MANUAL_RELEASE_NOT_CONFIRMED"}
+        return None
+    if remaining_side != "LONG":
+        results[symbol] = {**base, "result": "SKIPPED", "reason": "SURVIVOR_IS_SHORT"}
+        return None
+    action = next((a for a in evaluate_auto_hedge(
+        positions, threshold, open_orders=open_orders,
+        protected_sides={symbol: "LONG"}, skip_symbols=set(),
+    ) if a.symbol == symbol), None)
+    if action is None:
+        results[symbol] = {**base, "result": "SKIPPED", "reason": "POSITION_UNREADABLE"}
+        return None
+    base.update({
+        "shortQtyBefore": action.existing_hedge_qty,
+        "pendingShortOpenQty": action.pending_open_qty,
+        "pendingShortCloseQty": action.pending_close_qty,
+        "missingShortQty": max(0.0, action.delta_qty),
+    })
+    if action.delta_qty < 0:
+        # Already over-hedged: this button never opens or reduces anything for such a pair.
+        results[symbol] = {**base, "result": "SKIPPED", "reason": "OVER_HEDGED"}
+        return None
+    new_state = {**_new_cycle_state(action, state, threshold), "triggerReason": "USER_REHEDGE_ALL"}
+    if execute:
+        _pair_doc(uid, symbol).set(new_state, merge=True)
+        _audit(uid, {
+            "eventType": "REHEDGE_ALL_CYCLE_STARTED",
+            "symbol": symbol,
+            "pairCycleId": new_state["generationId"],
+            "previousStatus": status,
+            "protectedSide": "LONG",
+            "hedgeSide": "SHORT",
+            "protectedQty": action.protected_qty,
+            "hedgeQtyBefore": action.existing_hedge_qty,
+            "pendingOpenQty": action.pending_open_qty,
+            "requestedDelta": action.required_delta,
+            "reason": "USER_REHEDGE_ALL",
+        })
+    results[symbol] = {**base, "result": "STARTED", "reason": "USER_REHEDGE_ALL", "generationId": new_state["generationId"]}
+    return new_state
+
+
 def _prepare_lifecycle(
     *,
     uid: str,
@@ -312,8 +377,14 @@ def _prepare_lifecycle(
     open_orders: list[dict[str, Any]],
     execute: bool,
     allow_new_triggers: bool = True,
+    force_rehedge_symbols: set[str] | None = None,
+    force_results: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, str], set[str], dict[str, dict[str, Any]], list[dict[str, Any]]]:
     threshold = float(settings["thresholdUsd"])
+    # Re-Hedge All: user-chosen Recovery pairs start a new exact 1:1 cycle NOW, without the loss threshold.
+    force = {str(item).upper() for item in (force_rehedge_symbols or set())}
+    if force_results is None:
+        force_results = {}
     pmap = _position_map(positions)
     states = _pair_states(uid)
     active: dict[str, str] = {}
@@ -342,8 +413,22 @@ def _prepare_lifecycle(
                         "currentHedgeQty": 0.0, "reservedHedgeQty": 0.0,
                         "normalFreeQty": 0.0, "updatedAt": now,
                     }, merge=True)
+                if symbol in force:
+                    force_results[symbol] = {"symbol": symbol, "result": "SKIPPED", "reason": "POSITION_CLOSED"}
                 skip.add(symbol)
                 continue
+            if symbol in force and allow_new_triggers and settings.get("enabled") is True:
+                new_state = _force_rehedge_cycle(
+                    uid=uid, symbol=symbol, state=state, status=status,
+                    remaining_side=remaining_side, remaining=remaining,
+                    positions=positions, open_orders=open_orders,
+                    threshold=threshold, execute=execute, results=force_results,
+                )
+                if new_state is not None:
+                    states[symbol] = new_state
+                    active[symbol] = "LONG"
+                    created.append(new_state)
+                    continue
             if state.get("rehedgeEnabled") is True and allow_new_triggers:
                 if position_open_pnl(remaining) <= -threshold:
                     synthetic = evaluate_auto_hedge(
@@ -517,6 +602,8 @@ def _run_uid(
     *,
     force_shadow: bool = False,
     allow_new_triggers: bool | None = None,
+    force_rehedge_symbols: set[str] | None = None,
+    force_results: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not uid:
         return {"mode": "OFF", "ordersSent": 0, "status": "BLOCKED", "reason": "MISSING_UID", "actions": []}
@@ -569,6 +656,8 @@ def _run_uid(
             open_orders=open_orders,
             execute=execute,
             allow_new_triggers=bool(allow_new_triggers),
+            force_rehedge_symbols=force_rehedge_symbols,
+            force_results=force_results,
         )
 
         if not settings.get("enabled") and not protected_sides:
@@ -787,6 +876,129 @@ def put_position_loss_auto_hedge_rehedge(
     report = _run_uid(uid, force_shadow=not EXECUTION_ENABLED)
     response.headers["Cache-Control"] = "no-store"
     return {**_public(uid), "lastReport": _serialize(report)}
+
+
+class RehedgeAllRequest(BaseModel):
+    confirm: bool = False
+    clientBuild: str = Field(default="", max_length=32)
+
+
+REHEDGE_ALL_BUSY = "Account is bezig met een andere actie. Er is niets gewijzigd; probeer het over enkele seconden opnieuw."
+
+
+def _rehedge_all_item(symbol: str, forced: dict[str, Any] | None, report: dict[str, Any]) -> dict[str, Any]:
+    """One summary row. Success is only claimed from the exchange-confirmed reconcile result."""
+    forced = forced or {"symbol": symbol, "result": "SKIPPED", "reason": "NOT_IN_RECOVERY_ANYMORE"}
+    mark = float(forced.get("markPrice") or 0)
+    item = {
+        "symbol": symbol,
+        "markPrice": mark,
+        "longQty": float(forced.get("longQty") or 0),
+        "shortQtyBefore": float(forced.get("shortQtyBefore") or 0),
+        "addedShortQty": 0.0,
+        "shortQtyAfter": float(forced.get("shortQtyBefore") or 0),
+        "reason": str(forced.get("reason") or ""),
+    }
+    if forced.get("result") != "STARTED":
+        item["outcome"] = "SKIPPED"
+    else:
+        action = next((row for row in report.get("actions", []) if isinstance(row, dict)
+                       and str(row.get("symbol", "")).upper() == symbol), {})
+        final = next((row for row in report.get("final", []) if isinstance(row, dict)
+                      and str(row.get("symbol", "")).upper() == symbol), {})
+        status = str(action.get("status") or "").upper()
+        filled = float(action.get("filledQty") or 0) if action.get("exchangeOrderId") is not None else 0.0
+        item["addedShortQty"] = filled
+        if final:
+            item["longQty"] = float(final.get("protectedQty") or item["longQty"])
+            item["shortQtyAfter"] = float(final.get("hedgeQty") or 0)
+        else:
+            item["shortQtyAfter"] = item["shortQtyBefore"] + filled
+        final_status = str(final.get("status") or "").upper()
+        if str(report.get("mode", "")).upper() != "LIVE":
+            item["outcome"], item["reason"] = "TEST_ONLY", "SHADOW_MODE_NO_ORDERS"
+        elif status == "PRECISION_BLOCKED":
+            item["outcome"], item["reason"] = "TOO_SMALL", "BELOW_ASTER_MINIMUM_OR_STEP"
+        elif status == "INSUFFICIENT_MARGIN":
+            item["outcome"], item["reason"] = "NO_MARGIN", str(action.get("reason") or "INSUFFICIENT_MARGIN")
+        elif status == "FAILED":
+            # An order id was derived: the exchange may have it. The worker re-queries that same id; never resent blindly.
+            item["outcome"] = "UNKNOWN" if action.get("clientOrderId") else "FAILED"
+            item["reason"] = str(action.get("reason") or "FAILED")[:300]
+        elif final_status == "HEDGED":
+            item["outcome"] = "PROTECTED"
+        elif final_status == "PENDING":
+            item["outcome"], item["reason"] = "PENDING", "OPEN_ORDER_RECONCILING"
+        elif final_status == "NEEDS_REDUCE":
+            # The LONG shrank while the order ran; the existing 1:1 rule trims the SHORT on the next tick.
+            item["outcome"], item["reason"] = "PENDING", "LONG_SHRANK_AUTO_HEDGE_TRIMS"
+        elif filled > 0:
+            item["outcome"] = "PARTIAL"
+        else:
+            item["outcome"], item["reason"] = "QUEUED", "WORKER_CONTINUES"
+    long_qty = item["longQty"]
+    item["longNotional"] = long_qty * mark
+    item["shortNotionalBefore"] = item["shortQtyBefore"] * mark
+    item["shortNotionalAfter"] = item["shortQtyAfter"] * mark
+    item["hedgePercent"] = (item["shortQtyAfter"] / long_qty * 100.0) if long_qty > 0 else None
+    return item
+
+
+@main.app.post("/v1/me/aster/position-loss-auto-hedge/rehedge-all")
+def post_position_loss_auto_hedge_rehedge_all(
+    request: RehedgeAllRequest,
+    response: Response,
+    user: dict[str, Any] = Depends(main.authenticated_user),
+) -> dict[str, Any]:
+    uid = main.require_release_feature(user, "auto_hedge_v2")
+    if request.confirm is not True:
+        raise HTTPException(422, "Bevestiging ontbreekt")
+    if _current(uid).get("enabled") is not True:
+        raise HTTPException(409, "Zet Auto Hedge eerst AAN voordat je Recovery-posities opnieuw hedget")
+    if _dynamic_hedge_enabled(uid):
+        raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
+    candidates = sorted(
+        symbol for symbol, row in _pair_states(uid).items()
+        if str(row.get("status", "")).upper() in RECOVERY_STATUSES
+    )
+    response.headers["Cache-Control"] = "no-store"
+    if not candidates:
+        return {**_public(uid), "rehedgeAll": {"status": "NOTHING_TO_DO", "mode": "LIVE" if EXECUTION_ENABLED else "SHADOW",
+                                              "found": 0, "ordersSent": 0, "items": []}}
+    _audit(uid, {
+        "eventType": "REHEDGE_ALL_REQUESTED",
+        "symbols": candidates,
+        "clientBuild": str(request.clientBuild or "")[:32],
+        "reason": "USER_REHEDGE_ALL",
+    })
+    forced: dict[str, dict[str, Any]] = {}
+    report = _run_uid(
+        uid, force_shadow=not EXECUTION_ENABLED,
+        force_rehedge_symbols=set(candidates), force_results=forced,
+    )
+    if report.get("reason") == "ACCOUNT_COORDINATION_BUSY":
+        raise HTTPException(409, REHEDGE_ALL_BUSY)
+    if str(report.get("status", "")).upper() == "FAILED" and not any(
+        row.get("result") == "STARTED" for row in forced.values()
+    ):
+        raise HTTPException(503, "Posities konden niet betrouwbaar worden gelezen. Er is niets opnieuw gehedged.")
+    items = [_rehedge_all_item(symbol, forced.get(symbol), report) for symbol in candidates]
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item["outcome"]] = counts.get(item["outcome"], 0) + 1
+    return {
+        **_public(uid),
+        "lastReport": _serialize(report),
+        "rehedgeAll": {
+            "status": "FAILED" if str(report.get("status", "")).upper() == "FAILED" else "DONE",
+            "error": str(report.get("reason", ""))[:300] if str(report.get("status", "")).upper() == "FAILED" else "",
+            "mode": str(report.get("mode", "")),
+            "found": len(candidates),
+            "ordersSent": int(report.get("ordersSent") or 0),
+            "counts": counts,
+            "items": items,
+        },
+    }
 
 
 def _worker_loop() -> None:

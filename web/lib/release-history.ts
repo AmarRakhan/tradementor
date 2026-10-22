@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-22",
-  title: "Close Profits 2.1: hervatbare ronde · build 605",
+  title: "Re-Hedge All 1.0: Recovery opnieuw beschermen · build 606",
   newItems: [
+    "Build 606: nieuwe knop 'Re-Hedge All' links van 25% in het Tradecentrum. Eén bevestiging zet iedere Recovery-LONG direct terug onder Auto Hedge, ongeacht winst of verlies, via exact dezelfde hedgeroute als de bestaande Auto Hedge: de SHORT wordt aangevuld tot de actuele LONG-hoeveelheid, bestaande SHORT en openstaande orders tellen mee, afronden gaat altijd naar beneden en de SHORT wordt nooit groter dan de LONG. Overhedgede pairs worden overgeslagen en gemeld. De losse schakelaar 'Opnieuw hedgen' blijft ongewijzigd.",
     "Build 605: de groene Close Profits-ronde wordt op de server bewaard. Valt de verbinding weg, dan wordt de knop 'Hervat ronde · N resterend' en gaat dezelfde ronde verder; een SHORT die in deze ronde al gesloten is, wordt nooit nog eens verkleind. Bij een onbekende uitkomst controleert de server eerst Aster; een positie die gecontroleerd moet worden, stopt de rest niet. 'Ronde afsluiten' beëindigt een ronde bewust.",
     "Build 604: de groene Close Profits-knop sluit uitsluitend SHORTS met strikt meer dan $0,50 open winst (25/50/75/100%), na één bevestiging, ieder afzonderlijk en achter elkaar via de bestaande individuele Close-route; bij onzekere uitvoering stopt de reeks en er volgt nooit een automatische tweede order.",
     "Build 601 probeert ontbrekende historische TP-details opnieuw op te halen via de bestaande beveiligde closed-trades route; alleen bevestigde PnL wordt getoond, trading blijft ongewijzigd.",
