@@ -42,6 +42,7 @@ def execute_approved_leg_once(
     decision: ApprovedDecision | None = None,
     decision_provider: Callable[[], ApprovedDecision] | None = None,
     before_submit: Callable[[Any], None] | None = None,
+    pre_mutation_admission: Callable[[], ApprovedDecision] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Execute one leg only after a canonical decision has allowed it.
@@ -63,6 +64,11 @@ def execute_approved_leg_once(
             raise PermissionError("ASTERBOT_EXECUTION_DENIED:MISSING_DECISION")
         if before_submit is not None:
             before_submit(intent)
+
+    # Optional pre-mutation gate for Spike OPEN. Legacy routes remain unchanged.
+    # The final decision_provider still independently revalidates before POST.
+    if pre_mutation_admission is not None:
+        holder["decision"] = _validate_decision(pre_mutation_admission(), expected_action)
 
     result = execute_leg_once(
         client,
