@@ -95,12 +95,13 @@ class ReopenNinety(unittest.TestCase):
         r2 = go(r["record"], mark=97, short_qty=90, short_entry=97, min_qty=40)
         self.assertEqual((r2["override"], r2["event"]), (D(90), "LADDER_HOLD"))
 
-    def test_repeat_gives_81(self):
+    def test_repeat_stays_ten_percent_below_long(self):
+        # Decision Amar 17:57: reopen is always 90% of the LONG, never 81% / 72.9%.
         rec = {"cycleId": 2, "phase": "LADDER", "anchor": "97", "base": "90", "longAtStart": "100",
                "stepsReached": 0, "steps": 4, "stepPct": "2", "lastTarget": "90"}
         r = go(rec, mark="95.06", short_qty=90, min_qty=40)
         self.assertEqual(r["event"], "STEP_TOO_SMALL_CLOSE_ALL")
-        self.assertEqual(r["record"]["reopenQty"], "81")
+        self.assertEqual(r["record"]["reopenQty"], "90")
 
     def test_no_margin_never_closes_all(self):
         rec = go(min_qty=40)["record"]

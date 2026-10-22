@@ -13,9 +13,9 @@ Model (per symbol = per position; the bot never holds two LONGs in one symbol):
 * Desired SHORT = max(0, LONG - released). SHORT can therefore never exceed the
   LONG, and new LONG quantity (DCA) stays fully hedged.
 * A step reduction below the exchange minimum is NOT carried to the next step
-  (decision Amar 22-10 17:03). Instead the whole SHORT is closed and 90% of it is
-  reopened (``FULL_CLOSE_REOPEN``): the SHORT ends 10% below its previous size and
-  a new cycle starts on that reopened SHORT. If the 90% reopen is itself below the
+  (decision Amar 22-10 17:03). Instead the whole SHORT is closed and 90% of the LONG
+  is reopened (``FULL_CLOSE_REOPEN``, decision Amar 17:57): the SHORT always ends 10%
+  below the LONG (never 81%, 72.9%, ...) and a new cycle starts on that reopened SHORT. If the 90% reopen is itself below the
   exchange minimum, the symbol is skipped (no order).
 * At the final step an unsendable remainder does not block the cycle: the refill
   opens the gap up to the LONG, which ends in the same 1:1 state.
@@ -135,6 +135,7 @@ def plan(
     qty_step: Any,
     min_qty: Any = 0,
     min_notional: Any = 0,
+    reopen_basis_qty: Any = None,
 ) -> dict[str, Any]:
     """Decide the next Recovery action for one symbol. Never returns an order to OPEN beyond the LONG."""
     cfg = normalize_settings(settings)
@@ -172,7 +173,9 @@ def plan(
             # Final step: the refill opens up to the LONG, which yields the same 1:1 end state.
             result.update(action="CYCLE_COMPLETE", reason="FINAL_REMAINDER_BELOW_MINIMUM_REFILL", quantity=Decimal(0))
             return result
-        reopen = _floor(short_q * REOPEN_FRACTION, step)
+        # Reopen 90% of the basis (the runtime passes the LONG: the SHORT always ends 10% below the LONG).
+        basis = short_q if reopen_basis_qty is None else max(Decimal(0), _dec(reopen_basis_qty, "basis terugzetten"))
+        reopen = _floor(basis * REOPEN_FRACTION, step)
         if _below_minimum(short_q, price, min_qty, min_notional) or _below_minimum(reopen, price, min_qty, min_notional):
             result.update(action="HOLD", reason="BELOW_MINIMUM_EVEN_FOR_REOPEN_SKIP", quantity=Decimal(0))
             return result

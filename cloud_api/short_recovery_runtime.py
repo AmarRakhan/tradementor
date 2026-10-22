@@ -12,7 +12,7 @@ Phases of the per-pair ``shortRecovery`` record:
   A too-small step switches to REOPEN_CLOSE (after a margin pre-check for the reopen).
   Last step confirmed -> REFILL (legacy target = LONG -> 100% re-hedge -> new cycle).
 * REOPEN_CLOSE — target 0 until the SHORT is confirmed flat, then REOPEN_OPEN.
-* REOPEN_OPEN — target = reopenQty (90% of the SHORT before the close); once reached a new
+* REOPEN_OPEN — target = reopenQty (90% of the LONG: always a 10% gap); once reached a new
   LADDER cycle starts on that reopened SHORT.
 
 Settings changes apply from the next cycle (steps/stepPct are snapshotted at cycle start).
@@ -137,7 +137,7 @@ def decide(
                 "stepPct": str(rec.get("stepPct") or cfg["stepPct"])}
     decision = plan(long_qty=cap, short_qty=min(short_q, cap), base=base, anchor=_d(rec.get("anchor")), mark=price,
                     settings=snapshot, previous_steps=int(rec.get("stepsReached") or 0), qty_step=step,
-                    min_qty=min_qty, min_notional=min_notional)
+                    min_qty=min_qty, min_notional=min_notional, reopen_basis_qty=long_q)
     rec["stepsReached"] = max(int(rec.get("stepsReached") or 0), int(decision["stepsReached"]))
     target = min(long_q, decision["targetShort"])
     action = decision["action"]
