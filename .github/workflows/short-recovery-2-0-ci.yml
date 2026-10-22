@@ -1,0 +1,42 @@
+name: SHORT Recovery 2.0 CI (isolated, no secrets, no orders)
+# Test-only. Runs ONLY on the SHORT Recovery 2.0 branch (and manually). No secrets, no id-token, no deploy,
+# no Aster access, no production Firebase project.
+on:
+  push:
+    branches: [claude/short-recovery-2-0]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: short-recovery-2-0-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCLOUD_PROJECT: short-recovery-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: SHORT Recovery 2.0 ladder + engine
+        working-directory: cloud_api
+        run: python -m unittest -v test_short_recovery_ladder test_short_recovery_2_0_engine
+      - name: Auto Hedge engine + lifecycle regression
+        working-directory: cloud_api
+        run: pytest -q -rfE -p no:cacheprovider test_aster_position_loss_auto_hedge.py test_aster_position_loss_auto_hedge_lifecycle_contract.py test_aster_position_loss_auto_hedge_lock.py test_aster_position_loss_auto_hedge_owner_gate.py
+      - name: Re-Hedge All 1.0 regression
+        working-directory: cloud_api
+        run: python -m unittest -v test_rehedge_all_1_0
+      - name: Full backend regression
+        working-directory: cloud_api
+        run: pytest -q -rfE -p no:cacheprovider

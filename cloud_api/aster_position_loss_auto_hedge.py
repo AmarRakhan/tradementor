@@ -182,6 +182,7 @@ def _build_action(
     hedge_row: dict[str, Any] | None,
     threshold: float,
     pending: Mapping[tuple[str, str], Mapping[str, float]],
+    target_override: float | None = None,
 ) -> AutoHedgeAction:
     hedge_side = "SHORT" if protected_side == "LONG" else "LONG"
     protected_qty = position_quantity(protected_row)
@@ -190,21 +191,34 @@ def _build_action(
     pending_open = max(0.0, _f(pending_row.get("open")))
     pending_close = max(0.0, _f(pending_row.get("close")))
     effective = max(0.0, hedge_qty + pending_open - pending_close)
-    delta = protected_qty - effective
+    # SHORT Recovery 2.0 may lower the hedge target for a LONG-protected pair. The target
+    # can never exceed the protected quantity (never net short) and never drop below zero.
+    recovery_target = (
+        target_override is not None
+        and protected_side == "LONG"
+        and math.isfinite(_f(target_override, -1.0))
+    )
+    target = (
+        min(protected_qty, max(0.0, _f(target_override))) if recovery_target else protected_qty
+    )
+    delta = target - effective
     has_pending = pending_open > EPSILON or pending_close > EPSILON
     if abs(delta) <= EPSILON:
         operation = "HOLD"
         status = "PENDING" if has_pending else "HEDGED"
-        reason = "PENDING_ORDER_RECONCILES_EXACT_1_TO_1" if has_pending else "EXACT_1_TO_1"
+        if recovery_target and target + EPSILON < protected_qty:
+            reason = "PENDING_ORDER_RECONCILES_RECOVERY_TARGET" if has_pending else "SHORT_RECOVERY_TARGET"
+        else:
+            reason = "PENDING_ORDER_RECONCILES_EXACT_1_TO_1" if has_pending else "EXACT_1_TO_1"
         delta = 0.0
     elif delta > 0:
         operation = "OPEN"
         status = "NEEDS_HEDGE"
-        reason = "LOSS_THRESHOLD_REACHED_OR_PROTECTION_DRIFT"
+        reason = "SHORT_RECOVERY_REOPEN" if recovery_target and target + EPSILON < protected_qty else "LOSS_THRESHOLD_REACHED_OR_PROTECTION_DRIFT"
     else:
         operation = "REDUCE"
         status = "NEEDS_REDUCE"
-        reason = "OVER_HEDGED_EXACT_1_TO_1_REQUIRED"
+        reason = "SHORT_RECOVERY_STEP" if recovery_target and target + EPSILON < protected_qty else "OVER_HEDGED_EXACT_1_TO_1_REQUIRED"
     return AutoHedgeAction(
         symbol=symbol,
         protected_side=protected_side,
@@ -216,7 +230,7 @@ def _build_action(
         pending_open_qty=pending_open,
         pending_close_qty=pending_close,
         effective_hedge_qty=effective,
-        target_qty=protected_qty,
+        target_qty=target,
         delta_qty=delta,
         required_delta=abs(delta),
         operation=operation,
@@ -232,6 +246,7 @@ def evaluate_auto_hedge(
     open_orders: list[dict[str, Any]] | None = None,
     protected_sides: Mapping[str, str] | None = None,
     skip_symbols: set[str] | None = None,
+    target_overrides: Mapping[str, float] | None = None,
 ) -> list[AutoHedgeAction]:
     """Return deterministic exact-quantity decisions.
 
@@ -245,6 +260,7 @@ def evaluate_auto_hedge(
     pending = _pending_adjustments(open_orders or [])
     protected = {str(k).upper(): str(v).upper() for k, v in (protected_sides or {}).items()}
     skipped = {str(x).upper() for x in (skip_symbols or set())}
+    overrides = {str(k).upper(): v for k, v in (target_overrides or {}).items()}
     symbols = sorted({symbol for symbol, _ in pmap})
     actions: list[AutoHedgeAction] = []
 
@@ -278,6 +294,7 @@ def evaluate_auto_hedge(
             hedge_row=pmap.get((symbol, hedge_side)),
             threshold=threshold,
             pending=pending,
+            target_override=overrides.get(symbol),
         ))
     return actions
 
@@ -388,6 +405,7 @@ def reconcile_auto_hedge(
     protected_sides: Mapping[str, str] | None = None,
     skip_symbols: set[str] | None = None,
     intent_context: Mapping[str, Mapping[str, Any]] | None = None,
+    target_overrides: Mapping[str, float] | None = None,
     positions: list[dict[str, Any]] | None = None,
     open_orders: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -398,6 +416,7 @@ def reconcile_auto_hedge(
     actions = evaluate_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
+        target_overrides=target_overrides,
     )
     public_actions: list[dict[str, Any]] = []
     orders_sent = 0
@@ -539,6 +558,7 @@ def reconcile_auto_hedge(
     final_actions = evaluate_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
+        target_overrides=target_overrides,
     )
     return {
         "thresholdUsd": threshold,
