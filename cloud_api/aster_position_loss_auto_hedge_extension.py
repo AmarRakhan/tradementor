@@ -35,10 +35,6 @@ WORKER_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER", "true").lowe
 EXECUTION_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED", "false").lower() == "true"
 # SHORT Recovery 2.0: OFF = shadow only (decisions recorded, no target change, no orders).
 SHORT_RECOVERY_EXECUTION_ENABLED = os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "false").lower() == "true"
-# Build 616: the env switch above is only the global master switch. Real SHORT Recovery orders run per
-# user, and only when the admin set shortRecoveryExecutionEnabled=true on that user's Auto Hedge doc.
-# User routes never write that field; every other user stays in test mode.
-SHORT_RECOVERY_EXECUTION_FIELD = "shortRecoveryExecutionEnabled"
 HEDGE_MODE_REQUIRED_MESSAGE = (
     "Auto Hedge vereist Hedge Mode op je Aster-account. Je account staat nu op One-way mode. "
     "Zet in Aster de positiemodus op Hedge Mode (dat kan alleen zonder open posities en open orders) "
@@ -172,7 +168,7 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         "comparison": "openPnl <= -thresholdUsd",
         "targetInvariant": "ABS(LONG_QTY)==ABS(SHORT_QTY)",
         "shortRecoveryPlan": _public_short_recovery(row),
-        "shortRecoveryExecutionEnabled": _short_recovery_live_for(row),
+        "shortRecoveryExecutionEnabled": SHORT_RECOVERY_EXECUTION_ENABLED,
         "referenceId": "file_00000000ecd08246bd1b15532fb478d6",
     })
 
@@ -212,11 +208,6 @@ def _audit_global_setting_change(
         "sourceRoute": source_route,
         "result": result,
     })
-
-
-def _short_recovery_live_for(settings: dict[str, Any]) -> bool:
-    """Real SHORT Recovery orders only with the global master switch AND the per-user admin flag."""
-    return bool(SHORT_RECOVERY_EXECUTION_ENABLED and settings.get(SHORT_RECOVERY_EXECUTION_FIELD) is True)
 
 
 def _hedge_mode_ok(uid: str, client: Any = None) -> bool:
@@ -776,13 +767,12 @@ def _short_recovery_targets(
 ) -> tuple[dict[str, float], list[dict[str, Any]], set[str]]:
     """SHORT Recovery 2.0: per-symbol SHORT targets for the existing engine (+ symbols to hold this tick).
 
-    Live targets are returned only when ASTER_SHORT_RECOVERY_EXECUTION_ENABLED=true AND the user's own
-    shortRecoveryExecutionEnabled flag is true AND this is a live run.
+    Live targets are returned only when ASTER_SHORT_RECOVERY_EXECUTION_ENABLED=true AND this is a live run.
     Otherwise the decisions are recorded under ``shortRecoveryShadow`` and the engine keeps legacy 1:1.
     A symbol whose inputs cannot be read keeps its last confirmed target (never a blind top-up or cut).
     """
     plan_settings = settings.get("shortRecoveryPlan") if isinstance(settings.get("shortRecoveryPlan"), dict) else {}
-    live = bool(_short_recovery_live_for(settings) and execute)
+    live = bool(SHORT_RECOVERY_EXECUTION_ENABLED and execute)
     field = "shortRecovery" if live else "shortRecoveryShadow"
     symbols = [s for s, side in protected_sides.items() if side == "LONG"]
     if not symbols or plan_settings.get("enabled") is not True:
@@ -1352,51 +1342,6 @@ def post_position_loss_auto_hedge_rehedge_all(
             "counts": counts,
             "items": items,
         },
-    }
-
-
-class ShortRecoveryExecutionRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-    enabled: bool
-    confirm: bool = False
-
-
-@main.app.put("/v1/admin/aster/short-recovery-execution")
-def put_admin_short_recovery_execution(
-    request: ShortRecoveryExecutionRequest,
-    response: Response,
-    user: dict[str, Any] = Depends(main.authenticated_user),
-) -> dict[str, Any]:
-    """Admin-only: real SHORT Recovery orders ON/OFF for ONE user. Never places an order itself."""
-    main.require_admin(user)
-    if request.confirm is not True:
-        raise HTTPException(422, "Bevestiging is verplicht")
-    email = request.email.strip().lower()
-    try:
-        record = main.auth.get_user_by_email(email, app=main.auth_app)
-    except Exception as exc:
-        raise HTTPException(404, "Geen gebruiker gevonden met dit e-mailadres") from exc
-    target_uid = str(record.uid)
-    previous = _current(target_uid).get(SHORT_RECOVERY_EXECUTION_FIELD) is True
-    now = datetime.now(timezone.utc)
-    _doc(target_uid).set({
-        SHORT_RECOVERY_EXECUTION_FIELD: bool(request.enabled),
-        "shortRecoveryExecutionUpdatedAt": now,
-        "shortRecoveryExecutionUpdatedBy": str(user["uid"]),
-    }, merge=True)
-    _audit(target_uid, {
-        "eventType": "SHORT_RECOVERY_EXECUTION_CHANGED",
-        "previous": previous,
-        "next": bool(request.enabled),
-        "byAdminUid": str(user["uid"]),
-    })
-    response.headers["Cache-Control"] = "no-store"
-    return {
-        "updated": True,
-        "uid": target_uid,
-        "userFlag": bool(request.enabled),
-        "globalSwitch": SHORT_RECOVERY_EXECUTION_ENABLED,
-        "realOrders": bool(request.enabled and SHORT_RECOVERY_EXECUTION_ENABLED),
     }
 
 
