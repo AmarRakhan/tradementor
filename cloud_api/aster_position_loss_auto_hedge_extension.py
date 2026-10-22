@@ -27,6 +27,7 @@ from aster_position_loss_auto_hedge import (
 )
 from aster_gateway import ContractRules
 from short_recovery_runtime import decide as short_recovery_decide
+import short_recovery_pair_exit
 
 WORKER_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER", "true").lower() == "true"
 EXECUTION_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED", "false").lower() == "true"
@@ -602,6 +603,79 @@ def _sync_pair_views(
 
 
 
+
+PAIR_EXIT_REQUEST_MAX_AGE_SECONDS = 60
+PAIR_EXIT_MAX_SECONDS = 120
+
+
+def _as_utc(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return None
+
+
+def _short_recovery_pair_exit(
+    *, uid: str, symbol: str, state: dict[str, Any], prior: dict[str, Any] | None,
+    long_row: dict[str, Any], short_row: dict[str, Any], mark: Any, client: Any,
+    now: datetime, generation: str,
+) -> tuple[dict[str, Any] | None, Any, str] | None:
+    """Joint LONG+SHORT exit at LONG TP (net positive only). Returns None when not involved.
+
+    Only the SHORT is touched here (target 0 through the existing engine); the LONG is closed by
+    the Multi-BB TP path once it sees PAIR_EXIT with a flat SHORT.
+    """
+    if not prior:
+        return None
+    long_qty = position_quantity(long_row)
+    short_qty = position_quantity(short_row)
+    if prior.get("phase") == "PAIR_EXIT":
+        if long_qty <= 0:
+            return None  # decide() clears the record (NO_LONG)
+        started = _as_utc(prior.get("exitStartedAt")) or now
+        if short_qty <= 0 and (now - started).total_seconds() > PAIR_EXIT_MAX_SECONDS:
+            # LONG was not closed in time (TP no longer due): re-hedge 1:1 instead of leaving it open.
+            record = {**prior, "phase": "REFILL", "lastEvent": "JOINT_EXIT_EXPIRED_REHEDGE", "evaluatedAt": now,
+                      "lastTarget": str(long_qty)}
+            return record, None, "JOINT_EXIT_EXPIRED_REHEDGE"
+        record = {**prior, "lastTarget": "0", "evaluatedAt": now,
+                  "lastEvent": "JOINT_EXIT_SHORT_FLAT_WAIT_LONG_TP" if short_qty <= 0 else "JOINT_EXIT_CLOSING_SHORT"}
+        return record, 0, record["lastEvent"]
+    requested = _as_utc(state.get("pairExitRequestedAt"))
+    if requested is None or (now - requested).total_seconds() > PAIR_EXIT_REQUEST_MAX_AGE_SECONDS:
+        return None
+    if long_qty <= 0 or short_qty <= 0:
+        return None
+    since = _as_utc(prior.get("hedgeSince")) or _as_utc(state.get("triggerAt"))
+    funding = (short_recovery_pair_exit.paid_funding(client, symbol=symbol, start_ms=int(since.timestamp() * 1000))
+               if since else None)
+    price = float(mark or 0)
+    verdict = short_recovery_pair_exit.net_exit(
+        long_pnl=position_open_pnl(long_row), short_pnl=position_open_pnl(short_row),
+        long_notional=long_qty * price, short_notional=short_qty * price, funding_paid=funding,
+    )
+    if not verdict["allowed"]:
+        _audit(uid, {"eventType": "SHORT_RECOVERY_JOINT_EXIT_WAIT", "symbol": symbol,
+                     "reason": verdict["reason"], "net": None if verdict["net"] is None else str(verdict["net"])})
+        return None  # normal ladder continues; the LONG keeps waiting
+    record = {**prior, "phase": "PAIR_EXIT", "exitStartedAt": now, "lastTarget": "0", "evaluatedAt": now,
+              "lastEvent": "JOINT_EXIT_NET_POSITIVE_CLOSING_SHORT", "exitNet": str(verdict["net"]),
+              "generationId": generation}
+    _audit(uid, {"eventType": "SHORT_RECOVERY_JOINT_EXIT_START", "symbol": symbol, "net": str(verdict["net"]),
+                 "fees": str(verdict["fees"]), "fundingPaid": str(verdict["fundingPaid"])})
+    return record, 0, "JOINT_EXIT_NET_POSITIVE_CLOSING_SHORT"
+
+
+def _short_recovery_exit_reader(uid: str, symbol: str) -> dict[str, Any]:
+    return _pair_doc(uid, symbol).get().to_dict() or {}
+
+
+def _short_recovery_exit_requester(uid: str, symbol: str) -> None:
+    _pair_doc(uid, symbol).set({"pairExitRequestedAt": datetime.now(timezone.utc)}, merge=True)
+
+
+short_recovery_pair_exit.configure(_short_recovery_exit_reader, _short_recovery_exit_requester)
+
+
 def _short_recovery_targets(
     *,
     uid: str,
@@ -671,6 +745,20 @@ def _short_recovery_targets(
             rows.append({"symbol": symbol, "event": "RULES_UNAVAILABLE_HOLD", "mode": field})
             continue
         mark = long_row.get("markPrice") or short_row.get("markPrice") or 0
+        if live:
+            exit_result = _short_recovery_pair_exit(
+                uid=uid, symbol=symbol, state=state, prior=prior, long_row=long_row,
+                short_row=short_row, mark=mark, client=client, now=now, generation=generation,
+            )
+            if exit_result is not None:
+                record, target, event = exit_result
+                if target is not None:
+                    overrides[symbol] = float(target)
+                _pair_doc(uid, symbol).set({field: record, "pairExitRequestedAt": None}, merge=True)
+                rows.append({"symbol": symbol, "mode": field, "event": event,
+                             "targetShort": None if target is None else float(target),
+                             "phase": (record or {}).get("phase")})
+                continue
         short_qty: Any = position_quantity(short_row)
         short_entry: Any = short_row.get("entryPrice") or 0
         if not live and prior and prior.get("lastTarget") is not None:
@@ -691,7 +779,8 @@ def _short_recovery_targets(
         )
         record = result["record"]
         if record is not None:
-            record = {**record, "generationId": generation, "lastEvent": result["event"], "evaluatedAt": now}
+            record = {**record, "generationId": generation, "lastEvent": result["event"], "evaluatedAt": now,
+                      "hedgeSince": (prior or {}).get("hedgeSince") or state.get("triggerAt") or now}
         if live and result["override"] is not None:
             overrides[symbol] = float(result["override"])
         if execute:

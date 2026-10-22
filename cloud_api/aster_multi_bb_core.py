@@ -8,6 +8,7 @@ import copy, hashlib, math, time
 
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed
+from short_recovery_pair_exit import long_tp_gate
 from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, is_definite_contract_rejection, plan_pair
 from aster_unified_execution import execute_approved_leg_once
@@ -1124,6 +1125,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             sent += 1; continue
         tp_price = entry * (1 + settings.take_profit if side == "LONG" else 1 - settings.take_profit)
         tp_due = settings.take_profit_enabled and not asym["blockLongTp"] and not asym["disableShortTp"] and (mark >= tp_price if side == "LONG" else mark <= tp_price)
+        if tp_due and side == "LONG":
+            # SHORT Recovery 2.0: a recovery-managed pair with an open SHORT exits LONG+SHORT together and
+            # only when net positive. Legacy pairs are ALLOW (unchanged behaviour).
+            short_row = pmap.get(f"{symbol}|SHORT") or {}
+            verdict, why = long_tp_gate(account_uid=uid, symbol=symbol, short_qty=abs(_f(short_row.get("positionAmt"))))
+            if verdict != "ALLOW":
+                actions.append({"kind": "TP_WAIT_JOINT_EXIT", "symbol": symbol, "side": side, "reason": why})
+                continue
         if tp_due:
             tp_decision=evaluate_position_action(
                 policy_from_settings(settings),

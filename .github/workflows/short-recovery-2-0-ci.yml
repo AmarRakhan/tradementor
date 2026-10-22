@@ -16,7 +16,7 @@ concurrency:
 jobs:
   backend:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       GCLOUD_PROJECT: short-recovery-test-only
     steps:
@@ -28,15 +28,27 @@ jobs:
           cache-dependency-path: cloud_api/requirements.txt
       - name: Install backend dependencies
         run: pip install -r cloud_api/requirements.txt pytest
-      - name: SHORT Recovery 2.0 ladder + engine
+      - name: SHORT Recovery 2.0 pure modules
+        if: always()
         working-directory: cloud_api
-        run: python -m unittest -v test_short_recovery_ladder test_short_recovery_2_0_engine test_short_recovery_runtime test_short_recovery_2_0_worker
+        run: ../tools/ci_report.sh "short recovery pure" 40 python -m unittest -v test_short_recovery_ladder test_short_recovery_runtime test_short_recovery_pair_exit
+      - name: SHORT Recovery 2.0 engine
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "short recovery engine" 40 python -m unittest -v test_short_recovery_2_0_engine
+      - name: SHORT Recovery 2.0 real worker tick
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "short recovery worker" 60 python -m unittest -v test_short_recovery_2_0_worker
       - name: Auto Hedge engine + lifecycle regression
+        if: always()
         working-directory: cloud_api
-        run: pytest -q -rfE -p no:cacheprovider test_aster_position_loss_auto_hedge.py test_aster_position_loss_auto_hedge_lifecycle_contract.py test_aster_position_loss_auto_hedge_lock.py test_aster_position_loss_auto_hedge_owner_gate.py
+        run: ../tools/ci_report.sh "auto hedge regression" 20 pytest -q -rfE -p no:cacheprovider test_aster_position_loss_auto_hedge.py test_aster_position_loss_auto_hedge_lifecycle_contract.py test_aster_position_loss_auto_hedge_lock.py test_aster_position_loss_auto_hedge_owner_gate.py
       - name: Re-Hedge All 1.0 regression
+        if: always()
         working-directory: cloud_api
-        run: python -m unittest -v test_rehedge_all_1_0
+        run: ../tools/ci_report.sh "re-hedge all regression" 20 python -m unittest test_rehedge_all_1_0
       - name: Full backend regression
+        if: always()
         working-directory: cloud_api
-        run: pytest -q -rfE -p no:cacheprovider
+        run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider

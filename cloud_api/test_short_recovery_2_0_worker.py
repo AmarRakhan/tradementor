@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import unittest
 
-from test_rehedge_all_1_0 import HAVE, Base
+from datetime import datetime, timezone
+
+import short_recovery_pair_exit as pair_exit
+from test_rehedge_all_1_0 import HAVE, Base, HedgeClient
 
 PLAN = {"enabled": True, "steps": 4, "stepPct": "2"}
 
@@ -152,6 +155,73 @@ class LiveReopenNinety(Recovery):
         self.at("PEPEUSDT", 98)
         self.assertEqual(self.orders(), [])
         self.assertEqual(self.rec("PEPEUSDT")["lastEvent"], "SKIPPED_BELOW_MINIMUM")
+
+
+class JointExit(Recovery):
+    FUNDING: list = []
+
+    def setUp(self):
+        super().setUp()
+        HedgeClient.income_history = lambda client, **kw: list(self.FUNDING)
+        self.addCleanup(lambda: delattr(HedgeClient, "income_history"))
+
+    def request_exit(self, symbol):
+        self.assertEqual(pair_exit.long_tp_gate(account_uid=self.uid, symbol=symbol, short_qty=self.short(symbol))[0], "WAIT")
+        self.assertIsNotNone(self.pair(symbol).get("pairExitRequestedAt"))
+
+    def test_net_positive_closes_short_then_long_tp_allowed(self):
+        self.open_pair("SOLUSDT")                                   # LONG entry 101, SHORT entry 100
+        self.at("SOLUSDT", 100)
+        self.at("SOLUSDT", 98)                                      # ladder: SHORT 7.5
+        self.L.entry[("SOLUSDT", "LONG")] = 90.0                    # LONG deep in profit at mark 110
+        self.L.mark["SOLUSDT"] = 110.0
+        self.request_exit("SOLUSDT")
+        self.worker_tick()
+        self.check_invariant()
+        self.assertEqual(self.short("SOLUSDT"), 0.0)
+        self.assertEqual(self.long("SOLUSDT"), 10.0)
+        self.assertEqual(self.rec("SOLUSDT")["phase"], "PAIR_EXIT")
+        self.assertEqual(pair_exit.long_tp_gate(account_uid=self.uid, symbol="SOLUSDT", short_qty=0),
+                         ("ALLOW", "SHORT_FLAT_JOINT_EXIT"))
+        self.worker_tick()                                          # SHORT stays flat while LONG TP runs
+        self.assertEqual(self.short("SOLUSDT"), 0.0)
+
+    def test_net_negative_waits_and_keeps_short(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.L.entry[("SOLUSDT", "LONG")] = 100.4                   # LONG +0.4/coin, SHORT -0.5/coin at 100.5
+        self.L.mark["SOLUSDT"] = 100.5
+        self.request_exit("SOLUSDT")
+        self.worker_tick()
+        self.check_invariant()
+        self.assertEqual(self.short("SOLUSDT"), 10.0)
+        self.assertNotEqual(self.rec("SOLUSDT").get("phase"), "PAIR_EXIT")
+
+    def test_paid_funding_can_block_exit(self):
+        self.FUNDING = [{"symbol": "SOLUSDT", "income": "-500"}]
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.L.entry[("SOLUSDT", "LONG")] = 90.0
+        self.L.mark["SOLUSDT"] = 110.0
+        self.request_exit("SOLUSDT")
+        self.worker_tick()
+        self.assertEqual(self.short("SOLUSDT"), 10.0)
+
+    def test_unreadable_funding_waits(self):
+        HedgeClient.income_history = lambda client, **kw: (_ for _ in ()).throw(RuntimeError("down"))
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.L.entry[("SOLUSDT", "LONG")] = 90.0
+        self.L.mark["SOLUSDT"] = 110.0
+        self.request_exit("SOLUSDT")
+        self.worker_tick()
+        self.assertEqual(self.short("SOLUSDT"), 10.0)
+
+    def test_legacy_pair_tp_is_unchanged(self):
+        self.ext.SHORT_RECOVERY_EXECUTION_ENABLED = False
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.assertEqual(pair_exit.long_tp_gate(account_uid=self.uid, symbol="SOLUSDT", short_qty=10)[0], "ALLOW")
 
 
 class Shadow(Recovery):
