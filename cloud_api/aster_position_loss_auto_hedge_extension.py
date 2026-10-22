@@ -688,6 +688,18 @@ def _short_recovery_exit_requester(uid: str, symbol: str) -> None:
 short_recovery_pair_exit.configure(_short_recovery_exit_reader, _short_recovery_exit_requester)
 
 
+_RECORD_VOLATILE_KEYS = {"evaluatedAt"}
+
+
+def _short_recovery_record_changed(prior: dict[str, Any] | None, record: dict[str, Any] | None) -> bool:
+    if (prior is None) != (record is None):
+        return True
+    if prior is None:
+        return False
+    strip = lambda row: {k: v for k, v in row.items() if k not in _RECORD_VOLATILE_KEYS}
+    return strip(prior) != strip(record)
+
+
 def _short_recovery_targets(
     *,
     uid: str,
@@ -800,7 +812,8 @@ def _short_recovery_targets(
             hold.add(symbol)
         elif live and result["override"] is not None:
             overrides[symbol] = float(result["override"])
-        if execute:
+        if execute and _short_recovery_record_changed(prior, record):
+            # Write only on a real change (the worker ticks every few seconds; Firestore cost).
             _pair_doc(uid, symbol).set({field: record}, merge=True)
         rows.append({
             "symbol": symbol, "mode": field, "event": result["event"],

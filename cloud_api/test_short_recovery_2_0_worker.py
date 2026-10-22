@@ -86,6 +86,16 @@ class LiveLadder(Recovery):
         self.at("SOLUSDT", "90.16")                                   # first step of the NEW ladder (92 * 0.98)
         self.assertEqual(self.orders()[-1], ("CLOSE", 2.5))
 
+    def test_quiet_ticks_do_not_rewrite_the_record(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.at("SOLUSDT", 98)
+        self.at("SOLUSDT", "98.5")                                    # event changes once: STEP -> HOLD
+        first = dict(self.rec("SOLUSDT"))
+        for _ in range(5):
+            self.at("SOLUSDT", "98.5")                                # nothing changes
+        self.assertEqual(self.rec("SOLUSDT")["evaluatedAt"], first["evaluatedAt"])
+
     def test_gap_down_combines_steps_in_one_order(self):
         self.open_pair("SOLUSDT")
         self.at("SOLUSDT", 100)
