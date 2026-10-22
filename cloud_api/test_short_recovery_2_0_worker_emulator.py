@@ -17,6 +17,7 @@ EmulatorLiveLadder = _make(scenarios.LiveLadder)
 EmulatorLiveReopenNinety = _make(scenarios.LiveReopenNinety)
 EmulatorJointExit = _make(scenarios.JointExit)
 EmulatorShadow = _make(scenarios.Shadow)
+EmulatorUncertainFills = _make(scenarios.UncertainFills)
 
 if __name__ == "__main__":
     unittest.main()

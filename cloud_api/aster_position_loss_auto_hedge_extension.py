@@ -698,8 +698,8 @@ def _short_recovery_targets(
     open_orders: list[dict[str, Any]],
     client: Any,
     execute: bool,
-) -> tuple[dict[str, float], list[dict[str, Any]]]:
-    """SHORT Recovery 2.0: per-symbol SHORT targets for the existing engine.
+) -> tuple[dict[str, float], list[dict[str, Any]], set[str]]:
+    """SHORT Recovery 2.0: per-symbol SHORT targets for the existing engine (+ symbols to hold this tick).
 
     Live targets are returned only when ASTER_SHORT_RECOVERY_EXECUTION_ENABLED=true AND this is a live run.
     Otherwise the decisions are recorded under ``shortRecoveryShadow`` and the engine keeps legacy 1:1.
@@ -715,7 +715,7 @@ def _short_recovery_targets(
             for symbol in symbols:
                 if (states.get(symbol) or {}).get(field):
                     _pair_doc(uid, symbol).set({field: None}, merge=True)
-        return {}, []
+        return {}, [], set()
     pmap = _position_map(positions)
     try:
         info = client.public_exchange_info() or {}
@@ -737,6 +737,7 @@ def _short_recovery_targets(
         and str(o.get("status", "NEW")).upper() not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
     }
     overrides: dict[str, float] = {}
+    hold: set[str] = set()
     rows: list[dict[str, Any]] = []
     now = datetime.now(timezone.utc)
     for symbol in symbols:
@@ -793,7 +794,11 @@ def _short_recovery_targets(
         if record is not None:
             record = {**record, "generationId": generation, "lastEvent": result["event"], "evaluatedAt": now,
                       "hedgeSince": (prior or {}).get("hedgeSince") or state.get("triggerAt") or now}
-        if live and result["override"] is not None:
+        if live and result["event"] == "PENDING_ORDER_HOLD":
+            # An order on the SHORT is still open: send nothing for this symbol until it is final
+            # (a held target next to a pending close could otherwise open extra SHORT).
+            hold.add(symbol)
+        elif live and result["override"] is not None:
             overrides[symbol] = float(result["override"])
         if execute:
             _pair_doc(uid, symbol).set({field: record}, merge=True)
@@ -802,7 +807,7 @@ def _short_recovery_targets(
             "targetShort": None if result["override"] is None else float(result["override"]),
             "stepsReached": (record or {}).get("stepsReached"), "phase": (record or {}).get("phase"),
         })
-    return overrides, rows
+    return overrides, rows, hold
 
 
 def _run_uid(
@@ -897,7 +902,7 @@ def _run_uid(
                 "revision": int(float(state.get("intentRevision") or 0)),
             }
 
-        recovery_targets, recovery_rows = _short_recovery_targets(
+        recovery_targets, recovery_rows, recovery_hold = _short_recovery_targets(
             uid=uid, settings=settings, states=states, protected_sides=protected_sides,
             positions=positions, open_orders=open_orders, client=client, execute=execute,
         )
@@ -908,7 +913,7 @@ def _run_uid(
             execute=execute,
             audit=(lambda payload: _audit(uid, payload)),
             protected_sides=protected_sides or None,
-            skip_symbols=skip_symbols,
+            skip_symbols=skip_symbols | recovery_hold,
             intent_context=contexts,
             target_overrides=recovery_targets or None,
             positions=positions,

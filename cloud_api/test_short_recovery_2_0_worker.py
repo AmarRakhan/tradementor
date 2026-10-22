@@ -139,6 +139,69 @@ class LiveLadder(Recovery):
         self.assertAlmostEqual(self.short("AAAUSDT"), 10.0)
 
 
+class UncertainFills(Recovery):
+    """Partial fills and an uncertain order status (timeout after Aster accepted) during Recovery."""
+
+    def closed_total(self, symbol):
+        return round(sum(o["filled"] for o in self.L.hedge_orders if o["symbol"] == symbol and o["action"] == "CLOSE"), 9)
+
+    def test_partial_step_fill_is_completed_never_overshoots(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.L.partial_ratio = 0.5
+        self.L.hedge_modes["SOLUSDT"] = "partial"
+        self.at("SOLUSDT", 98)
+        self.assertAlmostEqual(self.short("SOLUSDT"), 8.75)          # half of the 2.5 step filled
+        self.at("SOLUSDT", 98)
+        self.at("SOLUSDT", 98)
+        self.assertAlmostEqual(self.short("SOLUSDT"), 7.5)           # completed, not beyond
+        self.assertAlmostEqual(self.closed_total("SOLUSDT"), 2.5)
+
+    def test_timeout_after_acceptance_is_not_sent_twice(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.L.hedge_modes["SOLUSDT"] = "timeout"
+        self.at("SOLUSDT", 98)                                      # Aster filled, answer lost
+        self.at("SOLUSDT", 98)
+        self.at("SOLUSDT", 98)
+        self.assertAlmostEqual(self.short("SOLUSDT"), 7.5)
+        self.assertEqual(len([o for o in self.L.hedge_orders if o["action"] == "CLOSE"]), 1)
+
+    def test_timeout_on_reopen_never_double_opens(self):
+        self.open_pair("PEPEUSDT", qty=10.0, minimum=3, step=1)
+        self.at("PEPEUSDT", 100)
+        self.at("PEPEUSDT", 98)                                     # close all
+        self.L.hedge_modes["PEPEUSDT"] = "timeout"
+        self.at("PEPEUSDT", 98)                                     # reopen 9 accepted, answer lost
+        self.L.entry[("PEPEUSDT", "SHORT")] = 98.0                  # Aster: new average entry of the reopened SHORT
+        for _ in range(3):
+            self.at("PEPEUSDT", 98)
+        self.assertAlmostEqual(self.short("PEPEUSDT"), 9.0)
+        self.assertEqual([o["action"] for o in self.L.hedge_orders], ["CLOSE", "OPEN"])
+
+    def test_partial_close_all_completes_before_reopen(self):
+        self.open_pair("PEPEUSDT", qty=10.0, minimum=3, step=1)
+        self.at("PEPEUSDT", 100)
+        self.L.partial_ratio = 0.5
+        self.L.hedge_modes["PEPEUSDT"] = "partial"
+        self.at("PEPEUSDT", 98)
+        self.assertAlmostEqual(self.short("PEPEUSDT"), 5.0)
+        self.assertNotIn("OPEN", [o["action"] for o in self.L.hedge_orders])   # no reopen while not flat
+        for _ in range(3):
+            self.at("PEPEUSDT", 98)
+        self.assertAlmostEqual(self.short("PEPEUSDT"), 9.0)
+        self.assertEqual([o["action"] for o in self.L.hedge_orders], ["CLOSE", "CLOSE", "OPEN"])
+
+    def test_pending_open_order_holds(self):
+        self.open_pair("SOLUSDT")
+        self.at("SOLUSDT", 100)
+        self.L.open_order_rows = [{"symbol": "SOLUSDT", "positionSide": "SHORT", "side": "BUY", "status": "NEW",
+                                   "origQty": "2.5", "executedQty": "0"}]
+        self.at("SOLUSDT", 96)
+        self.assertEqual(self.L.hedge_orders, [])                   # nothing new while an order is open
+        self.assertEqual(self.rec("SOLUSDT")["lastEvent"], "PENDING_ORDER_HOLD")
+
+
 class LiveReopenNinety(Recovery):
     def test_too_small_step_closes_all_and_reopens_90(self):
         self.open_pair("PEPEUSDT", qty=10.0, minimum=3, step=1)
