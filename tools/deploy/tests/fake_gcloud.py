@@ -52,6 +52,8 @@ def main():
     if fail and fail in cmdline:
         die(1, f"ERROR: (gcloud) injected failure for: {fail}")
     pos, flags = parse(argv)
+    if len(flags.get("display-name", "")) > 32:
+        die(1, "ERROR: (gcloud) INVALID_ARGUMENT: display name must be less than or equal to 32 characters.")
     allowed = {"project", "quiet", "format", "location", "display-name", "description", "workload-identity-pool",
                "issuer-uri", "attribute-mapping", "attribute-condition", "role", "member"}
     unknown = set(flags) - allowed

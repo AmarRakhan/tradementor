@@ -18,7 +18,7 @@ umask 077
 PROJECT_ID="tradementor-production"
 PROJECT_NUMBER="604335232956"
 POOL="gh-deploy"
-POOL_DISPLAY="GitHub release main + goedkeuring"
+POOL_DISPLAY="GitHub release (approval)"
 PROVIDER="github-main"
 DEPLOY_SA="github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com"
 OLD_POOL="github"
