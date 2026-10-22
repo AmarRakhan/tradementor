@@ -241,6 +241,76 @@ class RollbackTarget(unittest.TestCase):
         self.assertEqual(run("rollback-target", write(service([{"revisionName": "new", "percent": 100}])), write(r), "old")[0], 1)
 
 
+def web_revision(name, build="605", image="web:old", web_commit=None):
+    env = [{"name": "WEBAPP_BUILD_NUMBER", "value": build}, {"name": "NEXT_PUBLIC_X", "value": "1"}]
+    if web_commit:
+        env.append({"name": "TRADEMENTOR_WEB_SOURCE_COMMIT", "value": web_commit})
+    return {"metadata": {"name": name, "labels": {"serving.knative.dev/service": "amar-bot-v44-direct-install"},
+                         "annotations": {"autoscaling.knative.dev/minScale": "1"}},
+            "spec": {"serviceAccountName": "web@x", "timeoutSeconds": 300, "containerConcurrency": 80,
+                     "containers": [{"image": image, "env": env, "ports": [{"containerPort": 8080}]}]},
+            "status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+
+
+def html(build):
+    fd, path = tempfile.mkstemp(suffix=".html")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(f'<html lang="nl" data-webapp-version="46" data-webapp-build="{build}"><body>Webapp versie 46 · build {build}</body></html>')
+    return path
+
+
+class Web(unittest.TestCase):
+    def svc(self):
+        return service([{"revisionName": "w605", "percent": 100}])
+
+    def test_preflight_ok(self):
+        rc, out, err = run("web-preflight", write(self.svc()), write(web_revision("w605")), html("605"), "606", LIVE)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("LIVE_BUILD=605", out); self.assertIn("LIVE_WEB_COMMIT_RECORDED=nee", out)
+
+    def test_preflight_build_must_advance(self):
+        for b in ("605", "604"):
+            self.assertEqual(run("web-preflight", write(self.svc()), write(web_revision("w605")), html("605"), b, LIVE)[0], 1)
+
+    def test_preflight_recorded_commit_must_match(self):
+        rev = write(web_revision("w605", web_commit=NEW))
+        self.assertEqual(run("web-preflight", write(self.svc()), rev, html("605"), "606", LIVE)[0], 1)
+        self.assertEqual(run("web-preflight", write(self.svc()), rev, html("605"), "606", NEW)[0], 0)
+
+    def test_preflight_unreadable_page(self):
+        p = html("x"); open(p, "w").write("<html>geen build</html>")
+        self.assertEqual(run("web-preflight", write(self.svc()), write(web_revision("w605")), p, "606", LIVE)[0], 1)
+
+    def cand_setup(self, cand):
+        svc = service([{"revisionName": "w605", "percent": 100},
+                       {"revisionName": cand["metadata"]["name"], "percent": 0, "tag": "t", "url": "https://t---w.run.app"}])
+        return write(web_revision("w605")), write(cand), write(svc)
+
+    def test_candidate_web_ok(self):
+        cand = web_revision("w606", build="606", image=IMG, web_commit=NEW)
+        rc, out, err = run("candidate-web", *self.cand_setup(cand), NEW, "t", IMG, "606")
+        self.assertEqual(rc, 0, err); self.assertIn("CANDIDATE_URL=https://t---w.run.app", out)
+
+    def test_candidate_web_env_drift(self):
+        cand = web_revision("w606", build="606", image=IMG, web_commit=NEW)
+        cand["spec"]["containers"][0]["env"][1]["value"] = "2"
+        self.assertEqual(run("candidate-web", *self.cand_setup(cand), NEW, "t", IMG, "606")[0], 1)
+
+    def test_candidate_web_missing_commit_marker(self):
+        cand = web_revision("w606", build="606", image=IMG)
+        self.assertEqual(run("candidate-web", *self.cand_setup(cand), NEW, "t", IMG, "606")[0], 1)
+
+    def test_page(self):
+        self.assertEqual(run("page", html("606"), "606")[0], 0)
+        self.assertEqual(run("page", html("605"), "606")[0], 1)
+
+    def test_rollback_target_web(self):
+        svc = write(service([{"revisionName": "w606", "percent": 100}]))
+        rc, out, err = run("rollback-target", svc, write(web_revision("w605")), "w605", "amar-bot-v44-direct-install")
+        self.assertEqual(rc, 0, err); self.assertIn("TARGET_BUILD=605", out)
+        self.assertEqual(run("rollback-target", svc, write(web_revision("w605")), "w605", "tradementor-api")[0], 1)
+
+
 def condition():
     text = open(SETUP).read()
     vals = dict(re.findall(r'^(REPO_ID|OWNER_ID|WF)="([^"]*)"', text, re.M))

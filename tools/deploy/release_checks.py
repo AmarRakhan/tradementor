@@ -12,6 +12,7 @@ import sys
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 COMMIT_KEYS = ("TRADEMENTOR_SOURCE_COMMIT", "TRADEMENTOR_IMAGE_SOURCE_COMMIT")
+WEB_COMMIT_KEY = "TRADEMENTOR_WEB_SOURCE_COMMIT"
 # Annotaties die Cloud Run per revisie zelf zet; alle andere moeten gelijk blijven.
 VOLATILE_ANNOTATIONS = {
     "serving.knative.dev/creator",
@@ -144,15 +145,14 @@ def cmd_preflight(service_path: str, live_rev_path: str, expected_live: str) -> 
     print("UPDATE_ENV_KEYS=" + " ".join(k for k in COMMIT_KEYS if k in env or k == COMMIT_KEYS[0]))
 
 
-def cmd_candidate(live_rev_path: str, cand_rev_path: str, service_path: str, source: str, tag: str,
-                  expected_image: str) -> None:
+def _compare_candidate(live_rev_path: str, cand_rev_path: str, service_path: str, tag: str,
+                       expected_image: str, env_updates: dict) -> None:
     live = revision_shape(load(live_rev_path))
     cand_rev = load(cand_rev_path)
     cand = revision_shape(cand_rev)
     expected_env = dict(live["env"])
-    for key in COMMIT_KEYS:
-        if key in expected_env or key == COMMIT_KEYS[0]:
-            expected_env[key] = {"value": source}
+    for key, value in env_updates.items():
+        expected_env[key] = {"value": value}
     # Alleen namen tonen: logs van een publieke repo zijn openbaar, waarden kunnen gevoelig zijn.
     diff_keys = sorted(k for k in set(expected_env) | set(cand["env"]) if expected_env.get(k) != cand["env"].get(k))
     need(not diff_keys, f"env van de kandidaat wijkt af van live bij: {diff_keys}")
@@ -162,7 +162,6 @@ def cmd_candidate(live_rev_path: str, cand_rev_path: str, service_path: str, sou
         need(not keys, f"{part} van de kandidaat wijkt af van live bij: {keys}")
     image = (cand_rev.get("spec", {}).get("containers") or [{}])[0].get("image", "")
     need(image == expected_image, f"kandidaat-image {image} is niet het zojuist gebouwde image {expected_image}")
-    need(bool(SHA_RE.match(source)), "ongeldige commit")
     svc = load(service_path)
     rows = [r for r in svc.get("status", {}).get("traffic") or [] if r.get("tag") == tag]
     need(len(rows) == 1, f"tag {tag} niet gevonden")
@@ -171,6 +170,61 @@ def cmd_candidate(live_rev_path: str, cand_rev_path: str, service_path: str, sou
     need(rows[0].get("revisionName") == name, "tag wijst naar een andere revisie")
     print(f"CANDIDATE_REVISION={name}")
     print(f"CANDIDATE_URL={rows[0]['url']}")
+
+
+def cmd_candidate(live_rev_path: str, cand_rev_path: str, service_path: str, source: str, tag: str,
+                  expected_image: str) -> None:
+    need(bool(SHA_RE.match(source)), "ongeldige commit")
+    live_env = env_map((load(live_rev_path).get("spec", {}).get("containers") or [{}])[0])
+    updates = {k: source for k in COMMIT_KEYS if k in live_env or k == COMMIT_KEYS[0]}
+    _compare_candidate(live_rev_path, cand_rev_path, service_path, tag, expected_image, updates)
+
+
+def cmd_candidate_web(live_rev_path: str, cand_rev_path: str, service_path: str, source: str, tag: str,
+                      expected_image: str, build: str) -> None:
+    need(bool(SHA_RE.match(source)), "ongeldige commit")
+    need(build.isdigit(), "ongeldig buildnummer")
+    _compare_candidate(live_rev_path, cand_rev_path, service_path, tag, expected_image,
+                       {"WEBAPP_BUILD_NUMBER": build, WEB_COMMIT_KEY: source})
+
+
+def page_build(html: str) -> str:
+    m = re.search(r'data-webapp-build="([0-9]+)"', html)
+    return m.group(1) if m else ""
+
+
+def cmd_web_preflight(service_path: str, live_rev_path: str, live_html_path: str, source_build: str,
+                      expected_live: str) -> None:
+    svc = load(service_path)
+    st = svc.get("status", {})
+    rows = [r for r in st.get("traffic") or [] if (r.get("percent") or 0) > 0]
+    need(len(rows) == 1 and rows[0].get("percent") == 100, f"web-verkeer staat niet op één revisie met 100%: {rows}")
+    live = rows[0].get("revisionName")
+    rev = load(live_rev_path)
+    need(rev.get("metadata", {}).get("name") == live, "revisiedetails horen niet bij de live web-revisie")
+    with open(live_html_path, encoding="utf-8", errors="replace") as fh:
+        live_build = page_build(fh.read())
+    need(live_build != "", "buildnummer van de live web-app niet gevonden")
+    need(source_build.isdigit() and int(source_build) > int(live_build),
+         f"buildnummer moet hoger zijn dan live: live={live_build}, nieuw={source_build}")
+    env = env_map((rev.get("spec", {}).get("containers") or [{}])[0])
+    recorded = (env.get(WEB_COMMIT_KEY) or {}).get("value")
+    if recorded:
+        need(recorded == expected_live, f"live web is gebouwd uit {recorded}, verwacht {expected_live}")
+    url = st.get("url") or ""
+    need(url.startswith("https://"), "web-URL ontbreekt")
+    print(f"PREVIOUS_REVISION={live}")
+    print(f"LIVE_BUILD={live_build}")
+    print(f"CANONICAL_URL={url}")
+    print(f"LIVE_WEB_COMMIT_RECORDED={'ja' if recorded else 'nee'}")
+
+
+def cmd_page(html_path: str, build: str) -> None:
+    with open(html_path, encoding="utf-8", errors="replace") as fh:
+        html = fh.read()
+    need(page_build(html) == build, f"pagina toont build {page_build(html) or '?'} in plaats van {build}")
+    need(f"Webapp versie 46 · build {build}" in html, "tekst 'Webapp versie 46 · build' ontbreekt")
+    print("PAGE_OK=true")
 
 
 def cmd_health(path: str, expected: str) -> None:
@@ -202,7 +256,7 @@ def cmd_equal(a: str, b: str) -> None:
     print("EQUAL=true")
 
 
-def cmd_rollback_target(service_path: str, rev_path: str, target: str) -> None:
+def cmd_rollback_target(service_path: str, rev_path: str, target: str, service: str = "tradementor-api") -> None:
     svc = load(service_path)
     st = svc.get("status", {})
     rows = [r for r in st.get("traffic") or [] if (r.get("percent") or 0) > 0]
@@ -211,15 +265,20 @@ def cmd_rollback_target(service_path: str, rev_path: str, target: str) -> None:
     need(current != target, f"{target} krijgt al 100% verkeer")
     rev = load(rev_path)
     need(rev.get("metadata", {}).get("name") == target, "revisiedetails horen niet bij het doel")
-    need(rev.get("metadata", {}).get("labels", {}).get("serving.knative.dev/service") == "tradementor-api",
-         "doelrevisie hoort niet bij tradementor-api")
+    need(rev.get("metadata", {}).get("labels", {}).get("serving.knative.dev/service") == service,
+         f"doelrevisie hoort niet bij {service}")
     conds = {c.get("type"): c.get("status") for c in rev.get("status", {}).get("conditions") or []}
     need(conds.get("Ready") == "True", f"doelrevisie is niet Ready: {conds}")
     env = env_map((rev.get("spec", {}).get("containers") or [{}])[0])
-    commit = (env.get("TRADEMENTOR_SOURCE_COMMIT") or {}).get("value")
-    need(bool(commit and SHA_RE.match(commit)), "doelrevisie heeft geen TRADEMENTOR_SOURCE_COMMIT")
+    if service == "tradementor-api":
+        commit = (env.get("TRADEMENTOR_SOURCE_COMMIT") or {}).get("value")
+        need(bool(commit and SHA_RE.match(commit)), "doelrevisie heeft geen TRADEMENTOR_SOURCE_COMMIT")
+        print(f"TARGET_SOURCE_COMMIT={commit}")
+    else:
+        build = (env.get("WEBAPP_BUILD_NUMBER") or {}).get("value")
+        need(bool(build and build.isdigit()), "doelrevisie heeft geen WEBAPP_BUILD_NUMBER")
+        print(f"TARGET_BUILD={build}")
     print(f"CURRENT_REVISION={current}")
-    print(f"TARGET_SOURCE_COMMIT={commit}")
     print(f"SERVICE_URL={st.get('url')}")
 
 
@@ -231,7 +290,10 @@ COMMANDS = {
     "health": (cmd_health, 2),
     "openapi": (cmd_openapi, 2),
     "equal": (cmd_equal, 2),
-    "rollback-target": (cmd_rollback_target, 3),
+    "candidate-web": (cmd_candidate_web, 7),
+    "web-preflight": (cmd_web_preflight, 5),
+    "page": (cmd_page, 2),
+    "rollback-target": (cmd_rollback_target, (3, 4)),
 }
 
 
@@ -241,7 +303,7 @@ def main(argv: list[str]) -> int:
         return 2
     fn, n = COMMANDS[argv[1]]
     args = argv[2:]
-    if len(args) != n:
+    if len(args) not in (n if isinstance(n, tuple) else (n,)):
         print(f"{argv[1]} verwacht {n} argumenten, kreeg {len(args)}", file=sys.stderr)
         return 2
     try:

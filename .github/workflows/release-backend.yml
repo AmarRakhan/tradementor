@@ -1,5 +1,6 @@
-name: Release backend (exacte commit)
-# Release-route zonder Workstation. Alleen workflow_dispatch vanaf main.
+name: Release (backend of web, exacte commit)
+# Release-route zonder Workstation. Alleen workflow_dispatch vanaf main. target=backend (tradementor-api) of
+# target=web (amar-bot-v44-direct-install). De bestandsnaam blijft release-backend.yml: Google vertrouwt dit pad.
 # Job 'plan' (geen Google-toegang): invoer, environment-bescherming, voortbouwen op live, volledige backend-tests.
 # Job 'deploy' (environment 'release', alleen main; goedkeuring optioneel): image bouwen, nieuwe revisie ZONDER
 # verkeer, bewijzen dat alles behalve image en commit-variabelen gelijk is aan live, health + routes, verkeer om,
@@ -10,12 +11,18 @@ name: Release backend (exacte commit)
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: "Wat gaat live"
+        required: true
+        default: backend
+        type: choice
+        options: [backend, web]
       source_commit:
         description: "Exacte 40-teken commit die live moet"
         required: true
         type: string
       expected_live_commit:
-        description: "40-teken commit die NU live staat (anders stopt de release)"
+        description: "40-teken commit die NU live staat voor dit target (anders stopt de release)"
         required: true
         type: string
       reason:
@@ -28,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tradementor-production-backend
+  group: tradementor-production-release
   cancel-in-progress: false
 
 env:
@@ -42,6 +49,8 @@ env:
   SOURCE_COMMIT: ${{ inputs.source_commit }}
   EXPECTED_LIVE_COMMIT: ${{ inputs.expected_live_commit }}
   RELEASE_REASON: ${{ inputs.reason }}
+  RELEASE_TARGET: ${{ inputs.target }}
+  WEB_SERVICE: amar-bot-v44-direct-install
 
 jobs:
   plan:
@@ -98,7 +107,7 @@ jobs:
             echo "STOP: $SOURCE_COMMIT bevat de live versie $EXPECTED_LIVE_COMMIT niet. Eerst samenvoegen; terugrollen gaat via release-backend-rollback.yml." >&2; exit 1; }
           COMMITS="$(git rev-list --count "$EXPECTED_LIVE_COMMIT..$SOURCE_COMMIT")"
           {
-            echo "## Release backend — plan"
+            echo "## Release $RELEASE_TARGET — plan"
             echo
             echo "- **Wat:** ${RELEASE_REASON:-(geen omschrijving)}"
             echo "- **Nieuwe commit:** \`$SOURCE_COMMIT\`"
@@ -108,11 +117,13 @@ jobs:
             echo "### Commits"
             git log --format='- `%h` %s' "$EXPECTED_LIVE_COMMIT..$SOURCE_COMMIT" | head -40
             echo
-            echo "### Gewijzigde bestanden in het image (cloud_api/)"
-            git diff --stat "$EXPECTED_LIVE_COMMIT" "$SOURCE_COMMIT" -- cloud_api | tail -60 | sed 's/^/    /'
+            DIR=cloud_api; [ "$RELEASE_TARGET" = web ] && DIR=web
+            echo "### Gewijzigde bestanden in het image ($DIR/)"
+            git diff --stat "$EXPECTED_LIVE_COMMIT" "$SOURCE_COMMIT" -- "$DIR" | tail -60 | sed 's/^/    /'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Python
+        if: inputs.target == 'backend'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -120,9 +131,11 @@ jobs:
           cache-dependency-path: src/cloud_api/requirements.txt
 
       - name: Backend-afhankelijkheden
+        if: inputs.target == 'backend'
         run: pip install -r src/cloud_api/requirements.txt pytest
 
       - name: Volledige backend-suite
+        if: inputs.target == 'backend'
         shell: bash
         working-directory: src/cloud_api
         run: |
@@ -134,8 +147,47 @@ jobs:
           { echo; echo "### Backend-tests"; echo; echo "    $(tail -1 "$RUNNER_TEMP/pytest.txt")"; } >> "$GITHUB_STEP_SUMMARY"
           exit "$code"
 
+      - name: Web-versiecontract (build, release-historie, service worker, backend-URL)
+        if: inputs.target == 'web'
+        shell: bash
+        working-directory: src
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^export const WEBAPP_VERSION = "\([0-9][0-9]*\)";/\1/p' web/lib/app-version.ts)"
+          BUILD="$(sed -n 's/^export const WEBAPP_BUILD_NUMBER = "\([0-9][0-9]*\)";/\1/p' web/lib/app-version.ts)"
+          test "$VERSION" = "46" || { echo "STOP: WEBAPP_VERSION is niet 46" >&2; exit 1; }
+          test -n "$BUILD" || { echo "STOP: WEBAPP_BUILD_NUMBER niet gevonden" >&2; exit 1; }
+          grep -q 'build: WEBAPP_BUILD_NUMBER' web/lib/release-history.ts
+          grep -q 'version: WEBAPP_VERSION' web/lib/release-history.ts
+          grep -q 'amar-bot-shell-v46' web/public/sw.js
+          grep -q 'tradementor-api-604335232956.europe-west4.run.app' web/lib/cloud-proxy.ts
+          { echo; echo "### Web"; echo; echo "- Build: **$BUILD** (versie $VERSION)"; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Node.js
+        if: inputs.target == 'web'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+
+      - name: Volledige web-suite en build (npm test)
+        if: inputs.target == 'web'
+        shell: bash
+        working-directory: src/web
+        run: |
+          set -euo pipefail
+          npm ci
+          set +e
+          npm test 2>&1 | tee "$RUNNER_TEMP/npmtest.txt"
+          code=${PIPESTATUS[0]}
+          set -e
+          { echo; echo "### Web-tests"; echo; grep -E '^# (tests|pass|fail|skip)' "$RUNNER_TEMP/npmtest.txt" | tail -4 | sed 's/^/    /'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$code"
+
   deploy:
-    name: Deploy
+    name: Deploy backend
+    if: inputs.target == 'backend'
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -312,3 +364,181 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # Bewust geen upload van service-/revisie-JSON: die bevat env-waarden en deze repo is publiek.
+
+  deploy-web:
+    name: Deploy web
+    if: inputs.target == 'web'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Control plane van main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+
+      - name: Exacte broncode
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          path: src
+          fetch-depth: 0
+
+      - name: Bron is exact de gevraagde commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 control/tools/deploy/release_checks.py inputs "$SOURCE_COMMIT" "$EXPECTED_LIVE_COMMIT" "$GITHUB_REF" "$GITHUB_REPOSITORY"
+          test "$(git -C src rev-parse HEAD)" = "$SOURCE_COMMIT"
+          BUILD="$(sed -n 's/^export const WEBAPP_BUILD_NUMBER = "\([0-9][0-9]*\)";/\1/p' src/web/lib/app-version.ts)"
+          test -n "$BUILD"
+          echo "WEBAPP_BUILD_NUMBER=$BUILD" >> "$GITHUB_ENV"
+          echo "DEPLOY_PHASE=auth" >> "$GITHUB_ENV"
+
+      - name: Google Cloud (WIF, geen sleutels)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Vooraf (alleen lezen) — live web, buildnummer en backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=preflight" >> "$GITHUB_ENV"
+          R="$RUNNER_TEMP"
+          gcloud run services describe "$WEB_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/web-before.json"
+          LIVE="$(python3 -c 'import json,sys; rows=[r for r in json.load(open(sys.argv[1]))["status"]["traffic"] if (r.get("percent") or 0)>0]; print(rows[0]["revisionName"] if len(rows)==1 else "")' "$R/web-before.json")"
+          test -n "$LIVE" || { echo "STOP: web-verkeer is gesplitst over meerdere revisies" >&2; exit 1; }
+          gcloud run revisions describe "$LIVE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/web-live-revision.json"
+          URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"]["url"])' "$R/web-before.json")"
+          curl -fsS --retry 5 --retry-delay 3 "$URL/?versionCheck=$GITHUB_RUN_ID" -o "$R/web-live.html"
+          python3 control/tools/deploy/release_checks.py web-preflight "$R/web-before.json" "$R/web-live-revision.json" "$R/web-live.html" "$WEBAPP_BUILD_NUMBER" "$EXPECTED_LIVE_COMMIT" > "$R/web-preflight.env"
+          cat "$R/web-preflight.env" >> "$GITHUB_ENV"
+          # Backend eerst: de live backend moet exact dezelfde cloud_api bevatten als deze web-release.
+          BURL="$(gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+          curl -fsS --retry 4 --retry-delay 3 "$BURL/health" -o "$R/backend-health.json"
+          BACKEND_COMMIT="$(python3 -c 'import json,sys; h=json.load(open(sys.argv[1])); assert h.get("status")=="ready", h.get("status"); print(h["sourceCommit"])' "$R/backend-health.json")"
+          git -C src cat-file -e "$BACKEND_COMMIT^{commit}" || { echo "STOP: live backend-commit $BACKEND_COMMIT niet gevonden" >&2; exit 1; }
+          git -C src diff --quiet "$BACKEND_COMMIT" "$SOURCE_COMMIT" -- cloud_api || {
+            echo "STOP: de live backend ($BACKEND_COMMIT) heeft niet dezelfde cloud_api als deze web-release. Eerst de backend van $SOURCE_COMMIT deployen." >&2; exit 1; }
+          echo "BACKEND_COMMIT=$BACKEND_COMMIT" >> "$GITHUB_ENV"
+          gcloud run services get-iam-policy "$WEB_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/web-iam-before.json"
+          echo "Live web: $LIVE · backend: $BACKEND_COMMIT"
+
+      - name: Web-image bouwen en pushen
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=build" >> "$GITHUB_ENV"
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REPOSITORY/amar-bot-web-v46:$SOURCE_COMMIT"
+          docker build --tag "$IMAGE" src/web
+          docker push "$IMAGE"
+          PINNED="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")"
+          [[ "$PINNED" == "${IMAGE%%:*}@sha256:"* ]] || { echo "STOP: geen digest na push" >&2; exit 1; }
+          echo "IMAGE=$PINNED" >> "$GITHUB_ENV"
+
+      - name: Nieuwe web-revisie ZONDER verkeer
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=candidate" >> "$GITHUB_ENV"
+          R="$RUNNER_TEMP"
+          SUFFIX="rel-${SOURCE_COMMIT:0:8}-${GITHUB_RUN_ID: -6}${GITHUB_RUN_ATTEMPT}"
+          TAG="rel-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          gcloud run services update "$WEB_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$IMAGE" --revision-suffix "$SUFFIX" \
+            --update-env-vars "WEBAPP_BUILD_NUMBER=$WEBAPP_BUILD_NUMBER,TRADEMENTOR_WEB_SOURCE_COMMIT=$SOURCE_COMMIT" \
+            --no-traffic --tag "$TAG"
+          gcloud run services describe "$WEB_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/web-candidate-service.json"
+          gcloud run revisions describe "$WEB_SERVICE-$SUFFIX" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/web-candidate-revision.json"
+          python3 control/tools/deploy/release_checks.py candidate-web "$R/web-live-revision.json" "$R/web-candidate-revision.json" "$R/web-candidate-service.json" "$SOURCE_COMMIT" "$TAG" "$IMAGE" "$WEBAPP_BUILD_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Kandidaat controleren (pagina, offline, manifest, service worker)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=verify-candidate" >> "$GITHUB_ENV"
+          R="$RUNNER_TEMP"
+          curl -fsS --retry 8 --retry-delay 5 --retry-all-errors "$CANDIDATE_URL/" -o "$R/web-candidate.html"
+          python3 control/tools/deploy/release_checks.py page "$R/web-candidate.html" "$WEBAPP_BUILD_NUMBER"
+          curl -fsS "$CANDIDATE_URL/offline.html" -o /dev/null
+          curl -fsS "$CANDIDATE_URL/manifest.webmanifest" -o /dev/null
+          curl -fsS "$CANDIDATE_URL/sw.js" | grep -q 'amar-bot-shell-v46'
+
+      - name: Verkeer naar de nieuwe web-revisie
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=promote" >> "$GITHUB_ENV"
+          echo "PROMOTION_ATTEMPTED=true" >> "$GITHUB_ENV"
+          gcloud run services update-traffic "$WEB_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --to-revisions "$CANDIDATE_REVISION=100"
+
+      - name: Web bewaken (5 minuten)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=watch" >> "$GITHUB_ENV"
+          R="$RUNNER_TEMP"
+          for i in $(seq 1 10); do
+            curl -fsS --retry 3 --retry-delay 5 "$CANONICAL_URL/?check=$i-$GITHUB_RUN_ID" -o "$R/web-prod.html"
+            python3 control/tools/deploy/release_checks.py page "$R/web-prod.html" "$WEBAPP_BUILD_NUMBER" > /dev/null
+            sleep 30
+          done
+          FILTER="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$WEB_SERVICE\" AND resource.labels.revision_name=\"$CANDIDATE_REVISION\" AND httpRequest.status>=500"
+          if gcloud logging read "$FILTER" --project "$GCP_PROJECT_ID" --freshness=15m --limit=100 --format=json > "$R/web-5xx.json" 2>/dev/null; then
+            COUNT="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$R/web-5xx.json")"
+            echo "FIVEXX=$COUNT" >> "$GITHUB_ENV"
+            test "$COUNT" = "0" || { echo "STOP: $COUNT web-5xx op de nieuwe revisie" >&2; exit 1; }
+          else
+            echo "FIVEXX=niet leesbaar (geen logging-recht)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Cloud Run-IAM web ongewijzigd
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "DEPLOY_PHASE=iam" >> "$GITHUB_ENV"
+          gcloud run services get-iam-policy "$WEB_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$RUNNER_TEMP/web-iam-after.json"
+          python3 control/tools/deploy/release_checks.py equal "$RUNNER_TEMP/web-iam-before.json" "$RUNNER_TEMP/web-iam-after.json"
+
+      - name: Samenvatting (geslaagd)
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo "## Release web — LIVE"
+            echo
+            echo "- **Live revisie:** \`$CANDIDATE_REVISION\` (build $WEBAPP_BUILD_NUMBER, commit \`$SOURCE_COMMIT\`)"
+            echo "- **Rollback-punt:** \`$PREVIOUS_REVISION\` (build $LIVE_BUILD)"
+            echo "- **Backend live:** \`$BACKEND_COMMIT\` (zelfde cloud_api)"
+            echo "- **Bewaking:** 10× pagina met build $WEBAPP_BUILD_NUMBER in 5 minuten · **5xx:** ${FIVEXX:-?}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Automatisch terug bij een fout na het omzetten
+        if: ${{ failure() && env.PROMOTION_ATTEMPTED == 'true' && env.PREVIOUS_REVISION != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Fout in fase $DEPLOY_PHASE; web-verkeer terug naar $PREVIOUS_REVISION"
+          gcloud run services update-traffic "$WEB_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --to-revisions "$PREVIOUS_REVISION=100"
+          curl -fsS --retry 8 --retry-delay 5 "$CANONICAL_URL/?rollback=$GITHUB_RUN_ID" -o "$RUNNER_TEMP/web-rollback.html"
+          python3 control/tools/deploy/release_checks.py page "$RUNNER_TEMP/web-rollback.html" "$LIVE_BUILD"
+          { echo "## Release web — MISLUKT, TERUGGEZET"; echo; echo "- Fase: $DEPLOY_PHASE · verkeer weer op \`$PREVIOUS_REVISION\` (build $LIVE_BUILD)"; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Samenvatting (mislukt vóór het omzetten)
+        if: ${{ failure() && env.PROMOTION_ATTEMPTED != 'true' }}
+        shell: bash
+        run: |
+          { echo "## Release web — GESTOPT vóór het omzetten"; echo; echo "- Fase: ${DEPLOY_PHASE:-onbekend} · productie ongewijzigd"; } >> "$GITHUB_STEP_SUMMARY"

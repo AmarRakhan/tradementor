@@ -1,10 +1,16 @@
-name: Rollback backend
-# Zet 100% verkeer van tradementor-api terug naar een bestaande, gereede revisie. Bouwt en wijzigt verder niets.
-# Na goedkeuring in environment 'release'. Alleen workflow_dispatch vanaf main.
+name: Rollback (backend of web)
+# Zet 100% verkeer van tradementor-api of amar-bot-v44-direct-install terug naar een bestaande, gereede revisie. Bouwt en wijzigt verder niets.
+# Environment 'release' (alleen main). Alleen workflow_dispatch vanaf main.
 
 on:
   workflow_dispatch:
     inputs:
+      service:
+        description: "Welke service"
+        required: true
+        default: tradementor-api
+        type: choice
+        options: [tradementor-api, amar-bot-v44-direct-install]
       target_revision:
         description: "Bestaande revisie die weer 100% verkeer krijgt (bijv. tradementor-api-cp605-421f3452)"
         required: true
@@ -19,13 +25,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: tradementor-production-backend
+  group: tradementor-production-release
   cancel-in-progress: false
 
 env:
   GCP_PROJECT_ID: tradementor-production
   GCP_REGION: europe-west4
-  CLOUD_RUN_SERVICE: tradementor-api
+  CLOUD_RUN_SERVICE: ${{ inputs.service }}
   WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/gh-deploy/providers/github-main
   DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
   TARGET_REVISION: ${{ inputs.target_revision }}
@@ -79,7 +85,8 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
           test "$GITHUB_REF" = "refs/heads/main"
-          [[ "$TARGET_REVISION" =~ ^tradementor-api-[a-z0-9-]{1,47}$ ]] || { echo "STOP: ongeldige revisienaam" >&2; exit 1; }
+          case "$CLOUD_RUN_SERVICE" in tradementor-api|amar-bot-v44-direct-install) ;; *) echo "STOP: onbekende service" >&2; exit 1;; esac
+          [[ "$TARGET_REVISION" =~ ^${CLOUD_RUN_SERVICE}-[a-z0-9-]{1,40}$ ]] || { echo "STOP: ongeldige revisienaam voor $CLOUD_RUN_SERVICE" >&2; exit 1; }
 
       - name: Google Cloud (WIF, geen sleutels)
         uses: google-github-actions/auth@v2
@@ -97,7 +104,7 @@ jobs:
           R="$RUNNER_TEMP"
           gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/service.json"
           gcloud run revisions describe "$TARGET_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/target.json"
-          python3 control/tools/deploy/release_checks.py rollback-target "$R/service.json" "$R/target.json" "$TARGET_REVISION" >> "$GITHUB_ENV"
+          python3 control/tools/deploy/release_checks.py rollback-target "$R/service.json" "$R/target.json" "$TARGET_REVISION" "$CLOUD_RUN_SERVICE" >> "$GITHUB_ENV"
 
       - name: Verkeer terugzetten
         shell: bash
@@ -112,14 +119,19 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 6); do
-            curl -fsS --retry 6 --retry-delay 5 "$SERVICE_URL/health" -o "$RUNNER_TEMP/health.json"
-            python3 control/tools/deploy/release_checks.py health "$RUNNER_TEMP/health.json" "$TARGET_SOURCE_COMMIT" > /dev/null
+            if [ "$CLOUD_RUN_SERVICE" = tradementor-api ]; then
+              curl -fsS --retry 6 --retry-delay 5 "$SERVICE_URL/health" -o "$RUNNER_TEMP/health.json"
+              python3 control/tools/deploy/release_checks.py health "$RUNNER_TEMP/health.json" "$TARGET_SOURCE_COMMIT" > /dev/null
+            else
+              curl -fsS --retry 6 --retry-delay 5 "$SERVICE_URL/?rollback=$i-$GITHUB_RUN_ID" -o "$RUNNER_TEMP/page.html"
+              python3 control/tools/deploy/release_checks.py page "$RUNNER_TEMP/page.html" "$TARGET_BUILD" > /dev/null
+            fi
             sleep 20
           done
           {
-            echo "## Rollback backend — KLAAR"
+            echo "## Rollback $CLOUD_RUN_SERVICE — KLAAR"
             echo
-            echo "- **Live:** \`$TARGET_REVISION\` (commit \`$TARGET_SOURCE_COMMIT\`), health 6× ready"
+            echo "- **Live:** \`$TARGET_REVISION\` (${TARGET_SOURCE_COMMIT:+commit \`$TARGET_SOURCE_COMMIT\`}${TARGET_BUILD:+build $TARGET_BUILD}), 6× gecontroleerd"
             echo "- **Was:** \`$CURRENT_REVISION\` (blijft bestaan, 0% verkeer)"
             echo "- **Reden:** ${ROLLBACK_REASON:--}"
           } >> "$GITHUB_STEP_SUMMARY"
