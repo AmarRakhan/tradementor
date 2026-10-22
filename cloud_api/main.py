@@ -122,6 +122,7 @@ from aster_execution import NewPositionLeverageBlocked, is_definite_contract_rej
 from aster_execution import contract_brackets, planning_brackets
 from aster_close_guard import AsterCloseBlocked, BLOCK_MESSAGE, CloseEvidence
 from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, configure_auto_hedge_lock_reader, require_auto_hedge_close_allowed
+from short_recovery_runtime import public_unwind as public_short_recovery_unwind
 from aster_profit_close import MINIMUM_PROFIT_USD, position_profit, profit_preview, profitable_positions
 from aster_sniper import SniperSettings, backtest_candles
 from aster_sniper_runtime import run_sniper_tick
@@ -6311,6 +6312,8 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
                 "hedgeSide": auto_hedge_hedge_side,
                 "rehedgeEnabled": auto_hedge_pair.get("rehedgeEnabled") is True,
                 "reservedHedgeQty": safe_float(auto_hedge_pair.get("reservedHedgeQty")),
+                # SHORT Recovery 2.0 (UNWIND label): display only.
+                "unwind": public_short_recovery_unwind(auto_hedge_pair),
             }
         if strategy_id=="aster-strategy-2":
             if (symbol,side) in strategy2_airbag_by_key:

@@ -8,3 +8,4 @@ export function validateRecoverySettings(stepsRaw: unknown, totalPctRaw: unknown
 export function recoveryLadder(stepsRaw: unknown, totalPctRaw: unknown, anchor?: number): LadderRow[];
 export function recoveryEventLabel(event: unknown): string;
 export function recoveryRows(pairs: unknown, liveMode: boolean): RecoveryRow[];
+export function unwindBadge(pair: unknown): { label: string; cls: string } | null;

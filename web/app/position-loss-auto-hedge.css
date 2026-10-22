@@ -409,3 +409,9 @@ article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto
     letter-spacing:-.02em;
   }
 }
+
+/* SHORT Recovery 2.0 — UNWIND badge (row + pair card). TEST = test mode, no real orders. */
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto-hedge.unwind{border-color:rgba(45,186,214,.55)!important;background:rgba(8,74,92,.32)!important;color:#6fdcf2!important}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto-hedge.unwind.test{border-style:dashed!important;opacity:.85}
+.plah-status-badge.unwind{border-color:#2dbad6;color:#6fdcf2;background:rgba(8,74,92,.32)}
+.plah-status-badge.unwind.test{border-style:dashed;opacity:.85}

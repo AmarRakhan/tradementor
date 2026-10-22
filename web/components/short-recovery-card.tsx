@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
-import { recoveryLadder, recoveryRows, validateRecoverySettings } from "@/lib/short-recovery.mjs";
+import { recoveryLadder, validateRecoverySettings } from "@/lib/short-recovery.mjs";
 
 // SHORT Recovery 2.0 settings + status. Saving only stores settings; the server worker decides and
 // places every order through the existing Auto Hedge engine. This component holds no order logic.
@@ -41,7 +41,6 @@ export function ShortRecoveryCard({ state, onSaved }: { state: AutoHedgeLike; on
 
   const check = validateRecoverySettings(steps, totalPct);
   const ladder = useMemo(() => recoveryLadder(steps, totalPct), [steps, totalPct]);
-  const rows = useMemo(() => recoveryRows(state.pairs, live), [state.pairs, live]);
   const dirty = enabled !== plan.enabled || steps !== String(plan.steps) || totalPct !== String(plan.totalPct);
 
   async function save() {
@@ -69,7 +68,7 @@ export function ShortRecoveryCard({ state, onSaved }: { state: AutoHedgeLike; on
   const fmt = (n: number, d = 2) => n.toLocaleString("nl-NL", { maximumFractionDigits: d });
 
   return <section aria-label="SHORT Recovery 2.0" style={{ margin: "16px 0", perspective: 1200 }}>
-    <div style={{ position: "relative", minHeight: flipped ? 380 : 330 }}>
+    <div style={{ position: "relative", minHeight: flipped ? 300 : 330 }}>
       <div style={{ position: "relative", transformStyle: "preserve-3d", transform: flipped ? "rotateY(180deg)" : "rotateY(0)", transition: "transform .65s ease" }}>
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -104,23 +103,16 @@ export function ShortRecoveryCard({ state, onSaved }: { state: AutoHedgeLike; on
             <button type="button" style={button} onClick={() => setFlipped(true)}>Draai kaart ↻</button>
           </div>
         </div>
-        <div style={{ ...card, position: "absolute", inset: 0, transform: "rotateY(180deg)", minHeight: 380 }}>
+        <div style={{ ...card, position: "absolute", inset: 0, transform: "rotateY(180deg)", minHeight: 300 }}>
           <strong style={{ color: GOLD }}>AFBOUWCYCLUS · VOORBEELD VANAF $100</strong>
           <div style={{ overflowY: "auto", maxHeight: 120, marginTop: 8, fontSize: 12 }}>
             {ladder.map((x) => <div key={x.step} style={{ padding: "4px 0", borderBottom: "1px solid #354438" }}>
               Stap {x.step}: ${fmt(x.price, 4)} (−{fmt(x.dropPct, 4)}%) · SHORT {fmt(x.remainingPct)}% over
             </div>)}
           </div>
-          <strong style={{ color: GOLD, display: "block", marginTop: 10, fontSize: 12 }}>
-            POSITIES IN RECOVERY {live ? "" : "(TESTMODUS)"}
-          </strong>
-          <div style={{ overflowY: "auto", maxHeight: 150, marginTop: 6, fontSize: 12 }}>
-            {rows.length ? rows.map((r) => <div key={r.symbol} style={{ padding: "4px 0", borderBottom: "1px solid #354438", display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <b>{r.symbol.replace(/USDT$/i, "")}</b>
-              <span>stap {r.progress}{r.hedgePct !== null ? ` · ${fmt(r.hedgePct, 1)}% gehedged` : ""}{r.cycle > 1 ? ` · cyclus ${r.cycle}` : ""}</span>
-              <span style={{ opacity: .8 }}>{r.event}</span>
-            </div>) : <p style={{ opacity: .75 }}>Nog geen posities in Recovery.</p>}
-          </div>
+          <p style={{ fontSize: 12, opacity: .85, marginTop: 10 }}>
+            In het Tradecentrum en bij de gehedgede posities krijgt een munt die wordt afgebouwd het label <b>UNWIND stap/totaal · % gedekt</b>{live ? "" : " (met TEST zolang er geen echte orders gaan)"}.
+          </p>
           <button type="button" style={{ ...button, marginTop: 10 }} onClick={() => setFlipped(false)}>↶ Instellingen</button>
         </div>
       </div>

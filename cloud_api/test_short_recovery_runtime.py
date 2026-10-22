@@ -119,5 +119,17 @@ class ReopenNinety(unittest.TestCase):
         self.assertEqual((r["override"], r["event"]), (D(100), "SKIPPED_BELOW_MINIMUM"))
 
 
+class PublicUnwind(unittest.TestCase):
+    def test_live_first_then_test_mode(self):
+        from short_recovery_runtime import public_unwind
+        pair = {"currentProtectedQty": 10, "shortRecoveryShadow": {"phase": "LADDER", "stepsReached": 1, "steps": 4,
+                "lastTarget": "7.5", "cycleId": 1}}
+        self.assertEqual(public_unwind(pair)["mode"], "TEST")
+        self.assertEqual(public_unwind(pair)["hedgePct"], 75.0)
+        pair["shortRecovery"] = {"phase": "LADDER", "stepsReached": 2, "steps": 4, "lastTarget": "5", "cycleId": 1}
+        self.assertEqual((public_unwind(pair)["mode"], public_unwind(pair)["stepsReached"]), ("LIVE", 2))
+        self.assertIsNone(public_unwind({"status": "HEDGED"}))
+
+
 if __name__ == "__main__":
     unittest.main()

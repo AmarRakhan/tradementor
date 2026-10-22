@@ -73,3 +73,24 @@ export function recoveryRows(pairs, liveMode) {
     })
     .sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
+
+/** UNWIND badge for an Auto Hedge pair, or null when the pair is not (yet) being unwound.
+ *  Shown only once at least one step is done (or while closing/reopening/exiting); TEST = no real orders. */
+export function unwindBadge(pair) {
+  if (!pair || typeof pair !== "object") return null;
+  const live = pair.shortRecovery && typeof pair.shortRecovery === "object" ? pair.shortRecovery : null;
+  const rec = live || (pair.shortRecoveryShadow && typeof pair.shortRecoveryShadow === "object" ? pair.shortRecoveryShadow : null);
+  if (!rec || !rec.phase) return null;
+  const phase = String(rec.phase);
+  const reached = Number(rec.stepsReached) || 0;
+  const steps = Number(rec.steps) || 0;
+  const active = reached > 0 || phase === "REOPEN_CLOSE" || phase === "REOPEN_OPEN" || phase === "PAIR_EXIT";
+  if (!active) return null;
+  const long = Number(pair.currentProtectedQty) || 0;
+  const target = Number(rec.lastTarget);
+  const pct = long > 0 && Number.isFinite(target) ? Math.round(Math.min(100, (target / long) * 100)) : null;
+  let label = phase === "PAIR_EXIT" ? "UNWIND · TP" : phase.startsWith("REOPEN") ? "UNWIND · 90%" : `UNWIND ${Math.min(reached, steps)}/${steps}`;
+  if (pct !== null && phase === "LADDER") label += ` · ${pct}%`;
+  if (!live) label += " · TEST";
+  return { label, cls: live ? "unwind" : "unwind test" };
+}

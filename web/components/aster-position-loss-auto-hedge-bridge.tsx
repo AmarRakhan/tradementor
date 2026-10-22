@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { ShortRecoveryCard } from "./short-recovery-card";
+import { unwindBadge } from "@/lib/short-recovery.mjs";
 
 const TILE_HOST_ID = "aster-position-loss-auto-hedge-host";
 const SCREEN_HOST_ID = "aster-position-loss-auto-hedge-back-host";
@@ -320,6 +321,7 @@ function PairCard({ pair, saving, scaleAvailable, onRehedge, onScale }: {
             <strong>{pair.symbol.replace(/USDT$/i, "")}</strong>
             <span className="plah-pair-chevron" aria-hidden="true">⌄</span>
             <span className={`plah-status-badge ${statusClass(status)}`}>{statusLabel(status)}</span>
+            {unwindBadge(pair) ? <span className={`plah-status-badge ${unwindBadge(pair)!.cls}`}>{unwindBadge(pair)!.label}</span> : null}
             {status === "HEDGED" && scaleAvailable ? <button
               type="button"
               className="plah-scale-open"
@@ -512,8 +514,9 @@ export function AsterPositionLossAutoHedgeBridge() {
         }
         const small = coinCell.querySelector<HTMLElement>("small");
         if (!small) continue;
-        const cls = statusClass(pair.status);
-        const label = statusLabel(pair.status);
+        const unwind = unwindBadge(pair);
+        const cls = unwind ? unwind.cls : statusClass(pair.status);
+        const label = unwind ? unwind.label : statusLabel(pair.status);
         const badge = existing || document.createElement("em");
         const nextClass = `plah-tc-auto-hedge ${cls}`;
         if (badge.className !== nextClass) badge.className = nextClass;

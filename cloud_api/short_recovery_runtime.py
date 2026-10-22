@@ -170,3 +170,27 @@ def decide(
 
     rec["lastTarget"] = str(target)
     return {"override": target, "record": rec, "event": "STEP_REDUCE" if action == "REDUCE_SHORT" else "LADDER_HOLD"}
+
+
+def public_unwind(pair: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Compact UNWIND view of an Auto Hedge pair for labels (live record first, else test mode)."""
+    pair = pair or {}
+    for field, mode in (("shortRecovery", "LIVE"), ("shortRecoveryShadow", "TEST")):
+        rec = pair.get(field)
+        if not isinstance(rec, Mapping) or not rec.get("phase"):
+            continue
+        long_q = _d(pair.get("currentProtectedQty"))
+        target = _d(rec.get("lastTarget"), "-1")
+        hedge_pct = None
+        if long_q > 0 and target >= 0:
+            hedge_pct = float(min(Decimal(100), target / long_q * 100).quantize(Decimal("0.1")))
+        return {
+            "mode": mode,
+            "phase": str(rec.get("phase")),
+            "stepsReached": int(_d(rec.get("stepsReached"))),
+            "steps": int(_d(rec.get("steps"))),
+            "cycleId": int(_d(rec.get("cycleId"))),
+            "hedgePct": hedge_pct,
+            "lastEvent": str(rec.get("lastEvent") or ""),
+        }
+    return None
