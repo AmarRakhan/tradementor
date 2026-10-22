@@ -78,6 +78,20 @@ export async function authenticatedRequest(path: string, init: RequestInit = {})
     }
     return { round: view(r), busy: false, waiting: false };
   }
+  // Re-Hedge All 1.0: in-page model of the Auto Hedge state + the single bulk endpoint (the server decides sizes).
+  if (path === "/api/exchanges/aster/position-loss-auto-hedge" && method === "GET") {
+    return { enabled: w.__autoHedgeOff ? false : true, pairs: (w.__ahPairs || []).map((p: any) => ({ ...p })) };
+  }
+  if (path === "/api/exchanges/aster/position-loss-auto-hedge/rehedge-all" && method === "POST") {
+    if (w.__rehedgeFail) throw new Error(w.__rehedgeFail);
+    const recovery = (w.__ahPairs || []).filter((p: any) => ["RECOVERY", "REHEDGE_ARMED", "DISABLED"].includes(p.status));
+    const items = recovery.map((p: any) => {
+      p.status = "HEDGED";
+      return { symbol: p.symbol, outcome: "PROTECTED", longNotional: p.long, shortNotionalBefore: p.short,
+        shortNotionalAfter: p.long, hedgePercent: 100, addedShortQty: 1 };
+    });
+    return { rehedgeAll: { status: items.length ? "DONE" : "NOTHING_TO_DO", mode: "LIVE", found: items.length, ordersSent: items.length, items } };
+  }
   const match = path.match(/\/positions\/([^/]+)\/close$/);
   if (match && method === "POST") {
     const symbol = decodeURIComponent(match[1]);

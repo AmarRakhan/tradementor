@@ -295,7 +295,10 @@ def _exchange_rule(client: Any, symbol: str) -> ContractRules:
 
 
 def _exact_market_quantity(rule: ContractRules, requested: float, mark: float, symbol: str) -> Decimal:
-    value = Decimal(str(abs(requested)))
+    # Strip binary-float noise from the LONG-minus-SHORT subtraction (11.0 - 9.99 = 1.0099999999999998) before
+    # flooring; otherwise a valid one-step gap floors a whole step lower and is wrongly PRECISION_BLOCKED. 1e-10 is
+    # far below any Aster quantity step, so this can never turn into an order above the real gap.
+    value = Decimal(str(abs(requested))).quantize(Decimal("1e-10"))
     if value <= 0:
         raise AsterValidationError(f"{symbol}: hedge-quantity moet positief zijn")
     quantity = rule.market_quantity(value, Decimal(str(mark)))

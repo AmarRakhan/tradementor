@@ -1,0 +1,247 @@
+name: Re-Hedge All 1.0 CI (isolated, no secrets, no orders)
+# Test-only. Runs ONLY on the Re-Hedge All 1.0 review branch (and manually). No secrets, no id-token, no deploy, no Aster
+# access, no production Firebase project: Firestore is the local emulator (project close-profits-test-only).
+on:
+  push:
+    branches: [claude/bulk-rehedge-recovery-1-0]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: rehedge-all-1-0-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Close Profits 2.0 model tests (real dependencies)
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend model tests 2.0" 12 python -m unittest test_close_profits_2_0_integration test_close_profits_2_0_round6
+      - name: Close Profits 2.1 round model tests (real dependencies)
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend model tests 2.1" 40 python -m unittest -v test_close_profits_2_1_rounds
+      - name: Re-Hedge All 1.0 model tests (real extension + engine)
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend re-hedge all 1.0" 60 python -m unittest -v test_rehedge_all_1_0
+      - name: Auto Hedge engine + lifecycle regression
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend auto hedge regression" 20 pytest -q -rfE -p no:cacheprovider test_aster_position_loss_auto_hedge.py test_aster_position_loss_auto_hedge_lifecycle_contract.py test_aster_position_loss_auto_hedge_lock.py test_aster_position_loss_auto_hedge_owner_gate.py
+      - name: Full backend regression
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install emulator and backend dependencies
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+      - name: Rounds + 2.0 scenarios on the REAL Firestore emulator
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp21-firebase.json
+          tools/ci_report.sh "firestore emulator tests 2.0" 12 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -m unittest test_close_profits_2_0_firestore_emulator'
+      - name: Close Profits 2.1 rounds on the REAL Firestore emulator
+        run: |
+          tools/ci_report.sh "firestore emulator tests 2.1" 60 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -m unittest -v test_close_profits_2_1_rounds_emulator'
+      - name: Re-Hedge All 1.0 on the REAL Firestore emulator
+        run: |
+          tools/ci_report.sh "firestore emulator re-hedge all 1.0" 60 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -m unittest -v test_rehedge_all_1_0_emulator'
+  e2e-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install emulator and backend dependencies
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+      - name: End-to-end on the real stack (production ASGI entrypoint)
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp21-firebase.json
+          tools/ci_report.sh "e2e real stack 2.0" 12 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -W ignore -m unittest test_close_profits_2_0_e2e_stack test_close_profits_2_0_release_guards'
+      - name: Close Profits 2.1 rounds end-to-end on the real stack
+        run: |
+          tools/ci_report.sh "e2e real stack 2.1" 40 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -W ignore -m unittest -v test_close_profits_2_1_e2e_stack'
+  e2e-web-real-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+          (cd web && npm ci)
+      - name: Frontend round handlers -> real proxy -> real FastAPI -> Firestore emulator
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/cp21-firebase.json
+          tools/ci_report.sh "e2e web real backend" 120 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
+            'cd web && CP20_BACKEND=real node --test tests/aster-close-profits-rounds-e2e.test.mjs'
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: TypeScript typecheck (normalised error set for comparison with baseline)
+        working-directory: web
+        continue-on-error: true
+        run: ../tools/ci_report.sh "typescript errors (normalised)" 400 bash -c "npx tsc --noEmit -p tsconfig.json | sed -E 's/\\([0-9]+,[0-9]+\\)//' | sort | uniq -c | sort -rn; exit \${PIPESTATUS[0]}"
+      - name: TypeScript errors in changed files (reported; compare with BASELINE 605)
+        working-directory: web
+        continue-on-error: true
+        run: ../tools/ci_report.sh "typescript changed files" 60 bash -c "npx tsc --noEmit -p tsconfig.json | grep -E 'components/aster-recent-trades|components/aster-rehedge-all|rehedge-all|lib/(app-version|release-history)' ; test \${PIPESTATUS[1]} -ne 0"
+      - name: Production build
+        working-directory: web
+        run: ../tools/ci_report.sh "next production build" 30 npm run build
+      - name: Re-Hedge All + Close Profits web tests
+        working-directory: web
+        run: ../tools/ci_report.sh "web re-hedge + close-profits tests" 25 node --test tests/rehedge-all.test.mjs tests/aster-close-profits-rounds.test.mjs tests/aster-close-profitable.test.mjs tests/aster-trade-center.test.mjs tests/position-loss-auto-hedge.test.mjs
+      - name: Full web test suite
+        working-directory: web
+        run: ../tools/ci_report.sh "web full suite" 40 node --test tests/*.test.mjs
+      - name: Web deploy gate (npm test = build + regression suite)
+        working-directory: web
+        run: ../tools/ci_report.sh "web deploy gate npm test" 40 npm test
+  ui-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies and Chromium
+        working-directory: web
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - name: Start the UI harness and run the browser checks
+        working-directory: web
+        run: |
+          npx vite --config tests/visual/close-profits-ui-vite.config.ts >/tmp/cp-ui-vite.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:4175/tests/visual/close-profits-ui.html >/dev/null; then break; fi
+            sleep 1
+          done
+          ../tools/ci_report.sh "ui browser checks close profits" 60 node tests/visual/close-profits-ui-check.mjs
+          ../tools/ci_report.sh "ui browser checks re-hedge all" 60 node tests/visual/rehedge-all-ui-check.mjs
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rehedge-all-1-0-ui
+          path: web/artifacts
+          if-no-files-found: warn
+  baseline:
+    # Same checks on the live production source (build 605, 421f3452) to separate pre-existing failures.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tools_src
+      - uses: actions/checkout@v4
+        with:
+          ref: 421f3452e7f629b53cde83ce357e91644f24fc14
+          path: base
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Baseline backend pytest
+        working-directory: base/cloud_api
+        continue-on-error: true
+        run: |
+          pip install -r requirements.txt pytest
+          ../../tools_src/tools/ci_report.sh "BASELINE 605 backend pytest" 40 pytest -q -rfE -p no:cacheprovider
+      - name: Baseline TypeScript errors (normalised)
+        working-directory: base/web
+        continue-on-error: true
+        run: |
+          npm ci
+          ../../tools_src/tools/ci_report.sh "BASELINE 605 typescript errors (normalised)" 400 bash -c "npx tsc --noEmit -p tsconfig.json | sed -E 's/\\([0-9]+,[0-9]+\\)//' | sort | uniq -c | sort -rn; exit \${PIPESTATUS[0]}"
+      - name: Baseline web tests
+        working-directory: base/web
+        continue-on-error: true
+        run: ../../tools_src/tools/ci_report.sh "BASELINE 605 web node tests" 30 node --test tests/*.test.mjs
