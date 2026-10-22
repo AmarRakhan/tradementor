@@ -103,7 +103,7 @@ jobs:
       - name: Chart labels with a cold cache (#738) on the real stack
         run: |
           tools/ci_report.sh "e2e chart labels cold cache" 40 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
-            'cd cloud_api && python -W ignore -m unittest -v test_chart_markers_cold_cache_e2e'
+            'cd cloud_api && python -W ignore -m unittest -v test_chart_markers_cold_cache_e2e test_chart_read_cache_e2e'
       - name: Close Profits 2.1 rounds end-to-end on the real stack
         run: |
           tools/ci_report.sh "e2e real stack 2.1" 40 npx firebase emulators:exec --config /tmp/cp21-firebase.json --only firestore --project close-profits-test-only \
