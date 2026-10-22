@@ -73,7 +73,7 @@ from aster_gateway import (
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, full_leg_closes_from_sweep_ledgers, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
 from aster_account_truth import build_aster_account_truth
-from closed_trades_warmup import WARM_MAX_AGE_SECONDS, ClosedTradesWarmup
+from closed_trades_warmup import WARM_MAX_AGE_SECONDS, ClosedTradesWarmup, account_fingerprint
 from chart_read_cache import TailRefreshCache, TtlValueCache
 from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, confirmed_durable_close_activity_rows, collection_for_timeframe as portfolio_chart_collection, daily_equity_range as portfolio_chart_daily_equity_range, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
@@ -5975,6 +5975,7 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
 # (Strategy-2 state, close cursor) plus writes only for closes that are new. No order path (live_authorized=False).
 _chart_fill_activity_cache: dict[str, tuple[float, list[Any], list[Any], dict[str, list[dict[str, Any]]], dict[str, Any]]] = {}
 CHART_FILL_HISTORY_HOURS = 48
+CHART_FILL_NEW_CLOSE_SYMBOLS = 16   # bound for one refresh after a burst of closes
 
 
 def _strategy_attribution_maps(strategy2_state: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
@@ -6012,8 +6013,10 @@ def _load_chart_fill_activity(user: dict[str, Any]) -> None:
     if flip_card and now - flip_card[0] < WARM_MAX_AGE_SECONDS:
         # The closed-trades route ran recently on this instance: reuse its activity, no exchange or database call.
         activity = merge_recent_trade_activity(previous[3] if previous else {"entries": [], "exits": []}, flip_card[3])
+        meta = dict(previous[4]) if previous and isinstance(previous[4], dict) else {}
         with _cache_lock:
-            _chart_fill_activity_cache[uid] = (now, [], [], activity, {})
+            # Keep the flip card's own load time: re-stamping it "now" made a close up to 20 minutes late on the chart.
+            _chart_fill_activity_cache[uid] = (flip_card[0], [], [], activity, meta)
         return
     secret = load_aster_secret(user)
     client = AsterV3Client(signer_address=secret.signer_address, sign_message=local_eip712_signer(secret),
@@ -6033,6 +6036,17 @@ def _load_chart_fill_activity(user: dict[str, Any]) -> None:
                                             if isinstance(row, dict) and str(row.get("symbol", ""))))
     symbols = bounded_history_symbols(priority_symbols, background_symbols, maximum_symbols=8,
                                       rotation_slot=int(time.time() // 60))
+    # Symbols with a realized close newer than the previous load always get their fills now (a Close Profits round
+    # closes many SHORTs at once; the plain 8-symbol rotation would show only part of them for many minutes).
+    previous_meta = previous[4] if previous and isinstance(previous[4], dict) else {}
+    income_cursor_ms = int(safe_float(previous_meta.get("incomeCursorMs")))
+    newest_income_ms = max([int(safe_float(row.get("time"))) for row in income] or [income_cursor_ms])
+    if income_cursor_ms > 0:
+        new_close_symbols = list(dict.fromkeys(
+            str(row.get("symbol", "")).upper() for row in income
+            if str(row.get("symbol", "")) and int(safe_float(row.get("time"))) > income_cursor_ms
+        ))[:CHART_FILL_NEW_CLOSE_SYMBOLS]
+        symbols = list(dict.fromkeys([*new_close_symbols, *symbols]))[:max(8, len(new_close_symbols))]
     fills: list[dict[str, Any]] = []
     for symbol in symbols:
         try:
@@ -6047,7 +6061,8 @@ def _load_chart_fill_activity(user: dict[str, Any]) -> None:
     # Keep moneybags durable across restarts: store only closes newer than the existing cursor (usually none).
     _persist_confirmed_aster_closed_trades(user, closed_trades_from_fills(fills))
     with _cache_lock:
-        _chart_fill_activity_cache[uid] = (time.monotonic(), [], [], activity, {})
+        _chart_fill_activity_cache[uid] = (time.monotonic(), [], [], activity,
+                                           {"incomeCursorMs": max(newest_income_ms, income_cursor_ms)})
 
 
 def _chart_recent_activity(uid: str, warm_entry: tuple | None) -> dict[str, list[dict[str, Any]]]:
@@ -7189,7 +7204,7 @@ def aster_portfolio_chart_active_trades(
     adjusted_value = safe_float(active_state.get("value")) if active_state else None
     candles = _read_active_trades_chart_candles_display(user, timeframe, limit)
 
-    history_cache = _closed_trades_warmup.ensure(uid, user)
+    history_cache = _closed_trades_warmup.ensure(uid, user, account_fingerprint(snapshot, captured_ms))
     recent_activity = _chart_recent_activity(uid, history_cache)
     markers = portfolio_chart_trade_markers(recent_activity, timeframe)
     day_high = safe_float(active_state.get("dayHigh")) if active_state else adjusted_value
@@ -7276,7 +7291,7 @@ def aster_portfolio_chart(
     cycle = strategy_state.get("multiBbCycle") if isinstance(strategy_state.get("multiBbCycle"), dict) else {}
     cycle_start = safe_float(cycle.get("cycleStartEquity"))
 
-    history_cache = _closed_trades_warmup.ensure(uid, user)
+    history_cache = _closed_trades_warmup.ensure(uid, user, account_fingerprint(snapshot, captured_ms))
     recent_activity = _chart_recent_activity(uid, history_cache)
     # New zone-owned entries retain their origin in the compact chart tooltip.
     # Work on a copy of the cached fill activity; never rewrite historical fills.

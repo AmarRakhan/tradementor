@@ -9,7 +9,8 @@ import time
 import unittest
 from pathlib import Path
 
-from closed_trades_warmup import RETRY_BACKOFF_SECONDS, WARM_MAX_AGE_SECONDS, ClosedTradesWarmup
+from closed_trades_warmup import (CHANGE_BACKOFF_SECONDS, RETRY_BACKOFF_SECONDS, WARM_MAX_AGE_SECONDS,
+                                  ClosedTradesWarmup, account_fingerprint)
 
 ACTIVITY = {"entries": [{"symbol": "BTCUSDT", "side": "LONG"}], "exits": [{"symbol": "AAOIUSDT", "side": "SHORT"}]}
 
@@ -96,6 +97,65 @@ class WarmupTests(unittest.TestCase):
         self.assertEqual(self.calls, ["u1"])
 
 
+    # --- Live refresh: a close made right now must reach the chart without waiting 10 minutes -----------------------
+    def fp(self, ms, wallet, positions=124):
+        return account_fingerprint({"walletBalance": str(wallet), "activePositions": positions}, ms)
+
+    def test_a_new_close_refreshes_the_fresh_cache_at_once(self):
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(1_000, "250.10"))        # cold load
+        self.clock.t += CHANGE_BACKOFF_SECONDS + 1                           # well inside the 10-minute window
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(2_000, "250.10"))        # nothing happened: no call
+        self.assertEqual(self.calls, ["u1"])
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(3_000, "250.76"))        # Close Profits realized +$0.66
+        self.assertEqual(self.calls, ["u1", "u1"])
+
+    def test_a_full_close_with_unchanged_wallet_rounding_still_counts_by_position_count(self):
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(1_000, "250.10", 124))
+        self.clock.t += CHANGE_BACKOFF_SECONDS + 1
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(2_000, "250.10", 123))
+        self.assertEqual(self.calls, ["u1", "u1"])
+
+    def test_an_older_snapshot_from_another_route_never_counts_as_a_change(self):
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(5_000, "250.76"))
+        self.clock.t += CHANGE_BACKOFF_SECONDS + 1
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(4_000, "250.10"))        # stale stored snapshot
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(5_000, "250.10"))        # same moment, other source
+        self.assertEqual(self.calls, ["u1"])
+
+    def test_a_change_inside_the_backoff_is_remembered_and_refreshed_afterwards(self):
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(1_000, "250.10"))
+        self.clock.t += 5
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(2_000, "251.00"))        # change, but within 45 s of the load
+        self.assertEqual(self.calls, ["u1"])
+        self.clock.t += CHANGE_BACKOFF_SECONDS
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(3_000, "251.00"))        # same value again, change not lost
+        self.assertEqual(self.calls, ["u1", "u1"])
+        self.clock.t += CHANGE_BACKOFF_SECONDS + 1
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(4_000, "251.00"))
+        self.assertEqual(self.calls, ["u1", "u1"])                          # and refreshed only once
+
+    def test_continuous_trading_refreshes_at_most_once_per_backoff(self):
+        self.w.ensure("u1", {"uid": "u1"}, self.fp(1, "100"))
+        for i in range(2, 121):                                              # 10 minutes of 5 s polls, a fill each time
+            self.clock.t += 5
+            self.w.ensure("u1", {"uid": "u1"}, self.fp(i * 5_000, str(100 + i)))
+        self.assertLessEqual(len(self.calls), 1 + 600 // CHANGE_BACKOFF_SECONDS + 1)
+
+    def test_no_fingerprint_keeps_the_old_age_behaviour(self):
+        self.w.ensure("u1", {"uid": "u1"})
+        self.clock.t += CHANGE_BACKOFF_SECONDS + 1
+        self.w.ensure("u1", {"uid": "u1"}, None)
+        self.w.ensure("u1", {"uid": "u1"}, account_fingerprint({}, 5_000))  # snapshot without wallet balance
+        self.assertEqual(self.calls, ["u1"])
+
+    def test_fingerprint_is_stable_for_identical_snapshots(self):
+        a = account_fingerprint({"walletBalance": "250.1000", "activePositions": 3}, 1)
+        b = account_fingerprint({"walletBalance": 250.1, "activePositions": "3"}, 2)
+        self.assertEqual(a[1], b[1])
+        self.assertIsNone(account_fingerprint({"walletBalance": "x"}, 1))
+        self.assertIsNone(account_fingerprint({"walletBalance": "1"}, 0))
+
+
 class WiringTests(unittest.TestCase):
     SRC = (Path(__file__).parent / "main.py").read_text(encoding="utf-8")
 
@@ -105,11 +165,11 @@ class WiringTests(unittest.TestCase):
 
     def test_both_chart_routes_use_the_warmup_for_their_markers(self):
         chart = self.block('@app.get("/v1/me/aster/portfolio-chart")', '@app.get("/v1/me/aster/trade-events")')
-        self.assertIn("history_cache = _closed_trades_warmup.ensure(uid, user)", chart)
+        self.assertIn("history_cache = _closed_trades_warmup.ensure(uid, user, account_fingerprint(snapshot, captured_ms))", chart)
         self.assertIn("recent_activity = _chart_recent_activity(uid, history_cache)", chart)
         self.assertNotIn("history_cache = _aster_closed_trades_cache.get(uid)", chart)
         active = self.block("def aster_portfolio_chart_active_trades(", "\n@app.")
-        self.assertIn("history_cache = _closed_trades_warmup.ensure(uid, user)", active)
+        self.assertIn("history_cache = _closed_trades_warmup.ensure(uid, user, account_fingerprint(snapshot, captured_ms))", active)
         self.assertIn("recent_activity = _chart_recent_activity(uid, history_cache)", active)
 
     def test_warmup_uses_the_lean_read_only_fill_loader(self):
@@ -124,6 +184,17 @@ class WiringTests(unittest.TestCase):
                           "_persist_aster_realized_events", "_verified_aster_daily_close_summary",
                           "_stored_aster_closed_trades(", ".stream()", "aster_closed_trades(user)"):
             self.assertNotIn(forbidden, loader)
+
+    def test_flip_card_reuse_keeps_its_own_load_time(self):
+        loader = self.block("def _load_chart_fill_activity(", "\ndef ")
+        self.assertIn("_chart_fill_activity_cache[uid] = (flip_card[0], [], [], activity, meta)", loader)
+        self.assertNotIn("_chart_fill_activity_cache[uid] = (now, [], [], activity", loader)
+
+    def test_symbols_with_a_new_close_are_always_fetched(self):
+        loader = self.block("def _load_chart_fill_activity(", "\ndef ")
+        self.assertIn('int(safe_float(row.get("time"))) > income_cursor_ms', loader)
+        self.assertIn("symbols = list(dict.fromkeys([*new_close_symbols, *symbols]))", loader)
+        self.assertIn('{"incomeCursorMs": max(newest_income_ms, income_cursor_ms)}', loader)
 
     def test_events_feed_and_marker_builders_are_unchanged(self):
         events = self.block('@app.get("/v1/me/aster/portfolio-chart/events")', '@app.get("/v1/me/aster/portfolio-chart/audit")')

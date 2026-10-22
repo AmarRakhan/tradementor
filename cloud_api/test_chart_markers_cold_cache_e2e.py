@@ -29,6 +29,8 @@ class ColdCacheChartLabels(base.E2E):
             self.main._aster_closed_trades_cache.clear()
             self.main._chart_fill_activity_cache.clear()
         self.main._closed_trades_warmup._attempts.clear()
+        self.main._closed_trades_warmup._fingerprints.clear()
+        self.main._closed_trades_warmup._pending.clear()
 
     def manual_close(self, symbol, qty, pct=25):
         r = self.http.post(f"/v1/me/aster/positions/{symbol}/close", json={
@@ -45,7 +47,7 @@ class ColdCacheChartLabels(base.E2E):
         self.manual_close("AAOIUSDT", 8.0)
         self.cold()
         original = self.main._closed_trades_warmup.ensure
-        self.main._closed_trades_warmup.ensure = lambda uid, user: None
+        self.main._closed_trades_warmup.ensure = lambda uid, user, fingerprint=None: None
         try:
             markers = self.chart_markers()
         finally:
@@ -74,6 +76,36 @@ class ColdCacheChartLabels(base.E2E):
         stamp = self.main._chart_fill_activity_cache[self.uid][0]
         self.chart_markers()
         self.assertEqual(self.main._chart_fill_activity_cache[self.uid][0], stamp)   # no second history fetch
+
+    def age_stored_snapshot(self):
+        """Make the next chart call read a fresh account snapshot (production: the minute tick / 45 s refresh)."""
+        from datetime import datetime, timezone
+        self.main.aster_automation_reference(self.uid).update(
+            {"accountSnapshot.capturedAt": datetime(2020, 1, 1, tzinfo=timezone.utc)})
+
+    def test_live_refresh_a_close_made_now_appears_without_waiting_ten_minutes(self):
+        # Amar 22-10 09:26: the chart was already warm, a Close Profits round closed 11 SHORTs, no new moneybags.
+        self.cold()
+        self.fake.account["totalWalletBalance"] = "1000.00"
+        self.assertEqual([m for m in self.chart_markers() if m.get("kind") == "tp"], [])   # warm, nothing closed yet
+        self.manual_close("AAOIUSDT", 8.0)
+        self.fake.account["totalWalletBalance"] = "1000.66"                                 # realized +$0.66
+        orders_before = len(self.fake.accepted())
+        self.main._closed_trades_warmup._attempts[self.uid] -= 46                          # past the 45 s change backoff
+        self.age_stored_snapshot()
+        tp = [m for m in self.chart_markers() if m.get("kind") == "tp"]
+        self.assertTrue(tp, "the new close must show a moneybag within the change backoff, not after 10 minutes")
+        self.assertEqual(len(self.fake.accepted()), orders_before)                          # the chart placed NO order
+
+    def test_live_refresh_without_any_account_change_does_not_refetch(self):
+        self.cold()
+        self.fake.account["totalWalletBalance"] = "1000.00"
+        self.chart_markers()
+        stamp = self.main._chart_fill_activity_cache[self.uid][0]
+        self.main._closed_trades_warmup._attempts[self.uid] -= 46
+        self.age_stored_snapshot()
+        self.chart_markers()                                                                # newer snapshot, same values
+        self.assertEqual(self.main._chart_fill_activity_cache[self.uid][0], stamp)
 
     def test_unreadable_history_never_breaks_the_chart(self):
         self.cold()
