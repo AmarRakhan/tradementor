@@ -22,6 +22,6 @@ export type RehedgeAllSummary = {
   rows: RehedgeAllRow[];
 };
 export const OUTCOME_GROUPS: Record<"ok" | "busy" | "skipped" | "attention", string[]>;
-export function recoveryPairs<T extends { status?: unknown }>(pairs: T[] | unknown): T[];
-export function outcomeLabel(item: RehedgeAllItem): string;
-export function summarizeRehedgeAll(result: RehedgeAllResult | null | undefined): RehedgeAllSummary;
+export function recoveryPairs<T = Record<string, unknown>>(pairs: unknown): T[];
+export function outcomeLabel(item: unknown): string;
+export function summarizeRehedgeAll(result: unknown): RehedgeAllSummary;

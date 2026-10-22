@@ -4,13 +4,16 @@ import { useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
-import { recoveryPairs, summarizeRehedgeAll, type RehedgeAllResult, type RehedgeAllSummary } from "@/lib/rehedge-all.mjs";
+import { recoveryPairs, summarizeRehedgeAll } from "@/lib/rehedge-all.mjs";
 import styles from "./aster-trade-center.module.css";
 
 // Re-Hedge All 1.0: one server request. The server starts the EXISTING Auto Hedge cycle for every Recovery LONG;
 // this component contains no order, size or hedge logic.
 
 type Pair = { symbol?: string; status?: string };
+type RehedgeAllResult = { found?: number; ordersSent?: number; mode?: string; status?: string; items?: Record<string, unknown>[] };
+type RehedgeAllRow = { symbol: string; outcome: string; label: string; longNotional: string; shortBefore: string; shortAfter: string; addedQty: number; hedgePercent: string };
+type RehedgeAllSummary = { found: number; protected: number; busy: number; skipped: number; attention: number; ordersSent: number; testMode: boolean; rows: RehedgeAllRow[] };
 type AutoHedgeState = { enabled?: boolean; pairs?: Pair[] };
 
 const GOLD = "#e8c46a";
@@ -33,7 +36,7 @@ export function RehedgeAllButton() {
         setMessage("Zet Auto Hedge eerst AAN om Recovery-posities opnieuw te hedgen.");
         return;
       }
-      const pairs = recoveryPairs(state.pairs);
+      const pairs: Pair[] = recoveryPairs(state.pairs);
       if (!pairs.length) {
         setMessage("Geen Recovery-posities om opnieuw te hedgen.");
         return;
@@ -59,7 +62,7 @@ export function RehedgeAllButton() {
         cache: "no-store",
       }) as { rehedgeAll?: RehedgeAllResult };
       setConfirming(null);
-      setSummary(summarizeRehedgeAll(response.rehedgeAll));
+      setSummary(summarizeRehedgeAll(response.rehedgeAll) as RehedgeAllSummary);
     } catch (reason) {
       setConfirming(null);
       setMessage(reason instanceof Error ? reason.message : "Re-Hedge All kon niet worden uitgevoerd. Er is niets dubbel verstuurd.");
@@ -122,7 +125,7 @@ export function RehedgeAllButton() {
             <dt>Vereist controle</dt><dd className={summary.attention ? styles.loss : undefined}>{summary.attention}</dd>
           </dl>
           <div style={{ maxHeight: 260, overflowY: "auto", display: "grid", gap: 6 }} data-testid="rehedge-all-rows">
-            {summary.rows.map((row) => (
+            {summary.rows.map((row: RehedgeAllRow) => (
               <div key={row.symbol} style={{ padding: 8, borderRadius: 8, background: "#111d32", fontSize: 10 }}>
                 <strong>{row.symbol}</strong> · {row.label}
                 <div style={{ color: "#8993a8", marginTop: 3 }}>
