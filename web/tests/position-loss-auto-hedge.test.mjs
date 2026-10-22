@@ -58,7 +58,8 @@ test("Tradecentrum shows Auto Hedge status on every matching coin row without th
   assert.match(component, /function autoHedgeSymbolKey/);
   assert.match(component, /coinCell\.dataset\.autoHedgeSymbol/);
   assert.match(component, /autoHedgeSymbolKey\(item\.symbol\) === rowSymbol/);
-  assert.match(component, /const label = statusLabel\(pair\.status\);/);
+  // Build 607: an UNWIND badge (SHORT Recovery 2.0) replaces the status label once a step is done.
+  assert.match(component, /const label = unwind \? unwind\.label : statusLabel\(pair\.status\);/);
   assert.doesNotMatch(component, /const label = `AH \$\{statusLabel\(pair\.status\)\}`/);
 });
 
