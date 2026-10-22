@@ -74,8 +74,10 @@ export function recoveryRows(pairs, liveMode) {
     .sort((a, b) => a.symbol.localeCompare(b.symbol));
 }
 
-/** UNWIND badge for an Auto Hedge pair, or null when the pair is not (yet) being unwound.
- *  Shown only once at least one step is done (or while closing/reopening/exiting); TEST = no real orders. */
+/** Badge for a pair that SHORT afbouwen has partly unwound (Amar 22:04: "HEDGED 75%" instead of UNWIND).
+ *  label  = short text for the narrow Tradecentrum badge, e.g. "HEDGED 75%";
+ *  detail = longer text for the pair card, e.g. "HEDGED 75% · stap 1/4 · TEST".
+ *  null while the pair is still fully hedged (no step done yet). TEST = test mode (dashed style, no real orders). */
 export function unwindBadge(pair) {
   if (!pair || typeof pair !== "object") return null;
   const live = pair.shortRecovery && typeof pair.shortRecovery === "object" ? pair.shortRecovery : null;
@@ -89,8 +91,10 @@ export function unwindBadge(pair) {
   const long = Number(pair.currentProtectedQty) || 0;
   const target = Number(rec.lastTarget);
   const pct = long > 0 && Number.isFinite(target) ? Math.round(Math.min(100, (target / long) * 100)) : null;
-  let label = phase === "PAIR_EXIT" ? "UNWIND · TP" : phase.startsWith("REOPEN") ? "UNWIND · 90%" : `UNWIND ${Math.min(reached, steps)}/${steps}`;
-  if (pct !== null && phase === "LADDER") label += ` · ${pct}%`;
-  if (!live) label += " · TEST";
-  return { label, cls: live ? "unwind" : "unwind test" };
+  const label = phase === "PAIR_EXIT" ? "HEDGED · TP" : pct === null ? "HEDGED" : `HEDGED ${pct}%`;
+  const parts = [label];
+  if (phase === "LADDER" && steps) parts.push(`stap ${Math.min(reached, steps)}/${steps}`);
+  if (phase.startsWith("REOPEN")) parts.push("100% dicht · 90% terug");
+  if (!live) parts.push("TEST");
+  return { label, detail: parts.join(" · "), cls: live ? "unwind" : "unwind test" };
 }

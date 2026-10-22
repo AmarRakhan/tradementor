@@ -97,7 +97,7 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle }: {
           Stap te klein voor Aster: SHORT 100% sluiten en 90% van de LONG terugzetten.
         </p>
       </> : <p className="plah-info plah-unwind-error" role="alert"><span>!</span> {check.message}</p>}
-      {!live && <p className="plah-info plah-unwind-test"><span>T</span> TESTMODUS · de bot rekent mee op je echte posities (label UNWIND · TEST) maar plaatst nog geen afbouworders.</p>}
+      {!live && <p className="plah-info plah-unwind-test"><span>T</span> TESTMODUS · de bot rekent mee op je echte posities maar plaatst nog geen afbouworders. Gestippelde HEDGED x%-labels zijn testlabels.</p>}
       {dirty && <button type="button" className="plah-unwind-save" onClick={() => void save()} disabled={saving || !check.ok}>
         {saving ? "Opslaan…" : "Opslaan"}
       </button>}

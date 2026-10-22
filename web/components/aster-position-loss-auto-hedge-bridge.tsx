@@ -321,7 +321,7 @@ function PairCard({ pair, saving, scaleAvailable, onRehedge, onScale }: {
             <strong>{pair.symbol.replace(/USDT$/i, "")}</strong>
             <span className="plah-pair-chevron" aria-hidden="true">⌄</span>
             <span className={`plah-status-badge ${statusClass(status)}`}>{statusLabel(status)}</span>
-            {unwindBadge(pair) ? <span className={`plah-status-badge ${unwindBadge(pair)!.cls}`}>{unwindBadge(pair)!.label}</span> : null}
+            {unwindBadge(pair) ? <span className={`plah-status-badge ${unwindBadge(pair)!.cls}`}>{unwindBadge(pair)!.detail}</span> : null}
             {status === "HEDGED" && scaleAvailable ? <button
               type="button"
               className="plah-scale-open"
@@ -521,7 +521,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         const nextClass = `plah-tc-auto-hedge ${cls}`;
         if (badge.className !== nextClass) badge.className = nextClass;
         if (badge.textContent !== label) badge.textContent = label;
-        badge.title = "Auto Hedge-status";
+        badge.title = unwind ? unwind.detail : "Auto Hedge-status";
         if (!existing) small.appendChild(badge);
       }
     };
