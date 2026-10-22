@@ -484,7 +484,7 @@ def test_portfolio_chart_uses_stable_15m_zone_basis_for_every_display_timeframe(
     end = source.index('@app.get("/v1/me/aster/trade-events")', start + 1)
     block = source[start:end]
     assert 'zone_timeframe = "15m"' in block
-    assert '_read_portfolio_chart_candles(user, zone_timeframe, 600)' in block
+    assert '_read_portfolio_chart_candles_display(user, zone_timeframe, 600)' in block
     assert 'portfolio_chart_latest_zone_ladder_candles(' in block
     assert 'zone_history, zone_timeframe' in block
     assert 'if not zones and len(zone_history) >= 7:' in block

@@ -73,7 +73,8 @@ from aster_gateway import (
 from aster_signing import AsterSecret, local_eip712_signer
 from aster_history import closed_trades_from_fills, fully_closed_trades_from_fills, full_leg_closes_from_sweep_ledgers, realized_events_from_income, merge_realized_events, merge_recent_trade_activity, recent_trade_activity_from_fills, trade_events_from_fills
 from aster_account_truth import build_aster_account_truth
-from closed_trades_warmup import ClosedTradesWarmup
+from closed_trades_warmup import WARM_MAX_AGE_SECONDS, ClosedTradesWarmup
+from chart_read_cache import TailRefreshCache, TtlValueCache
 from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, confirmed_durable_close_activity_rows, collection_for_timeframe as portfolio_chart_collection, daily_equity_range as portfolio_chart_daily_equity_range, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
@@ -2096,7 +2097,7 @@ def _canonical_display_portfolio_zone_ladder(uid: str, cycle_start: float, equit
     Deliberately separate from the Zone Warriors execution ladder: changing
     rendering must never change entry permissions or order decisions.
     """
-    history = _read_portfolio_chart_candles({"uid": uid}, "15m", 600)
+    history = _read_portfolio_chart_candles_display({"uid": uid}, "15m", 600)
     source = portfolio_chart_latest_zone_ladder_candles(
         history, "15m", cycle_start_equity=cycle_start, min_bars=7
     )
@@ -5697,6 +5698,7 @@ def _persist_confirmed_aster_closed_trades(user: dict[str, Any], rows: list[dict
         batch.commit()
     if pending:
         control_ref.set({"closedTradesSyncedThrough": max(item[2] for item in pending)}, merge=True)
+        _stored_closes_cache.invalidate(str(user["uid"]))   # new durable close: display lists re-read at once
     return len(pending)
 
 
@@ -5965,10 +5967,101 @@ def aster_closed_trades(user: dict[str, Any] = Depends(authenticated_user)) -> d
         return {"closedTrades": _merge_aster_closed_trades(stored, fallback), "realizedEvents": durable_events, "recentTradeActivity": activity, "closedTradeSummaryToday": summary, "historyAvailable": bool(durable_events)}
 
 
-# Chart labels (moneybags, LONG/SHORT entries) read `_aster_closed_trades_cache`. Let the chart routes fill it through
-# the existing read-only loader when it is cold or stale (#738). Late-bound lambda: extensions may wrap the route.
-_closed_trades_warmup = ClosedTradesWarmup(_aster_closed_trades_cache, _cache_lock,
-                                           lambda user: aster_closed_trades(user))
+# Chart labels (moneybags, LONG/SHORT entries) need confirmed Aster fill activity. Until #738 that activity existed
+# only in `_aster_closed_trades_cache`, filled when the app opened "Trades gesloten". The chart routes now keep their
+# own chart-only activity cache warm (Kostenreductie 4.1 correction of cff09990): the warm-up reads Aster fills
+# directly instead of re-running the full closed-trades loader, which also re-read up to 2 x 5,000 realized-event
+# documents and all profit sweeps from Firestore on every refresh. Firestore cost of one warm-up: 2 small reads
+# (Strategy-2 state, close cursor) plus writes only for closes that are new. No order path (live_authorized=False).
+_chart_fill_activity_cache: dict[str, tuple[float, list[Any], list[Any], dict[str, list[dict[str, Any]]], dict[str, Any]]] = {}
+CHART_FILL_HISTORY_HOURS = 48
+
+
+def _strategy_attribution_maps(strategy2_state: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
+    """Same attribution as aster_closed_trades: clientOrderId/orderId -> strategy name (display only)."""
+    strategy_by_intent: dict[str, str] = {}
+    strategy_by_order_id: dict[str, str] = {}
+    settings = strategy2_state.get("settings") if isinstance(strategy2_state.get("settings"), dict) else {}
+    strategy_name = str(settings.get("name", "Strategy 2")).strip() or "Strategy 2"
+    for attribution in strategy2_state.get("orderAttributions") if isinstance(strategy2_state.get("orderAttributions"), list) else []:
+        if not isinstance(attribution, dict):
+            continue
+        attributed_name = str(attribution.get("strategyName", strategy_name)).strip() or strategy_name
+        order_id = str(attribution.get("orderId", "")).strip()
+        client_order_id = str(attribution.get("clientOrderId", "")).strip()
+        if order_id:
+            strategy_by_order_id[order_id] = attributed_name
+        if client_order_id:
+            strategy_by_intent[client_order_id] = attributed_name
+    for leg in strategy2_state.get("ownedLegs") if isinstance(strategy2_state.get("ownedLegs"), list) else []:
+        if not isinstance(leg, dict):
+            continue
+        for intent in leg.get("intent_ids") if isinstance(leg.get("intent_ids"), list) else []:
+            if str(intent):
+                strategy_by_intent[str(intent)] = strategy_name
+    return strategy_by_intent, strategy_by_order_id
+
+
+def _load_chart_fill_activity(user: dict[str, Any]) -> None:
+    """Refresh the chart-only fill activity for one account (read-only exchange calls, bounded Firestore use)."""
+    uid = str(user["uid"])
+    now = time.monotonic()
+    with _cache_lock:
+        flip_card = _aster_closed_trades_cache.get(uid)
+        previous = _chart_fill_activity_cache.get(uid)
+    if flip_card and now - flip_card[0] < WARM_MAX_AGE_SECONDS:
+        # The closed-trades route ran recently on this instance: reuse its activity, no exchange or database call.
+        activity = merge_recent_trade_activity(previous[3] if previous else {"entries": [], "exits": []}, flip_card[3])
+        with _cache_lock:
+            _chart_fill_activity_cache[uid] = (now, [], [], activity, {})
+        return
+    secret = load_aster_secret(user)
+    client = AsterV3Client(signer_address=secret.signer_address, sign_message=local_eip712_signer(secret),
+                           live_authorized=False)
+    since_ms = int((datetime.now(timezone.utc) - timedelta(hours=CHART_FILL_HISTORY_HOURS)).timestamp() * 1000)
+    income = [row for row in client.income_history(income_type="REALIZED_PNL", start_time=since_ms, limit=1000)
+              if isinstance(row, dict)]
+    income.sort(key=lambda row: safe_float(row.get("time")), reverse=True)
+    active_positions = [row for row in client.position_risk()
+                        if isinstance(row, dict) and abs(safe_float(row.get("positionAmt", row.get("quantity")))) > 0]
+    strategy2_state = aster_strategy2_reference(uid).get().to_dict() or {}
+    strategy2_legs = strategy2_state.get("ownedLegs") if isinstance(strategy2_state.get("ownedLegs"), list) else []
+    strategy_by_intent, strategy_by_order_id = _strategy_attribution_maps(strategy2_state)
+    priority_symbols = list(dict.fromkeys(str(row.get("symbol", "")).upper() for row in income if str(row.get("symbol", ""))))
+    background_symbols = list(dict.fromkeys(str(row.get("symbol", "")).upper()
+                                            for row in [*active_positions, *strategy2_legs]
+                                            if isinstance(row, dict) and str(row.get("symbol", ""))))
+    symbols = bounded_history_symbols(priority_symbols, background_symbols, maximum_symbols=8,
+                                      rotation_slot=int(time.time() // 60))
+    fills: list[dict[str, Any]] = []
+    for symbol in symbols:
+        try:
+            rows = client.user_trades(symbol, limit=500)
+        except (AsterApiError, AsterSubmissionUncertain, AsterValidationError, ValueError):
+            continue
+        fills.extend(row for row in rows if isinstance(row, dict))
+    fresh = recent_trade_activity_from_fills(fills, active_positions=active_positions,
+                                             strategy_by_intent=strategy_by_intent,
+                                             strategy_by_order_id=strategy_by_order_id)
+    activity = merge_recent_trade_activity(previous[3] if previous else {"entries": [], "exits": []}, fresh)
+    # Keep moneybags durable across restarts: store only closes newer than the existing cursor (usually none).
+    _persist_confirmed_aster_closed_trades(user, closed_trades_from_fills(fills))
+    with _cache_lock:
+        _chart_fill_activity_cache[uid] = (time.monotonic(), [], [], activity, {})
+
+
+def _chart_recent_activity(uid: str, warm_entry: tuple | None) -> dict[str, list[dict[str, Any]]]:
+    """Chart marker input: the chart-only activity merged with the closed-trades route cache, if present."""
+    with _cache_lock:
+        flip_card = _aster_closed_trades_cache.get(uid)
+    groups = [entry[3] for entry in (warm_entry, flip_card) if entry and isinstance(entry[3], dict)]
+    if not groups:
+        return {"entries": [], "exits": []}
+    return groups[0] if len(groups) == 1 else merge_recent_trade_activity(*groups)
+
+
+_closed_trades_warmup = ClosedTradesWarmup(_chart_fill_activity_cache, _cache_lock,
+                                           lambda user: _load_chart_fill_activity(user))
 
 
 @app.get("/v1/me/aster/status")
@@ -6359,7 +6452,7 @@ def aster_status(user: dict[str, Any] = Depends(authenticated_user)) -> dict[str
         long_break_even=safe_float((v2_long.get("strategy2Tp") or {}).get("breakEvenPrice")) if isinstance(v2_long.get("strategy2Tp"),dict) else long_entry
         cycle_start=safe_float(v2_state.get("cycleStartEquity")); cycle_equity=safe_float(v2_history.get("equity")) or safe_float(strategy2_snapshot.get("equity"))
         focus_v2_cockpit={"symbol":v2_symbol,"cycleId":str(v2_state.get("cycleId","")),"currentPrice":current,"longQuantity":long_qty,"longEntry":long_entry,"longBreakEvenPrice":long_break_even or long_entry,"longNotional":long_notional,"longPnl":safe_float(v2_long.get("unrealizedPnl",v2_long.get("unRealizedProfit"))),"longLeverage":safe_float(v2_long.get("leverage")),"shortQuantity":short_qty,"shortEntry":short_entry,"shortNotional":short_notional,"shortPnl":safe_float(v2_short.get("unrealizedPnl",v2_short.get("unRealizedProfit"))),"shortLeverage":safe_float(v2_short.get("leverage")),"netExposure":long_notional-short_notional,"grossExposure":long_notional+short_notional,"hedgeRatio":(short_notional/long_notional if long_notional>0 else 0.0),"dcaCount":int(safe_float(v2_state.get("dcaCount"))),"dcaAnchorPrice":dca_anchor,"nextLongDcaPrice":next_dca,"nextLongDcaDistancePct":((next_dca/current-1)*100 if next_dca>0 and current>0 else None),"recoveryReboundPrice":rebound,"recoveryTrigger":rebound,"longTakeProfitPrice":(0.0 if recovery_model_version>=3 else (safe_float(v2_history.get("longTakeProfitPrice")) or (long_entry*(1+strategy2_settings.focus_minimum_profit_pct) if long_entry>0 else 0.0))),"recoveryPriceMet":price_met,"bollinger5mMiddle":safe_float(v2_history.get("bollinger5mMiddle")),"bollinger5mConfirmed":middle_met,"portfolioRecoveryTarget":safe_float(v2_history.get("portfolioRecoveryTarget")) or cycle_start*strategy2_settings.focus_v2_portfolio_recovery_ratio,"portfolioRecoveryMet":portfolio_met,"shortReleaseRatio":strategy2_settings.focus_v2_release_ratio,"shortReleaseReady":release_ready,"nextShortReleasePrice":next_release_price,"nextShortReleaseQty":next_release_qty,"recoveryModelVersion":recovery_model_version,"recoveryStage":recovery_stage,"recoveryProgress":recovery_progress,"recoveryLow":recovery_low,"recoveryHigh":recovery_high,"releasedShortQty":released_short_qty,"targetShortNotional":target_short_notional,"rehedgePrice":rehedge_price,"rehedgeArmed":rehedge_armed,"armedRehedgeQty":armed_rehedge_qty,"cycleStartEquity":cycle_start,"cycleEquity":cycle_equity,"cyclePnl":cycle_equity-cycle_start if cycle_start>0 else 0.0,"cycleTargetActive":False,"cycleTargetEquity":None,"stateMachineVersion":state_machine_version,"cycleStatus":str(v2_state.get("cycleStatus",v2_state.get("lastAction","HOLD"))),"startHedgePercent":safe_float(v2_state.get("startHedgePercent",getattr(strategy2_settings,"focus_v2_start_hedge_ratio",0))),"hedgeTargetPercent":safe_float(v2_state.get("hedgeTargetPercent",strategy2_settings.focus_v2_hedge_ratio)),"tpMode":tp_mode,"tpValue":tp_value,"distanceToTp":profit_remaining,"autoRestart":bool(v2_state.get("autoRestart",getattr(strategy2_settings,"focus_v2_auto_restart",False))),"dcaMode":str(v2_state.get("dcaMode","")),"dcaTriggerPending":bool(v2_state.get("dcaTriggerPending",False)),"dcaTriggerPrice":safe_float(v2_state.get("dcaTriggerPrice")),"protectedFloorPrice":safe_float(v2_state.get("protectedFloorPrice")),"protectedCeilingPrice":safe_float(v2_state.get("protectedCeilingPrice")),"reHedgeAnchorPrice":safe_float(v2_state.get("reHedgeAnchorPrice")),"releaseRehedgeMarginReady":bool(v2_state.get("releaseRehedgeMarginReady",False)),"releaseRehedgeRequiredMargin":safe_float(v2_state.get("releaseRehedgeRequiredMargin")),"releaseRehedgeAvailableAfterCloseEstimate":safe_float(v2_state.get("releaseRehedgeAvailableAfterCloseEstimate")),"hedgeReleaseTriggerToSubmitMs":safe_float(v2_state.get("hedgeReleaseTriggerToSubmitMs")),"reHedgeTriggerToSubmitMs":safe_float(v2_state.get("reHedgeTriggerToSubmitMs")),"protectionReserveRequired":safe_float(v2_state.get("protectionReserveRequired")),"protectionReserveAvailable":safe_float(v2_state.get("protectionReserveAvailable")),"protectionReserveSpendableMargin":safe_float(v2_state.get("protectionReserveSpendableMargin")),"protectionReserveReady":bool(v2_state.get("protectionReserveReady",False)),"protectionReserveShortfall":safe_float(v2_state.get("protectionReserveShortfall")),"realtimeWorkerConnected":realtime_worker_connected,"realtimeWorkerHealthy":realtime_worker_healthy,"protectionStatus":("PROTECTION READY" if protection_ui_ready else ("PROTECTION MARGIN LOW" if not bool(v2_state.get("protectionReserveReady",False)) else "PROTECTION REALTIME NOT READY")),"triggerToLongSubmitMs":safe_float(v2_state.get("triggerToLongSubmitMs")),"longFillToShortSubmitMs":safe_float(v2_state.get("longFillToShortSubmitMs")),"triggerToFullHedgeMs":safe_float(v2_state.get("triggerToFullHedgeMs")),"hedgeState":str(v2_state.get("hedgeState","")),"lastDcaFillPrice":last_dca_fill,"hedgeReleasePrice":next_release_price if state_machine_version>=5 else 0.0,"shortNetGreenReleasePrice":safe_float(v2_state.get("shortNetGreenReleasePrice",v2_history.get("shortNetGreenReleasePrice"))),"shortReleasePriceReady":bool(v2_state.get("shortReleasePriceReady",False)),"shortReleaseNetGreenReady":bool(v2_state.get("shortReleaseNetGreenReady",False)),"expectedNetShortClosePnl":safe_float(v2_state.get("expectedNetShortClosePnl")),"hedgeReleaseRecoveryPct":strategy2_settings.focus_v2_hedge_release_recovery_pct if state_machine_version>=5 else 0.0,"recoverySinceLastDcaPct":safe_float(v2_history.get("recoverySinceLastDcaPct")),"hedgeTargetQty":safe_float(v2_state.get("hedgeTargetQty",v2_history.get("hedgeTargetQty"))),"harvestBaselineEquity":harvest_baseline,"profitSinceHarvest":profit_since_harvest,"profitTriggerUsdt":profit_trigger,"profitHarvestUsdt":profit_harvest,"profitRemainingUsdt":profit_remaining,"lastHarvestProfit":safe_float(v2_state.get("lastHarvestProfit",v2_history.get("lastHarvestProfit"))),"totalHarvestedProfit":safe_float(v2_state.get("totalHarvestedProfit",v2_history.get("totalHarvestedProfit"))),"nextAction":next_action,"status":str(v2_state.get("lastAction","HOLD")),"runtimePhase":runtime_phase,"runtimeHoldReason":runtime_hold_reason,"recentActions":recent_actions}
-    closed_trades = _stored_aster_closed_trades(user)
+    closed_trades = _stored_aster_closed_trades_display(user)
     def confirmed_snapshot_number(key: str) -> float | None:
         value=snapshot.get(key)
         return safe_float(value) if value is not None else None
@@ -6672,6 +6765,66 @@ def _read_active_trades_chart_candles(
     return rows
 
 
+# --- Display-only read cache (Kostenreductie 4.1) ------------------------------------------------------------------
+# The chart/status presentation routes re-read the same candle and audit documents every few seconds. These cached
+# readers return exactly what the direct readers above return, but after the first read they only fetch the newest
+# documents (see chart_read_cache.py for the correctness argument). The Strategy-2 tick and every order, Auto Hedge,
+# TP and DCA path keep using the direct readers. CHART_READ_CACHE_ENABLED=false restores the direct reads.
+_CHART_CANDLE_OVERLAP_MS = 10 * 60 * 1000      # writers only touch the bucket of a sample at most ~2 minutes old
+_CHART_AUDIT_OVERLAP_MS = 3 * 60 * 1000        # the tick writes audit rows with its own, current timestamp
+_chart_candle_cache = TailRefreshCache(overlap=_CHART_CANDLE_OVERLAP_MS)
+_chart_audit_cache = TailRefreshCache(overlap=_CHART_AUDIT_OVERLAP_MS)
+_stored_closes_cache = TtlValueCache(ttl_seconds=60.0)
+
+
+def _cached_bucket_series(collection: Any, cache_key: tuple[str, ...], limit: int | None) -> list[dict[str, Any]]:
+    """Newest `limit` raw candle documents of one series, newest first (same set as order_by(desc).limit)."""
+    def as_rows(documents: Any) -> list[tuple[str, int, dict[str, Any]]]:
+        rows = []
+        for document in documents:
+            raw = document.to_dict() or {}
+            rows.append((document.id, int(safe_float(raw.get("bucketMs"))), raw))
+        return rows
+
+    def full(window: int | None) -> list[tuple[str, int, dict[str, Any]]]:
+        query = collection.order_by("bucketMs", direction=firestore.Query.DESCENDING)
+        if window is not None:
+            query = query.limit(max(1, int(window)))
+        return as_rows(query.stream())
+
+    def tail(since: int) -> list[tuple[str, int, dict[str, Any]]]:
+        return as_rows(collection.where("bucketMs", ">=", int(since)).order_by(
+            "bucketMs", direction=firestore.Query.DESCENDING).stream())
+
+    return [raw for _doc_id, _key, raw in _chart_candle_cache.get(cache_key, limit=limit, full=full, tail=tail)]
+
+
+def _read_portfolio_chart_candles_display(user: dict[str, Any], timeframe: str, limit: int | None) -> list[dict[str, Any]]:
+    """Presentation-only twin of _read_portfolio_chart_candles (identical output, cached reads)."""
+    collection_name = portfolio_chart_collection(timeframe)
+    raws = _cached_bucket_series(user_reference(user).collection(collection_name),
+                                 (str(user["uid"]), collection_name), limit)
+    rows = [candle for candle in (public_portfolio_chart_candle(dict(raw)) for raw in raws) if candle]
+    rows.sort(key=lambda row: int(row["atMs"]))
+    return rows
+
+
+def _read_active_trades_chart_candles_display(user: dict[str, Any], timeframe: str, limit: int | None) -> list[dict[str, Any]]:
+    """Presentation-only twin of _read_active_trades_chart_candles (identical output, cached reads)."""
+    collection_name = active_trades_chart_collection(timeframe)
+    raws = _cached_bucket_series(user_reference(user).collection(collection_name),
+                                 (str(user["uid"]), collection_name), limit)
+    rows = [candle for candle in (public_active_trades_candle(dict(raw)) for raw in raws) if candle]
+    rows.sort(key=lambda row: int(row["atMs"]))
+    return rows
+
+
+def _stored_aster_closed_trades_display(user: dict[str, Any]) -> list[dict[str, Any]]:
+    """The 100 stored confirmed closes for chart/status display; at most 60 s old, refreshed on every new close."""
+    rows = _stored_closes_cache.get(str(user["uid"]), lambda: _stored_aster_closed_trades(user))
+    return [dict(row) for row in rows]
+
+
 def _aster_account_daily_range(
     user: dict[str, Any],
     now_utc: datetime,
@@ -6687,7 +6840,7 @@ def _aster_account_daily_range(
     day_start_ms = int(day_start_local.astimezone(timezone.utc).timestamp() * 1000)
     day_end_ms = int(day_end_local.astimezone(timezone.utc).timestamp() * 1000)
     result = portfolio_chart_daily_equity_range(
-        _read_portfolio_chart_candles(user, "5m", 400),
+        _read_portfolio_chart_candles_display(user, "5m", 400),
         day_start_ms=day_start_ms,
         day_end_ms=day_end_ms,
     )
@@ -6750,6 +6903,43 @@ def _portfolio_chart_recent_strategy_audit_rows(uid: str, *, now_utc: datetime |
             rows.append({**row, "timestampMs": stamp, "auditId": document.id})
     except Exception:
         return []
+    return rows
+
+
+def _portfolio_chart_recent_strategy_audit_rows_display(uid: str, *, now_utc: datetime | None = None) -> list[dict[str, Any]]:
+    """Presentation-only twin of _portfolio_chart_recent_strategy_audit_rows (same rows, cached reads)."""
+    current = now_utc or datetime.now(timezone.utc)
+    cutoff = current - timedelta(hours=36)
+    cutoff_ms = int(cutoff.timestamp() * 1000)
+    reference = aster_strategy2_reference(uid).collection("audit")
+
+    def as_rows(documents: Any) -> list[tuple[str, int, dict[str, Any]]]:
+        rows = []
+        for document in documents:
+            raw = document.to_dict() or {}
+            rows.append((document.id, _portfolio_chart_timestamp_ms(raw.get("timestamp")), raw))
+        return rows
+
+    def full(window: int | None) -> list[tuple[str, int, dict[str, Any]]]:
+        return as_rows(reference.where("timestamp", ">=", cutoff).order_by(
+            "timestamp", direction=firestore.Query.DESCENDING).limit(int(window or 1200)).stream())
+
+    def tail(since_ms: int) -> list[tuple[str, int, dict[str, Any]]]:
+        since = datetime.fromtimestamp(max(since_ms, cutoff_ms) / 1000, timezone.utc)
+        return as_rows(reference.where("timestamp", ">=", since).order_by(
+            "timestamp", direction=firestore.Query.DESCENDING).limit(1200).stream())
+
+    rows: list[dict[str, Any]] = []
+    try:
+        cached = _chart_audit_cache.get((uid, "strategy2-audit"), limit=1200, full=full, tail=tail,
+                                        keep=lambda row: row[1] >= cutoff_ms)
+    except Exception:
+        return []
+    for doc_id, _key, raw in cached:
+        stamp = _portfolio_chart_timestamp_ms(raw.get("timestampMs", raw.get("timestamp")))
+        if stamp <= 0:
+            continue
+        rows.append({**raw, "timestampMs": stamp, "auditId": doc_id})
     return rows
 
 
@@ -6820,7 +7010,7 @@ def aster_portfolio_chart_events(
     """
     uid = str(user["uid"])
     now_utc = datetime.now(timezone.utc)
-    audit_rows = _portfolio_chart_recent_strategy_audit_rows(uid, now_utc=now_utc)
+    audit_rows = _portfolio_chart_recent_strategy_audit_rows_display(uid, now_utc=now_utc)
     attribution_rows = _portfolio_chart_order_attribution_rows(uid, now_utc=now_utc)
     markers = portfolio_chart_strategy_audit_markers([*audit_rows, *attribution_rows], timeframe)
     return {
@@ -6866,7 +7056,7 @@ def aster_portfolio_chart_audit(
     snapshot_short=sum(1 for row in snapshot_positions if str(row.get("positionSide",row.get("side",""))).upper()=="SHORT")
 
     strategy_state=aster_strategy2_reference(uid).get().to_dict() or {}
-    audit_rows=_portfolio_chart_recent_strategy_audit_rows(uid,now_utc=now_utc)
+    audit_rows=_portfolio_chart_recent_strategy_audit_rows_display(uid,now_utc=now_utc)
     attribution_rows=_portfolio_chart_order_attribution_rows(uid,now_utc=now_utc)
 
     markers={}
@@ -6997,10 +7187,10 @@ def aster_portfolio_chart_active_trades(
             user, basket=basket, source_at_ms=captured_ms
         )
     adjusted_value = safe_float(active_state.get("value")) if active_state else None
-    candles = _read_active_trades_chart_candles(user, timeframe, limit)
+    candles = _read_active_trades_chart_candles_display(user, timeframe, limit)
 
     history_cache = _closed_trades_warmup.ensure(uid, user)
-    recent_activity = history_cache[3] if history_cache else {"entries": [], "exits": []}
+    recent_activity = _chart_recent_activity(uid, history_cache)
     markers = portfolio_chart_trade_markers(recent_activity, timeframe)
     day_high = safe_float(active_state.get("dayHigh")) if active_state else adjusted_value
     day_low = safe_float(active_state.get("dayLow")) if active_state else adjusted_value
@@ -7081,13 +7271,13 @@ def aster_portfolio_chart(
     if snapshot_fresh:
         _persist_portfolio_chart_sample(user, equity=equity, source_at_ms=captured_ms)
 
-    candles = _read_portfolio_chart_candles(user, timeframe, limit)
+    candles = _read_portfolio_chart_candles_display(user, timeframe, limit)
     strategy_state = aster_strategy2_reference(uid).get().to_dict() or {}
     cycle = strategy_state.get("multiBbCycle") if isinstance(strategy_state.get("multiBbCycle"), dict) else {}
     cycle_start = safe_float(cycle.get("cycleStartEquity"))
 
     history_cache = _closed_trades_warmup.ensure(uid, user)
-    recent_activity = history_cache[3] if history_cache else {"entries": [], "exits": []}
+    recent_activity = _chart_recent_activity(uid, history_cache)
     # New zone-owned entries retain their origin in the compact chart tooltip.
     # Work on a copy of the cached fill activity; never rewrite historical fills.
     managed_positions = strategy_state.get("multiBbPositions") if isinstance(strategy_state.get("multiBbPositions"), dict) else {}
@@ -7116,7 +7306,7 @@ def aster_portfolio_chart(
     durable_exits = []
     try:
         durable_exits = confirmed_durable_close_activity_rows(
-            _stored_aster_closed_trades(user), cached_exits
+            _stored_aster_closed_trades_display(user), cached_exits
         )
     except google_exceptions.GoogleAPICallError:
         # A transient Firestore read error must not remove cached chart data.
@@ -7133,7 +7323,7 @@ def aster_portfolio_chart(
     # consumption so the deployed runtime cannot reach current_zone with an
     # unbound zones local. This is read-only presentation logic and sends no orders.
     zone_timeframe = "15m"
-    zone_history = candles if timeframe == zone_timeframe else _read_portfolio_chart_candles(user, zone_timeframe, 600)
+    zone_history = candles if timeframe == zone_timeframe else _read_portfolio_chart_candles_display(user, zone_timeframe, 600)
     zone_candles = portfolio_chart_latest_zone_ladder_candles(
         zone_history, zone_timeframe, cycle_start_equity=cycle_start, min_bars=7
     )

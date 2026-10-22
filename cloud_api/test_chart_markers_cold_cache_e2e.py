@@ -27,6 +27,7 @@ class ColdCacheChartLabels(base.E2E):
     def cold(self):
         with self.main._cache_lock:
             self.main._aster_closed_trades_cache.clear()
+            self.main._chart_fill_activity_cache.clear()
         self.main._closed_trades_warmup._attempts.clear()
 
     def manual_close(self, symbol, qty, pct=25):
@@ -44,7 +45,7 @@ class ColdCacheChartLabels(base.E2E):
         self.manual_close("AAOIUSDT", 8.0)
         self.cold()
         original = self.main._closed_trades_warmup.ensure
-        self.main._closed_trades_warmup.ensure = lambda uid, user: self.main._aster_closed_trades_cache.get(uid)
+        self.main._closed_trades_warmup.ensure = lambda uid, user: None
         try:
             markers = self.chart_markers()
         finally:
@@ -63,14 +64,16 @@ class ColdCacheChartLabels(base.E2E):
         # the confirmed closes are now also stored durably, so a later cold instance still has them
         stored = list(self.db.collection("users").document(self.uid).collection("asterClosedTrades").stream())
         self.assertGreaterEqual(len(stored), 1)
+        # Kostenreductie 4.1: the labels came from the lean chart loader, not from the heavy closed-trades loader
+        self.assertNotIn(self.uid, self.main._aster_closed_trades_cache)
 
     def test_second_chart_load_reuses_the_warm_cache(self):
         self.manual_close("AAOIUSDT", 8.0)
         self.cold()
         self.chart_markers()
-        stamp = self.main._aster_closed_trades_cache[self.uid][0]
+        stamp = self.main._chart_fill_activity_cache[self.uid][0]
         self.chart_markers()
-        self.assertEqual(self.main._aster_closed_trades_cache[self.uid][0], stamp)   # no second history fetch
+        self.assertEqual(self.main._chart_fill_activity_cache[self.uid][0], stamp)   # no second history fetch
 
     def test_unreadable_history_never_breaks_the_chart(self):
         self.cold()

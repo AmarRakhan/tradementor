@@ -106,16 +106,23 @@ class WiringTests(unittest.TestCase):
     def test_both_chart_routes_use_the_warmup_for_their_markers(self):
         chart = self.block('@app.get("/v1/me/aster/portfolio-chart")', '@app.get("/v1/me/aster/trade-events")')
         self.assertIn("history_cache = _closed_trades_warmup.ensure(uid, user)", chart)
+        self.assertIn("recent_activity = _chart_recent_activity(uid, history_cache)", chart)
         self.assertNotIn("history_cache = _aster_closed_trades_cache.get(uid)", chart)
         active = self.block("def aster_portfolio_chart_active_trades(", "\n@app.")
         self.assertIn("history_cache = _closed_trades_warmup.ensure(uid, user)", active)
+        self.assertIn("recent_activity = _chart_recent_activity(uid, history_cache)", active)
 
-    def test_warmup_uses_the_existing_read_only_closed_trades_loader(self):
-        self.assertIn("_closed_trades_warmup = ClosedTradesWarmup(_aster_closed_trades_cache, _cache_lock,", self.SRC)
-        self.assertIn("lambda user: aster_closed_trades(user))", self.SRC)
-        loader = self.block("def aster_closed_trades(", "\n@app.")
+    def test_warmup_uses_the_lean_read_only_fill_loader(self):
+        # Kostenreductie 4.1: the warm-up must NOT re-run the full closed-trades loader, which re-reads up to
+        # 2 x 5,000 realized-event documents and all profit sweeps from Firestore on every refresh.
+        self.assertIn("_closed_trades_warmup = ClosedTradesWarmup(_chart_fill_activity_cache, _cache_lock,", self.SRC)
+        self.assertIn("lambda user: _load_chart_fill_activity(user))", self.SRC)
+        self.assertNotIn("lambda user: aster_closed_trades(user))", self.SRC)
+        loader = self.block("def _load_chart_fill_activity(", "\ndef ")
         self.assertIn("live_authorized=False", loader)
-        for forbidden in ("submit_order", "execute_aster_leg", "live_authorized=True"):
+        for forbidden in ("submit_order", "execute_aster_leg", "live_authorized=True", "_stored_aster_realized_events",
+                          "_persist_aster_realized_events", "_verified_aster_daily_close_summary",
+                          "_stored_aster_closed_trades(", ".stream()", "aster_closed_trades(user)"):
             self.assertNotIn(forbidden, loader)
 
     def test_events_feed_and_marker_builders_are_unchanged(self):
