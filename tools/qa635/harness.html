@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{margin:0;background:#000}#c{position:absolute;left:0;top:0;width:390px;height:320px;touch-action:none}</style></head>
+<body><div id="c"></div>
+<script src="./lwc.js"></script>
+<script>
+const LWC=window.LightweightCharts;
+const mode=new URLSearchParams(location.search).get("mode");
+const opts={width:390,height:320,
+  handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true},
+  handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
+if(mode==="new"){opts.trackingMode={exitMode:LWC.TrackingModeExitMode.OnTouchEnd};opts.kineticScroll={touch:true,mouse:false};opts.handleScale.axisDoubleClickReset=true}
+const chart=LWC.createChart(document.getElementById("c"),opts);
+const s=chart.addSeries(LWC.CandlestickSeries,{});
+const t0=1761000000;let p=250;const rows=[];
+for(let i=0;i<300;i++){const o=p;p+=Math.sin(i/7)*1.2;rows.push({time:t0+i*900,open:o,high:Math.max(o,p)+.5,low:Math.min(o,p)-.5,close:p})}
+s.setData(rows);
+chart.timeScale().setVisibleLogicalRange({from:300-42.5,to:299+1.6});
+window.range=()=>{const r=chart.timeScale().getVisibleLogicalRange();return r?{from:r.from,to:r.to}:null};
+window.ps=()=>({auto:chart.priceScale("right").options().autoScale,range:chart.priceScale("right").getVisibleRange()});
+window.setPs=(r)=>{const p=chart.priceScale("right");p.setAutoScale(false);p.setVisibleRange(r)};
+</script></body></html>

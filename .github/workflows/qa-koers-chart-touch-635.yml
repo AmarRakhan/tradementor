@@ -1,0 +1,30 @@
+name: QA 635 Portfolio Koers touch
+on:
+  push:
+    branches: [claude/koers-grafiek-635-qa]
+permissions:
+  contents: read
+jobs:
+  touch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Install lightweight-charts and Playwright
+        working-directory: tools/qa635
+        run: |
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund lightweight-charts@5.2.0 playwright@1
+          npx playwright install --with-deps chromium
+      - name: Touch QA
+        working-directory: tools/qa635
+        run: LWC_JS=node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js node touch-qa.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa635
+          path: |
+            tools/qa635/*.png
+            tools/qa635/result.json
