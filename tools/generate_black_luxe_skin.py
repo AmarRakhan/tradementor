@@ -26,7 +26,7 @@ APP = ROOT / "web" / "app"
 OUT = APP / "black-luxe.css"
 MANUAL = ROOT / "tools" / "black_luxe_overrides.css"
 SKIN = 'html[data-app-skin="black-luxe"]'
-HERITAGE = 'html[data-app-skin="suriname-heritage"]'
+HERITAGE = 'html:is([data-app-skin="suriname-heritage"],[data-app-skin="black-luxe"])'
 SKIP_FILES = {"black-luxe.css", "ultra-rivalry.css", "suriname-heritage.css"}
 
 COLOR_PROPS = re.compile(r"^(--.*|background.*|border.*|box-shadow|outline.*|color|fill|stroke|text-shadow|caret-color|accent-color|column-rule.*|text-decoration.*)$")
@@ -275,10 +275,13 @@ def emit(css: str, mode: str, indent: str = "") -> list[str]:
         if mode == "heritage":
             if not all(HERITAGE in s for s in sels):
                 continue
+            # Heritage rules already apply to Black Luxe for everything except colour
+            # (shared selector in suriname-heritage.css); mirror only the colours here.
             new_sels = [s.replace(HERITAGE, SKIN) for s in sels]
             decls = []
             for prop, val in split_decls(body):
-                decls.append(f"{prop}:{transform_value(prop.lower(), val) if COLOR_PROPS.match(prop.lower()) else val}")
+                if COLOR_PROPS.match(prop.lower()):
+                    decls.append(f"{prop}:{transform_value(prop.lower(), val)}")
         else:
             new_sels = [x for x in (scope_base(s) for s in sels) if x]
             if not new_sels:
