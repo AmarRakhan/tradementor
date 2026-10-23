@@ -93,3 +93,12 @@ test("Build 635 Nu-button resets to the latest candle and auto price scale",asyn
   const css=await readFile(new URL("../app/portfolio-koers-chart.css",import.meta.url),"utf8");
   assert.ok(css.includes(".portfolio-koers-now.is-visible{opacity:1;transform:none;pointer-events:auto;cursor:pointer}"));
 });
+
+test("Build 637 vertical drag in the pane works without touching the price axis first",async()=>{
+  const source=await component();
+  assert.ok(source.includes('container.addEventListener("pointerdown",onGestureDown,{capture:true,passive:true});'));
+  assert.ok(source.includes("priceScale.setAutoScale(false);\n            priceScale.setVisibleRange({from:Number(range.from),to:Number(range.to)});"));
+  assert.ok(source.includes("if(gesture.frozen&&Math.abs(dx)>2.5*Math.abs(dy)){"));
+  assert.ok(source.includes("if(gesture.frozen&&!gesture.decided){try{priceScale.setAutoScale(true)}"));
+  assert.ok(source.includes('container.removeEventListener("pointerdown",onGestureDown,{capture:true});'));
+});

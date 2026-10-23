@@ -1178,6 +1178,55 @@ export function PortfolioKoersChart({
         if(pending){pendingPayloadRef.current=null;setPayload(pending)}
       },650);
     };
+    // Build 636: lightweight-charts ignores vertical drags in the pane while the
+    // price scale auto-scales; only touching the price axis switched that off.
+    // Freeze the current price range the moment a finger/mouse goes down, so
+    // up/down works immediately. A gesture that turns out horizontal (or a plain
+    // tap) hands the scale back to auto, so left/right keeps auto-fitting.
+    // The frozen range equals the auto range, so nothing jumps.
+    let gesture:{id:number;x:number;y:number;frozen:boolean;decided:boolean}|null=null;
+    const onGestureDown=(event:PointerEvent)=>{
+      if(!event.isPrimary||(event.pointerType==="mouse"&&event.button!==0))return;
+      let frozen=false;
+      try{
+        if(priceScale.options().autoScale!==false){
+          const range=priceScale.getVisibleRange();
+          if(range&&Number(range.to)>Number(range.from)){
+            priceScale.setAutoScale(false);
+            priceScale.setVisibleRange({from:Number(range.from),to:Number(range.to)});
+            frozen=true;
+          }
+        }
+      }catch{/* disposed */}
+      gesture={id:event.pointerId,x:event.clientX,y:event.clientY,frozen,decided:!frozen};
+    };
+    const onGestureMove=(event:PointerEvent)=>{
+      if(!gesture||event.pointerId!==gesture.id||gesture.decided)return;
+      const dx=event.clientX-gesture.x,dy=event.clientY-gesture.y;
+      if(Math.hypot(dx,dy)<10)return;
+      gesture.decided=true;
+      if(gesture.frozen&&Math.abs(dx)>2.5*Math.abs(dy)){
+        try{priceScale.setAutoScale(true)}catch{/* disposed */}
+      }
+    };
+    const onGestureEnd=(event:PointerEvent)=>{
+      if(!gesture||event.pointerId!==gesture.id)return;
+      if(gesture.frozen&&!gesture.decided){try{priceScale.setAutoScale(true)}catch{/* disposed */}}
+      gesture=null;
+      updateAwayFromNow();
+    };
+    const onSecondFinger=(event:TouchEvent)=>{
+      // Pinch-zoom: give the scale back to auto unless the user already moved it.
+      if(event.touches.length>1&&gesture&&gesture.frozen&&!gesture.decided){
+        gesture.decided=true;
+        try{priceScale.setAutoScale(true)}catch{/* disposed */}
+      }
+    };
+    container.addEventListener("pointerdown",onGestureDown,{capture:true,passive:true});
+    container.addEventListener("pointermove",onGestureMove,{capture:true,passive:true});
+    container.addEventListener("touchstart",onSecondFinger,{capture:true,passive:true});
+    window.addEventListener("pointerup",onGestureEnd,{passive:true});
+    window.addEventListener("pointercancel",onGestureEnd,{passive:true});
     goToNowRef.current=()=>{
       manualViewportRef.current[viewportKey]=false;
       delete savedViewportRef.current[viewportKey];
@@ -1250,6 +1299,10 @@ export function PortfolioKoersChart({
       window.removeEventListener("pointerup",endInteraction);window.removeEventListener("pointercancel",endInteraction);
       window.removeEventListener("touchend",endInteraction);window.removeEventListener("touchcancel",endInteraction);
       goToNowRef.current=()=>{};
+      container.removeEventListener("pointerdown",onGestureDown,{capture:true});
+      container.removeEventListener("pointermove",onGestureMove,{capture:true});
+      container.removeEventListener("touchstart",onSecondFinger,{capture:true});
+      window.removeEventListener("pointerup",onGestureEnd);window.removeEventListener("pointercancel",onGestureEnd);
       resize.disconnect();if(resizeFrame)cancelAnimationFrame(resizeFrame);chart.timeScale().unsubscribeVisibleLogicalRangeChange(rememberViewport);
       window.removeEventListener("resize",syncAfterResize);window.visualViewport?.removeEventListener("resize",syncAfterResize);
       container.removeEventListener("pointermove",rememberViewport);container.removeEventListener("touchmove",rememberViewport);
