@@ -212,11 +212,14 @@ def derive_sr_zones(candles: list[dict[str, Any]] | None) -> dict[str, Any]:
         target = next((cluster for cluster in clusters if abs(swing["price"] - cluster["price"]) <= CLUSTER_ATR * atr), None)
         if target is None:
             clusters.append({"price": swing["price"], "prices": [swing["price"]], "touches": 1,
-                             "firstIndex": swing["index"], "lastIndex": swing["index"], "kinds": {swing["kind"]}})
+                             "firstIndex": swing["index"], "lastIndex": swing["index"], "kinds": {swing["kind"]},
+                             "originKind": swing["kind"], "originIndex": swing["index"]})
         else:
             target["prices"].append(swing["price"])
             target["price"] = sum(target["prices"]) / len(target["prices"])
             target["touches"] += 1
+            if swing["index"] < target["originIndex"]:
+                target["originIndex"], target["originKind"] = swing["index"], swing["kind"]
             target["firstIndex"] = min(target["firstIndex"], swing["index"])
             target["lastIndex"] = max(target["lastIndex"], swing["index"])
             target["kinds"].add(swing["kind"])
@@ -228,8 +231,11 @@ def derive_sr_zones(candles: list[dict[str, Any]] | None) -> dict[str, Any]:
     levels: list[dict[str, Any]] = []
     for cluster in kept:
         history = _role_history(cluster["price"], rows, atr, cluster["firstIndex"])
-        flipped = history["lastFlipIndex"] is not None
         kind = "support" if cluster["price"] < last_close else "resistance"
+        origin_kind = "resistance" if cluster["originKind"] == "high" else "support"
+        # A role flip only counts when the level now plays the other role than
+        # the swings that created it, and a break + retest confirmed that.
+        flipped = history["lastFlipIndex"] is not None and kind != origin_kind
         levels.append({
             "price": cluster["price"],
             "kind": kind,
@@ -239,8 +245,22 @@ def derive_sr_zones(candles: list[dict[str, Any]] | None) -> dict[str, Any]:
             "flips": history["flips"],
             "flipAtMs": rows[history["lastFlipIndex"]]["atMs"] if flipped else None,
             "brokenAwaitingRetest": history["pendingBreak"] is not None,
+            "provisional": False,
             "lastTouchAtMs": rows[cluster["lastIndex"]]["atMs"],
         })
+    # Price beyond every confirmed level (fresh breakdown/breakout): the recent
+    # extreme is not a confirmed swing yet, so add it as a provisional level.
+    recent = rows[-(SWING_WING * 2 + 1):]
+    if levels and last_close < levels[0]["price"]:
+        low = min(row["low"] for row in recent)
+        levels.insert(0, {"price": low, "kind": "support", "touches": 1, "strength": 1, "flipped": False, "flips": 0,
+                          "flipAtMs": None, "brokenAwaitingRetest": False, "provisional": True,
+                          "lastTouchAtMs": next(row["atMs"] for row in recent if row["low"] == low)})
+    elif levels and last_close >= levels[-1]["price"]:
+        high = max(row["high"] for row in recent)
+        levels.append({"price": high, "kind": "resistance", "touches": 1, "strength": 1, "flipped": False, "flips": 0,
+                       "flipAtMs": None, "brokenAwaitingRetest": False, "provisional": True,
+                       "lastTouchAtMs": next(row["atMs"] for row in recent if row["high"] == high)})
     zones: list[dict[str, Any]] = []
     active_position = None
     for index in range(len(levels) - 1):

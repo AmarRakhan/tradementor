@@ -105,6 +105,18 @@ class SupportResistanceTests(unittest.TestCase):
             self.assertAlmostEqual(previous["upper"], current["lower"])
             self.assertEqual(current["index"], previous["index"] + 1)
 
+    def test_untouched_old_resistance_is_not_flipped(self):
+        result = derive_sr_zones(bars([100, 102, 104, 106, 108, 110, 108, 106, 104, 102] * 5 + [104], wick=0.4))
+        self.assertFalse(any(level["flipped"] for level in result["levels"]))
+
+    def test_fresh_breakdown_gets_provisional_support_and_active_zone(self):
+        closes = [100, 102, 104, 106, 108, 110, 108, 106, 104, 102] * 4 + [100, 97, 94, 91, 88]
+        result = derive_sr_zones(bars(closes, wick=0.4))
+        self.assertTrue(result["levels"][0].get("provisional"))
+        self.assertEqual(result["levels"][0]["kind"], "support")
+        self.assertIsNotNone(result["activeZone"])
+        self.assertLessEqual(result["activeZone"]["lower"], result["lastClose"])
+
     def test_too_few_candles(self):
         self.assertEqual(derive_sr_zones(bars([1, 2, 3]))["reason"], "TOO_FEW_CANDLES")
 

@@ -60,7 +60,7 @@ const PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE="file_00000000267082109428370054535e
 const PORTFOLIO_KOERS_CANONICAL_REFERENCE="file_0000000047d081f4b2c4348a14e0db2f";
 const PORTFOLIO_KOERS_REJECTED_REFERENCE="file_00000000d22c81f4aa440e735e9a23ed";
 // Build 645: Actieve Trades prijszones (server: LONG-mand met vaste gewichten + swing-S/R).
-type ActiveZoneLevel={price:number;kind:"support"|"resistance";touches:number;strength:number;flipped:boolean;brokenAwaitingRetest:boolean};
+type ActiveZoneLevel={price:number;kind:"support"|"resistance";touches:number;strength:number;flipped:boolean;brokenAwaitingRetest:boolean;provisional:boolean};
 type ActiveZonesPayload={candles:Candle[];levels:ActiveZoneLevel[];activeZone:{lower:number;upper:number}|null;reason:string;usedSymbols:number;coveragePercent:number|null};
 type ActiveZoneOverlay={levels:{key:string;top:number;kind:"support"|"resistance";strength:number;flipped:boolean;broken:boolean;tag:string}[];band:{top:number;height:number}|null};
 const EMPTY_ACTIVE_ZONES:ActiveZonesPayload={candles:[],levels:[],activeZone:null,reason:"",usedSymbols:0,coveragePercent:null};
@@ -74,7 +74,7 @@ function normalizeActiveZonesPayload(raw:unknown):ActiveZonesPayload{
   const levels=(Array.isArray(root.levels)?root.levels:[]).flatMap((row:any)=>{
     const price=Number(row?.price);
     if(!Number.isFinite(price)||price<=0)return [];
-    return [{price,kind:row?.kind==="resistance"?"resistance":"support",touches:Math.max(1,Math.round(Number(row?.touches)||1)),strength:Math.min(3,Math.max(1,Math.round(Number(row?.strength)||1))),flipped:row?.flipped===true,brokenAwaitingRetest:row?.brokenAwaitingRetest===true} as ActiveZoneLevel];
+    return [{price,kind:row?.kind==="resistance"?"resistance":"support",touches:Math.max(1,Math.round(Number(row?.touches)||1)),strength:Math.min(3,Math.max(1,Math.round(Number(row?.strength)||1))),flipped:row?.flipped===true,brokenAwaitingRetest:row?.brokenAwaitingRetest===true,provisional:row?.provisional===true} as ActiveZoneLevel];
   });
   const zone=root.activeZone&&Number.isFinite(Number(root.activeZone.lower))&&Number.isFinite(Number(root.activeZone.upper))?{lower:Number(root.activeZone.lower),upper:Number(root.activeZone.upper)}:null;
   const basket=root.basket&&typeof root.basket==="object"?root.basket:{};
@@ -1161,7 +1161,7 @@ export function PortfolioKoersChart({
           if(y===null)return [];
           const top=Number(y);
           if(top<0||top>height)return [];
-          const tag=`${level.kind==="support"?"S":"R"}${level.flipped?" ↺":""} · ${level.touches}×`;
+          const tag=level.provisional?`${level.kind==="support"?"S":"R"} · voorlopig`:`${level.kind==="support"?"S":"R"}${level.flipped?" ↺":""} · ${level.touches}×`;
           return [{key:`${index}-${level.price.toFixed(6)}`,top,kind:level.kind,strength:level.strength,flipped:level.flipped,broken:level.brokenAwaitingRetest,tag}];
         });
         let band:ActiveZoneOverlay["band"]=null;

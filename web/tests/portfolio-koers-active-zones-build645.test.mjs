@@ -21,7 +21,8 @@ test("Build 645 zones are drawn only on the Actieve Trades view, never on Accoun
 
 test("Build 645 levels show kind, touches and role flip; strength drives emphasis",async()=>{
   const source=await read("../components/portfolio-koers-chart.tsx");
-  assert.ok(source.includes('const tag=`${level.kind==="support"?"S":"R"}${level.flipped?" ↺":""} · ${level.touches}×`;'));
+  assert.ok(source.includes('`${level.kind==="support"?"S":"R"}${level.flipped?" ↺":""} · ${level.touches}×`'));
+  assert.ok(source.includes("· voorlopig"));
   const css=await read("../app/portfolio-koers-chart.css");
   for(const rule of [".portfolio-koers-sr-level.support{color:#2be4a7}",".portfolio-koers-sr-level.resistance{color:#ff6274}",".portfolio-koers-sr-level.flipped{border-top-style:solid}",".portfolio-koers-sr-layer{position:absolute;inset:0 48px 0 0;z-index:5;overflow:hidden;pointer-events:none"]) assert.ok(css.includes(rule),rule);
 });
