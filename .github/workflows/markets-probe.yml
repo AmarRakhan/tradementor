@@ -1,21 +1,20 @@
 name: Markets probe (alleen lezen, publieke Aster-data)
 on:
-  workflow_dispatch:
   push:
     branches: [claude/markets-probe]
 permissions:
-  contents: read
+  contents: write
 jobs:
   probe:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
       - run: |
-          mkdir out
-          curl -sS -m 30 https://fapi.asterdex.com/fapi/v1/exchangeInfo -o out/exchangeInfo.json
-          curl -sS -m 30 https://fapi.asterdex.com/fapi/v1/ticker/24hr -o out/ticker24h.json
-          ls -la out
-      - uses: actions/upload-artifact@v4
-        with:
-          name: aster-public
-          path: out/
+          mkdir -p probe-out
+          curl -sS -m 30 https://fapi.asterdex.com/fapi/v1/exchangeInfo -o probe-out/exchangeInfo.json
+          curl -sS -m 30 https://fapi.asterdex.com/fapi/v1/ticker/24hr -o probe-out/ticker24h.json
+          git config user.name "markets-probe"; git config user.email "noreply@anthropic.com"
+          git checkout -b claude/markets-probe-data
+          git add probe-out && git commit -qm "Publieke Aster-data voor Markets-ontwerp [skip ci]"
+          git push -f origin claude/markets-probe-data
