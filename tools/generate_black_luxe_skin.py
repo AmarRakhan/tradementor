@@ -292,6 +292,19 @@ def emit(css: str, mode: str, indent: str = "") -> list[str]:
                 if not COLOR_PROPS.match(pl):
                     continue
                 nv = transform_value(pl, val)
+                if not KEEP_ORDER and re.fullmatch(r"border(-top|-right|-bottom|-left)?|outline", pl):
+                    # high-specificity mirrors (inline <style> blocks) may only re-colour a border,
+                    # never (re)introduce its width or style
+                    if nv == val:
+                        continue
+                    colours = re.findall(r"#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)", nv)
+                    if len(colours) != 1:
+                        continue
+                    changed = True
+                    decls.append(f"{prop}-color:{colours[0]}" if pl != "outline" else f"outline-color:{colours[0]}")
+                    continue
+                if not KEEP_ORDER and nv == val:
+                    continue
                 changed |= nv != val
                 decls.append(f"{prop}:{nv}")
             if not changed and not KEEP_ORDER:
