@@ -2,10 +2,24 @@
 
 export const RECOVERY_STATUSES = ["RECOVERY", "REHEDGE_ARMED", "DISABLED", "MANUAL_RELEASE_PENDING", "MANUAL_RELEASE_UNCERTAIN"];
 
+const ACTIVE_STATUSES = ["HEDGING", "HEDGED", "ADJUSTING", "BLOCKED", "ERROR", "PRECISION_BLOCKED"];
+
+/** Build 623 (Amar 23-10): Re-Hedge All = everything back to 100%: Recovery pairs AND pairs halfway the afbouw
+ *  (same rule as the server). Both sides: a remaining SHORT gets a LONG hedge. */
+export function midLadder(pair) {
+  const rec = pair && typeof pair.shortRecovery === "object" && pair.shortRecovery ? pair.shortRecovery : null;
+  if (!rec || !rec.phase) return false;
+  if (rec.phase === "REOPEN_CLOSE" || rec.phase === "REOPEN_OPEN" || Number(rec.stepsReached) > 0) return true;
+  const target = Number(rec.lastTarget);
+  const protectedQty = Number(pair.currentProtectedQty) || 0;
+  return Number.isFinite(target) && target < protectedQty;
+}
+
 export function recoveryPairs(pairs) {
-  return (Array.isArray(pairs) ? pairs : []).filter((pair) =>
-    RECOVERY_STATUSES.includes(String(pair?.status || "").toUpperCase()),
-  );
+  return (Array.isArray(pairs) ? pairs : []).filter((pair) => {
+    const status = String(pair?.status || "").toUpperCase();
+    return RECOVERY_STATUSES.includes(status) || (ACTIVE_STATUSES.includes(status) && midLadder(pair));
+  });
 }
 
 const OUTCOME_LABELS = {
@@ -22,8 +36,8 @@ const OUTCOME_LABELS = {
 };
 
 const REASON_LABELS = {
-  OVER_HEDGED: "SHORT is al groter dan de LONG · niets gedaan, graag controleren",
-  SURVIVOR_IS_SHORT: "Alleen een SHORT over (LONG is gesloten) · geen LONG geopend",
+  OVER_HEDGED: "Hedge is al groter dan de positie · niets gedaan, graag controleren",
+  ALREADY_FULLY_HEDGED: "Stond al 100% gehedged",
   MANUAL_RELEASE_NOT_CONFIRMED: "Handmatige sluiting nog niet bevestigd",
   POSITION_CLOSED: "Positie is niet meer open",
   POSITION_UNREADABLE: "Positie niet betrouwbaar leesbaar",

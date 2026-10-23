@@ -7,7 +7,7 @@ import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { recoveryPairs, summarizeRehedgeAll } from "@/lib/rehedge-all.mjs";
 import styles from "./aster-trade-center.module.css";
 
-// Re-Hedge All 1.0: one server request. The server starts the EXISTING Auto Hedge cycle for every Recovery LONG;
+// Re-Hedge All (build 623: both sides, also pairs halfway the afbouw): one server request. The server starts the EXISTING Auto Hedge cycle for every candidate;
 // this component contains no order, size or hedge logic.
 
 type Pair = { symbol?: string; status?: string };
@@ -38,7 +38,7 @@ export function RehedgeAllButton() {
       }
       const pairs: Pair[] = recoveryPairs(state.pairs);
       if (!pairs.length) {
-        setMessage("Geen Recovery-posities om opnieuw te hedgen.");
+        setMessage("Geen Recovery- of half afgebouwde posities om opnieuw te hedgen.");
         return;
       }
       setConfirming(pairs);
@@ -96,12 +96,13 @@ export function RehedgeAllButton() {
       )}
       {confirming && modal(
         <>
-          <h3>{confirming.length} Recovery-{confirming.length === 1 ? "positie" : "posities"} opnieuw hedgen?</h3>
+          <h3>{confirming.length} {confirming.length === 1 ? "positie" : "posities"} opnieuw 100% hedgen?</h3>
           <p>
-            Iedere Recovery-LONG gaat direct terug onder Auto Hedge, ook als hij in de plus staat. De SHORT wordt
-            aangevuld tot de <strong>actuele LONG-hoeveelheid</strong> bij Aster; bestaande SHORT en openstaande orders
-            tellen mee. Er wordt altijd naar beneden afgerond: de SHORT wordt nooit groter dan de LONG. Een SHORT die
-            al groter is, wordt overgeslagen en gemeld.
+            Iedere Recovery-positie en elke positie die half is afgebouwd gaat direct terug naar 100% onder Auto Hedge,
+            ook als hij in de plus staat. Bij een LONG wordt de SHORT aangevuld, bij een SHORT de LONG, tot de{" "}
+            <strong>actuele hoeveelheid</strong> bij Aster; bestaande hedge en openstaande orders tellen mee. Er wordt
+            altijd naar beneden afgerond: de hedge wordt nooit groter dan de positie. Een hedge die al groter is, wordt
+            overgeslagen en gemeld. Afbouwen telt daarna vanaf de koers van nu.
           </p>
           <p style={{ wordBreak: "break-word" }}>{confirming.map((pair) => String(pair.symbol || "").replace(/USDT$/i, "")).join(" · ")}</p>
           <footer>

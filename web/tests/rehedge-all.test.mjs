@@ -28,7 +28,7 @@ test("the component sends exactly one server request and has no order, size or h
   assert.match(component, /if \(inFlight\.current\) return;/);
   assert.match(component, /"Re-Hedging…" : "Re-Hedge All"/);
   assert.match(component, /Re-Hedge All afgerond/);
-  assert.match(component, /nooit groter dan de LONG/);
+  assert.match(component, /de hedge wordt nooit groter dan de positie/);
 });
 
 test("proxy route forwards to the backend bulk endpoint only", async () => {
@@ -42,6 +42,14 @@ test("only Recovery statuses count as candidates", () => {
     .map((status, i) => ({ symbol: `S${i}USDT`, status }));
   assert.deepEqual(recoveryPairs(pairs).map((p) => p.status), ["RECOVERY", "REHEDGE_ARMED", "DISABLED", "MANUAL_RELEASE_UNCERTAIN"]);
   assert.deepEqual(recoveryPairs(null), []);
+});
+
+test("build 623: pairs halfway the afbouw are candidates too", () => {
+  const half = { symbol: "SOLUSDT", status: "HEDGED", currentProtectedQty: 10,
+    shortRecovery: { phase: "LADDER", stepsReached: 1, steps: 3, lastTarget: "6.667" } };
+  const full = { symbol: "ETHUSDT", status: "HEDGED", currentProtectedQty: 10,
+    shortRecovery: { phase: "LADDER", stepsReached: 0, steps: 3, lastTarget: "10" } };
+  assert.deepEqual(recoveryPairs([half, full]).map((p) => p.symbol), ["SOLUSDT"]);
 });
 
 test("summary groups outcomes and never claims protection that the server did not confirm", () => {
@@ -60,7 +68,7 @@ test("summary groups outcomes and never claims protection that the server did no
   assert.equal(summary.rows[0].symbol, "ICP");
   assert.equal(summary.rows[0].longNotional, "$150,00");
   assert.equal(summary.rows[1].hedgePercent, "66.6%");                          // floored, never rounded up
-  assert.match(summary.rows[2].label, /SHORT is al groter dan de LONG/);
+  assert.match(summary.rows[2].label, /Hedge is al groter dan de positie/);
   assert.match(outcomeLabel({ outcome: "UNKNOWN" }), /nooit dubbel/);
   assert.equal(summarizeRehedgeAll({ mode: "SHADOW", items: [] }).testMode, true);
 });

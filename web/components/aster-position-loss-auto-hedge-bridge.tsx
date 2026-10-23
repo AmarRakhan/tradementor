@@ -103,6 +103,8 @@ type AutoHedgeState = {
   legacyHedgeRecoveryAvailable?: boolean;
   enabled: boolean;
   thresholdUsd: number;
+  thresholdLongUsd?: number;
+  thresholdShortUsd?: number;
   workerEnabled?: boolean;
   executionEnabled?: boolean;
   operational?: boolean;
@@ -120,6 +122,7 @@ type AutoHedgeState = {
   } | null;
   lastError?: string;
   shortRecoveryPlan?: { enabled: boolean; steps: number; totalPct: string; stepPct?: string };
+  longRecoveryPlan?: { enabled: boolean; steps: number; totalPct: string; stepPct?: string };
   shortRecoveryExecutionEnabled?: boolean;
 };
 
@@ -402,6 +405,8 @@ export function AsterPositionLossAutoHedgeBridge() {
   const [state, setState] = useState<AutoHedgeState>(DEFAULT_STATE);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [draft, setDraft] = useState("10");
+  // Build 623: separate loss threshold for a SHORT position (draft = LONG position, historic thresholdUsd).
+  const [draftShort, setDraftShort] = useState("10");
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -435,6 +440,7 @@ export function AsterPositionLossAutoHedgeBridge() {
       document.documentElement.setAttribute("data-position-loss-auto-hedge", "true");
       setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
       setDraft(String(threshold));
+      setDraftShort(String(Number(next.thresholdShortUsd ?? 10)));
       setError("");
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Auto Hedge kon niet worden geladen.";
@@ -553,8 +559,9 @@ export function AsterPositionLossAutoHedgeBridge() {
   }, [open, screenHost, saving]);
 
   const persist = async (enabled: boolean, threshold: number, applyNow = false, source = "AUTO_HEDGE_SCREEN") => {
-    if (!Number.isFinite(threshold) || threshold < 0.01 || threshold > 100000) {
-      setError("Vul een verliesgrens tussen $0,01 en $100.000 in.");
+    if (!Number.isFinite(threshold) || threshold < 0.01 || threshold > 100000
+      || !Number.isFinite(thresholdShort) || thresholdShort < 0.01 || thresholdShort > 100000) {
+      setError("Vul voor LONG en SHORT een verliesgrens tussen $0,01 en $100.000 in.");
       return false;
     }
     setSaving(true);
@@ -566,10 +573,11 @@ export function AsterPositionLossAutoHedgeBridge() {
         : "/api/exchanges/aster/position-loss-auto-hedge";
       const next = await authenticatedRequest(endpoint, {
         method: applyNow ? "POST" : "PUT",
-        body: JSON.stringify({ enabled, thresholdUsd: threshold, confirmDisable: state.enabled === true && enabled === false, clientBuild: WEBAPP_BUILD_NUMBER, clientSource: source }),
+        body: JSON.stringify({ enabled, thresholdUsd: threshold, thresholdShortUsd: thresholdShort, confirmDisable: state.enabled === true && enabled === false, clientBuild: WEBAPP_BUILD_NUMBER, clientSource: source }),
       }) as AutoHedgeState;
       setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
       setDraft(String(Number(next.thresholdUsd)));
+      setDraftShort(String(Number(next.thresholdShortUsd ?? thresholdShort)));
       if (!next.executionEnabled) {
         const actions = Array.isArray(next.lastReport?.actions) ? next.lastReport?.actions ?? [] : [];
         const due = actions.filter((item) => Number(item.requiredDelta) > 0).length;
@@ -736,7 +744,9 @@ export function AsterPositionLossAutoHedgeBridge() {
   };
 
   const threshold = Number(draft.replace(",", "."));
+  const thresholdShort = Number(draftShort.replace(",", "."));
   const sliderValue = Math.max(5, Math.min(100, Number.isFinite(threshold) ? threshold : 10));
+  const sliderShort = Math.max(5, Math.min(100, Number.isFinite(thresholdShort) ? thresholdShort : 10));
   const pairs = Array.isArray(state.pairs) ? state.pairs : [];
   const hasLockedPair = pairs.some((pair) =>
     ["HEDGING", "HEDGED", "ADJUSTING", "BLOCKED", "ERROR", "PRECISION_BLOCKED"].includes(String(pair.status || "").toUpperCase()),
@@ -925,19 +935,38 @@ export function AsterPositionLossAutoHedgeBridge() {
 
         <section className="plah-threshold-card">
           <div className="plah-threshold-head">
-            <label htmlFor="plah-threshold-number">Hedge vanaf verlies per positie</label>
+            <label htmlFor="plah-threshold-number">LONG-positie · hedge vanaf verlies</label>
             <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => setDraft(event.target.value)} disabled={saving} /></label></div>
           </div>
           <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)}</div>
-          <input className="plah-range" type="range" min="5" max="100" step="1" value={sliderValue} onChange={(event) => setDraft(event.target.value)} disabled={saving} aria-label="Auto Hedge verliesgrens" />
+          <input className="plah-range" type="range" min="5" max="100" step="1" value={sliderValue} onChange={(event) => setDraft(event.target.value)} disabled={saving} aria-label="Auto Hedge verliesgrens LONG" />
           <div className="plah-range-labels" aria-hidden="true"><span>$5</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
-          <p className="plah-info"><span>i</span> Bij -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager wordt de tegengestelde zijde aangepast tot exact 1:1 coin quantity.</p>
+          <p className="plah-info"><span>i</span> Staat een LONG-positie -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager, dan wordt de SHORT aangevuld tot exact 1:1 coin quantity.</p>
         </section>
 
         <ShortRecoveryCard
           state={state as unknown as Parameters<typeof ShortRecoveryCard>[0]["state"]}
           onSaved={(next) => setState(next as unknown as AutoHedgeState)}
           renderToggle={(props) => <Toggle {...props} labelText />}
+          hedgeSide="SHORT"
+        />
+
+        <section className="plah-threshold-card">
+          <div className="plah-threshold-head">
+            <label htmlFor="plah-threshold-short-number">SHORT-positie · hedge vanaf verlies</label>
+            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-short-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draftShort} onChange={(event) => setDraftShort(event.target.value)} disabled={saving} /></label></div>
+          </div>
+          <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)}</div>
+          <input className="plah-range" type="range" min="5" max="100" step="1" value={sliderShort} onChange={(event) => setDraftShort(event.target.value)} disabled={saving} aria-label="Auto Hedge verliesgrens SHORT" />
+          <div className="plah-range-labels" aria-hidden="true"><span>$5</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
+          <p className="plah-info"><span>i</span> Staat een SHORT-positie -{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)} of lager, dan wordt de LONG aangevuld tot exact 1:1 coin quantity.</p>
+        </section>
+
+        <ShortRecoveryCard
+          state={state as unknown as Parameters<typeof ShortRecoveryCard>[0]["state"]}
+          onSaved={(next) => setState(next as unknown as AutoHedgeState)}
+          renderToggle={(props) => <Toggle {...props} labelText />}
+          hedgeSide="LONG"
         />
 
         <div className="plah-scope-grid">
