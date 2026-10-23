@@ -275,7 +275,7 @@ export function MarketsPage() {
                       {own?.bot ? <span className={styles.tagBot}>BOT</span> : null}
                       {own?.manual ? <span className={styles.tagManual}>MANUAL</span> : null}
                     </span>
-                    {row.quoteAsset !== "USDT" ? <em className={styles.quote}>{row.name || row.baseAsset} · {row.quoteAsset}</em> : null}
+                    {row.quoteAsset !== "USDT" ? <em className={styles.quote}>{row.name ? `${row.name} · ${row.quoteAsset}` : row.quoteAsset}</em> : null}
                   </span>
                 </span>
                 <span className={styles.cellVol}>{compactVolume(row.quoteVolume24h)}</span>
