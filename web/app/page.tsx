@@ -123,7 +123,7 @@ function TradeMentorHome() {
   const [adminDeviceAllowed, setAdminDeviceAllowed] = useState(false);
   const [adminDeviceEnrolled, setAdminDeviceEnrolled] = useState(false);
   const { snapshots, refresh, refreshAll, confirmAsterStrategy2 } = useExchangeData(cloudReady, user?.uid || "");
-  // Build 640: Markets shows BOT / MANUAL labels from this same snapshot.
+  // Build 644: Markets shows BOT / MANUAL labels from this same snapshot.
   useEffect(() => {
     const positions = snapshots.aster.data?.positions;
     if (Array.isArray(positions)) publishAsterPositions(positions);

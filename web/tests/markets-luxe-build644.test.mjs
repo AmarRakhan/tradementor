@@ -22,7 +22,7 @@ const tickers = [
   { symbol: "OLDUSDT", lastPrice: "1", priceChangePercent: "0", quoteVolume: "9" },
 ];
 
-test("Build 640: Markets lists every tradable Aster perpetual, not only USDT", () => {
+test("Build 644: Markets lists every tradable Aster perpetual, not only USDT", () => {
   const rows = buildMarketRows(info, tickers);
   assert.deepEqual(rows.map((row) => row.symbol), ["XAUUSD1", "BTCUSDT", "SKHYNIXUSD1", "BTCUSDC"]);
   assert.deepEqual(rows.map((row) => row.quoteAsset), ["USD1", "USDT", "USD1", "USDC"]);
@@ -30,14 +30,14 @@ test("Build 640: Markets lists every tradable Aster perpetual, not only USDT", (
   assert.equal(rows[0].name, "Gold");
 });
 
-test("Build 640: categories come from Aster's own labels", () => {
+test("Build 644: categories come from Aster's own labels", () => {
   assert.equal(marketCategory(info.symbols[0]), "crypto");
   assert.equal(marketCategory(info.symbols[1]), "commodity");
   assert.equal(marketCategory(info.symbols[2]), "stock");
   assert.equal(marketCategory({ symbolType: 1, underlyingSubType: ["pre-launch"] }), "stock");
 });
 
-test("Build 640: BOT and MANUAL labels follow ownership in the account snapshot", () => {
+test("Build 644: BOT and MANUAL labels follow ownership in the account snapshot", () => {
   const own = ownershipBySymbol([
     { symbol: "BTCUSDT", side: "LONG", strategyId: "aster-strategy-2", quantity: 1 },
     { symbol: "BTCUSDT", side: "SHORT", strategyId: "", positionLossAutoHedge: { status: "HEDGED" }, quantity: 1 },
@@ -49,7 +49,7 @@ test("Build 640: BOT and MANUAL labels follow ownership in the account snapshot"
   assert.equal(own.has("ETHUSDT"), false);
 });
 
-test("Build 640: filters and sorting match the chips and columns", () => {
+test("Build 644: filters and sorting match the chips and columns", () => {
   const rows = buildMarketRows(info, tickers).map((row, index) => ({ ...row, bbStatus: ["above", "between", "below", null][index] }));
   const ownership = new Map([["BTCUSDT", { bot: true, manual: false }], ["SKHYNIXUSD1", { bot: false, manual: true }]]);
   assert.deepEqual(filterMarkets(rows, { owner: "free", ownership }).map((row) => row.symbol), ["XAUUSD1", "BTCUSDC"]);
@@ -63,7 +63,7 @@ test("Build 640: filters and sorting match the chips and columns", () => {
   assert.deepEqual(sortMarkets(rows, "symbol", "asc").map((row) => row.baseAsset), ["BTC", "BTC", "SKHYNIX", "XAU"]);
 });
 
-test("Build 640: numbers read like the design", () => {
+test("Build 644: numbers read like the design", () => {
   assert.equal(compactVolume(109_700_000), "109.70M");
   assert.equal(compactVolume(9_830_000), "9.83M");
   assert.equal(compactVolume(952_310), "952.31K");
@@ -72,7 +72,7 @@ test("Build 640: numbers read like the design", () => {
   assert.equal(iconAsset("1000PEPE"), "pepe");
 });
 
-test("Build 640: your fills become chart labels; a close above the average entry is a TP", () => {
+test("Build 644: your fills become chart labels; a close above the average entry is a TP", () => {
   const markers = tradeMarkersFromEvents([
     { side: "LONG", action: "increase", price: 100, quantity: 1, timestampMs: 1_000_000 },
     { side: "LONG", action: "increase", price: 90, quantity: 1, timestampMs: 1_100_000 },
@@ -84,7 +84,7 @@ test("Build 640: your fills become chart labels; a close above the average entry
   assert.equal(markers[1].color, "#ffc320");
 });
 
-test("Build 640: server reads Aster's public universe and keeps the old route as fallback", () => {
+test("Build 644: server reads Aster's public universe and keeps the old route as fallback", () => {
   const route = read("../app/api/markets/aster/route.ts");
   assert.match(route, /fapi\/v1\/exchangeInfo/);
   assert.match(route, /fapi\/v1\/ticker\/24hr/);
@@ -95,7 +95,7 @@ test("Build 640: server reads Aster's public universe and keeps the old route as
   assert.match(candles, /searchParams\.get\("market"\)/);
 });
 
-test("Build 640: Markets page matches the design and flips on double tap", () => {
+test("Build 644: Markets page matches the design and flips on double tap", () => {
   const page = read("../components/markets-page.tsx");
   for (const label of ["Alles", "Vrij", "In positie", "BOT", "MANUAL", "Alle", "Crypto", "Aandelen", "Grondstoffen", "SYMBOL", "24H VOL", "24H", "Zoek munt of symbool"]) assert.ok(page.includes(label), label);
   assert.match(page, /BB \(\{bbLabel\}\)/);

@@ -131,14 +131,14 @@ function parseEnrichSymbols(url: URL) {
     .map((value) => value.trim().toUpperCase())
     .filter(Boolean);
   const symbols = Array.from(new Set(requested));
-  // Build 640: every tradable Aster perpetual (USDT, USD1, USDC, U), not only USDT.
+  // Build 644: every tradable Aster perpetual (USDT, USD1, USDC, U), not only USDT.
   if (!symbols.length || symbols.length > MAX_ENRICH_SYMBOLS || symbols.some((symbol) => !/^[A-Z0-9]{2,40}$/.test(symbol))) {
     throw new Error(`Enrichment ondersteunt 1-${MAX_ENRICH_SYMBOLS} geldige Aster-symbolen per batch`);
   }
   return symbols;
 }
 
-// Build 640: the Markets list reads Aster's public market data directly
+// Build 644: the Markets list reads Aster's public market data directly
 // (no account call, no Cloud Run hop). exchangeInfo changes rarely; tickers are
 // shared between viewers for a few seconds so many open pages cost one call.
 const EXCHANGE_INFO_TTL_MS = 10 * 60_000;

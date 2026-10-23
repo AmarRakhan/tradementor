@@ -8,7 +8,7 @@ import { PORTFOLIO_KOERS_TIMEFRAMES, bollinger20x2 } from "@/lib/portfolio-koers
 import { formatMarketPrice, signedPercent, tradeMarkersFromEvents, type MarketRow } from "@/lib/markets-universe.mjs";
 import styles from "./markets-coin-flip.module.css";
 
-// Build 640: double tap on a Markets row flips that card to the coin's Koers
+// Build 644: double tap on a Markets row flips that card to the coin's Koers
 // chart — same look as Portfolio Koers on the Aster page, full screen, nothing
 // above or below it. Double tap on the chart flips it back.
 

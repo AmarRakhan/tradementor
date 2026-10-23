@@ -1,4 +1,4 @@
-/* Build 640: Markets flip-kaart — de rij draait om naar de schermvullende Koers. */
+/* Build 644: Markets flip-kaart — de rij draait om naar de schermvullende Koers. */
 .overlay { position: fixed; inset: 0; z-index: 2147483000; overflow: hidden; touch-action: none; overscroll-behavior: none; }
 .backdrop { position: absolute; inset: 0; background: #000; }
 .stageWrap { position: absolute; inset: 0; perspective: 1700px; perspective-origin: 50% 40%; }

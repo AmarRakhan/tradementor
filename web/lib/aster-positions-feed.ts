@@ -1,4 +1,4 @@
-// Build 640: the Aster page already polls the account snapshot. Markets reads the
+// Build 644: the Aster page already polls the account snapshot. Markets reads the
 // open positions from that same snapshot instead of fetching the account again.
 
 type Listener = (positions: unknown[]) => void;

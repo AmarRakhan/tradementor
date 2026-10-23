@@ -23,7 +23,7 @@ import { MarketsCoinFlip } from "@/components/markets-coin-flip";
 import { MarketIcon } from "@/components/market-icon";
 import styles from "./markets-page.module.css";
 
-// Build 640: Markets in Black Luxe — every tradable Aster perpetual, one row per
+// Build 644: Markets in Black Luxe — every tradable Aster perpetual, one row per
 // market, BOT/MANUAL labels from the account snapshot, double tap flips a row to
 // its full-screen Koers chart.
 
@@ -46,7 +46,7 @@ const BB_TEXT: Record<MarketBbStatus, string> = { above: "UPPER", between: "BINN
 const ENRICH_BATCH_SIZE = 8;
 const DOUBLE_TAP_MS = 300;
 const FAVORITES_KEY = "tradementor.markets.favorites";
-const PREFS_KEY = "tradementor.markets.prefs.v640";
+const PREFS_KEY = "tradementor.markets.prefs.v644";
 
 function readJson<T>(key: string, fallback: T): T {
   try { const raw = window.localStorage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }

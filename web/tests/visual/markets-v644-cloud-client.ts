@@ -1,5 +1,5 @@
-// In-page fake of lib/cloud-client for the Markets 640 visual QA. No network, no Firebase.
-import fixture from "./markets-v640-fixture.json";
+// In-page fake of lib/cloud-client for the Markets 644 visual QA. No network, no Firebase.
+import fixture from "./markets-v644-fixture.json";
 
 const LEVERAGE: Record<string, number> = { BTCUSDT: 200, ETHUSDT: 200, SOLUSDT: 100, XRPUSDT: 75, DOGEUSDT: 75, ADAUSDT: 75, BNBUSDT: 125, LTCUSDT: 75, TRXUSDT: 75, LINKUSDT: 75, "1000PEPEUSDT": 50, IRYSUSDT: 10 };
 const w = window as any;
