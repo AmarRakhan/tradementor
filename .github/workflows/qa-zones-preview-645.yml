@@ -1,0 +1,20 @@
+name: QA 645 zones preview
+on:
+  push:
+    branches: [claude/zones-preview-qa]
+permissions:
+  contents: read
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Fetch module from feature branch
+        run: |
+          git fetch --depth 1 origin claude/actieve-trades-zones
+          mkdir -p cloud_api && git show FETCH_HEAD:cloud_api/active_trades_zones.py > cloud_api/active_trades_zones.py
+      - name: Preview
+        run: python tools/qa645/preview.py
