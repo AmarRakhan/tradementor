@@ -328,10 +328,13 @@ export function MarketsCoinFlip({ row, originRect, onClosed }: { row: MarketRow;
     return rect && rect.width > 0 && rect.bottom > 0 && rect.top < window.innerHeight ? rect : originRect;
   }, [originRect, row.symbol]);
 
+  // The card is laid out full screen and scaled down onto the row; it turns around its own centre.
   const keyframes = useCallback((rect: DOMRect): Keyframe[] => {
-    const scaleX = rect.width / Math.max(1, window.innerWidth), scaleY = rect.height / Math.max(1, window.innerHeight);
+    const width = Math.max(1, window.innerWidth), height = Math.max(1, window.innerHeight);
+    const scaleX = rect.width / width, scaleY = rect.height / height;
+    const dx = rect.left + rect.width / 2 - width / 2, dy = rect.top + rect.height / 2 - height / 2;
     return [
-      { transform: `translate(${rect.left}px, ${rect.top}px) scale(${scaleX}, ${scaleY}) rotateY(0deg)`, borderRadius: "14px" },
+      { transform: `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY}) rotateY(0deg)`, borderRadius: "14px" },
       { transform: "translate(0px, 0px) scale(1, 1) rotateY(180deg)", borderRadius: "0px" },
     ];
   }, []);
@@ -340,7 +343,7 @@ export function MarketsCoinFlip({ row, originRect, onClosed }: { row: MarketRow;
     if (!mounted) return;
     const card = cardRef.current, backdrop = backdropRef.current;
     if (!card || !backdrop || reduced) { setPhase("open"); return; }
-    const animation = card.animate(keyframes(rowRect()), { duration: FLIP_MS, easing: "cubic-bezier(.2,.75,.15,1)", fill: "forwards" });
+    const animation = card.animate(keyframes(rowRect()), { duration: FLIP_MS, easing: "cubic-bezier(.32,.72,.2,1)", fill: "forwards" });
     backdrop.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FLIP_MS * 0.6, easing: "ease-out", fill: "forwards" });
     animation.onfinish = () => { if (phaseRef.current === "opening") { animation.cancel(); setPhase("open"); } };
     return () => { animation.onfinish = null; };
