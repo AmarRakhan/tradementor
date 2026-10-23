@@ -59,6 +59,27 @@ const PORTFOLIO_KOERS_UI41_REFERENCE="file_00000000e2fc820a9057c8f60c1ec845";
 const PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE="file_00000000267082109428370054535e59";
 const PORTFOLIO_KOERS_CANONICAL_REFERENCE="file_0000000047d081f4b2c4348a14e0db2f";
 const PORTFOLIO_KOERS_REJECTED_REFERENCE="file_00000000d22c81f4aa440e735e9a23ed";
+// Build 645: Actieve Trades prijszones (server: LONG-mand met vaste gewichten + swing-S/R).
+type ActiveZoneLevel={price:number;kind:"support"|"resistance";touches:number;strength:number;flipped:boolean;brokenAwaitingRetest:boolean};
+type ActiveZonesPayload={candles:Candle[];levels:ActiveZoneLevel[];activeZone:{lower:number;upper:number}|null;reason:string;usedSymbols:number;coveragePercent:number|null};
+type ActiveZoneOverlay={levels:{key:string;top:number;kind:"support"|"resistance";strength:number;flipped:boolean;broken:boolean;tag:string}[];band:{top:number;height:number}|null};
+const EMPTY_ACTIVE_ZONES:ActiveZonesPayload={candles:[],levels:[],activeZone:null,reason:"",usedSymbols:0,coveragePercent:null};
+const EMPTY_ACTIVE_ZONE_OVERLAY:ActiveZoneOverlay={levels:[],band:null};
+function normalizeActiveZonesPayload(raw:unknown):ActiveZonesPayload{
+  const root=(raw&&typeof raw==="object"?raw:{}) as Record<string,any>;
+  const candles=(Array.isArray(root.candles)?root.candles:[]).flatMap((row:any)=>{
+    const time=Number(row?.time),open=Number(row?.open),high=Number(row?.high),low=Number(row?.low),close=Number(row?.close);
+    return [time,open,high,low,close].every(Number.isFinite)&&time>0&&high>=low?[{time,atMs:time*1000,open,high,low,close,samples:1,sourceAtMs:time*1000} as Candle]:[];
+  });
+  const levels=(Array.isArray(root.levels)?root.levels:[]).flatMap((row:any)=>{
+    const price=Number(row?.price);
+    if(!Number.isFinite(price)||price<=0)return [];
+    return [{price,kind:row?.kind==="resistance"?"resistance":"support",touches:Math.max(1,Math.round(Number(row?.touches)||1)),strength:Math.min(3,Math.max(1,Math.round(Number(row?.strength)||1))),flipped:row?.flipped===true,brokenAwaitingRetest:row?.brokenAwaitingRetest===true} as ActiveZoneLevel];
+  });
+  const zone=root.activeZone&&Number.isFinite(Number(root.activeZone.lower))&&Number.isFinite(Number(root.activeZone.upper))?{lower:Number(root.activeZone.lower),upper:Number(root.activeZone.upper)}:null;
+  const basket=root.basket&&typeof root.basket==="object"?root.basket:{};
+  return {candles,levels,activeZone:zone,reason:String(root.reason||""),usedSymbols:Array.isArray(basket.usedSymbols)?basket.usedSymbols.length:0,coveragePercent:Number.isFinite(Number(basket.coveragePercent))?Number(basket.coveragePercent):null};
+}
 const EMPTY_STRUCTURE_OVERLAY:StructureOverlayLayout={levels:[],activeZone:null,roleFlip:null,newHigh:null,breakout:null};
 const PRICE_AXIS_WIDTH=48;
 const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOffset:number}>={
@@ -534,6 +555,9 @@ export function PortfolioKoersChart({
   const [zoneLayout,setZoneLayout]=useState<ZoneLayout[]>([]);
   const [zoneBoundaries,setZoneBoundaries]=useState<ZoneBoundaryLayout[]>([]);
   const [structureOverlay,setStructureOverlay]=useState<StructureOverlayLayout>(EMPTY_STRUCTURE_OVERLAY);
+  const [activeZones,setActiveZones]=useState<ActiveZonesPayload>(EMPTY_ACTIVE_ZONES);
+  const [activeZoneOverlay,setActiveZoneOverlay]=useState<ActiveZoneOverlay>(EMPTY_ACTIVE_ZONE_OVERLAY);
+  const activeZonesRef=useRef<ActiveZonesPayload>(EMPTY_ACTIVE_ZONES);
   const [eventLabels,setEventLabels]=useState<EventLabel[]>([]);
   const [selectedTpCluster,setSelectedTpCluster]=useState<EventLabel|null>(null);
   const [tpDetailLoading,setTpDetailLoading]=useState(false);
@@ -766,10 +790,31 @@ export function PortfolioKoersChart({
     return()=>{window.clearInterval(timer);document.removeEventListener("visibilitychange",visible)};
   },[loadActiveTrades,viewMode,activeTradesAvailable]);
 
+  const loadActiveZones=useCallback(async()=>{
+    if(viewMode!=="active"||!activeTradesAvailable)return;
+    try{
+      const response=await authenticatedRequest(`/api/exchanges/aster/portfolio-chart/active-zones?timeframe=${encodeURIComponent(timeframe)}&limit=320`,{cache:"no-store"});
+      setActiveZones(normalizeActiveZonesPayload(response));
+    }catch{/* keep the last zones; the minute index stays as fallback */}
+  },[timeframe,viewMode,activeTradesAvailable]);
+
+  useEffect(()=>{setActiveZones(EMPTY_ACTIVE_ZONES)},[timeframe]);
+  useEffect(()=>{
+    if(viewMode!=="active"||!activeTradesAvailable)return;
+    void loadActiveZones();
+    const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void loadActiveZones()},60_000);
+    return()=>window.clearInterval(timer);
+  },[loadActiveZones,viewMode,activeTradesAvailable]);
+
   // Account OHLC is server-owned. Do not synthesize candles from rendered DOM text.
 
   const baseCandles=payload.candles;
-  const activeCandles=activePayload.candles;
+  // Build 645: the Actieve Trades chart shows the LONG-basket index (real kline
+  // history, constant weights) with its S/R zones; the minute-sampled index is
+  // only the fallback while that loads or when there are no open LONGs.
+  const zonesIndexReady=activeZones.candles.length>=20;
+  const activeCandles=zonesIndexReady?activeZones.candles:activePayload.candles;
+  activeZonesRef.current=activeZones;
   const timelineCandles=baseCandles;
   const chartTimeline=useMemo(()=>portfolioKoersTimelineHealth(timelineCandles,timeframe,Date.now(),1),[timelineCandles,timeframe]);
   const visibleTimelineStart=timelineCandles[Math.max(0,timelineCandles.length-((TIMEFRAME_VIEW[timeframe]||TIMEFRAME_VIEW["15m"]).visibleBars+3))]?.time??0;
@@ -810,6 +855,7 @@ export function PortfolioKoersChart({
   useEffect(()=>{onActiveZoneChange?.(activeZone)},[activeZone,onActiveZoneChange]);
   useEffect(()=>()=>{onActiveZoneChange?.(null)},[onActiveZoneChange]);
   useEffect(()=>{syncOverlaysRef.current()},[chartZoneLadder,activeZone]);
+  useEffect(()=>{syncOverlaysRef.current()},[activeZones]);
   useEffect(()=>{setSelectedTpCluster(null);setTpDetailLoading(false);setTpDetailError("")},[timeframe,viewMode]);
 
   useEffect(()=>{
@@ -1108,6 +1154,28 @@ export function PortfolioKoersChart({
         reserved.push({left:Math.max(0,width/2-58),right:Math.min(width-PRICE_AXIS_WIDTH,width/2+58),top:zoneCenter-16,bottom:zoneCenter+16});
       }
       setStructureOverlay({...structureDraft,roleFlip:null,newHigh:null,breakout:null});
+      if(viewMode==="active"&&activeZonesRef.current.candles.length>=20){
+        const zonesNow=activeZonesRef.current;
+        const placed=zonesNow.levels.flatMap((level,index)=>{
+          const y=series.priceToCoordinate(level.price);
+          if(y===null)return [];
+          const top=Number(y);
+          if(top<0||top>height)return [];
+          const tag=`${level.kind==="support"?"S":"R"}${level.flipped?" ↺":""} · ${level.touches}×`;
+          return [{key:`${index}-${level.price.toFixed(6)}`,top,kind:level.kind,strength:level.strength,flipped:level.flipped,broken:level.brokenAwaitingRetest,tag}];
+        });
+        let band:ActiveZoneOverlay["band"]=null;
+        if(zonesNow.activeZone){
+          const upperY=series.priceToCoordinate(zonesNow.activeZone.upper),lowerY=series.priceToCoordinate(zonesNow.activeZone.lower);
+          if(upperY!==null&&lowerY!==null){
+            const top=Math.max(0,Math.min(Number(upperY),Number(lowerY))),bottom=Math.min(height,Math.max(Number(upperY),Number(lowerY)));
+            if(bottom-top>1)band={top,height:bottom-top};
+          }
+        }
+        setActiveZoneOverlay({levels:placed,band});
+      }else{
+        setActiveZoneOverlay(EMPTY_ACTIVE_ZONE_OVERLAY);
+      }
       setEventLabels(markerLayout.all as EventLabel[]);
     };
     syncOverlaysRef.current=()=>requestAnimationFrame(syncOverlays);
@@ -1622,7 +1690,13 @@ export function PortfolioKoersChart({
       {/* Build 559: history gaps remain internal data-quality truth but are no
           longer painted as an obstructive chart overlay. */}
       {viewMode==="performance"?<div className="portfolio-koers-performance-note">PERFORMANCE · cashflow gecorrigeerd<span>Strategyzones staan alleen bij Accountwaarde</span></div>:null}
-      {viewMode==="active"?<div className="portfolio-koers-active-note">ACTIEVE TRADES MARKTINDEX<span>Basis 100 · LONG mee · SHORT invers · gewogen op entry-notional</span></div>:null}
+      {viewMode==="active"?(zonesIndexReady
+        ?<div className="portfolio-koers-active-note">PRIJSZONE-INDEX · OPEN LONGS<span>Basis 100 · {activeZones.usedSymbols} munten · vaste gewichten · hedges tellen niet mee</span></div>
+        :<div className="portfolio-koers-active-note">ACTIEVE TRADES MARKTINDEX<span>Basis 100 · LONG mee · SHORT invers · gewogen op entry-notional</span></div>):null}
+      {viewMode==="active"?<div className="portfolio-koers-sr-layer" aria-hidden="true">
+        {activeZoneOverlay.band?<div className="portfolio-koers-sr-band" style={{top:`${activeZoneOverlay.band.top}px`,height:`${activeZoneOverlay.band.height}px`}}><span>Prijszone actief</span></div>:null}
+        {activeZoneOverlay.levels.map((level)=><div key={level.key} className={`portfolio-koers-sr-level ${level.kind} strength-${level.strength}${level.flipped?" flipped":""}${level.broken?" broken":""}`} style={{top:`${level.top}px`}}><span>{level.tag}</span></div>)}
+      </div>:null}
       <div className={`portfolio-koers-zones ${zoneLayout.length?"is-ready":""}`} aria-hidden="true">{zoneLayout.map((zone)=><div key={zone.index} className={`portfolio-koers-zone zone-${zone.tone} ${zoneLevelClass(zone.index)} ${zone.index===activeZone?"active":""}`} style={{top:`${zone.top}px`,height:`${zone.height}px`}}><span>{zone.label}</span></div>)}</div>
       <div className="portfolio-koers-zone-boundaries" aria-hidden="true">{zoneBoundaries.map((boundary,index)=>{const distance=portfolioZoneDistancePercent(boundary.price,currentZonePrice);return <div key={`${boundary.price}-${index}`} className={`portfolio-koers-zone-boundary ${boundary.kind}`} style={{top:`${boundary.top}px`}}>{boundary.kind!=="regular"?<span title={`Exacte grens ${levelUsd(boundary.price)}`}>{boundary.kind==="next-up"?"↑":"↓"} Z{signedZone(boundary.targetIndex)} · {percent2(distance)}</span>:null}</div>})}</div>
       {viewMode==="account"?<div className="portfolio-koers-structure-layer" data-reference={PORTFOLIO_STRUCTURE_REFERENCE} aria-hidden="true">

@@ -75,6 +75,7 @@ from aster_history import closed_trades_from_fills, fully_closed_trades_from_fil
 from aster_account_truth import build_aster_account_truth
 from closed_trades_warmup import WARM_MAX_AGE_SECONDS, ClosedTradesWarmup, account_fingerprint
 from chart_read_cache import TailRefreshCache, TtlValueCache
+from active_trades_zones import TIMEFRAME_TO_ASTER as ACTIVE_ZONES_TIMEFRAME_TO_ASTER, basket_index_candles as active_trades_basket_index, derive_sr_zones as active_trades_sr_zones, kline_candles as active_trades_kline_candles, long_basket as active_trades_long_basket
 from aster_portfolio_chart import TIMEFRAME_MS as PORTFOLIO_CHART_TIMEFRAME_MS, active_trades_collection_for_timeframe as active_trades_chart_collection, active_trades_continuity_value, active_trades_snapshot, aggregate_trade_activity as portfolio_chart_trade_markers, confirmed_durable_close_activity_rows, collection_for_timeframe as portfolio_chart_collection, daily_equity_range as portfolio_chart_daily_equity_range, derive_equity_zones, external_cashflow_markers as portfolio_chart_cashflow_markers, latest_contiguous_candles as portfolio_chart_latest_contiguous_candles, latest_established_contiguous_candles as portfolio_chart_latest_established_candles, latest_zone_ladder_candles as portfolio_chart_latest_zone_ladder_candles, merge_active_trades_sample, merge_equity_sample as merge_portfolio_equity_sample, public_active_trades_candle, public_candle as public_portfolio_chart_candle, active_zone as active_portfolio_zone, strategy_audit_trade_markers as portfolio_chart_strategy_audit_markers, candle_integrity_report as portfolio_chart_candle_integrity_report, classify_confirmed_close as portfolio_chart_classify_close, zone_shadow_backtest
 from aster_strategy import AsterStrategySettings
 from aster_strategy2 import PortfolioState as Strategy2PortfolioState, Strategy2Config, validate_worst_case, trend_bollinger_entry_check
@@ -7264,6 +7265,79 @@ def aster_portfolio_chart_active_trades(
         "source": "Aster exchange-confirmed active-position market index + confirmed fills",
     }
 
+
+
+# Build 645: Actieve Trades prijszones (read-only). Constant-weight index of the
+# open LONG legs over each coin's own Aster klines + swing S/R zones with role
+# flips. Never feeds orders, seats or strategy state.
+_ACTIVE_ZONES_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+_ACTIVE_ZONES_TTL_SECONDS = 60.0
+
+
+def _active_zones_klines(symbol: str, interval: str, limit: int) -> list[dict[str, Any]]:
+    try:
+        return active_trades_kline_candles(_public_aster_client().klines(symbol, interval, limit))
+    except (AsterApiError, AsterValidationError, ValueError, TypeError):
+        return []
+
+
+@app.get("/v1/me/aster/portfolio-chart/active-zones")
+def aster_portfolio_chart_active_zones(
+    timeframe: str = Query(default="15m", pattern=r"^(1m|5m|15m|1u|4u|24u)$"),
+    limit: int = Query(default=320, ge=60, le=600),
+    user: dict[str, Any] = Depends(authenticated_user),
+) -> dict[str, Any]:
+    """Actieve Trades prijszones: LONG-basket index + support/resistance zones."""
+    uid = require_release_feature(user, "active_trades_chart")
+    automation = aster_automation_reference(uid).get().to_dict() or {}
+    snapshot = automation.get("accountSnapshot") if isinstance(automation.get("accountSnapshot"), dict) else {}
+    positions = snapshot.get("positions") if isinstance(snapshot.get("positions"), list) else []
+    basket = active_trades_long_basket(positions)
+    signature = tuple((row["symbol"], round(float(row["weight"]), 3)) for row in basket["symbols"])
+    key = (uid, timeframe, limit, signature)
+    now_mono = time.monotonic()
+    with _cache_lock:
+        cached = _ACTIVE_ZONES_CACHE.get(key)
+    if cached and now_mono - cached[0] <= _ACTIVE_ZONES_TTL_SECONDS:
+        return cached[1]
+    interval = ACTIVE_ZONES_TIMEFRAME_TO_ASTER[timeframe]
+    candles_by_symbol: dict[str, list[dict[str, Any]]] = {}
+    if basket["symbols"]:
+        with ThreadPoolExecutor(max_workers=6, thread_name_prefix="active-zones") as pool:
+            futures = {pool.submit(_active_zones_klines, row["symbol"], interval, limit): row["symbol"] for row in basket["symbols"]}
+            for future in as_completed(futures):
+                candles_by_symbol[futures[future]] = future.result()
+    index = active_trades_basket_index(basket, candles_by_symbol)
+    zones = active_trades_sr_zones(index["candles"])
+    result = {
+        "timeframe": timeframe,
+        "candles": index["candles"],
+        "levels": zones["levels"],
+        "zones": zones["zones"],
+        "activeZone": zones["activeZone"],
+        "atr": zones["atr"],
+        "method": zones.get("method"),
+        "reason": zones.get("reason") if basket["symbols"] else "NO_OPEN_LONGS",
+        "basket": {
+            "symbols": basket["symbols"],
+            "usedSymbols": index["usedSymbols"],
+            "droppedSymbols": index["droppedSymbols"],
+            "coveragePercent": basket["coveragePercent"],
+            "usedWeightPercent": index["usedWeightPercent"],
+            "weighting": basket["weighting"],
+        },
+        "indexName": "Actieve Trades prijszone-index",
+        "indexBase": 100.0,
+        "readOnly": True,
+        "ordersSent": 0,
+        "source": "Aster klines per munt, vaste huidige LONG-gewichten",
+    }
+    with _cache_lock:
+        _ACTIVE_ZONES_CACHE[key] = (now_mono, result)
+        if len(_ACTIVE_ZONES_CACHE) > 200:
+            for stale in sorted(_ACTIVE_ZONES_CACHE, key=lambda item: _ACTIVE_ZONES_CACHE[item][0])[:100]:
+                _ACTIVE_ZONES_CACHE.pop(stale, None)
+    return result
 
 @app.get("/v1/me/aster/portfolio-chart")
 def aster_portfolio_chart(

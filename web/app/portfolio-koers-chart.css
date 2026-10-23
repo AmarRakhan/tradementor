@@ -1228,3 +1228,17 @@
 .portfolio-koers-now:active{transform:scale(.95)}
 .portfolio-koers-now:focus-visible{outline:2px solid rgba(240,200,92,.85);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){.portfolio-koers-now{transition:none}}
+
+/* Build 645: Actieve Trades prijszones — echte support/resistance van de LONG-mand.
+   Support groen, resistance rood; sterker = vaker geraakt; ↺ = rolwissel na doorbraak + retest. */
+.portfolio-koers-sr-layer{position:absolute;inset:0 48px 0 0;z-index:5;overflow:hidden;pointer-events:none;font-variant-numeric:tabular-nums}
+.portfolio-koers-sr-band{position:absolute;left:0;right:0;background:rgba(240,200,92,.07);border-top:1px solid rgba(240,200,92,.22);border-bottom:1px solid rgba(240,200,92,.22)}
+.portfolio-koers-sr-band>span{position:absolute;left:8px;top:50%;transform:translateY(-50%);padding:2px 7px;border:1px solid rgba(240,200,92,.45);border-radius:999px;background:rgba(30,23,6,.86);color:#f0c85c;font:800 8px/1.2 system-ui;letter-spacing:.03em;white-space:nowrap}
+.portfolio-koers-sr-level{position:absolute;left:0;right:0;height:0;border-top:1px dashed currentColor;opacity:.55}
+.portfolio-koers-sr-level.support{color:#2be4a7}
+.portfolio-koers-sr-level.resistance{color:#ff6274}
+.portfolio-koers-sr-level.strength-2{opacity:.72}
+.portfolio-koers-sr-level.strength-3{opacity:.9;border-top-width:2px}
+.portfolio-koers-sr-level.flipped{border-top-style:solid}
+.portfolio-koers-sr-level.broken{opacity:.4}
+.portfolio-koers-sr-level>span{position:absolute;right:4px;top:0;transform:translateY(-50%);padding:1px 5px;border:1px solid currentColor;border-radius:6px;background:rgba(2,12,16,.88);font:800 7.5px/1.3 system-ui;white-space:nowrap}

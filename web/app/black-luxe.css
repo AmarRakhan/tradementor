@@ -2079,6 +2079,14 @@ html:where([data-app-skin="black-luxe"])[data-aster-compact-snapshot="true"] .me
 }
 :where(html[data-app-skin="black-luxe"]) .portfolio-koers-now{border:1px solid rgba(255,212,69,0.62);border-radius:999px;background:linear-gradient(180deg,rgba(23,23,24,0.94),rgba(8,8,8,0.96));box-shadow:0 6px 18px rgba(0,0,0,.45),0 0 14px rgba(255,212,69,0.14),inset 0 1px 0 rgba(255,250,163,0.14);color:#ffdb4c}
 :where(html[data-app-skin="black-luxe"]) .portfolio-koers-now:focus-visible{outline:2px solid rgba(255,212,69,0.85);outline-offset:2px}
+:where(html[data-app-skin="black-luxe"]) .portfolio-koers-sr-band{background:rgba(255,212,69,0.07);border-top:1px solid rgba(255,212,69,0.22);border-bottom:1px solid rgba(255,212,69,0.22)}
+:where(html[data-app-skin="black-luxe"]) .portfolio-koers-sr-band>span{border:1px solid rgba(255,212,69,0.45);border-radius:999px;background:rgba(13,13,13,0.86);color:#ffd445}
+:where(html[data-app-skin="black-luxe"]) .portfolio-koers-sr-level{border-top:1px dashed currentColor}
+:where(html[data-app-skin="black-luxe"]) .portfolio-koers-sr-level.support{color:#08fdac}
+:where(html[data-app-skin="black-luxe"]) .portfolio-koers-sr-level.resistance{color:#ff5f77}
+:where(html[data-app-skin="black-luxe"]) .portfolio-koers-sr-level.strength-3{border-top-width:2px}
+:where(html[data-app-skin="black-luxe"]) .portfolio-koers-sr-level.flipped{border-top-style:solid}
+:where(html[data-app-skin="black-luxe"]) .portfolio-koers-sr-level>span{border:1px solid currentColor;border-radius:6px;background:rgba(6,6,6,0.88)}
 /* from trade-intelligence-advisor-center.css */
 :where(html[data-app-skin="black-luxe"]) .tia-center{--tia-green:#00ffa9;--tia-green-soft:#00d685;--tia-gold:#ffc627;--tia-red:#ff5570;--tia-blue:#2fd0ff;border:1px solid rgba(36,183,78,0.72);border-radius:17px;color:#f5fbf8;background:radial-gradient(circle at 5% 0,rgba(0,235,131,0.12),transparent 30%),
     radial-gradient(circle at 94% 100%,rgba(251,188,25,0.08),transparent 30%),
