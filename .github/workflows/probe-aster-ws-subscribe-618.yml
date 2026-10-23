@@ -1,0 +1,24 @@
+name: Probe Aster websocket subscribe (publiek, geen secrets, geen orders)
+
+on:
+  push:
+    branches: [claude/spike-realtime-subscribe-618]
+    paths:
+      - tools/probe/**
+      - .github/workflows/probe-aster-ws-subscribe-618.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet "websockets>=15.0,<16"
+      - name: Probe (alleen publieke markprijzen)
+        run: python3 -I tools/probe/aster_ws_subscribe_probe.py tools/probe/spike_watch_symbols.txt
