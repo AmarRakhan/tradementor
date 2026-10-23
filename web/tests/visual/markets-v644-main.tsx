@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { MarketsPage } from "../../components/markets-page";
 import { publishAsterPositions } from "../../lib/aster-positions-feed";
 import "../../app/portfolio-koers-chart.css";
+import "../../app/black-luxe.css";
 
 // Fake candles for /api/market-data: a smooth random walk around the live price.
 const realFetch = window.fetch.bind(window);

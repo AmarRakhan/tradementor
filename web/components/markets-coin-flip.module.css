@@ -2,7 +2,7 @@
 .overlay { position: fixed; inset: 0; z-index: 2147483000; overflow: hidden; touch-action: none; overscroll-behavior: none; }
 .backdrop { position: absolute; inset: 0; background: #000; }
 .stageWrap { position: absolute; inset: 0; perspective: 1700px; perspective-origin: 50% 40%; }
-.card { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh; transform-origin: 0 0; transform-style: preserve-3d; will-change: transform; }
+.card { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh; transform-origin: 50% 50%; transform-style: preserve-3d; will-change: transform; }
 .cardFlipping .front, .cardFlipping .back { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
 .front { position: absolute; inset: 0; border-radius: inherit; border: 1.5px solid rgba(255, 195, 32, 0.9); background: linear-gradient(160deg, #111112, #050505); box-shadow: 0 0 40px rgba(255, 195, 32, 0.18); }
 .frontUp { background: linear-gradient(160deg, #0b1a10, #050505); }

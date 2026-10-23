@@ -267,15 +267,15 @@ export function MarketsPage() {
             return <li key={row.symbol} className={styles.row} data-market-symbol={row.symbol}>
               <button type="button" className={styles.rowMain} onClick={(event) => onRowTap(row, event)} aria-label={`${row.baseAsset}${row.quoteAsset !== "USDT" ? ` ${row.quoteAsset}` : ""}: tik om te handelen, dubbeltik voor de koers`}>
                 <span className={styles.cellSymbol}>
-                  <span className={styles.iconWrap}>
-                    <MarketIcon row={row} />
-                    {row.quoteAsset !== "USDT" ? <em className={styles.quote}>{row.quoteAsset}</em> : null}
-                  </span>
-                  <span className={styles.nameLine}>
-                    <strong>{row.baseAsset}</strong>
-                    <small>{row.maxLeverage ? `${row.maxLeverage}x` : ""}</small>
-                    {own?.bot ? <span className={styles.tagBot}>BOT</span> : null}
-                    {own?.manual ? <span className={styles.tagManual}>MANUAL</span> : null}
+                  <MarketIcon row={row} />
+                  <span className={styles.nameBlock}>
+                    <span className={styles.nameLine}>
+                      <strong>{row.baseAsset}</strong>
+                      <small>{row.maxLeverage ? `${row.maxLeverage}x` : ""}</small>
+                      {own?.bot ? <span className={styles.tagBot}>BOT</span> : null}
+                      {own?.manual ? <span className={styles.tagManual}>MANUAL</span> : null}
+                    </span>
+                    {row.quoteAsset !== "USDT" ? <em className={styles.quote}>{row.name || row.baseAsset} · {row.quoteAsset}</em> : null}
                   </span>
                 </span>
                 <span className={styles.cellVol}>{compactVolume(row.quoteVolume24h)}</span>
