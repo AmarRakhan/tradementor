@@ -98,3 +98,8 @@
 .release-history-trigger>span:nth-child(2){max-width:92px}.webapp-version-badge{font-size:6.5px;padding-left:5px;padding-right:5px}.profit-notification-titlebar h1{font-size:18px}.profit-mode-card strong{font-size:8.5px}
 .profit-setting-row{grid-template-columns:40px minmax(0,1fr) 52px 27px}.profit-setting-row strong{font-size:12.5px}.profit-setting-row small{font-size:8px}
 }
+
+/* Hoorn bij Portfolio TP */
+.profit-horn-test{justify-self:start;margin-top:6px;padding:5px 11px;border:1px solid rgba(39,221,137,.52);border-radius:999px;background:#061a13;color:#33eaa0;font-size:12px;font-weight:850;cursor:pointer}
+.profit-horn-test:active{transform:translateY(1px)}
+@media (max-width:520px){.profit-horn-test{padding:4px 9px;font-size:10px;margin-top:4px}}

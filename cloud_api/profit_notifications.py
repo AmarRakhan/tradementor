@@ -288,6 +288,33 @@ def portfolio_tp_push_payload(event: dict[str, Any], account: dict[str, Any]) ->
     }
 
 
+PORTFOLIO_TP_ACTIVE_STATUSES = {"PORTFOLIO_TP_EXECUTING", "FLAT_CONFIRMING", "RESTARTING"}
+
+
+def latest_portfolio_tp_from_state(strategy_state: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Read-only: the most recent Portfolio TP of this user's Aster bot, for the in-app sound.
+
+    Independent of push settings. Returns None when no Portfolio TP was ever reached.
+    One stable cycleId per Portfolio TP, so the web app plays the sound only once.
+    """
+    state = strategy_state if isinstance(strategy_state, dict) else {}
+    current = state.get("multiBbCycle") if isinstance(state.get("multiBbCycle"), dict) else {}
+    status = str(current.get("cycleStatus") or "").upper()
+    triggered_ms = _integer(current.get("portfolioTpTriggeredAtMs"))
+    if status in PORTFOLIO_TP_ACTIVE_STATUSES and triggered_ms > 0 and str(current.get("cycleId") or ""):
+        return {"cycleId": str(current.get("cycleId")), "phase": "EXECUTING", "occurredAtMs": triggered_ms,
+                "cycleProfitUsd": None}
+    completed = state.get("multiBbLastCompletedCycle") if isinstance(state.get("multiBbLastCompletedCycle"), dict) else {}
+    cycle_id = str(completed.get("cycleId") or "")
+    occurred_ms = _integer(completed.get("portfolioTpTriggeredAtMs")) or _integer(completed.get("flatConfirmedAtMs"))
+    if not cycle_id or occurred_ms <= 0:
+        return None
+    start = _number(completed.get("cycleStartEquity"))
+    end = _number(completed.get("cycleEndEquity"))
+    return {"cycleId": cycle_id, "phase": "COMPLETED", "occurredAtMs": occurred_ms,
+            "cycleProfitUsd": (end - start) if start > 0 and end > 0 else None}
+
+
 class NotificationSettingsRequest(BaseModel):
     enabled: bool = False
     tradeProfitEnabled: bool = True
@@ -622,6 +649,14 @@ class ProfitNotificationService:
         rows.sort(key=lambda row: (row["occurredAtMs"], row["eventId"]))
         return rows
 
+    def latest_portfolio_tp(self, uid: str) -> dict[str, Any] | None:
+        try:
+            state = self.db.collection("asterStrategy2").document(str(uid)).get().to_dict() or {}
+            return latest_portfolio_tp_from_state(state)
+        except Exception:
+            LOGGER.warning("latest portfolio tp lookup failed", exc_info=True)
+            return None
+
     def _active_subscriptions(self, uid: str) -> list[tuple[Any, dict[str, Any]]]:
         result = []
         for doc in self._devices(uid).where("kind", "==", "webpush").stream():
@@ -874,5 +909,7 @@ def install_profit_notification_routes(app: Any, service: ProfitNotificationServ
     @app.get("/v1/me/notifications/recent")
     def recent_profit_notification_events(after_ms: int = Query(default=0, ge=0),
                                           user: dict[str, Any] = Depends(authenticated_user)) -> dict[str, Any]:
-        return {"events": service.recent_trade_events(str(user["uid"]), after_ms=after_ms, limit=20),
+        uid = str(user["uid"])
+        return {"events": service.recent_trade_events(uid, after_ms=after_ms, limit=20),
+                "latestPortfolioTp": service.latest_portfolio_tp(uid),
                 "source": "confirmed-backend-profit-events"}

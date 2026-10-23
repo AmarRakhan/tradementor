@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 632: Hoorn bij Portfolio TP — zodra je portfolio take profit is behaald speelt de app één keer een hoorn af (alleen terwijl de app open is); schakelaar per apparaat en testknop in Pushmeldingen beheren. Bevat 631 (backend). Geen trading-wijzigingen.
 // Build 629: hedge afbouwen — een gewijzigde instelling geldt direct voor alle lopende posities (geen vastgezette instellingen per cyclus meer); de ladder meet vanaf de eigen gemiddelde instapkoers van de hedge (de winst die je ziet), een hedge die al voorbij stappen is verkoopt die meteen en wordt na de laatste stap weer 100% gehedged; nooit terugkopen midden in een cyclus. Bevat 628: alles-sluiten-fase sluit nooit met verlies.
 // Build 627 (alleen backend): alleen de Cloud Run-revisie met verkeer doet achtergrond-botwerk (tick, realtime, Spike, Auto Hedge, noodhedge); oude en kandidaat-revisies staan stand-by. Bij twijfel werkt hij door.
 // Build 626: Auto Hedge voor LONG én SHORT — apart verliesbedrag per kant, hedge afbouwen gespiegeld met eigen instellingen per kant (standaard UIT), stap alleen met winst na fees, TP sluit beide samen en alleen netto groen (elk pair), Re-Hedge All voor beide kanten en ook halverwege de afbouw, nooit verkopen om recht te trekken, één positie per munt met Auto Hedge AAN, Hedge Mode-check, echte afbouworders.
@@ -51,7 +52,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "629";
+export const WEBAPP_BUILD_NUMBER = "632";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

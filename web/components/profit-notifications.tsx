@@ -4,6 +4,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuthSession } from "@/components/auth-provider";
 import { authenticatedRequest } from "@/lib/cloud-client";
+import {
+  handleLatestPortfolioTp,
+  installPortfolioTpSoundUnlock,
+  isPortfolioTpSoundEnabled,
+  playPortfolioTpSound,
+  setPortfolioTpSoundEnabled,
+  type LatestPortfolioTp,
+} from "@/lib/portfolio-tp-sound.mjs";
 
 const OPEN_EVENT = "amar:open-profit-notifications";
 const LAST_SEEN_KEY = "amar.profitNotifications.lastSeenAt.v1";
@@ -204,6 +212,7 @@ export function ProfitNotificationPanel() {
   const [working, setWorking] = useState("");
   const [message, setMessage] = useState("");
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [hornEnabled, setHornEnabled] = useState(true);
   const scrollY = useRef(0);
 
   const refreshPermission = useCallback(() => {
@@ -246,6 +255,7 @@ export function ProfitNotificationPanel() {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     refreshPermission();
+    setHornEnabled(isPortfolioTpSoundEnabled());
     void load();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -364,6 +374,17 @@ export function ProfitNotificationPanel() {
     }
   }
 
+  function changeHorn(next: boolean) {
+    setPortfolioTpSoundEnabled(next);
+    setHornEnabled(next);
+    setMessage(next ? "Hoorn bij Portfolio TP staat AAN op dit apparaat." : "Hoorn bij Portfolio TP staat UIT op dit apparaat.");
+  }
+
+  async function testHorn() {
+    const played = await playPortfolioTpSound();
+    setMessage(played ? "Testgeluid afgespeeld. Er is geen trade of portfolioactie uitgevoerd." : "Dit apparaat liet het geluid niet afspelen. Controleer of het geluid aan staat en tik nog eens.");
+  }
+
   const previewInterval = settings.mode === "SUMMARY" ? settings.intervalMinutes : null;
   if (!open) return null;
 
@@ -436,6 +457,17 @@ export function ProfitNotificationPanel() {
               <b className={settings.portfolioTpEnabled ? "on" : ""}>{settings.portfolioTpEnabled ? "AAN" : "UIT"}</b>
             </section>
 
+            <section className="profit-setting-row horn">
+              <span className="profit-setting-icon gold" aria-hidden="true">📯</span>
+              <div>
+                <strong>Hoorn bij Portfolio TP</strong>
+                <small>Speelt een hoorn af zodra je portfolio TP-doel is behaald, terwijl de app open is. Geldt voor dit apparaat.</small>
+                <button type="button" className="profit-horn-test" onClick={() => void testHorn()}>▶ Geluid testen</button>
+              </div>
+              <Toggle checked={hornEnabled} onChange={changeHorn} label="Hoorn bij Portfolio TP" />
+              <b className={hornEnabled ? "on" : ""}>{hornEnabled ? "AAN" : "UIT"}</b>
+            </section>
+
             <section className="profit-setting-row">
               <span className="profit-setting-icon" aria-hidden="true">↻</span>
               <div><strong>Portfolio &amp; Available realtime verversen bij verzenden</strong><small>Haal de nieuwste waarden op vlak vóór de melding wordt verstuurd</small></div>
@@ -505,11 +537,16 @@ export function ProfitCelebration() {
     }
   }, []);
 
+  useEffect(() => installPortfolioTpSoundUnlock(), []);
+
   const poll = useCallback(async () => {
-    if (!user || !cloudReady || document.visibilityState !== "visible" || visible) return;
+    // Blijft ook pollen terwijl de winst-popup open staat, zodat de Portfolio TP-hoorn niet wacht.
+    if (!user || !cloudReady || document.visibilityState !== "visible") return;
     try {
       const path = "/api/notifications/recent?after_ms=" + Math.max(0, lastSeen.current);
       const payload = await authenticatedRequest(path);
+      handleLatestPortfolioTp(payload.latestPortfolioTp as LatestPortfolioTp);
+      if (visible) return;
       const rows = Array.isArray(payload.events) ? payload.events as ProfitEvent[] : [];
       if (!rows.length) return;
       const newestAt = Math.max(...rows.map((row) => Number(row.occurredAtMs || 0)));
