@@ -1,0 +1,25 @@
+/* iOS: keep the mobile bottom navigation anchored to the bottom of the screen.
+   Own compositor layer (prevents jumping with backdrop-filter during momentum
+   scroll), hidden while the on-screen keyboard is open, no animation while
+   re-anchoring. Display only. */
+@media (max-width: 980px) {
+  .bottom-nav, .premium-bottom-nav {
+    transform: translate3d(0, 0, 0);
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    transition: transform .18s ease, opacity .18s ease;
+  }
+  html[data-soft-keyboard="open"] .bottom-nav,
+  html[data-soft-keyboard="open"] .premium-bottom-nav {
+    transform: translate3d(0, 120%, 0);
+    opacity: 0;
+    pointer-events: none;
+  }
+  html[data-nav-reanchor="true"] .bottom-nav,
+  html[data-nav-reanchor="true"] .premium-bottom-nav {
+    transition: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bottom-nav, .premium-bottom-nav { transition: none; }
+}

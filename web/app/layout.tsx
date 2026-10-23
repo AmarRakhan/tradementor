@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/components/auth-provider";
 import { PwaRegistration } from "@/components/pwa-registration";
 import { ZoomGuard } from "@/components/zoom-guard";
+import { BottomNavViewportGuard } from "@/components/bottom-nav-viewport-guard";
 import { AppVersionControl } from "@/components/app-version-control";
 import { ReleaseHistoryControl } from "@/components/release-history-control";
 import { ProfitCelebration, ProfitNotificationControl, ProfitNotificationPanel } from "@/components/profit-notifications";
@@ -45,6 +46,7 @@ import "./profit-notifications.css";
 import "./sniper-bridge.css";
 import "./friends-bridge.css";
 import "./ultra-rivalry.css";
+import "./bottom-nav-viewport.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
@@ -93,6 +95,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         </div>
         <PwaRegistration />
         <ZoomGuard />
+        <BottomNavViewportGuard />
         <AuthProvider>
           <ProfitNotificationPanel />
           <ProfitCelebration />
