@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { buildMarketRows } from "@/lib/markets-universe.mjs";
 
 const ASTER = "https://fapi.asterdex.com";
 const CLOUD_API = "https://tradementor-api-604335232956.europe-west4.run.app";
@@ -130,10 +131,32 @@ function parseEnrichSymbols(url: URL) {
     .map((value) => value.trim().toUpperCase())
     .filter(Boolean);
   const symbols = Array.from(new Set(requested));
-  if (!symbols.length || symbols.length > MAX_ENRICH_SYMBOLS || symbols.some((symbol) => !/^[A-Z0-9]+USDT$/.test(symbol))) {
-    throw new Error(`Enrichment ondersteunt 1-${MAX_ENRICH_SYMBOLS} geldige USDT-symbolen per batch`);
+  // Build 644: every tradable Aster perpetual (USDT, USD1, USDC, U), not only USDT.
+  if (!symbols.length || symbols.length > MAX_ENRICH_SYMBOLS || symbols.some((symbol) => !/^[A-Z0-9]{2,40}$/.test(symbol))) {
+    throw new Error(`Enrichment ondersteunt 1-${MAX_ENRICH_SYMBOLS} geldige Aster-symbolen per batch`);
   }
   return symbols;
+}
+
+// Build 644: the Markets list reads Aster's public market data directly
+// (no account call, no Cloud Run hop). exchangeInfo changes rarely; tickers are
+// shared between viewers for a few seconds so many open pages cost one call.
+const EXCHANGE_INFO_TTL_MS = 10 * 60_000;
+const TICKER_TTL_MS = 12_000;
+let exchangeInfoCache: Timed<unknown> | null = null;
+let tickerCache: Timed<unknown> | null = null;
+
+async function publicUniverse() {
+  const now = Date.now();
+  const [info, tickers] = await Promise.all([
+    exchangeInfoCache && exchangeInfoCache.expiresAt > now
+      ? exchangeInfoCache.value
+      : jsonFetch(`${ASTER}/fapi/v1/exchangeInfo`).then((value) => { exchangeInfoCache = { expiresAt: Date.now() + EXCHANGE_INFO_TTL_MS, value }; return value; }),
+    tickerCache && tickerCache.expiresAt > now
+      ? tickerCache.value
+      : jsonFetch(`${ASTER}/fapi/v1/ticker/24hr`).then((value) => { tickerCache = { expiresAt: Date.now() + TICKER_TTL_MS, value }; return value; }),
+  ]);
+  return buildMarketRows(info, tickers);
 }
 
 function marketObjects(payload: unknown, depth = 0): Record<string, unknown>[] {
@@ -237,15 +260,27 @@ export async function GET(request: Request) {
       return Response.json({ detail: "Ongeldige Markets-modus" }, { status: 422 });
     }
 
-    const focusUrl = `${CLOUD_API}/v1/me/aster/strategy2/focus/markets`;
-    const focusPayload = await jsonFetch(focusUrl, { headers: { Authorization: authorization } });
-    const markets = rowsFromFocusMarkets(focusPayload);
-    if (!markets.length) throw new Error("Aster market-universe bevat momenteel geen geldige USDT perpetuals");
+    let markets: Array<Record<string, unknown>> = [];
+    let source = "aster-public";
+    try {
+      markets = await publicUniverse();
+    } catch {
+      markets = [];
+    }
+    if (!markets.length) {
+      // Fallback: the previous account route (USDT perpetuals only).
+      const focusUrl = `${CLOUD_API}/v1/me/aster/strategy2/focus/markets`;
+      const focusPayload = await jsonFetch(focusUrl, { headers: { Authorization: authorization } });
+      markets = rowsFromFocusMarkets(focusPayload).map((row) => ({ ...row, name: "", category: "crypto", pricePrecision: 4, high24h: 0, low24h: 0 }));
+      source = "account-fallback-usdt";
+    }
+    if (!markets.length) throw new Error("Aster market-universe bevat momenteel geen handelbare perpetuals");
 
     return Response.json({
       exchange: "aster",
       contractType: "PERPETUAL",
-      quoteAsset: "USDT",
+      quoteAssets: Array.from(new Set(markets.map((row) => String(row.quoteAsset)))).sort(),
+      source,
       interval,
       bollinger: { period: BOLLINGER_PERIOD, deviations: BOLLINGER_DEVIATIONS },
       marketCount: markets.length,

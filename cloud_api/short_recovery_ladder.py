@@ -121,7 +121,7 @@ def normalize_settings(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     safety = total if raw.get("safetyNetPct") in (None, "") else _dec(raw.get("safetyNetPct"), "vangnet")
     if safety <= 0 or safety >= 100:
         raise ValueError("vangnet moet tussen 0% en 100% liggen")
-    # Build 644 (Amar 24-10): "Opnieuw hedgen na afbouw". ON (default) = grid as before. OFF = once the hedge is
+    # Build 645 (Amar 24-10): "Opnieuw hedgen na afbouw". ON (default) = grid as before. OFF = once the hedge is
     # fully reduced, nothing more for that pair: no buy-back, no vangnet; the protected position survives on its own.
     rehedge = raw.get("rehedgeAfterAfbouw", True)
     if not isinstance(rehedge, bool):
@@ -322,7 +322,7 @@ def grid_step(*, anchor: Any, price: Any, sold: int, n: int, total_pct: Any, reb
               fee_rate: Any = DEFAULT_FEE_RATE, rehedge: bool = True, safety_from: Any = None) -> dict[str, Any]:
     """One grid decision: new number of sold parts and the event. Pure; the caller turns parts into a target.
 
-    ``rehedge=False`` (build 644): once every part is sold the grid stops (GRID_DONE_NO_REHEDGE): no buy-back and
+    ``rehedge=False`` (build 645): once every part is sold the grid stops (GRID_DONE_NO_REHEDGE): no buy-back and
     no vangnet. ``safety_from``: price where the grid resumed; the vangnet counts from there when it lies beyond
     the last level, so switching re-hedging back on never re-hedges at once.
     """

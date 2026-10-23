@@ -40,7 +40,7 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
   // Build 634 (grid): buy back after N levels up, and the vangnet beyond the last level.
   const [rebuy, setRebuy] = useState(String(plan.rebuySteps ?? 1));
   const [safety, setSafety] = useState(String(plan.safetyNetPct ?? plan.totalPct));
-  // Build 644: "Opnieuw hedgen na afbouw" (default AAN). UIT = na volledige afbouw niets meer voor dat pair.
+  // Build 645: "Opnieuw hedgen na afbouw" (default AAN). UIT = na volledige afbouw niets meer voor dat pair.
   const [rehedge, setRehedge] = useState(plan.rehedgeAfterAfbouw !== false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");

@@ -10,13 +10,15 @@ export async function GET(request: NextRequest) {
   const exchange = request.nextUrl.searchParams.get("exchange") === "hyperliquid" ? "hyperliquid" : "aster";
   const symbol = cleanSymbol(request.nextUrl.searchParams.get("symbol") || "BTC");
   const interval = (request.nextUrl.searchParams.get("interval") || "15m").toLowerCase();
-  const limit = Math.min(1000, Math.max(100, Number(request.nextUrl.searchParams.get("limit") || 600)));
+  const limit = Math.min(1000, Math.max(request.nextUrl.searchParams.get("market") ? 2 : 100, Number(request.nextUrl.searchParams.get("limit") || 600)));
   const before = Number(request.nextUrl.searchParams.get("before") || Date.now());
   if (!allowedIntervals.has(interval)) return NextResponse.json({ error: "Dit timeframe wordt niet ondersteund." }, { status: 400 });
 
   try {
     if (exchange === "aster") {
-      const market = `${symbol}USDT`;
+      // Build 644: Markets passes the exact Aster symbol (XAUUSD1, BTCUSDC, ...).
+      const exact = (request.nextUrl.searchParams.get("market") || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const market = /^[A-Z0-9]{2,40}$/.test(exact) ? exact : `${symbol}USDT`;
       const url = new URL("https://fapi.asterdex.com/fapi/v1/klines");
       url.searchParams.set("symbol", market);
       url.searchParams.set("interval", interval);
