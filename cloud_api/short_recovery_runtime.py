@@ -28,7 +28,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
-from short_recovery_ladder import normalize_settings, plan
+from short_recovery_ladder import normalize_settings, plan, profitable_after_fees
 
 PHASE_LADDER = "LADDER"
 PHASE_REOPEN_CLOSE = "REOPEN_CLOSE"
@@ -133,6 +133,15 @@ def decide(
         if short_q <= (step / 2 if step > 0 else Decimal(0)):
             rec.update(phase=PHASE_REOPEN_OPEN, lastTarget=rec["reopenQty"])
             return {"override": min(long_q, _d(rec["reopenQty"])), "record": rec, "event": "CLOSED_ALL_REOPEN_90"}
+        # Amar 23-10 (kernregel): never close a hedge at a loss. The close-all was decided when the hedge was in
+        # profit, but the hedge may have been refilled since (e.g. at a worse price): re-check against the CURRENT
+        # hedge entry on every tick. Not profitable -> abort the close-all (no order), back to REFILL: the pair is
+        # made 1:1 again by buying only, and a new cycle anchors on that hedge entry.
+        if not profitable_after_fees(direction=str(rec.get("direction") or direction), hedge_entry=_d(short_entry),
+                                     price=price):
+            keep = min(long_q, short_q)
+            rec.update(phase=PHASE_REFILL, reopenQty=None, lastTarget=str(keep))
+            return {"override": keep, "record": rec, "event": "CLOSE_ALL_ABORTED_NOT_PROFITABLE"}
         rec["lastTarget"] = "0"
         return {"override": Decimal(0), "record": rec, "event": "CLOSING_ALL"}
 

@@ -143,5 +143,50 @@ class PublicUnwind(unittest.TestCase):
         self.assertIsNone(public_unwind({"status": "HEDGED"}))
 
 
+class CloseAllNeverAtLoss(unittest.TestCase):
+    """Incident 23-10 14:29 (CC/LINK/MSTR): the close-all was decided on a profitable old hedge; another writer
+    refilled the SHORT at a worse price and the close-all phase then closed the NEW SHORT at a loss."""
+
+    def _close_all_record(self):
+        rec = go(min_qty=40)["record"]
+        r = go(rec, mark=98, min_qty=40)
+        self.assertEqual(r["event"], "STEP_TOO_SMALL_CLOSE_ALL")
+        return r["record"]
+
+    def test_refilled_hedge_at_worse_price_is_not_closed(self):
+        # SHORT refilled 1:1 at 97.5, price now 98: closing it would be a loss -> no close, back to REFILL.
+        r = go(self._close_all_record(), mark=98, short_qty=100, short_entry="97.5", min_qty=40)
+        self.assertEqual((r["override"], r["event"]), (D(100), "CLOSE_ALL_ABORTED_NOT_PROFITABLE"))
+        self.assertEqual((r["record"]["phase"], r["record"]["reopenQty"]), ("REFILL", None))
+        # next tick: exactly 1:1 -> new cycle anchored on the CURRENT hedge entry, not the old anchor
+        r2 = go(r["record"], mark=98, short_qty=100, short_entry="97.5", min_qty=40)
+        self.assertEqual((r2["event"], r2["record"]["anchor"]), ("CYCLE_STARTED", "97.5"))
+
+    def test_profit_smaller_than_fees_is_not_closed(self):
+        r = go(self._close_all_record(), mark="97.95", short_qty=100, short_entry=98, min_qty=40)
+        self.assertEqual(r["event"], "CLOSE_ALL_ABORTED_NOT_PROFITABLE")
+
+    def test_partly_closed_remainder_at_loss_is_held(self):
+        r = go(self._close_all_record(), mark=99, short_qty=40, short_entry=98, min_qty=40)
+        self.assertEqual((r["override"], r["event"]), (D(40), "CLOSE_ALL_ABORTED_NOT_PROFITABLE"))
+
+    def test_unknown_entry_never_closes(self):
+        r = go(self._close_all_record(), mark=98, short_qty=100, short_entry=0, min_qty=40)
+        self.assertEqual(r["event"], "CLOSE_ALL_ABORTED_NOT_PROFITABLE")
+
+    def test_still_profitable_keeps_closing(self):
+        r = go(self._close_all_record(), mark=98, short_qty=60, short_entry=100, min_qty=40)
+        self.assertEqual((r["override"], r["event"]), (D(0), "CLOSING_ALL"))
+
+    def test_mirrored_side_long_hedge(self):
+        # protected SHORT, LONG hedge (direction UP): selling the LONG hedge below its entry is never allowed.
+        rec = {"cycleId": 1, "phase": "REOPEN_CLOSE", "direction": "UP", "reopenQty": "90", "lastTarget": "0",
+               "anchor": "100", "base": "100", "longAtStart": "100", "stepsReached": 1, "steps": 4, "stepPct": "2"}
+        r = go(rec, mark=101, short_qty=100, short_entry=102, direction="UP")
+        self.assertEqual(r["event"], "CLOSE_ALL_ABORTED_NOT_PROFITABLE")
+        r = go(rec, mark=103, short_qty=100, short_entry=100, direction="UP")
+        self.assertEqual(r["event"], "CLOSING_ALL")
+
+
 if __name__ == "__main__":
     unittest.main()
