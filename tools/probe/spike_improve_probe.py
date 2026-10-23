@@ -54,10 +54,11 @@ def btc15(t):
     return (a / b - 1) * 100 if a and b else 0
 TFS = {"1m": 60000, "5m": 300000, "15m": 900000}
 CONFIGS = [(tf, k, d) for tf in TFS for k in (2, 3, 4, 5, 6, 7) for d in (0, 1, 2, 3)]
-VARIANTS = ["base", "b0.2", "b0.3", "b0.5", "btc", "breadth", "trend1h", "b0.3+breadth", "b0.3+trend1h", "b0.3+breadth+trend1h"]
-TP = 0.5
+VARIANTS = ["base", "b0.2", "b0.3", "b0.3+breadth"]
+TPS = [0.25, 0.3, 0.4, 0.5]
+TP = max(TPS)
 HEDGES = [1.25, 2.0]
-res = {f"{tf}|{k}|{d}|{v}": {"n": 0, "tp": {str(h): 0 for h in HEDGES}, "ever": 0, "mins": []}
+res = {f"{tf}|{k}|{d}|{v}": {"n": 0, "tp": {str(t): {str(h): 0 for h in HEDGES} for t in TPS}, "ever": {str(t): 0 for t in TPS}, "mins": []}
        for tf, k, d in CONFIGS for v in VARIANTS}
 for sym, m1 in M1.items():
     if sym == "BTCUSDT": continue
@@ -111,22 +112,23 @@ for sym, m1 in M1.items():
                         if v == "btc" and btc15(te) <= -0.7: busy = te + 60000; continue
                         if "trend1h" in v and not trend_ok(te): busy = te + 60000; continue
                         r_["n"] += 1
-                        mae, hit, q = 0.0, None, first
+                        mae, q = 0.0, first
+                        got = {}
                         for q in range(first, len(m1)):
                             c = m1[q]
                             mae = max(mae, (ep - c[2]) / ep * 100)
                             fav = c[3] if q == j and first == j else c[1]
-                            if (fav - ep) / ep * 100 >= TP:
-                                hit = (mae, q - ei); break
-                        if hit:
-                            r_["ever"] += 1; r_["mins"].append(hit[1])
+                            g = (fav - ep) / ep * 100
+                            for t in TPS:
+                                if t not in got and g >= t: got[t] = mae
+                            if TP in got: break
+                        for t, m_ in got.items():
+                            r_["ever"][str(t)] += 1
                             for h in HEDGES:
-                                if hit[0] < h: r_["tp"][str(h)] += 1
-                            busy = m1[q][0] + 60000
-                        else:
-                            busy = 10 ** 15
+                                if m_ < h: r_["tp"][str(t)][str(h)] += 1
+                        # positie dicht bij de kleinste TP? de munt is vrij na de grootste TP (conservatief qua aantal)
+                        busy = (m1[q][0] + 60000) if TP in got else 10 ** 15
 out = {"startMs": START, "endMs": now, "symbols": len(M1), "tp": TP, "results": {}}
 for kk, a in res.items():
-    m = sorted(a["mins"])
-    out["results"][kk] = {"n": a["n"], "tp": a["tp"], "ever": a["ever"], "medianMin": m[len(m) // 2] if m else None}
+    out["results"][kk] = {"n": a["n"], "tp": a["tp"], "ever": a["ever"]}
 json.dump(out, open(sys.argv[2], "w")); print("ok", len(M1))
