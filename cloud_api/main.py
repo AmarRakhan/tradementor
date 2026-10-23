@@ -3302,7 +3302,8 @@ _RELEASE_FEATURE_DEFAULTS: dict[str, dict[str, Any]] = {
     "price_zones": {"status": "IN_BOUW", "beta": False, "stable": False},
     "zone_soldiers": {"status": "TESTEN", "beta": True, "stable": False},
     "zone_command_center": {"status": "TESTEN", "beta": True, "stable": False},
-    "auto_hedge_v2": {"status": "TESTEN", "beta": True, "stable": False},
+    # Build 640 (akkoord Amar 24-10 00:42): Auto Hedge 2 voor alle gebruikers. Terugtrekken = owner-paneel (schrijft releaseFeatures).
+    "auto_hedge_v2": {"status": "LIVE", "beta": True, "stable": True},
     "legacy_hedge_recovery": {"status": "TESTEN", "beta": True, "stable": False},
     "active_trades_chart": {"status": "TESTEN", "beta": True, "stable": False},
 }

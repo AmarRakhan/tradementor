@@ -790,20 +790,6 @@ export function PortfolioKoersChart({
   if(freshChartZoneLadder?.zones?.length)lastConfirmedZoneLadderRef.current=freshChartZoneLadder;
   const chartZoneLadder=freshChartZoneLadder??lastConfirmedZoneLadderRef.current;
   const zoneContext=useMemo(()=>portfolioZoneContextFromLadder(chartZoneLadder,currentZonePrice),[chartZoneLadder,currentZonePrice]);
-  // Build 635: zone lines over the whole loaded account history (display only).
-  const candlePriceRange=useMemo(()=>{
-    let low=Number.POSITIVE_INFINITY,high=0;
-    for(const row of baseCandles){
-      if(Number.isFinite(Number(row.low))&&Number(row.low)>0)low=Math.min(low,Number(row.low));
-      if(Number.isFinite(Number(row.high))&&Number(row.high)>0)high=Math.max(high,Number(row.high));
-    }
-    return Number.isFinite(low)&&high>0?{low,high}:null;
-  },[baseCandles]);
-  const displayZoneLadder=useMemo(()=>{
-    if(!chartZoneLadder?.zones?.length||!candlePriceRange)return chartZoneLadder;
-    const span=Math.max(0,candlePriceRange.high-candlePriceRange.low);
-    return extendPortfolioZoneLadderToRange(chartZoneLadder,candlePriceRange.low-span*.15,candlePriceRange.high+span*.15,{focusPrice:currentZonePrice});
-  },[chartZoneLadder,candlePriceRange,currentZonePrice]);
   const zoneSoldierReport=advisorSeats.zoneSoldiers;
   const runtimeTruth=advisorSeats.runtimeTruth;
   const runtimeTruthCanonical=runtimeTruth.source==="SERVER_RUNTIME";
@@ -817,13 +803,13 @@ export function PortfolioKoersChart({
   // Trading runtime state stays available for the command center only. It must
   // never suppress or relocate the chart's informational price levels.
   const operationalActiveZone=runtimeZoneActive?signedIntegerOrNull(runtimeTruth.activeZone):activeZone;
-  advisorZoneLadderRef.current=displayZoneLadder;
+  advisorZoneLadderRef.current=chartZoneLadder;
   activeZoneRef.current=activeZone;
 
   // The chart and sibling snapshot expose the visual current price zone.
   useEffect(()=>{onActiveZoneChange?.(activeZone)},[activeZone,onActiveZoneChange]);
   useEffect(()=>()=>{onActiveZoneChange?.(null)},[onActiveZoneChange]);
-  useEffect(()=>{syncOverlaysRef.current()},[displayZoneLadder,activeZone]);
+  useEffect(()=>{syncOverlaysRef.current()},[chartZoneLadder,activeZone]);
   useEffect(()=>{setSelectedTpCluster(null);setTpDetailLoading(false);setTpDetailError("")},[timeframe,viewMode]);
 
   useEffect(()=>{
@@ -880,37 +866,9 @@ export function PortfolioKoersChart({
       if(Number.isFinite(currentPrice)&&currentPrice>0)series.createPriceLine({price:currentPrice,color:"#e4b84a",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:""});
     }
 
-    // Build 567: support/resistance is a permanent chart primitive, not a
-    // viewport-clipped DOM decoration. Draw the complete extended zone ladder
-    // as chart-native price lines so panning/zooming never makes the ladder
-    // disappear. Labels stay hidden; only the horizontal structure is shown.
-    const lineLadder=advisorZoneLadderRef.current;
-    if(viewMode==="account"&&lineLadder?.zones?.length){
-      const current=Number(candles.at(-1)?.close);
-      const seen=new Set<string>();
-      const prices:number[]=[];
-      for(const zone of lineLadder.zones as any[]){
-        for(const raw of [zone?.lower,zone?.upper]){
-          const price=Number(raw);
-          if(!Number.isFinite(price)||price<=0)continue;
-          const key=price.toFixed(8);
-          if(seen.has(key))continue;
-          seen.add(key);prices.push(price);
-        }
-      }
-      prices.sort((a,b)=>a-b);
-      for(const price of prices){
-        const resistance=Number.isFinite(current)&&price>current;
-        series.createPriceLine({
-          price,
-          color:resistance?"rgba(255,86,106,.58)":"rgba(71,225,166,.50)",
-          lineWidth:1,
-          lineStyle:2,
-          axisLabelVisible:false,
-          title:"",
-        });
-      }
-    }
+    // Build 641: no background zone price lines. The structure levels (R1–R4 /
+    // S1–S4) and zone boundaries drawn above the candles are the zone lines;
+    // a second canvas copy at the same prices looked doubled (keuze Amar 24-10).
 
     // Build 562: Bollinger is a display indicator over the confirmed candle
     // observations. A timeline gap must not make the bands disappear entirely.
@@ -1022,14 +980,38 @@ export function PortfolioKoersChart({
           return {label:`S${offset+1}`,price:Number.isFinite(Number(row?.lower))?Number(row.lower):null,side:"support" as const};
         });
         const rawLevels=[...resistanceLevels,...supportLevels];
-        const levels=rawLevels.flatMap((level)=>{
+        // Build 643: beyond R4/S4, continue the same R/S lines over the visible
+        // price range only, so every candle on screen sits between two lines.
+        // Nothing is drawn off-screen and there is no second (canvas) layer.
+        const visibleExtraLevels:{label:string;price:number|null;side:"resistance"|"support"}[]=[];
+        const topPrice=series.coordinateToPrice(0),bottomPrice=series.coordinateToPrice(height);
+        if(Number.isFinite(Number(activeIndex))&&topPrice!==null&&bottomPrice!==null){
+          const visLow=Math.min(Number(topPrice),Number(bottomPrice)),visHigh=Math.max(Number(topPrice),Number(bottomPrice));
+          const visibleLadder=extendPortfolioZoneLadderToRange(zoneLadder,visLow,visHigh,{focusPrice:structurePrice,maxZones:160});
+          for(const row of (Array.isArray(visibleLadder?.zones)?visibleLadder.zones:[]) as any[]){
+            const index=Number(row.index),active=Number(activeIndex);
+            if(index>=active+4&&Number.isFinite(Number(row.upper)))visibleExtraLevels.push({label:`R${index-active+1}`,price:Number(row.upper),side:"resistance"});
+            if(index<=active-4&&Number.isFinite(Number(row.lower)))visibleExtraLevels.push({label:`S${active-index+1}`,price:Number(row.lower),side:"support"});
+          }
+        }
+        const placedLevels=[...rawLevels,...visibleExtraLevels].flatMap((level)=>{
           if(!Number.isFinite(Number(level.price))||Number(level.price)<=0)return [];
           const coordinate=series.priceToCoordinate(Number(level.price));
           if(coordinate===null)return [];
           const top=Number(coordinate);
           if(top<0||top>height)return [];
           return [{label:level.label,price:Number(level.price),top,side:level.side}] as StructureLevelLayout[];
-        });
+        }).sort((a,b)=>a.top-b.top);
+        // Zoomed far out the lines would crowd together: keep at least 10 px
+        // between lines (R1 and S1 always stay).
+        const levels:StructureLevelLayout[]=[];
+        for(const level of placedLevels){
+          const last=levels.at(-1);
+          if(!last||level.top-last.top>=10||level.label==="R1"||level.label==="S1"){
+            if(last&&level.top-last.top<10&&last.label!=="R1"&&last.label!=="S1")levels.pop();
+            levels.push(level);
+          }
+        }
         const activeUpperY=Number.isFinite(Number(activeUpper))?series.priceToCoordinate(Number(activeUpper)):null;
         const activeLowerY=Number.isFinite(Number(activeLower))?series.priceToCoordinate(Number(activeLower)):null;
         const activeTop=activeUpperY!==null&&activeLowerY!==null?Math.min(Number(activeUpperY),Number(activeLowerY)):null;

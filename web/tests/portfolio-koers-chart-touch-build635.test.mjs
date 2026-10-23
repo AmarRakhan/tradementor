@@ -71,12 +71,14 @@ test("Build 635 the 45 s refresh waits for the finger and keeps a manual price z
   assert.ok(source.includes("priceScale.setAutoScale(false);priceScale.setVisibleRange(savedPriceRange)"));
 });
 
-test("Build 635 zone lines are drawn over the full display ladder without a 48-line cap",async()=>{
+test("Build 641 draws zone lines once: overlay levels only, no background price-line copy",async()=>{
   const source=await component();
-  assert.ok(source.includes("advisorZoneLadderRef.current=displayZoneLadder;"));
-  assert.ok(source.includes("const lineLadder=advisorZoneLadderRef.current;"));
-  assert.equal(source.includes("prices.slice(-48)"),false);
-  // Trading/advisor zone context still uses the original strategy ladder.
+  assert.ok(source.includes("advisorZoneLadderRef.current=chartZoneLadder;"));
+  assert.equal(source.includes("displayZoneLadder"),false);
+  assert.equal(source.includes("rgba(255,86,106,.26)"),false);
+  assert.equal(source.includes("const lineLadder="),false);
+  // Only the live-price line and the cycle-start line remain as chart price lines.
+  assert.equal((source.match(/series\.createPriceLine\(/g)||[]).length,2);
   assert.ok(source.includes("portfolioZoneContextFromLadder(chartZoneLadder,currentZonePrice)"));
 });
 
@@ -101,4 +103,13 @@ test("Build 637 vertical drag in the pane works without touching the price axis 
   assert.ok(source.includes("if(gesture.frozen&&Math.abs(dx)>2.5*Math.abs(dy)){"));
   assert.ok(source.includes("if(gesture.frozen&&!gesture.decided){try{priceScale.setAutoScale(true)}"));
   assert.ok(source.includes('container.removeEventListener("pointerdown",onGestureDown,{capture:true});'));
+});
+
+test("Build 643 R/S lines continue over the visible price range only, thinned to 10 px",async()=>{
+  const source=await component();
+  assert.ok(source.includes("const topPrice=series.coordinateToPrice(0),bottomPrice=series.coordinateToPrice(height);"));
+  assert.ok(source.includes("extendPortfolioZoneLadderToRange(zoneLadder,visLow,visHigh,{focusPrice:structurePrice,maxZones:160})"));
+  assert.ok(source.includes("const placedLevels=[...rawLevels,...visibleExtraLevels]"));
+  assert.ok(source.includes("level.top-last.top>=10"));
+  assert.equal((source.match(/series\.createPriceLine\(/g)||[]).length,2);
 });

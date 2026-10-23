@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 
   try {
     if (exchange === "aster") {
-      // Build 640: Markets passes the exact Aster symbol (XAUUSD1, BTCUSDC, ...).
+      // Build 644: Markets passes the exact Aster symbol (XAUUSD1, BTCUSDC, ...).
       const exact = (request.nextUrl.searchParams.get("market") || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
       const market = /^[A-Z0-9]{2,40}$/.test(exact) ? exact : `${symbol}USDT`;
       const url = new URL("https://fapi.asterdex.com/fapi/v1/klines");

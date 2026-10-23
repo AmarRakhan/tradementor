@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
-const out = "artifacts/markets-v640";
+const out = "artifacts/markets-v644";
 await mkdir(out, { recursive: true });
-const url = "http://127.0.0.1:4176/tests/visual/markets-v640.html";
+const url = "http://127.0.0.1:4176/tests/visual/markets-v644.html";
 const errors = [];
 
 for (const width of [320, 390, 430]) {
@@ -72,4 +72,4 @@ for (const width of [320, 390, 430]) {
   await browser.close();
 }
 assert.deepEqual(errors.filter((line) => !/fonts\.g|coincap|Failed to load resource/.test(line)), [], "geen fouten in de pagina");
-console.log("Markets 640 visual QA OK");
+console.log("Markets 644 visual QA OK");

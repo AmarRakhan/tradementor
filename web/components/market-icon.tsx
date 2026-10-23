@@ -4,7 +4,7 @@ import { useState } from "react";
 import { iconAsset, type MarketRow } from "@/lib/markets-universe.mjs";
 import styles from "./markets-page.module.css";
 
-// Build 640: coin icons from the public CoinCap set; stocks get a monogram,
+// Build 644: coin icons from the public CoinCap set; stocks get a monogram,
 // commodities a small drawn glyph (gold bars, oil drop, gas flame, copper).
 const COMMODITY_GLYPH: Record<string, "bars" | "drop" | "flame" | "coin"> = { XAU: "bars", XAG: "bars", XPT: "bars", XPD: "bars", PAXG: "bars", CL: "drop", BZ: "drop", NATGAS: "flame", XCU: "coin" };
 
