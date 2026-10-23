@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 624: Auto Hedge voor LONG én SHORT — apart verliesbedrag per kant, hedge afbouwen gespiegeld met eigen instellingen per kant (standaard UIT), stap alleen met winst na fees, TP sluit beide samen en alleen netto groen (elk pair), Re-Hedge All voor beide kanten en ook halverwege de afbouw, nooit verkopen om recht te trekken, één positie per munt met Auto Hedge AAN, Hedge Mode-check, echte afbouworders.
 // Build 623 (alleen backend): Spike-statistiek "verhandelbaar" werkt ook als de stoelen vol zijn — hefboomgrenzen eens per 6 uur in één bulk-aanvraag.
 // Build 622 (alleen backend): Spike-doorschiet-meting — per spike en niveau de daling vóór TP 0,5/1/2 % en de maximale daling binnen 4 uur (basis voor de Auto Hedge-drempel).
 // Build 621 (alleen backend): Spike-statistiek — per uur hoeveel munten 20,2 t/m 20,7+ raakten (LONG/SHORT, alle vs. verhandelbaar), in asterStrategy2/{uid}/spikeStats.
@@ -47,7 +48,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "618";
+export const WEBAPP_BUILD_NUMBER = "624";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
