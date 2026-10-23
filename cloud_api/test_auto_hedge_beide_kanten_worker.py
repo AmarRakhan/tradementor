@@ -127,10 +127,27 @@ class BothSides(Base):
         self.open_pair("SOLUSDT", "LONG", hedge_entry=100)                 # cycle anchored at 100
         self.at("SOLUSDT", 100)
         self.L.entry[("SOLUSDT", "SHORT")] = 97.0                          # later the SHORT average became 97
-        self.at("SOLUSDT", 98)                                              # step level reached, but 98 > 97
+        # Build 629 (keuze B): the ladder measures from the live hedge entry (97), never from the old anchor.
+        self.at("SOLUSDT", 98)                                              # above the hedge entry: nothing
         self.assertEqual(self.orders(), [])
-        self.at("SOLUSDT", 96)                                              # now profitable: 2 steps at once
-        self.assertEqual(self.orders(), [("SHORT", "CLOSE", 6.666)])
+        self.at("SOLUSDT", 96)                                              # 1% below 97: first step is at -2%
+        self.assertEqual(self.orders(), [])
+        self.at("SOLUSDT", 95.06)                                           # -2% from 97: step 1 of 3
+        self.assertEqual(self.orders(), [("SHORT", "CLOSE", 3.333)])
+
+    # 3b (build 629) ------------------------------------------------------------------------------------------
+    def test_settings_change_applies_at_once_with_catch_up_and_rehedge(self):
+        self.settings(shortRecoveryPlan=dict(SIX_IN_THREE))
+        self.open_pair("SOLUSDT", "LONG", hedge_entry=100)
+        self.at("SOLUSDT", 100)
+        self.at("SOLUSDT", 99)                                              # 1% down: no step at 6% in 3
+        self.assertEqual(self.orders(), [])
+        self.settings(shortRecoveryPlan={"enabled": True, "steps": 3, "totalPct": "1"})
+        self.at("SOLUSDT", 99)                                              # past all 3 steps: one catch-up sale
+        self.assertEqual(self.orders(), [("SHORT", "CLOSE", 10.0)])
+        self.assertAlmostEqual(self.short("SOLUSDT"), 0.0)
+        self.at("SOLUSDT", 99)                                              # cycle done: re-hedged 1:1
+        self.assertAlmostEqual(self.short("SOLUSDT"), 10.0)
 
     # 4 ---------------------------------------------------------------------------------------------------
     def test_short_tp_closes_both_when_net_positive(self):
