@@ -6,7 +6,7 @@ Positie $20, één positie per munt per instelling. Fees taker: crypto 0,04 %/ka
 import json, math, sys, time, urllib.request
 from multiprocessing import Pool
 BASE = "https://fapi.asterdex.com"
-DAYS = [(1792476000000 + i * 86400000) for i in range(3)]   # 20,21,22 okt 06:00 UTC
+DAYS = [(1792476000000 - (28 - i) * 86400000) for i in range(28)]   # 22 sep t/m 19 okt 06:00 UTC (buiten de eerdere 3 dagen)
 T0 = DAYS[0] - 10 * 3600000
 T1 = DAYS[-1] + 15 * 3600000
 TFS = {"1m": 1, "5m": 5, "15m": 15}
@@ -15,19 +15,27 @@ DISTS = [0, 2]
 BOUNCES = [0.0, 0.3]
 NETS = [0.1, 0.3, 0.5, 1.0]
 HEDGES = [1, 2, 3]
-RULES = ["H1", "H2", "H3", "T15", "T60", "H2T60", "EOD"]
+RULES = ["H1", "H2", "H3"]
 LOW_FEE = set(open(sys.argv[3]).read().split())
 def get(sym, s, e):
+    for attempt in range(5):
+        try:
+            return _get(sym, s, e)
+        except Exception:
+            time.sleep(2 + attempt * 3)
+    return _get(sym, s, e)
+def _get(sym, s, e):
     with urllib.request.urlopen(f"{BASE}/fapi/v1/klines?symbol={sym}&interval=1m&startTime={s}&endTime={e}&limit=1500", timeout=25) as r:
         return json.loads(r.read())
 def fetch(sym):
     rows, t = [], T0
-    for _ in range(6):
+    import random
+    for _ in range(40):
         part = get(sym, t, T1)
         if not part: break
         rows += [[int(x[0]), float(x[2]), float(x[3]), float(x[4])] for x in part if not rows or int(x[0]) > rows[-1][0]]
         t = int(part[-1][0]) + 60000
-        time.sleep(0.05)
+        time.sleep(0.3)
         if len(part) < 1500: break
     return rows
 def work(sym):
@@ -129,9 +137,11 @@ def work(sym):
 if __name__ == "__main__":
     symbols = open(sys.argv[1]).read().split()
     agg = {}
-    with Pool(4) as pool:
+    done = []
+    with Pool(3) as pool:
         for sym, res in pool.imap_unordered(work, symbols):
             if not res: continue
+            done.append(sym)
             for key, lst in res.items():
                 a = agg.setdefault(key, {"days": {str(d): [0, 0, 0.0, 0] for d in DAYS}, "diff": {}})
                 for t_in, t_out, pnl, win, day in lst:
@@ -145,5 +155,5 @@ if __name__ == "__main__":
         for t in sorted(a["diff"]):
             cur += a["diff"][t]; mx = max(mx, cur)
         out[key] = {"days": a["days"], "maxOpen": mx}
-    json.dump({"days": DAYS, "results": out}, open(sys.argv[2], "w"))
+    json.dump({"days": DAYS, "symbolsDone": len(done), "results": out}, open(sys.argv[2], "w"))
     print("ok", len(out))
