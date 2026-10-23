@@ -9,12 +9,23 @@ const opts={width:390,height:320,
   handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true},
   handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true}};
 if(mode==="new"){opts.trackingMode={exitMode:LWC.TrackingModeExitMode.OnTouchEnd};opts.kineticScroll={touch:true,mouse:false};opts.handleScale.axisDoubleClickReset=true}
+if(mode==="v637"){opts.trackingMode={exitMode:LWC.TrackingModeExitMode.OnTouchEnd};opts.kineticScroll={touch:true,mouse:false}}
 const chart=LWC.createChart(document.getElementById("c"),opts);
 const s=chart.addSeries(LWC.CandlestickSeries,{});
 const t0=1761000000;let p=250;const rows=[];
 for(let i=0;i<300;i++){const o=p;p+=Math.sin(i/7)*1.2;rows.push({time:t0+i*900,open:o,high:Math.max(o,p)+.5,low:Math.min(o,p)-.5,close:p})}
 s.setData(rows);
 chart.timeScale().setVisibleLogicalRange({from:300-42.5,to:299+1.6});
+if(mode==="v637"){
+  const container=document.getElementById("c");const priceScale=chart.priceScale("right");
+  let gesture=null;
+  container.addEventListener("pointerdown",(event)=>{if(!event.isPrimary)return;let frozen=false;
+    if(priceScale.options().autoScale!==false){const range=priceScale.getVisibleRange();if(range&&range.to>range.from){priceScale.setAutoScale(false);priceScale.setVisibleRange({from:range.from,to:range.to});frozen=true}}
+    gesture={id:event.pointerId,x:event.clientX,y:event.clientY,frozen,decided:!frozen}},{capture:true,passive:true});
+  container.addEventListener("pointermove",(event)=>{if(!gesture||event.pointerId!==gesture.id||gesture.decided)return;const dx=event.clientX-gesture.x,dy=event.clientY-gesture.y;if(Math.hypot(dx,dy)<10)return;gesture.decided=true;if(gesture.frozen&&Math.abs(dx)>2.5*Math.abs(dy))priceScale.setAutoScale(true)},{capture:true,passive:true});
+  window.addEventListener("pointerup",(event)=>{if(!gesture||event.pointerId!==gesture.id)return;if(gesture.frozen&&!gesture.decided)priceScale.setAutoScale(true);gesture=null},{passive:true});
+  window.addEventListener("pointercancel",(event)=>{gesture=null},{passive:true});
+}
 window.range=()=>{const r=chart.timeScale().getVisibleLogicalRange();return r?{from:r.from,to:r.to}:null};
 window.ps=()=>({auto:chart.priceScale("right").options().autoScale,range:chart.priceScale("right").getVisibleRange()});
 window.setPs=(r)=>{const p=chart.priceScale("right");p.setAutoScale(false);p.setVisibleRange(r)};
