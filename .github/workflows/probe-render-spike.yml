@@ -1,0 +1,13 @@
+name: Probe RENDER spike (publiek, geen secrets, geen orders)
+on:
+  push:
+    branches: [claude/probe-render-spike]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -I tools/probe/render_spike_probe.py > probe.out && echo "::notice title=probe::$(cat probe.out)"
