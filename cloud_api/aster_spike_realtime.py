@@ -47,6 +47,16 @@ class SpikeWatch:
     short_timeframe: str
     long_enabled: bool
     short_enabled: bool
+    # Build 621 (statistiek): munten met genoeg hefboom volgens de scanner, en munten
+    # met al een open positie per kant. Leeg = onbekend (telt niet als verhandelbaar).
+    tradable: frozenset[str] = frozenset()
+    open_long: frozenset[str] = frozenset()
+    open_short: frozenset[str] = frozenset()
+
+    def tradable_for(self, symbol: str, side: str) -> bool:
+        if symbol not in self.tradable:
+            return False
+        return symbol not in (self.open_long if side == "LONG" else self.open_short)
 
     def sides(self) -> tuple[tuple[str, str], ...]:
         out = []
@@ -75,10 +85,15 @@ def watch_from_control(uid: str, raw: dict[str, Any], *, now_ms: int) -> SpikeWa
         str(s).upper().strip() for s in (watch.get("symbols") or []) if str(s).strip()))[:MAX_WATCH_SYMBOLS]
     long_tf = str(watch.get("longTimeframe") or "")
     short_tf = str(watch.get("shortTimeframe") or "")
+    def symbol_set(name: str) -> frozenset[str]:
+        raw_list = watch.get(name) if isinstance(watch.get(name), list) else []
+        return frozenset(str(s).upper().strip() for s in raw_list if str(s).strip())
     result = SpikeWatch(uid=str(uid), symbols=symbols, level=normalize_level(watch.get("level")),
                         long_timeframe=long_tf, short_timeframe=short_tf,
                         long_enabled=bool(watch.get("longEnabled")) and long_tf in TIMEFRAMES,
-                        short_enabled=bool(watch.get("shortEnabled")) and short_tf in TIMEFRAMES)
+                        short_enabled=bool(watch.get("shortEnabled")) and short_tf in TIMEFRAMES,
+                        tradable=symbol_set("tradableSymbols"), open_long=symbol_set("openLong"),
+                        open_short=symbol_set("openShort"))
     return result if result.symbols and result.sides() else None
 
 
@@ -99,7 +114,9 @@ class SpikeTrigger:
     """Beslist in het geheugen of een live prijs een Spike-band raakt."""
 
     def __init__(self, warm_reference: Callable[[str, str, int], bool] | None = None,
-                 warm_per_second: float = 5.0) -> None:
+                 warm_per_second: float = 5.0, stats: Any = None) -> None:
+        # Build 621: optionele statistiek per niveau (aster_spike_stats.SpikeStats).
+        self._stats = stats
         self._watches: dict[str, SpikeWatch] = {}
         self._fired: dict[tuple[str, str, str, int], float] = {}
         self._lock = threading.Lock()
@@ -142,6 +159,7 @@ class SpikeTrigger:
         if watch is None or not (isinstance(price, (int, float)) and math.isfinite(price) and price > 0):
             return []
         out: list[tuple[str, int]] = []
+        observed: set[str] = set()
         for side, timeframe in watch.sides():
             reference = cached_spike_reference(symbol, timeframe, now_ms)
             if reference is None and self._try_warm(symbol, timeframe, now_ms):
@@ -149,6 +167,15 @@ class SpikeTrigger:
             if reference is None:
                 continue  # nog geen referentie: volgende prijsbericht of de minuut-scan vult hem
             closes, live_close_ms = reference
+            if self._stats is not None and timeframe not in observed:
+                observed.add(timeframe)
+                try:
+                    self._stats.observe(uid=uid, symbol=symbol, timeframe=timeframe, closes=closes,
+                                        live_close_ms=live_close_ms, price=float(price),
+                                        tradable_long=watch.tradable_for(symbol, "LONG"),
+                                        tradable_short=watch.tradable_for(symbol, "SHORT"))
+                except Exception:
+                    pass  # statistiek mag de trigger nooit hinderen
             band = spike_band_price(list(closes), side=side, level=watch.level)
             if band is None:
                 continue
@@ -159,6 +186,11 @@ class SpikeTrigger:
                 if (uid, symbol, side, live_close_ms) in self._fired:
                     continue
             out.append((side, live_close_ms))
+        if self._stats is not None:
+            try:
+                self._stats.maybe_flush(now_ms)
+            except Exception:
+                pass
         return out
 
     def mark_fired(self, uid: str, symbol: str, side: str, live_close_ms: int) -> None:

@@ -1708,6 +1708,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         scanner_side_diagnostics[managed_side]["lastEntryAtMs"] = max(
             scanner_side_diagnostics[managed_side]["lastEntryAtMs"], managed_started_at,
         )
+    # Build 621: welke munten genoeg hefboom hebben (voor de Spike-statistiek "verhandelbaar").
+    spike_tradable_seen: set[str] = set(); spike_tradable_failed: set[str] = set()
     for candidate_index, ranked_row in enumerate(candidates):
         if sent >= budget or account_remaining_capacity <= 0 or (long_need <= 0 and short_need <= 0): break
         scanned_candidates += 1
@@ -1733,6 +1735,10 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             if orphan_priority:
                 print(f"ORPHAN_LONG_DIAG symbol={symbol} stage=leverage_unavailable maximum={maximum}", flush=True)
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": "SYMBOL_LEVERAGE_DATA_UNAVAILABLE"}); continue
+        if maximum < settings.minimum_leverage:
+            spike_tradable_failed.add(symbol)
+        else:
+            spike_tradable_seen.add(symbol)
         if maximum < settings.minimum_leverage and not orphan_priority:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "reason": f"MAX_LEVERAGE_BELOW_MINIMUM: {maximum}x < {settings.minimum_leverage}x"}); continue
         if orphan_priority and long_need > 0:
@@ -2595,6 +2601,15 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
             **{k: v for k, v in settings.spike_settings().items() if k in ("level", "longTimeframe", "shortTimeframe", "longEnabled", "shortEnabled")},
             "updatedAtMs": timestamp_ms,
         }
+        # Build 621 (statistiek): hefboom-geschikte munten blijven bewaard tussen scans,
+        # ook als een scan vroeg stopt omdat alle stoelen vol zijn.
+        previous_watch = previous_report.get("spikeWatch") if isinstance(previous_report.get("spikeWatch"), dict) else {}
+        previous_tradable = {str(x).upper() for x in (previous_watch.get("tradableSymbols") or []) if str(x).strip()}
+        watch_symbols = set(report["spikeWatch"]["symbols"])
+        tradable_now = ((previous_tradable | spike_tradable_seen) - spike_tradable_failed) & watch_symbols
+        report["spikeWatch"]["tradableSymbols"] = sorted(tradable_now)[:400]
+        report["spikeWatch"]["openLong"] = sorted({k.split("|")[0] for k in active if str(k).endswith("|LONG")})[:400]
+        report["spikeWatch"]["openShort"] = sorted({k.split("|")[0] for k in active if str(k).endswith("|SHORT")})[:400]
     if not dry_run:
         final_payload = {"multiBbPositions": state, "multiBbReport": report, "multiBbAdoptionPending": False,
                  "exposureRefillSide": exposure_refill.get("activeSide") or None,

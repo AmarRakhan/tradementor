@@ -10554,7 +10554,10 @@ def _start_spike_realtime_workers()->None:
     global _spike_trigger
     if os.getenv("ASTER_REALTIME_WORKER","false").lower()!="true":return
     if os.getenv("ASTER_SPIKE_REALTIME_WORKER","true").lower()!="true":return
-    _spike_trigger=SpikeTrigger(warm_reference=_spike_warm_reference)
+    # Build 621: statistiek per niveau (20,2 … 20,7+) per uur in asterStrategy2/{uid}/spikeStats.
+    from aster_spike_stats import SpikeStats, firestore_persister
+    _spike_trigger=SpikeTrigger(warm_reference=_spike_warm_reference,
+        stats=SpikeStats(persist=firestore_persister(db,firestore.Increment,firestore.ArrayUnion)))
     evaluate=make_spike_evaluator(_spike_trigger,_run_spike_account_tick)
     execution=os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true"
     for index in range(SPIKE_MAX_CONNECTIONS):
