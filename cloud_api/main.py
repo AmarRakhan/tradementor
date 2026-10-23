@@ -2273,6 +2273,8 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     if _aster_close_all_active(uid):
         return {"status":"blocked","reason":"Accountgebonden Alles-sluiten-lock actief","ordersSent":0}
     ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
+    # Build 619: ook hier (instellingen opslaan en realtime roepen de tick direct aan).
+    raw=_prune_expired_entry_cooldowns(ref,raw,int(now.timestamp()*1000))
     pending_reopens=list(raw.get("pendingReopens",[])) if isinstance(raw.get("pendingReopens"),list) else []
     raw_settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
     raw_settings=_strip_unreleased_beta_settings_for_uid(raw_settings, uid)

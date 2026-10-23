@@ -90,6 +90,13 @@ class EntryCooldownPruneTests(unittest.TestCase):
         body = src[start:start + 4000]
         self.assertLess(body.index("_prune_expired_entry_cooldowns("), body.index("ref.set("))
 
+    def test_prune_runs_at_start_of_every_tick(self):
+        src = open(SOURCE, encoding="utf-8").read()
+        start = src.index("def _run_aster_strategy2_tick(")
+        body = src[start:start + 6000]
+        self.assertLess(body.index("_prune_expired_entry_cooldowns("), body.index("ref.set("))
+        self.assertLess(body.index("_prune_expired_entry_cooldowns("), body.index("_sync_price_zone_seat_runtime("))
+
 
 if __name__ == "__main__":
     unittest.main()
