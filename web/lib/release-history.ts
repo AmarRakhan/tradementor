@@ -25,9 +25,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-10-23",
-  title: "Zonelijnen over het hele scherm · build 643",
+  releasedAt: "2026-10-24",
+  title: "Markets in Black Luxe · build 644",
   newItems: [
+    "Build 644: het tabblad Markets is vernieuwd in zwart en goud. Je ziet nu alle munten waarin je op Aster kunt handelen, ook goud, zilver, olie en aandelen (de USD1- en USDC-paren). Bovenaan zoek je op munt of symbool; met de chips filter je op Alles, Vrij (geen positie), In positie, BOT of MANUAL en op Crypto, Aandelen of Grondstoffen. Per munt zie je de leverage, het 24-uurs volume, de Bollinger-status (UPPER, BINNEN of LOWER) en de verandering in 24 uur, en sorteer je op elke kolom. Met de ster maak je een munt favoriet. De gouden filterknop rechtsboven kiest het Bollinger-tijdframe, filtert op Upper/Binnen/Lower en toont desgewenst alleen favorieten. BOT betekent dat de bot een positie op die munt heeft, MANUAL een positie die niet van de bot is. Dubbeltik op een munt draait de kaart om naar de koersgrafiek van die munt, schermvullend en in dezelfde opmaak als Portfolio Koers, met Bollinger Bands en jouw eigen instappen, uitstappen en take profits. Dubbeltik op de grafiek (of het kruisje) draait hem terug. De onderste balk blijft ongewijzigd. Alleen weergave; trading blijft ongewijzigd.",
     "Build 643: de rode en groene zonelijnen in de Portfolio Koers-grafiek stopten na vier lijnen boven en onder de actieve zone, waardoor candles verderop niet meer tussen twee lijnen vielen. Nu lopen dezelfde lijnen door over het hele stuk dat je op het scherm ziet, ook als je schuift of zoomt; daarbuiten wordt niets getekend. Zoom je ver uit, dan houdt de grafiek minstens 10 pixels tussen de lijnen zodat het rustig blijft. Alleen weergave.",
     "Build 641: in de Portfolio Koers-grafiek stonden de zonelijnen dubbel: de lijnen rond de actieve zone en daarachter nog een tweede laag stippellijnen over de hele hoogte. Die achtergrondlaag is weg. De rode en groene lijnen rond de koers (boven en onder de actieve zone) blijven precies zoals ze waren. Alleen weergave.",
     "Build 640: de gestippelde prijszonelijnen in de Portfolio Koers-grafiek zijn minder fel. Opbouw, plek en kleuren blijven hetzelfde (rood boven de koers, groen eronder), alleen ongeveer de helft zo sterk, zodat candles en labels weer voorop staan. Alleen weergave.",
