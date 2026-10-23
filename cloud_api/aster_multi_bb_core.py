@@ -2623,7 +2623,21 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         previous_tradable = {str(x).upper() for x in (previous_watch.get("tradableSymbols") or []) if str(x).strip()}
         watch_symbols = set(report["spikeWatch"]["symbols"])
         tradable_now = ((previous_tradable | spike_tradable_seen) - spike_tradable_failed) & watch_symbols
+        # Build 623: zijn de stoelen vol, dan stopt de scan vóór de hefboomcontrole en
+        # leert hij niets. Daarom eens per 6 uur (of als de lijst ontbreekt) één bulk-
+        # aanvraag voor alle hefboomgrenzen. Mislukt die, dan blijft de oude lijst staan.
+        tradable_checked_ms = _i(previous_watch.get("tradableCheckedAtMs"))
+        if not dry_run and (not previous_tradable or timestamp_ms - tradable_checked_ms >= 6 * 3600 * 1000):
+            try:
+                bulk_brackets = client.leverage_brackets()
+                if isinstance(bulk_brackets, list) and len(bulk_brackets) > 1:
+                    tradable_now = {sym for sym in watch_symbols
+                                    if max_contract_leverage(bulk_brackets, sym) >= settings.minimum_leverage}
+                    tradable_checked_ms = timestamp_ms
+            except Exception as exc:
+                print(f"SPIKE_TRADABLE_REFRESH_FAILED {exc}", flush=True)
         report["spikeWatch"]["tradableSymbols"] = sorted(tradable_now)[:400]
+        report["spikeWatch"]["tradableCheckedAtMs"] = tradable_checked_ms
         report["spikeWatch"]["openLong"] = sorted({k.split("|")[0] for k in active if str(k).endswith("|LONG")})[:400]
         report["spikeWatch"]["openShort"] = sorted({k.split("|")[0] for k in active if str(k).endswith("|SHORT")})[:400]
     if not dry_run:
