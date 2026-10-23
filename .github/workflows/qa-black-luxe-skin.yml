@@ -44,7 +44,7 @@ jobs:
         if: always()
         working-directory: tools/qa-black-luxe
         run: |
-          mkdir -p /tmp/shots && cp *.png result.json /tmp/shots/ 2>/dev/null || true
+          mkdir -p /tmp/shots && cp *.png *.layout.json result.json /tmp/shots/ 2>/dev/null || true
           cd /tmp/shots
           git init -q && git checkout -q -b qa-shots
           git config user.name "qa-bot" && git config user.email "qa-bot@users.noreply.github.com"

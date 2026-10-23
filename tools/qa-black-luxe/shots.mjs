@@ -21,6 +21,19 @@ for (const skin of ["suriname-heritage", "black-luxe", "(none)"]) {
     const applied = await page.evaluate(() => document.documentElement.dataset.appSkin || "");
     const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     const name = `${tab}-${skin.replace(/[()]/g, "")}`;
+    const layout = await page.evaluate(() => {
+      const out = [];
+      const props = ["marginTop","marginBottom","paddingTop","paddingBottom","borderTopWidth","borderBottomWidth","height","display","position","top","fontSize","lineHeight"];
+      const walk = (el, path) => {
+        const r = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        out.push({ path, tag: el.tagName, cls: String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className).slice(0, 80), y: Math.round(r.top + scrollY), h: Math.round(r.height), s: props.map((p) => cs[p]).join("|") });
+        [...el.children].forEach((c, i) => walk(c, path + "/" + i));
+      };
+      walk(document.body, "b");
+      return out;
+    });
+    writeFileSync(`${name}.layout.json`, JSON.stringify(layout));
     await page.screenshot({ path: `${name}.png`, fullPage: true });
     result.push({ name, skin, tab, applied, bodyBackground: bg, errors: errors.slice(0, 5) });
     await context.close();
