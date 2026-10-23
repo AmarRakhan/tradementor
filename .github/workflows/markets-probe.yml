@@ -1,6 +1,8 @@
 name: Markets probe (alleen lezen, publieke Aster-data)
 on:
   workflow_dispatch:
+  push:
+    branches: [claude/markets-probe]
 permissions:
   contents: read
 jobs:
