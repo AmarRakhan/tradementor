@@ -63,11 +63,10 @@ for sym, m1 in M1.items():
     if sym == "BTCUSDT": continue
     idx = {r[0]: i for i, r in enumerate(m1)}
     h1 = agg(m1, 3600000); h1c = [r[3] for r in h1]; h1t = [r[0] for r in h1]
+    import bisect
     def trend_ok(t):   # laatste afgesloten 1h-close boven SMA20(1h)
-        i = None
-        for q in range(len(h1t) - 1, -1, -1):
-            if h1t[q] + 3600000 <= t: i = q; break
-        if i is None or i < 19: return False
+        i = bisect.bisect_right(h1t, t - 3600000) - 1
+        if i < 19: return False
         sma = sum(h1c[i - 19:i + 1]) / 20
         return h1c[i] >= sma
     for tf, ms in TFS.items():
@@ -79,22 +78,23 @@ for sym, m1 in M1.items():
             stats[i] = (mu, math.sqrt(sum((v - mu) ** 2 for v in p) / 20))
         for k in (2, 3, 4, 5, 6, 7):
             for d in (0, 1, 2, 3):
+                trigs = []   # (tf-candle start, trigger price, first 1m index)
+                for i in range(20, len(rows)):
+                    r = rows[i]
+                    if r[0] < START: continue
+                    mu, dev = stats[i]
+                    if not dev > 0: continue
+                    trig = min(mu - k * dev, mu * (1 - d / 100))
+                    if r[2] > trig: continue
+                    for t0 in range(r[0], r[0] + ms, 60000):
+                        q = idx.get(t0)
+                        if q is not None and m1[q][2] <= trig:
+                            trigs.append((r[0], trig, q)); break
                 for v in VARIANTS:
                     r_ = res[f"{tf}|{k}|{d}|{v}"]
                     busy = 0
-                    for i in range(20, len(rows)):
-                        r = rows[i]
-                        if r[0] < START or r[0] < busy: continue
-                        mu, dev = stats[i]
-                        if not dev > 0: continue
-                        trig = min(mu - k * dev, mu * (1 - d / 100))
-                        if r[2] > trig: continue
-                        j = None
-                        for t0 in range(r[0], r[0] + ms, 60000):
-                            q = idx.get(t0)
-                            if q is not None and m1[q][2] <= trig: j = q; break
-                        if j is None: continue
-                        # instapmoment en -prijs
+                    for start_ms, trig, j in trigs:
+                        if start_ms < busy and m1[j][0] < busy: continue
                         if v.startswith("b0."):
                             b = float(v.split("+")[0][1:]) / 100
                             low, e = m1[j][2], None
@@ -111,7 +111,7 @@ for sym, m1 in M1.items():
                         if v == "btc" and btc15(te) <= -0.7: busy = te + 60000; continue
                         if "trend1h" in v and not trend_ok(te): busy = te + 60000; continue
                         r_["n"] += 1
-                        mae, hit = 0.0, None
+                        mae, hit, q = 0.0, None, first
                         for q in range(first, len(m1)):
                             c = m1[q]
                             mae = max(mae, (ep - c[2]) / ep * 100)
