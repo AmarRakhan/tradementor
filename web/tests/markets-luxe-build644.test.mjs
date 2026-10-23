@@ -102,6 +102,7 @@ test("Build 644: Markets page matches the design and flips on double tap", () =>
   assert.match(page, /UPPER[\s\S]*BINNEN[\s\S]*LOWER/);
   assert.match(page, /DOUBLE_TAP_MS/);
   assert.match(page, /<MarketsCoinFlip/);
+  assert.doesNotMatch(page, /openMarket|open-aster-market/);
   assert.match(page, /subscribeAsterPositions/);
   const flip = read("../components/markets-coin-flip.tsx");
   assert.match(flip, /portfolio-koers-card portfolio-koers-ui41/);

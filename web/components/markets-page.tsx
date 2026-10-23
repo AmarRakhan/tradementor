@@ -25,7 +25,7 @@ import styles from "./markets-page.module.css";
 
 // Build 644: Markets in Black Luxe — every tradable Aster perpetual, one row per
 // market, BOT/MANUAL labels from the account snapshot, double tap flips a row to
-// its full-screen Koers chart.
+// its full-screen Koers chart (a single tap does nothing).
 
 type MarketsPayload = { marketCount: number; updatedAt: number; interval: MarketBbTimeframe; markets: MarketRow[] };
 type EnrichedRow = Pick<MarketRow, "symbol" | "maxLeverage" | "bbStatus" | "bbUpper" | "bbMiddle" | "bbLower">;
@@ -44,7 +44,7 @@ const BB_FILTERS: Array<{ id: MarketBbStatus | "all"; label: string }> = [
 ];
 const BB_TEXT: Record<MarketBbStatus, string> = { above: "UPPER", between: "BINNEN", below: "LOWER" };
 const ENRICH_BATCH_SIZE = 8;
-const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_MS = 350;
 const FAVORITES_KEY = "tradementor.markets.favorites";
 const PREFS_KEY = "tradementor.markets.prefs.v644";
 
@@ -86,7 +86,7 @@ export function MarketsPage() {
   const orderRef = useRef<string[]>([]);
   const enrichedRef = useRef<Set<string>>(new Set());
   const leverageRef = useRef<Map<string, number>>(new Map());
-  const tapRef = useRef<{ symbol: string; at: number; timer: number } | null>(null);
+  const tapRef = useRef<{ symbol: string; at: number } | null>(null);
   const restoredRef = useRef(false);
 
   // Restore filters and favorites once.
@@ -198,28 +198,17 @@ export function MarketsPage() {
       return next;
     });
   };
-  const openMarket = (row: MarketRow) => {
-    const url = new URL(window.location.href); url.searchParams.delete("tmView"); url.searchParams.set("tmSymbol", row.symbol); url.searchParams.set("tmTimeframe", timeframe); url.hash = "/aster";
-    window.history.pushState({ destination: "aster", market: row.symbol, timeframe }, "", `${url.pathname}${url.search}${url.hash}`);
-    window.dispatchEvent(new CustomEvent("tradementor:open-aster-market", { detail: { symbol: row.symbol, timeframe } }));
-    window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
-  };
-  // One tap opens the Tradecentrum (as before); a double tap flips the row to its Koers chart.
+  // Only a double tap does something: it flips the row to its Koers chart. A single tap does nothing.
   const onRowTap = (row: MarketRow, event: ReactMouseEvent<HTMLElement>) => {
     const now = Date.now();
-    const target = event.currentTarget;
     const last = tapRef.current;
     if (last && last.symbol === row.symbol && now - last.at < DOUBLE_TAP_MS) {
-      window.clearTimeout(last.timer);
       tapRef.current = null;
-      setFlip({ row, rect: target.getBoundingClientRect() });
+      setFlip({ row, rect: event.currentTarget.getBoundingClientRect() });
       return;
     }
-    if (last) window.clearTimeout(last.timer);
-    const timer = window.setTimeout(() => { tapRef.current = null; openMarket(row); }, DOUBLE_TAP_MS);
-    tapRef.current = { symbol: row.symbol, at: now, timer };
+    tapRef.current = { symbol: row.symbol, at: now };
   };
-  useEffect(() => () => { if (tapRef.current) window.clearTimeout(tapRef.current.timer); }, []);
 
   const bbLabel = MARKET_BB_LABEL[timeframe];
   const activeFilterCount = Number(bbFilter !== "all") + Number(favoritesOnly) + Number(timeframe !== "15m");
@@ -265,7 +254,7 @@ export function MarketsPage() {
             const favorite = favorites.has(row.symbol);
             const up = row.change24hPct > 0, down = row.change24hPct < 0;
             return <li key={row.symbol} className={styles.row} data-market-symbol={row.symbol}>
-              <button type="button" className={styles.rowMain} onClick={(event) => onRowTap(row, event)} aria-label={`${row.baseAsset}${row.quoteAsset !== "USDT" ? ` ${row.quoteAsset}` : ""}: tik om te handelen, dubbeltik voor de koers`}>
+              <button type="button" className={styles.rowMain} onClick={(event) => onRowTap(row, event)} aria-label={`${row.baseAsset}${row.quoteAsset !== "USDT" ? ` ${row.quoteAsset}` : ""}: dubbeltik voor de koers`}>
                 <span className={styles.cellSymbol}>
                   <MarketIcon row={row} />
                   <span className={styles.nameBlock}>
@@ -290,7 +279,7 @@ export function MarketsPage() {
         </ul>}
     </div>
     {error && data ? <p className={styles.note}>{error}</p> : null}
-    {data ? <p className={styles.note}>{data.marketCount} handelbare perpetuals · tik om te handelen · dubbeltik voor de koers</p> : null}
+    {data ? <p className={styles.note}>{data.marketCount} handelbare perpetuals · dubbeltik op een munt voor de koers</p> : null}
 
     {sheetOpen ? <div className={styles.sheetBackdrop} onClick={() => setSheetOpen(false)}>
       <div className={styles.sheet} role="dialog" aria-modal="true" aria-labelledby="markets-filter-title" onClick={(event) => event.stopPropagation()}>

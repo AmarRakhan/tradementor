@@ -40,10 +40,14 @@ for (const width of [320, 390, 430]) {
     await page.screenshot({ path: `${out}/filters-390.png` });
     await page.getByRole("button", { name: "Klaar" }).click();
 
-    // Double tap BTC -> flip to the full-screen Koers chart.
+    // Double tap BTC -> flip to the full-screen Koers chart. A single tap does nothing.
     const btc = page.locator('[data-market-symbol="BTCUSDT"] button').first();
     await btc.scrollIntoViewIfNeeded();
     const box = await btc.boundingBox();
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForTimeout(700);
+    assert.equal(await page.getByRole("dialog").count(), 0, "enkele tik doet niets");
+    assert.ok(!(await page.evaluate(() => window.location.hash.includes("aster") || window.location.search.includes("tmSymbol"))), "enkele tik opent geen Tradecentrum");
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForTimeout(90);
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
