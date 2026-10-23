@@ -90,3 +90,21 @@ test("Instapfilter springt niet terug bij elke refresh (Amar 23-10 00:43, build 
   assert.match(card, /if \(previous === configKey\) return;/);
   assert.match(card, /currentKey === previous \|\| currentKey === configKey \? config : current/);
 });
+
+test("terug naar Bollinger/Geen filter slaat direct op (Amar 23-10 01:28, build 615)", async () => {
+  const [card, bridge] = await Promise.all([
+    readFile(new URL("../components/aster-extreme-spike-entry-card.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/aster-profit-lock-ladder-bridge.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(card, /onClick=\{\(\) => selectMode\(mode\)\}/);
+  assert.match(card, /if \(mode !== "EXTREME_SPIKE" && mode !== config\.mode\) onSave\(next\);/);
+  // De Bollinger-kaart volgt de opgeslagen modus; die wordt nu direct BOLLINGER.
+  assert.match(bridge, /entryMode === "BOLLINGER" \? <AsterBollingerEntryFilter15mCard/);
+  // Opslaan als BOLLINGER zet de bestaande Bollinger-schakelaar aan.
+  const { spikeSettingsPayload, spikeConfigFromSettings } = await import("../lib/extreme-spike-settings.mjs");
+  const fromSpike = spikeConfigFromSettings({ entryFilterMode: "EXTREME_SPIKE", extremeSpikeSettingsVersion: 2 });
+  const payload = spikeSettingsPayload({ ...fromSpike, mode: "BOLLINGER" });
+  assert.equal(payload.entryFilterMode, "BOLLINGER");
+  assert.equal(payload.bollingerEntryFilter15mEnabled, true);
+  assert.equal(spikeConfigFromSettings(payload).mode, "BOLLINGER");
+});
