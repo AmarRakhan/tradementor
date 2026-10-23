@@ -54,7 +54,7 @@ def btc15(t):
     return (a / b - 1) * 100 if a and b else 0
 TFS = {"1m": 60000, "5m": 300000, "15m": 900000}
 CONFIGS = [(tf, k, d) for tf in TFS for k in (2, 3, 4, 5, 6, 7) for d in (0, 1, 2, 3)]
-VARIANTS = ["base", "b0.2", "b0.3", "b0.3+breadth"]
+VARIANTS = ["base", "b0.2", "b0.3", "b0.5", "b0.3+breadth", "b0.3+btc"]
 TPS = [0.25, 0.3, 0.4, 0.5]
 TP = max(TPS)
 HEDGES = [1.25, 2.0]
@@ -109,7 +109,7 @@ for sym, m1 in M1.items():
                             ei, ep, first = j, trig, j
                         te = m1[ei][0]
                         if "breadth" in v and breadth.get(te, 0) >= 0.15: busy = te + 60000; continue
-                        if v == "btc" and btc15(te) <= -0.7: busy = te + 60000; continue
+                        if "btc" in v and btc15(te) <= -0.7: busy = te + 60000; continue
                         if "trend1h" in v and not trend_ok(te): busy = te + 60000; continue
                         r_["n"] += 1
                         mae, q = 0.0, first
