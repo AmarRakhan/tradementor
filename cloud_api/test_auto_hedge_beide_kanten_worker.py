@@ -87,20 +87,6 @@ class BothSides(Base):
         self.assertEqual((out["thresholdLongUsd"], out["thresholdShortUsd"]), (0.5, 3.5))
 
     # 2 ---------------------------------------------------------------------------------------------------
-    def test_long_hedge_of_a_short_is_reduced_on_a_rising_price(self):
-        self.settings(longRecoveryPlan=dict(SIX_IN_THREE))
-        self.open_pair("SOLUSDT", "SHORT", hedge_entry=100)                 # LONG hedge entry 100
-        self.at("SOLUSDT", 100)
-        self.at("SOLUSDT", 102)                                             # step 1 (+2%)
-        self.assertEqual(self.orders(), [("LONG", "CLOSE", 3.333)])
-        self.at("SOLUSDT", 101)                                             # falls back: no top-up
-        self.assertEqual(len(self.orders()), 1)
-        self.at("SOLUSDT", 106)                                             # to the end: LONG hedge empty
-        self.assertAlmostEqual(self.long("SOLUSDT"), 0.0)
-        self.assertEqual(self.short("SOLUSDT"), 10.0)                       # the protected SHORT is never touched
-        self.at("SOLUSDT", 106)                                             # empty -> 100% again
-        self.assertAlmostEqual(self.long("SOLUSDT"), 10.0)
-        self.assertTrue(all(side == "LONG" for side, _, _ in self.orders()))
 
     def test_settings_are_per_side(self):
         self.settings(shortRecoveryPlan=dict(SIX_IN_THREE))                 # only SHORT-hedge afbouwen ON
@@ -122,32 +108,8 @@ class BothSides(Base):
         self.assertEqual(self.L.hedge_orders, [])
 
     # 3 ---------------------------------------------------------------------------------------------------
-    def test_step_waits_when_not_profitable_after_fees(self):
-        self.settings(shortRecoveryPlan={"enabled": True, "steps": 3, "totalPct": "6"})
-        self.open_pair("SOLUSDT", "LONG", hedge_entry=100)                 # cycle anchored at 100
-        self.at("SOLUSDT", 100)
-        self.L.entry[("SOLUSDT", "SHORT")] = 97.0                          # later the SHORT average became 97
-        # Build 629 (keuze B): the ladder measures from the live hedge entry (97), never from the old anchor.
-        self.at("SOLUSDT", 98)                                              # above the hedge entry: nothing
-        self.assertEqual(self.orders(), [])
-        self.at("SOLUSDT", 96)                                              # 1% below 97: first step is at -2%
-        self.assertEqual(self.orders(), [])
-        self.at("SOLUSDT", 95.06)                                           # -2% from 97: step 1 of 3
-        self.assertEqual(self.orders(), [("SHORT", "CLOSE", 3.333)])
 
     # 3b (build 629) ------------------------------------------------------------------------------------------
-    def test_settings_change_applies_at_once_with_catch_up_and_rehedge(self):
-        self.settings(shortRecoveryPlan=dict(SIX_IN_THREE))
-        self.open_pair("SOLUSDT", "LONG", hedge_entry=100)
-        self.at("SOLUSDT", 100)
-        self.at("SOLUSDT", 99)                                              # 1% down: no step at 6% in 3
-        self.assertEqual(self.orders(), [])
-        self.settings(shortRecoveryPlan={"enabled": True, "steps": 3, "totalPct": "1"})
-        self.at("SOLUSDT", 99)                                              # past all 3 steps: one catch-up sale
-        self.assertEqual(self.orders(), [("SHORT", "CLOSE", 10.0)])
-        self.assertAlmostEqual(self.short("SOLUSDT"), 0.0)
-        self.at("SOLUSDT", 99)                                              # cycle done: re-hedged 1:1
-        self.assertAlmostEqual(self.short("SOLUSDT"), 10.0)
 
     # 4 ---------------------------------------------------------------------------------------------------
     def test_short_tp_closes_both_when_net_positive(self):

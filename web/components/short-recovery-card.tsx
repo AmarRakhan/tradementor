@@ -10,7 +10,7 @@ import { recoveryLadder, validateRecoverySettings } from "@/lib/short-recovery.m
 // reduced while the price falls; hedgeSide "LONG" = LONG-hedge of a SHORT position, reduced while it rises.
 // Saving only stores settings; the server worker decides and places every order through the Auto Hedge engine.
 
-type Plan = { enabled: boolean; steps: number; totalPct: string; stepPct?: string };
+type Plan = { enabled: boolean; steps: number; totalPct: string; stepPct?: string; rebuySteps?: number; safetyNetPct?: string };
 type HedgeSide = "SHORT" | "LONG";
 type AutoHedgeLike = {
   enabled: boolean;
@@ -37,23 +37,33 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
   const [enabled, setEnabled] = useState(plan.enabled);
   const [steps, setSteps] = useState(String(plan.steps));
   const [totalPct, setTotalPct] = useState(String(plan.totalPct));
+  // Build 634 (grid): buy back after N levels up, and the vangnet beyond the last level.
+  const [rebuy, setRebuy] = useState(String(plan.rebuySteps ?? 1));
+  const [safety, setSafety] = useState(String(plan.safetyNetPct ?? plan.totalPct));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     setEnabled(plan.enabled); setSteps(String(plan.steps)); setTotalPct(String(plan.totalPct));
-  }, [plan.enabled, plan.steps, plan.totalPct]);
+    setRebuy(String(plan.rebuySteps ?? 1)); setSafety(String(plan.safetyNetPct ?? plan.totalPct));
+  }, [plan.enabled, plan.steps, plan.totalPct, plan.rebuySteps, plan.safetyNetPct]);
 
   const check = validateRecoverySettings(steps, totalPct, hedgeSide);
   const ladder = useMemo(() => recoveryLadder(steps, totalPct, 100, hedgeSide), [steps, totalPct, hedgeSide]);
-  const dirty = enabled !== plan.enabled || steps !== String(plan.steps) || totalPct !== String(plan.totalPct);
+  const rebuyN = Number(rebuy);
+  const safetyN = Number(String(safety).replace(",", "."));
+  const gridOk = Number.isInteger(rebuyN) && rebuyN >= 1 && rebuyN <= 100 && Number.isFinite(safetyN) && safetyN > 0 && safetyN < 100;
+  const dirty = enabled !== plan.enabled || steps !== String(plan.steps) || totalPct !== String(plan.totalPct)
+    || rebuy !== String(plan.rebuySteps ?? 1) || safety !== String(plan.safetyNetPct ?? plan.totalPct);
 
   async function save(nextEnabled = enabled) {
     if (nextEnabled && !check.ok) { setError(check.message); return; }
+    if (nextEnabled && !gridOk) { setError("Terugkopen: 1 t/m 100 stappen. Vangnet: tussen 0% en 100%."); return; }
     // Switching OFF always works, even with half-typed inputs: keep the last saved values.
     const payload = check.ok
-      ? { enabled: nextEnabled, steps: check.steps, totalPct: String(check.totalPct) }
+      ? { enabled: nextEnabled, steps: check.steps, totalPct: String(check.totalPct),
+          ...(gridOk ? { rebuySteps: rebuyN, safetyNetPct: String(safetyN) } : {}) }
       : { enabled: false, steps: plan.steps, totalPct: String(plan.totalPct) };
     setSaving(true); setError(""); setMessage("");
     try {
@@ -96,13 +106,21 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
         <div className="plah-exact-box"><small>In hoeveel stappen</small>
           <label><b>#</b><input aria-label={`Aantal afbouwstappen (${hedgeSide}-hedge)`} type="number" min="1" max="100" step="1" inputMode="numeric" value={steps} onChange={(e) => setSteps(e.target.value)} disabled={saving} /></label>
         </div>
+        <div className="plah-exact-box"><small>Terugkopen na stappen {up ? "daling" : "stijging"}</small>
+          <label><b>#</b><input aria-label={`Terugkopen na aantal stappen (${hedgeSide}-hedge)`} type="number" min="1" max="100" step="1" inputMode="numeric" value={rebuy} onChange={(e) => setRebuy(e.target.value)} disabled={saving} /></label>
+        </div>
+        <div className="plah-exact-box"><small>Vangnet na extra {move}</small>
+          <label><b>%</b><input aria-label={`Vangnet in procent (${hedgeSide}-hedge)`} type="text" inputMode="decimal" value={safety} onChange={(e) => setSafety(e.target.value)} disabled={saving} /></label>
+        </div>
       </div>
       {check.ok ? <>
         <div className="plah-threshold-value plah-unwind-value">elke {fmt(check.stepPct, 4)}% · {fmt(check.sellPct, 4)}%</div>
         <p className="plah-info"><span>i</span>
           Vanaf de instapkoers van de hedge verkoopt de bot bij elke {fmt(check.stepPct, 4)}% {move} {fmt(check.sellPct, 4)}% van de {hedgeSide}
-          (eerste stap {sign}{fmt(ladder[0]?.dropPct ?? 0, 4)}%, leeg bij {sign}{fmt(check.totalPct, 4)}%). Alleen met winst na fees. Leeg = weer 100% hedgen. Een wijziging geldt direct voor alle lopende posities.
-          Stap te klein voor Aster: {hedgeSide} 100% sluiten en 90% van de {protectedSide} terugzetten.
+          (eerste stap {sign}{fmt(ladder[0]?.dropPct ?? 0, 4)}%, leeg bij {sign}{fmt(check.totalPct, 4)}%). Alleen met winst na fees.
+          Grid: komt de koers {gridOk ? rebuyN : 1} stap{gridOk && rebuyN === 1 ? "" : "pen"} terug, dan koopt de bot dat deel van de {hedgeSide} weer terug; zo groeit je netto {protectedSide} hoe verder de koers {up ? "stijgt" : "daalt"} en pak je bij elke schommeling een stap winst.
+          Alles afgebouwd en nog {gridOk ? fmt(safetyN, 4) : "…"}% verder: vangnet, weer 100% hedgen en een nieuw grid vanaf daar.
+          Kleine munt: minder, grotere stappen (elke order minstens het Aster-minimum). Een wijziging geldt direct voor alle lopende posities.
         </p>
       </> : <p className="plah-info plah-unwind-error" role="alert"><span>!</span> {check.message}</p>}
       {!live && <p className="plah-info plah-unwind-test"><span>T</span> TESTMODUS · de bot rekent mee op je echte posities maar plaatst nog geen afbouworders. Gestippelde HEDGED x%-labels zijn testlabels.</p>}

@@ -61,30 +61,6 @@ class Recovery(Base):
 
 
 class LiveLadder(Recovery):
-    def test_four_steps_no_topup_then_refill_and_new_cycle(self):
-        self.open_pair("SOLUSDT")
-        self.at("SOLUSDT", 100)
-        self.assertEqual(self.orders(), [])
-        self.assertEqual(self.rec("SOLUSDT")["anchor"], "100")
-        self.at("SOLUSDT", 98)
-        self.assertEqual(self.orders(), [("CLOSE", 2.5)])
-        self.at("SOLUSDT", 99.5)                                     # bounce: no top-up, no re-short
-        self.at("SOLUSDT", 99.5)
-        self.assertEqual(self.orders(), [("CLOSE", 2.5)])
-        self.assertAlmostEqual(self.short("SOLUSDT"), 7.5)
-        self.assertEqual(self.pair("SOLUSDT")["status"], "HEDGED")
-        for mark in (96, 94, 92):
-            self.at("SOLUSDT", mark)
-        self.assertAlmostEqual(self.short("SOLUSDT"), 0.0)
-        self.assertEqual(self.long("SOLUSDT"), 10.0)                  # LONG never touched
-        self.at("SOLUSDT", 92)                                       # ladder done -> 100% refill
-        self.assertAlmostEqual(self.short("SOLUSDT"), 10.0)
-        self.L.entry[("SOLUSDT", "SHORT")] = 92.0                    # Aster reports the new average entry
-        self.at("SOLUSDT", 92)
-        rec = self.rec("SOLUSDT")
-        self.assertEqual((rec["phase"], rec["anchor"], rec["cycleId"]), ("LADDER", "92", 2))
-        self.at("SOLUSDT", "90.16")                                   # first step of the NEW ladder (92 * 0.98)
-        self.assertEqual(self.orders()[-1], ("CLOSE", 2.5))
 
     def test_quiet_ticks_do_not_rewrite_the_record(self):
         self.open_pair("SOLUSDT")
@@ -195,30 +171,7 @@ class UncertainFills(Recovery):
         self.assertAlmostEqual(self.short("SOLUSDT"), 7.5)
         self.assertEqual(len([o for o in self.L.hedge_orders if o["action"] == "CLOSE"]), 1)
 
-    def test_timeout_on_reopen_never_double_opens(self):
-        self.open_pair("PEPEUSDT", qty=10.0, minimum=3, step=1)
-        self.at("PEPEUSDT", 100)
-        self.at("PEPEUSDT", 98)                                     # close all
-        self.L.hedge_modes["PEPEUSDT"] = "timeout"
-        self.at("PEPEUSDT", 98)                                     # reopen 9 accepted, answer lost
-        self.L.entry[("PEPEUSDT", "SHORT")] = 98.0                  # Aster: new average entry of the reopened SHORT
-        for _ in range(3):
-            self.at("PEPEUSDT", 98)
-        self.assertAlmostEqual(self.short("PEPEUSDT"), 9.0)
-        self.assertEqual([o["action"] for o in self.L.hedge_orders], ["CLOSE", "OPEN"])
 
-    def test_partial_close_all_completes_before_reopen(self):
-        self.open_pair("PEPEUSDT", qty=10.0, minimum=3, step=1)
-        self.at("PEPEUSDT", 100)
-        self.L.partial_ratio = 0.5
-        self.L.hedge_modes["PEPEUSDT"] = "partial"
-        self.at("PEPEUSDT", 98)
-        self.assertAlmostEqual(self.short("PEPEUSDT"), 5.0)
-        self.assertNotIn("OPEN", [o["action"] for o in self.L.hedge_orders])   # no reopen while not flat
-        for _ in range(3):
-            self.at("PEPEUSDT", 98)
-        self.assertAlmostEqual(self.short("PEPEUSDT"), 9.0)
-        self.assertEqual([o["action"] for o in self.L.hedge_orders], ["CLOSE", "CLOSE", "OPEN"])
 
     def test_pending_open_order_holds(self):
         self.open_pair("SOLUSDT")
@@ -230,37 +183,6 @@ class UncertainFills(Recovery):
         self.assertEqual(self.rec("SOLUSDT")["lastEvent"], "PENDING_ORDER_HOLD")
 
 
-class LiveReopenNinety(Recovery):
-    def test_too_small_step_closes_all_and_reopens_90(self):
-        self.open_pair("PEPEUSDT", qty=10.0, minimum=3, step=1)
-        self.at("PEPEUSDT", 100)
-        self.at("PEPEUSDT", 98)
-        self.assertEqual(self.orders(), [("CLOSE", 10.0)])
-        self.at("PEPEUSDT", 98)
-        self.assertEqual(self.orders()[-1], ("OPEN", 9.0))
-        self.assertAlmostEqual(self.short("PEPEUSDT"), 9.0)
-        self.L.entry[("PEPEUSDT", "SHORT")] = 98.0
-        self.at("PEPEUSDT", 98)
-        self.assertEqual(self.rec("PEPEUSDT")["base"], "9")
-        self.at("PEPEUSDT", 99)                                      # the 10% gap is kept
-        self.at("PEPEUSDT", 99)
-        self.assertAlmostEqual(self.short("PEPEUSDT"), 9.0)
-        self.assertEqual(len(self.orders()), 2)
-
-    def test_no_margin_for_reopen_never_closes_all(self):
-        self.open_pair("PEPEUSDT", qty=10.0, minimum=3, step=1)
-        self.at("PEPEUSDT", 100)
-        self.L.available = 0.0
-        self.at("PEPEUSDT", 98)
-        self.assertEqual(self.orders(), [])
-        self.assertAlmostEqual(self.short("PEPEUSDT"), 10.0)
-
-    def test_reopen_below_minimum_is_skipped(self):
-        self.open_pair("PEPEUSDT", qty=10.0, minimum=10, step=1)
-        self.at("PEPEUSDT", 100)
-        self.at("PEPEUSDT", 98)
-        self.assertEqual(self.orders(), [])
-        self.assertEqual(self.rec("PEPEUSDT")["lastEvent"], "SKIPPED_BELOW_MINIMUM")
 
 
 class JointExit(Recovery):
@@ -340,7 +262,8 @@ class SettingsRoute(Recovery):
 
     def test_free_settings_saved_and_public(self):
         out = self.save()
-        self.assertEqual(out["shortRecoveryPlan"], {"enabled": True, "steps": 10, "totalPct": "20", "stepPct": "2"})
+        self.assertEqual(out["shortRecoveryPlan"], {"enabled": True, "steps": 10, "totalPct": "20", "stepPct": "2",
+                                                    "rebuySteps": 1, "safetyNetPct": "20"})
         self.assertEqual(self.get("asterPositionLossAutoHedge", self.uid)["shortRecoveryPlan"]["steps"], 10)
         self.assertEqual(self.L.hedge_orders, [])                    # saving never places an order
 
@@ -362,25 +285,16 @@ class SettingsRoute(Recovery):
 class Shadow(Recovery):
     LIVE = False
 
-    def test_shadow_records_ladder_and_sends_no_recovery_order(self):
+    def test_shadow_records_grid_and_sends_no_order(self):
         self.open_pair("SOLUSDT")
-        for mark in (100, 98, 99, 96, 94, 92, 92):
+        for mark in (100, 98, 96, 98, 94):
             self.at("SOLUSDT", mark)
-        self.assertEqual(self.orders(), [])                         # legacy 1:1 already exact
+        self.assertEqual(self.orders(), [])                          # test mode: real hedge stays 1:1
         self.assertAlmostEqual(self.short("SOLUSDT"), 10.0)
         self.assertEqual(self.rec("SOLUSDT"), {})
-        shadow = self.rec("SOLUSDT", "shortRecoveryShadow")
-        self.assertEqual(shadow["phase"], "REFILL")
-        self.at("SOLUSDT", 92)
-        shadow = self.rec("SOLUSDT", "shortRecoveryShadow")
-        self.assertEqual((shadow["phase"], shadow["cycleId"], shadow["anchor"]), ("LADDER", 2, "92"))
+        self.assertEqual(self.rec("SOLUSDT", "shortRecoveryShadow")["phase"], "LADDER")
 
-    def test_shadow_reports_decisions(self):
-        self.open_pair("SOLUSDT")
-        self.at("SOLUSDT", 100)
-        report = self.at("SOLUSDT", 98)
-        row = report["shortRecovery"][0]
-        self.assertEqual((row["event"], row["targetShort"], row["mode"]), ("STEP_REDUCE", 7.5, "shortRecoveryShadow"))
+
 
 
 if __name__ == "__main__":

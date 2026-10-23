@@ -30,7 +30,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
-from short_recovery_ladder import normalize_settings, plan, profitable_after_fees
+from short_recovery_ladder import effective_parts, grid_released, grid_step, normalize_settings, plan, profitable_after_fees
 
 PHASE_LADDER = "LADDER"
 PHASE_REOPEN_CLOSE = "REOPEN_CLOSE"
@@ -76,6 +76,7 @@ def _start_cycle(prior: Mapping[str, Any] | None, *, long_q: Decimal, short_q: D
         "totalPct": cfg["totalPct"],
         "stepPct": cfg["stepPct"],
         "startReason": reason,
+        "sold": 0,
         "reopenQty": None,
         "lastTarget": _txt(short_q),
     }
@@ -144,94 +145,60 @@ def decide(
             return {"override": short_q, "record": new, "event": "CYCLE_STARTED"}
         return {"override": None, "record": rec, "event": "WAIT_FOR_1_TO_1"}
 
-    if phase == PHASE_REOPEN_CLOSE:
-        if short_q <= (step / 2 if step > 0 else Decimal(0)):
-            rec.update(phase=PHASE_REOPEN_OPEN, lastTarget=rec["reopenQty"])
-            return {"override": min(long_q, _d(rec["reopenQty"])), "record": rec, "event": "CLOSED_ALL_REOPEN_90"}
-        # Amar 23-10 (kernregel): never close a hedge at a loss. The close-all was decided when the hedge was in
-        # profit, but the hedge may have been refilled since (e.g. at a worse price): re-check against the CURRENT
-        # hedge entry on every tick. Not profitable -> abort the close-all (no order), back to REFILL: the pair is
-        # made 1:1 again by buying only, and a new cycle anchors on that hedge entry.
-        if not profitable_after_fees(direction=str(rec.get("direction") or direction), hedge_entry=_d(short_entry),
-                                     price=price):
-            keep = min(long_q, short_q)
-            rec.update(phase=PHASE_REFILL, reopenQty=None, lastTarget=str(keep))
-            return {"override": keep, "record": rec, "event": "CLOSE_ALL_ABORTED_NOT_PROFITABLE"}
-        rec["lastTarget"] = "0"
-        return {"override": Decimal(0), "record": rec, "event": "CLOSING_ALL"}
+    if phase in (PHASE_REOPEN_CLOSE, PHASE_REOPEN_OPEN):
+        # Build 634: the close-all / reopen-90 route is gone (small coins use fewer, larger grid parts). A record
+        # still in such a phase goes back to 1:1 by buying only, and a fresh grid cycle starts from there.
+        rec.update(phase=PHASE_REFILL, reopenQty=None, lastTarget=str(long_q))
+        return {"override": None, "record": rec, "event": "REOPEN_PHASE_REPLACED_BY_GRID"}
 
-    if phase == PHASE_REOPEN_OPEN:
-        reopen = min(long_q, _d(rec.get("reopenQty")))
-        if _same(short_q, reopen, step) and _d(short_entry) > 0:
-            new = _start_cycle(rec, long_q=long_q, short_q=short_q, short_entry=_d(short_entry), cfg=cfg,
-                               reason="REOPENED_90")
-            new["direction"] = direction
-            return {"override": short_q, "record": new, "event": "CYCLE_STARTED_AFTER_REOPEN"}
-        rec["lastTarget"] = str(reopen)
-        return {"override": reopen, "record": rec, "event": "REOPENING_90"}
+    return _grid(rec=rec, cfg=cfg, long_q=long_q, short_q=short_q, entry=_d(short_entry), price=price, step=step,
+                 min_qty=min_qty, min_notional=min_notional, direction=str(rec.get("direction") or direction))
 
-    # LADDER
-    # Build 629 (Amar 23-10, keuze B): the CURRENT settings apply at once to every running ladder (no snapshot
-    # per cycle any more), and the ladder measures from the hedge's own live average entry, i.e. exactly the
-    # profit the user sees on the hedge. A pair that is already past steps under the new settings sells them
-    # now (one catch-up order); past the last step it sells the whole hedge and is re-hedged 1:1.
+
+def _grid(*, rec: dict[str, Any], cfg: Mapping[str, Any], long_q: Decimal, short_q: Decimal, entry: Decimal,
+          price: Decimal, step: Decimal, min_qty: Any, min_notional: Any, direction: str) -> dict[str, Any]:
+    """Build 634 (Amar 23-10): grid on the hedge inside one cycle (phase LADDER).
+
+    Fixed levels from the cycle anchor. Away from the anchor: sell one more part per level (profit after fees
+    only). Back towards the anchor ``rebuySteps`` levels above the last sold part: buy that part back. Everything
+    sold and the price ``safetyNetPct`` beyond the last level: re-hedge 100% (vangnet), new cycle at that price.
+    Settings apply at once; a changed grid keeps the hedge as it is and re-counts the sold parts on the new grid.
+    """
     base = _d(rec.get("base"))
     growth = max(Decimal(0), long_q - _d(rec.get("longAtStart")))
-    cap = base + growth
-    live = {"enabled": True, "steps": cfg["steps"], "totalPct": cfg["totalPct"]}
-    settings_changed = (str(rec.get("totalPct")) != str(cfg["totalPct"])
-                        or int(rec.get("steps") or 0) != int(cfg["steps"]))
-    entry = _d(short_entry)
-    anchor = entry if entry > 0 else _d(rec.get("anchor"))
-    # Steps of an older setting mean something else: recount on the new grid. The ceiling below still
-    # guarantees that nothing already sold is bought back.
-    previous = 0 if settings_changed else int(rec.get("stepsReached") or 0)
-    decision = plan(long_qty=cap, short_qty=min(short_q, cap), base=base, anchor=anchor, mark=price,
-                    settings=live, previous_steps=previous, qty_step=step,
-                    min_qty=min_qty, min_notional=min_notional, reopen_basis_qty=long_q,
-                    direction=str(rec.get("direction") or direction), hedge_entry=entry)
-    rec.update(stepsReached=int(decision["stepsReached"]), steps=cfg["steps"], totalPct=cfg["totalPct"],
-               stepPct=cfg["stepPct"], anchor=_txt(anchor) if anchor > 0 else rec.get("anchor"))
-    # Never buy back within a cycle (also not after a settings change): the hedge only grows with new
-    # protected quantity (DCA) since the last confirmed target; refilling is for cycle end / Re-Hedge All.
-    last = _d(rec.get("lastTarget"), str(short_q))
-    long_at_last = _d(rec.get("longAtLastTarget"), str(rec.get("longAtStart") or long_q))
-    ceiling = last + max(Decimal(0), long_q - long_at_last)
-    target = min(long_q, decision["targetShort"], ceiling)
-    rec["longAtLastTarget"] = _txt(long_q)
-    action = decision["action"]
-
-    if action == "CYCLE_COMPLETE":
-        rec.update(phase=PHASE_REFILL, lastTarget=str(long_q))
-        return {"override": None, "record": rec, "event": "LADDER_DONE_REFILL_1_TO_1"}
-
-    if action == "FULL_CLOSE_REOPEN":
-        reopen = decision["reopenQuantity"]
-        lev = max(Decimal(1), _d(leverage, "1"))
-        if available_balance is None or reopen * price / lev > _d(available_balance):
-            # Never close the whole SHORT unless the 90% reopen is affordable.
-            keep = min(long_q, short_q)
-            rec["lastTarget"] = str(keep)
-            return {"override": keep, "record": rec, "event": "REOPEN_MARGIN_UNPROVEN_SKIP"}
-        rec.update(phase=PHASE_REOPEN_CLOSE, reopenQty=str(reopen), lastTarget="0")
-        return {"override": Decimal(0), "record": rec, "event": "STEP_TOO_SMALL_CLOSE_ALL"}
-
-    if action == "HOLD" and decision["reason"] == "BELOW_MINIMUM_EVEN_FOR_REOPEN_SKIP":
-        keep = min(long_q, short_q)
-        rec["lastTarget"] = str(keep)
-        return {"override": keep, "record": rec, "event": "SKIPPED_BELOW_MINIMUM"}
-
-    if action == "HOLD" and decision["reason"] == "OVER_HEDGED_LEFT_TO_AUTO_HEDGE":
-        # Over-covered (own position on the hedge side): no target, the engine never sells it (vangnet).
+    cap = base + growth                       # DCA after the cycle start stays fully hedged
+    if short_q > cap + (step / 2 if step > 0 else Decimal(0)):
         return {"override": None, "record": rec, "event": "OVER_COVERED_HOLD"}
-
-    if action == "HOLD" and decision["reason"] == "STEP_WAIT_PROFIT_AFTER_FEES":
-        keep = min(long_q, short_q)
-        rec["lastTarget"] = str(keep)
-        return {"override": keep, "record": rec, "event": "STEP_WAIT_PROFIT_AFTER_FEES"}
-
-    rec["lastTarget"] = str(target)
-    return {"override": target, "record": rec, "event": "STEP_REDUCE" if action == "REDUCE_SHORT" else "LADDER_HOLD"}
+    anchor = _d(rec.get("anchor"))
+    if anchor <= 0:
+        anchor = entry if entry > 0 else price
+    grid_key = f"{cfg['steps']}|{cfg['totalPct']}|{cfg['rebuySteps']}"
+    regrid = rec.get("gridKey") != grid_key or rec.get("sold") is None or rec.get("gridParts") is None
+    # The number of parts is fixed per cycle (decided at the anchor price), so it never jitters with the price.
+    n = effective_parts(base, cfg["steps"], anchor, step, min_qty, min_notional) if regrid else int(rec["gridParts"])
+    if n <= 0:
+        rec.update(lastTarget=str(min(long_q, short_q)), steps=0, gridParts=0, gridKey=grid_key, sold=0)
+        return {"override": None, "record": rec, "event": "SKIPPED_BELOW_MINIMUM"}
+    if regrid:
+        # New grid (or a pre-634 ladder record): keep the hedge as it is, count its sold parts on this grid.
+        released = max(Decimal(0), cap - short_q)
+        sold = int((released / base * n).to_integral_value()) if base > 0 else 0
+        sold = max(0, min(n, sold))
+    else:
+        sold = max(0, min(n, int(rec.get("sold") or 0)))
+    decision = grid_step(anchor=anchor, price=price, sold=sold, n=n, total_pct=cfg["totalPct"],
+                         rebuy_steps=min(int(cfg["rebuySteps"]), n), safety_pct=cfg["safetyNetPct"],
+                         direction=direction, hedge_entry=entry if entry > 0 else None)
+    event = decision["event"]
+    rec.update(anchor=_txt(anchor), gridKey=grid_key, gridParts=n, steps=n, totalPct=cfg["totalPct"],
+               stepPct=cfg["stepPct"], rebuySteps=cfg["rebuySteps"], safetyNetPct=cfg["safetyNetPct"])
+    if event == "SAFETY_NET_REHEDGE":
+        rec.update(phase=PHASE_REFILL, anchorAtMark=True, sold=None, lastTarget=str(long_q))
+        return {"override": None, "record": rec, "event": event}
+    sold = decision["sold"]
+    target = max(Decimal(0), min(long_q, cap - grid_released(base, sold, n, step)))
+    rec.update(sold=sold, stepsReached=sold, lastTarget=_txt(target))
+    return {"override": target, "record": rec, "event": event}
 
 
 def public_unwind(pair: Mapping[str, Any] | None) -> dict[str, Any] | None:

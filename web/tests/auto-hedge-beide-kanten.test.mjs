@@ -36,3 +36,11 @@ test("Auto Hedge screen has a loss threshold and an afbouw card per side", () =>
   assert.match(card, /state\.longRecoveryPlan : state\.shortRecoveryPlan/);
   assert.match(card, /Alleen met winst na fees/);
 });
+
+test("build 634: grid fields in the afbouw card", () => {
+  const card = readFileSync(new URL("../components/short-recovery-card.tsx", import.meta.url), "utf8");
+  assert.match(card, /rebuySteps: rebuyN, safetyNetPct: String\(safetyN\)/);
+  assert.match(card, /Terugkopen na stappen/);
+  assert.match(card, /Vangnet na extra/);
+  assert.doesNotMatch(card, /100% sluiten en 90%/);
+});

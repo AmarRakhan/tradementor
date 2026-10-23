@@ -82,28 +82,9 @@ class AfterFees(unittest.TestCase):
         r = run(mark=98, hedge_entry=97)
         self.assertEqual((r["action"], r["reason"]), ("HOLD", "STEP_WAIT_PROFIT_AFTER_FEES"))
 
-    def test_runtime_keeps_hedge_when_waiting(self):
-        # Build 629 (keuze B): the ladder measures from the live hedge entry, so a refilled hedge at 97 has no
-        # step at 98 yet (was: level from the old anchor 100 touched, sale waits for profit).
-        cycle = go(short_entry="100", mark="100")["record"]
-        r = go(cycle, short_entry="97", mark="98")
-        self.assertEqual((r["event"], r["override"], r["record"]["stepsReached"]), ("LADDER_HOLD", D("10"), 0))
-        r = go(r["record"], short_entry="97", mark="96")                    # 1% below 97: still no full step
-        self.assertEqual(r["record"]["anchor"], "97")
 
 
 class RuntimeBothSides(unittest.TestCase):
-    def test_up_cycle_and_steps(self):
-        r = go(direction="UP")
-        self.assertEqual((r["event"], r["record"]["direction"], r["record"]["anchor"]), ("CYCLE_STARTED", "UP", "100"))
-        r = go(r["record"], mark=102, direction="UP")
-        self.assertEqual((r["event"], r["override"]), ("STEP_REDUCE", D("6.667")))
-        r = go(r["record"], short_qty="6.667", mark=101, direction="UP")    # falls back: no top-up
-        self.assertEqual(r["override"], D("6.667"))
-        r = go(r["record"], short_qty="6.667", mark=106, direction="UP")    # to the end: empty
-        self.assertEqual(r["override"], D("0"))
-        r = go(r["record"], short_qty=0, mark=106, direction="UP")
-        self.assertEqual((r["event"], r["override"]), ("LADDER_DONE_REFILL_1_TO_1", None))  # 100% again
 
     def test_over_covered_never_starts_a_cycle(self):
         # Own position on the hedge side larger than the protected leg: no cycle, no target, nothing sold.

@@ -26,13 +26,6 @@ class Lifecycle(unittest.TestCase):
         r = go(short_qty=0)
         self.assertEqual((r["override"], r["event"]), (None, "WAIT_FOR_1_TO_1"))
 
-    def test_existing_hedge_catches_up_from_hedge_entry(self):
-        # Build 629 (Amar 23-10, keuze B): the ladder measures from the hedge's own entry, so a hedge that is
-        # already past every step sells them now in one catch-up order (was: start at the switch-on mark).
-        r = go(short_entry=100, mark=85, start_at_mark=True)
-        r2 = go(r["record"], mark=85, start_at_mark=True)
-        self.assertEqual((r2["event"], r2["override"], r2["record"]["stepsReached"]), ("STEP_REDUCE", D(0), 4))
-        self.assertEqual(r2["record"]["anchor"], "100")
 
     def test_refill_after_switch_on_uses_short_entry(self):
         rec = {"cycleId": 1, "phase": "REFILL", "lastTarget": "100"}
@@ -54,19 +47,7 @@ class Lifecycle(unittest.TestCase):
             rec = r["record"]
         return rec, short
 
-    def test_four_steps_then_refill(self):
-        rec, short = self.full_ladder()
-        self.assertEqual(short, D(0))
-        r = go(rec, mark=92, short_qty=0)
-        self.assertEqual((r["override"], r["event"], r["record"]["phase"]), (None, "LADDER_DONE_REFILL_1_TO_1", "REFILL"))
-        r2 = go(r["record"], mark=91, short_qty=100, short_entry=91)
-        self.assertEqual((r2["event"], r2["record"]["anchor"], r2["record"]["cycleId"]), ("CYCLE_STARTED", "91", 2))
 
-    def test_partial_reduction_is_never_topped_up(self):
-        rec = go()["record"]
-        rec = go(rec, mark=98)["record"]
-        r = go(rec, mark=99, short_qty=75)  # bounce
-        self.assertEqual((r["override"], r["event"]), (D(75), "LADDER_HOLD"))
 
     def test_pending_order_holds_last_target(self):
         rec = go()["record"]
@@ -90,46 +71,6 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual((r["override"], r["record"], r["event"]), (None, None, "NO_LONG"))
 
 
-class ReopenNinety(unittest.TestCase):
-    def test_close_all_then_reopen_90_then_new_cycle(self):
-        rec = go(min_qty=40)["record"]
-        r = go(rec, mark=98, min_qty=40)
-        self.assertEqual((r["override"], r["event"]), (D(0), "STEP_TOO_SMALL_CLOSE_ALL"))
-        r = go(r["record"], mark=98, short_qty=40, min_qty=40)  # partially closed so far
-        self.assertEqual((r["override"], r["event"]), (D(0), "CLOSING_ALL"))
-        r = go(r["record"], mark=98, short_qty=0, min_qty=40)
-        self.assertEqual((r["override"], r["event"]), (D(90), "CLOSED_ALL_REOPEN_90"))
-        r = go(r["record"], mark=98, short_qty=50, min_qty=40)
-        self.assertEqual((r["override"], r["event"]), (D(90), "REOPENING_90"))
-        r = go(r["record"], mark=97, short_qty=90, short_entry=97, min_qty=40)
-        self.assertEqual(r["event"], "CYCLE_STARTED_AFTER_REOPEN")
-        self.assertEqual((r["record"]["base"], r["record"]["anchor"], r["override"]), ("90", "97", D(90)))
-        # the 10% gap is kept: no top-up to the LONG
-        r2 = go(r["record"], mark=97, short_qty=90, short_entry=97, min_qty=40)
-        self.assertEqual((r2["override"], r2["event"]), (D(90), "LADDER_HOLD"))
-
-    def test_repeat_stays_ten_percent_below_long(self):
-        # Decision Amar 17:57: reopen is always 90% of the LONG, never 81% / 72.9%.
-        rec = {"cycleId": 2, "phase": "LADDER", "anchor": "97", "base": "90", "longAtStart": "100",
-               "stepsReached": 0, "steps": 4, "stepPct": "2", "lastTarget": "90"}
-        r = go(rec, mark="95.06", short_qty=90, short_entry="97", min_qty=40)
-        self.assertEqual(r["event"], "STEP_TOO_SMALL_CLOSE_ALL")
-        self.assertEqual(r["record"]["reopenQty"], "90")
-
-    def test_no_margin_never_closes_all(self):
-        rec = go(min_qty=40)["record"]
-        r = go(rec, mark=98, min_qty=40, available_balance=1)
-        self.assertEqual((r["override"], r["event"]), (D(100), "REOPEN_MARGIN_UNPROVEN_SKIP"))
-
-    def test_unknown_margin_never_closes_all(self):
-        rec = go(min_qty=40)["record"]
-        r = go(rec, mark=98, min_qty=40, available_balance=None)
-        self.assertEqual(r["event"], "REOPEN_MARGIN_UNPROVEN_SKIP")
-
-    def test_reopen_below_minimum_skips_without_order(self):
-        rec = go(min_qty=95)["record"]
-        r = go(rec, mark=98, min_qty=95)
-        self.assertEqual((r["override"], r["event"]), (D(100), "SKIPPED_BELOW_MINIMUM"))
 
 
 class PublicUnwind(unittest.TestCase):
@@ -144,96 +85,9 @@ class PublicUnwind(unittest.TestCase):
         self.assertIsNone(public_unwind({"status": "HEDGED"}))
 
 
-class CloseAllNeverAtLoss(unittest.TestCase):
-    """Incident 23-10 14:29 (CC/LINK/MSTR): the close-all was decided on a profitable old hedge; another writer
-    refilled the SHORT at a worse price and the close-all phase then closed the NEW SHORT at a loss."""
-
-    def _close_all_record(self):
-        rec = go(min_qty=40)["record"]
-        r = go(rec, mark=98, min_qty=40)
-        self.assertEqual(r["event"], "STEP_TOO_SMALL_CLOSE_ALL")
-        return r["record"]
-
-    def test_refilled_hedge_at_worse_price_is_not_closed(self):
-        # SHORT refilled 1:1 at 97.5, price now 98: closing it would be a loss -> no close, back to REFILL.
-        r = go(self._close_all_record(), mark=98, short_qty=100, short_entry="97.5", min_qty=40)
-        self.assertEqual((r["override"], r["event"]), (D(100), "CLOSE_ALL_ABORTED_NOT_PROFITABLE"))
-        self.assertEqual((r["record"]["phase"], r["record"]["reopenQty"]), ("REFILL", None))
-        # next tick: exactly 1:1 -> new cycle anchored on the CURRENT hedge entry, not the old anchor
-        r2 = go(r["record"], mark=98, short_qty=100, short_entry="97.5", min_qty=40)
-        self.assertEqual((r2["event"], r2["record"]["anchor"]), ("CYCLE_STARTED", "97.5"))
-
-    def test_profit_smaller_than_fees_is_not_closed(self):
-        r = go(self._close_all_record(), mark="97.95", short_qty=100, short_entry=98, min_qty=40)
-        self.assertEqual(r["event"], "CLOSE_ALL_ABORTED_NOT_PROFITABLE")
-
-    def test_partly_closed_remainder_at_loss_is_held(self):
-        r = go(self._close_all_record(), mark=99, short_qty=40, short_entry=98, min_qty=40)
-        self.assertEqual((r["override"], r["event"]), (D(40), "CLOSE_ALL_ABORTED_NOT_PROFITABLE"))
-
-    def test_unknown_entry_never_closes(self):
-        r = go(self._close_all_record(), mark=98, short_qty=100, short_entry=0, min_qty=40)
-        self.assertEqual(r["event"], "CLOSE_ALL_ABORTED_NOT_PROFITABLE")
-
-    def test_still_profitable_keeps_closing(self):
-        r = go(self._close_all_record(), mark=98, short_qty=60, short_entry=100, min_qty=40)
-        self.assertEqual((r["override"], r["event"]), (D(0), "CLOSING_ALL"))
-
-    def test_mirrored_side_long_hedge(self):
-        # protected SHORT, LONG hedge (direction UP): selling the LONG hedge below its entry is never allowed.
-        rec = {"cycleId": 1, "phase": "REOPEN_CLOSE", "direction": "UP", "reopenQty": "90", "lastTarget": "0",
-               "anchor": "100", "base": "100", "longAtStart": "100", "stepsReached": 1, "steps": 4, "stepPct": "2"}
-        r = go(rec, mark=101, short_qty=100, short_entry=102, direction="UP")
-        self.assertEqual(r["event"], "CLOSE_ALL_ABORTED_NOT_PROFITABLE")
-        r = go(rec, mark=103, short_qty=100, short_entry=100, direction="UP")
-        self.assertEqual(r["event"], "CLOSING_ALL")
 
 
 if __name__ == "__main__":
     unittest.main()
 
 
-class LiveSettings629(unittest.TestCase):
-    """Build 629 (Amar 23-10): a settings change applies at once to running ladders, measured from the hedge entry."""
-
-    OLD = {"cycleId": 1, "phase": "LADDER", "anchor": "100", "base": "100", "longAtStart": "100",
-           "stepsReached": 0, "steps": 3, "totalPct": "6", "stepPct": "2", "lastTarget": "100"}
-
-    def test_new_settings_apply_to_running_cycle_with_catch_up(self):
-        r = go(dict(self.OLD), settings={"enabled": True, "steps": 3, "totalPct": "1"}, mark="99")
-        self.assertEqual((r["event"], r["override"]), ("STEP_REDUCE", D(0)))
-        self.assertEqual((r["record"]["steps"], r["record"]["totalPct"], r["record"]["stepsReached"]), (3, "1", 3))
-
-    def test_three_sales_at_three_levels(self):
-        cfg = {"enabled": True, "steps": 3, "totalPct": "1"}
-        rec = go(settings=cfg)["record"]
-        targets = []
-        for mark, qty in (("99.66", 100), ("99.33", 67), ("99", 34)):
-            r = go(rec, settings=cfg, mark=mark, short_qty=qty)
-            rec = r["record"]
-            targets.append(r["override"])
-        self.assertEqual(targets, [D(67), D(34), D(0)])
-        done = go(rec, settings=cfg, mark="99", short_qty=0)
-        self.assertEqual((done["event"], done["override"]), ("LADDER_DONE_REFILL_1_TO_1", None))
-
-    def test_settings_change_never_buys_back(self):
-        rec = {**self.OLD, "steps": 3, "totalPct": "1", "stepsReached": 2, "lastTarget": "34", "longAtLastTarget": "100"}
-        r = go(rec, settings={"enabled": True, "steps": 3, "totalPct": "6"}, mark="99.3", short_qty=34)
-        self.assertEqual(r["override"], D(34))
-
-    def test_dca_growth_still_hedged_under_ceiling(self):
-        rec = {**self.OLD, "steps": 3, "totalPct": "6", "stepsReached": 0, "lastTarget": "100", "longAtLastTarget": "100"}
-        r = go(rec, settings={"enabled": True, "steps": 3, "totalPct": "6"}, long_qty=110, short_qty=100, mark="100")
-        self.assertEqual(r["override"], D(110))
-
-    def test_measures_from_live_hedge_entry_not_cycle_anchor(self):
-        # Re-Hedge All topped up at a lower price: the averaged hedge entry is the reference (keuze B).
-        rec = {**self.OLD, "anchor": "95", "startReason": "REHEDGE_ALL_AT_MARK"}
-        r = go(rec, short_entry="100", mark="97.9")
-        self.assertEqual((r["event"], r["record"]["stepsReached"], r["record"]["anchor"]), ("STEP_REDUCE", 1, "100"))
-
-    def test_tiny_steps_still_wait_for_profit_after_fees(self):
-        cfg = {"enabled": True, "steps": 3, "totalPct": "0.03"}
-        rec = go(settings=cfg)["record"]
-        r = go(rec, settings=cfg, mark="99.98")
-        self.assertEqual((r["event"], r["override"]), ("STEP_WAIT_PROFIT_AFTER_FEES", D(100)))

@@ -35,6 +35,7 @@ DEFAULT_STEPS = 4
 DEFAULT_TOTAL_PCT = Decimal("8")
 MAX_STEPS = 100
 REOPEN_FRACTION = Decimal("0.9")
+DEFAULT_REBUY_STEPS = 1
 DIRECTIONS = {"DOWN", "UP"}
 # Conservative taker fee per order (open and close), fraction of notional.
 DEFAULT_FEE_RATE = Decimal("0.0005")
@@ -111,8 +112,18 @@ def normalize_settings(raw: Mapping[str, Any] | None) -> dict[str, Any]:
         raise ValueError("totale daling moet groter dan 0% zijn")
     if total >= 100:
         raise ValueError("totale daling moet onder 100% liggen")
+    # Build 634 (Amar 23-10, grid): buy a sold part back once the price is ``rebuySteps`` levels above the level
+    # where it was sold (default 1), and re-hedge 100% when the price moves ``safetyNetPct`` beyond the last level
+    # (default = the total move).
+    rebuy = raw.get("rebuySteps", DEFAULT_REBUY_STEPS)
+    if isinstance(rebuy, bool) or not isinstance(rebuy, int) or not 1 <= rebuy <= MAX_STEPS:
+        raise ValueError(f"terugkopen na aantal stappen moet een geheel getal van 1 t/m {MAX_STEPS} zijn")
+    safety = total if raw.get("safetyNetPct") in (None, "") else _dec(raw.get("safetyNetPct"), "vangnet")
+    if safety <= 0 or safety >= 100:
+        raise ValueError("vangnet moet tussen 0% en 100% liggen")
     return {"enabled": enabled, "steps": steps, "totalPct": _text(total),
-            "stepPct": _text((total / Decimal(steps)).quantize(Decimal("1e-8")))}
+            "stepPct": _text((total / Decimal(steps)).quantize(Decimal("1e-8"))),
+            "rebuySteps": rebuy, "safetyNetPct": _text(safety)}
 
 
 def step_price(anchor: Any, k: int, n: int, total_pct: Any, direction: Any = "DOWN") -> Decimal:
@@ -258,3 +269,77 @@ def plan(
         return result
     result.update(action="REDUCE_SHORT", reason=f"STEP_{k}_OF_{n}", quantity=qty)
     return result
+
+
+# --- Build 634 (Amar 23-10): grid on the hedge -------------------------------------------------------------
+# Fixed levels from the cycle anchor: level k = anchor * (1 -/+ k * total / n / 100). Price crosses level k on the
+# way away from the anchor -> one more part of the hedge is sold (only with profit after fees). Price comes back
+# ``rebuy`` levels above the level of the last sold part -> that part is bought back. Beyond the last level by
+# ``safety``% with everything sold -> re-hedge 100% (vangnet). Small coins use fewer, larger parts so every order
+# is at least one Aster minimum order (no close-all / reopen-90 any more).
+
+
+def grid_level(anchor: Any, k: int, n: int, total_pct: Any, direction: Any = "DOWN") -> Decimal:
+    """Level k (may be <= 0: at or above the anchor for rebuys) of an n-part grid."""
+    a = _dec(anchor, "anker")
+    move = _dec(total_pct, "totale daling") * Decimal(k) / Decimal(n) / Decimal(100)
+    return a * (Decimal(1) + move if _direction(direction) == "UP" else Decimal(1) - move)
+
+
+def _away(price: Decimal, level: Decimal, up: bool) -> bool:
+    """Price reached ``level`` moving away from the anchor (falling for DOWN, rising for UP)."""
+    return price >= level if up else price <= level
+
+
+def effective_parts(base: Any, wanted: int, price: Any, qty_step: Any, min_qty: Any, min_notional: Any) -> int:
+    """Largest number of parts (<= wanted) whose part size is still one sendable Aster order; 0 = none."""
+    b = max(Decimal(0), _dec(base, "basis"))
+    p = _dec(price, "koers")
+    step = _dec(qty_step, "stapgrootte")
+    for k in range(max(0, int(wanted)), 0, -1):
+        part = _floor(b / Decimal(k), step)
+        if part > 0 and not _below_minimum(part, p, min_qty, min_notional):
+            return k
+    return 0
+
+
+def grid_released(base: Any, sold: int, n: int, qty_step: Any) -> Decimal:
+    b = max(Decimal(0), _dec(base, "basis"))
+    if sold <= 0 or n <= 0:
+        return Decimal(0)
+    if sold >= n:
+        return b
+    return _floor(b * Decimal(sold) / Decimal(n), _dec(qty_step, "stapgrootte"))
+
+
+def grid_step(*, anchor: Any, price: Any, sold: int, n: int, total_pct: Any, rebuy_steps: int,
+              safety_pct: Any, direction: Any = "DOWN", hedge_entry: Any = None,
+              fee_rate: Any = DEFAULT_FEE_RATE) -> dict[str, Any]:
+    """One grid decision: new number of sold parts and the event. Pure; the caller turns parts into a target."""
+    up = _direction(direction) == "UP"
+    p = _dec(price, "koers")
+    n = max(1, int(n))
+    old = max(0, min(n, int(sold)))
+    new = old
+    while new < n and _away(p, grid_level(anchor, new + 1, n, total_pct, direction), up):
+        new += 1
+    if new > old:
+        if hedge_entry is not None and not profitable_after_fees(
+                direction=direction, hedge_entry=hedge_entry, price=p, fee_rate=fee_rate):
+            return {"sold": old, "event": "STEP_WAIT_PROFIT_AFTER_FEES"}
+        return {"sold": new, "event": "GRID_SELL"}
+    g = max(1, int(rebuy_steps))
+    while new > 0:
+        back = grid_level(anchor, new - g, n, total_pct, direction)
+        if not (p <= back if up else p >= back):
+            break
+        new -= 1
+    if new < old:
+        return {"sold": new, "event": "GRID_REBUY"}
+    if old >= n:
+        last = grid_level(anchor, n, n, total_pct, direction)
+        s = _dec(safety_pct, "vangnet") / Decimal(100)
+        net = last * (Decimal(1) + s) if up else last * (Decimal(1) - s)
+        if _away(p, net, up):
+            return {"sold": old, "event": "SAFETY_NET_REHEDGE"}
+    return {"sold": old, "event": "GRID_HOLD"}
