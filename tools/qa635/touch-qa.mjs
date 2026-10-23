@@ -33,6 +33,7 @@ await run("old");await run("new");
 await browser.close();server.close();
 await writeFile(path.join(dir,"result.json"),JSON.stringify(results,null,2));
 console.log(JSON.stringify(results,null,2));
+for(const r of results)console.log(`::notice title=QA635 ${r.mode}::swipePanned=${r.swipePanned} afterHold=${r.afterHold.from.toFixed(1)} afterSwipe=${r.afterSwipe.from.toFixed(1)} priceAuto=${r.priceScale.auto} priceFrom=${r.priceScale.range&&r.priceScale.range.from.toFixed(2)}`);
 const old=results.find(r=>r.mode==="old"),neu=results.find(r=>r.mode==="new");
 if(!neu.swipePanned){console.error("FAIL: new config does not pan after press-and-hold");process.exit(1)}
 if(neu.priceScale.auto!==false||Math.abs(neu.priceScale.range.from-240)>.01){console.error("FAIL: price scale restore");process.exit(1)}
