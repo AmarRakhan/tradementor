@@ -290,11 +290,11 @@ test("Build 568 keeps the denser reference timeline while visible data drives ac
     '"1m":{visibleBars:32',
     '"5m":{visibleBars:31',
     '"15m":{visibleBars:42',
-    '"1u":{visibleBars:28',
-    '"4u":{visibleBars:26',
-    '"24u":{visibleBars:24',
+    '"1u":{visibleBars:42',
+    '"4u":{visibleBars:42',
+    '"24u":{visibleBars:36',
   ]) assert.ok(component.includes(pair),pair);
-  assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
+  assert.ok(component.includes("const focusVisibleBars=view.visibleBars;"));
   assert.equal(component.includes("ACCOUNT_STARTUP_VISIBLE_BARS"),false);
   assert.equal(component.includes("guideLow"),false);
   assert.equal(component.includes("guideHigh"),false);
@@ -527,7 +527,7 @@ test("Build 564 binds the chart to the canonical good reference and rejects the 
 
 test("Build 564 supersedes the later zone-crop experiment and keeps Build 518 viewport with Bollinger",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
+  assert.ok(component.includes("const focusVisibleBars=view.visibleBars;"));
   assert.equal(component.includes("ACCOUNT_STARTUP_VISIBLE_BARS"),false);
   assert.equal(component.includes("portfolioKoersFocusBars(candles"),false);
   assert.ok(component.includes('const bb=viewMode==="account"?bollinger20x2(candles)'));
@@ -544,7 +544,7 @@ test("Build 564 removes the obsolete zone-focus helper from startup rendering",a
 test("Build 568 keeps confirmed-event anchoring on the denser startup viewport",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes('"15m":{visibleBars:42,barSpacing:5.4,rightOffset:1.6}'));
-  assert.ok(component.includes("const focusVisibleBars=Math.min(candles.length,view.visibleBars)"));
+  assert.ok(component.includes("const focusVisibleBars=view.visibleBars;"));
   assert.equal(component.includes("ACCOUNT_STARTUP_VISIBLE_BARS"),false);
   assert.ok(component.includes("delta<=markerStep"));
   assert.ok(component.includes("markerTime:row.time"));
@@ -573,7 +573,7 @@ test("Build 584 keeps Bollinger on full canonical history while cold-starting on
   assert.equal(component.includes("sessionCandles.length>=20?sessionCandles:candles"),false);
   assert.equal(component.includes("const sessionStartIndex=viewMode===\"account\"&&sessionCandles.length"),false);
   assert.equal(component.includes("Math.max(sessionStartIndex,candles.length-focusVisibleBars-.5)"),false);
-  assert.ok(component.includes("const accountDefaultFrom=Math.max(-.5,candles.length-accountStartupVisibleBars-.5)"));
+  assert.ok(component.includes("const accountDefaultFrom=candles.length-accountStartupVisibleBars-.5;"));
   assert.ok(component.includes("delta<=markerStep"));
   assert.ok(component.includes("markerTime:row.time"));
   assert.ok(component.includes("file_0000000047d081f4b2c4348a14e0db2f"));
@@ -588,7 +588,8 @@ test("Build 567 keeps S/R lines persistent across chart pan and extends the ladd
   assert.ok(component.includes('axisLabelVisible:false'));
   assert.ok(component.includes('rgba(255,86,106,.58)'));
   assert.ok(component.includes('rgba(71,225,166,.50)'));
-  assert.ok(component.includes("prices.slice(-48)"));
+  assert.ok(component.includes("for(const price of prices){"));
+  assert.ok(component.includes("extendPortfolioZoneLadderToRange(chartZoneLadder"));
 });
 
 

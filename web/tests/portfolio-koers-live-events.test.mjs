@@ -190,8 +190,9 @@ test("Build 569 merged entry marker count equals unique confirmed detail rows",(
   assert.equal(rows[0].count,2);
 });
 
-test("Build 569 cold start focuses the latest contiguous real candle run",async()=>{
+test("Build 635 cold start shows the latest N candles at 15m density on every timeframe",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
-  assert.ok(component.includes("contiguousStartupCandles=viewMode===\"account\"?latestContiguousPortfolioCandles(candles,timeframe):candles"));
+  assert.equal(component.includes("latestContiguousPortfolioCandles"),false);
+  assert.ok(component.includes("const accountStartupVisibleBars=view.visibleBars;"));
   assert.ok(component.includes("candles.length-accountStartupVisibleBars-.5"));
 });

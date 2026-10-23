@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
+import { CandlestickSeries, ColorType, CrosshairMode, LineSeries, TrackingModeExitMode, createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { ActiveZoneSeatBlock, type ActiveZoneSeatSummary } from "@/components/active-zone-seat-block";
 import { AsterSlotOverview } from "@/components/aster-slot-overview";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersMarkers, normalizePortfolioKoersPayload, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, markerCoordinateInViewport, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
-import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
+import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, extendPortfolioZoneLadderToRange, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
@@ -66,9 +66,9 @@ const TIMEFRAME_VIEW:Record<string,{visibleBars:number;barSpacing:number;rightOf
   "1m":{visibleBars:32,barSpacing:7.2,rightOffset:1.5},
   "5m":{visibleBars:31,barSpacing:7.4,rightOffset:1.5},
   "15m":{visibleBars:42,barSpacing:5.4,rightOffset:1.6},
-  "1u":{visibleBars:28,barSpacing:7.8,rightOffset:1.6},
-  "4u":{visibleBars:26,barSpacing:8.0,rightOffset:1.8},
-  "24u":{visibleBars:24,barSpacing:8.2,rightOffset:2.0},
+  "1u":{visibleBars:42,barSpacing:5.4,rightOffset:1.6},
+  "4u":{visibleBars:42,barSpacing:5.4,rightOffset:1.6},
+  "24u":{visibleBars:36,barSpacing:6.2,rightOffset:1.6},
 };
 const localTime=(seconds:number)=>new Date(seconds*1000).toLocaleString("nl-NL",{timeZone:"Europe/Amsterdam",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockTime=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString("nl-NL",{timeZone:"Europe/Amsterdam",hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
@@ -196,15 +196,6 @@ function advisorSeatsFromPayload(payload:unknown):AdvisorSeats {
 }
 const signedZone=(value:number|null)=>value===null?"—":value===0?"0":value>0?`+${value}`:`${value}`;
 
-function latestContiguousPortfolioCandles(candles:Candle[],timeframe:string):Candle[]{
-  const rows=Array.isArray(candles)?candles:[];
-  if(!rows.length)return [];
-  const health=portfolioKoersTimelineHealth(rows,timeframe,Date.now(),1);
-  const lastGap=Array.isArray(health.gaps)?health.gaps.at(-1):null;
-  if(!lastGap)return rows;
-  const start=Number(lastGap.beforeTime);
-  return Number.isFinite(start)&&start>0?rows.filter((row)=>Number(row.time)>=start):rows;
-}
 const zoneLevelClass=(value:number)=>value<0?`level-n${Math.abs(value)}`:value>0?`level-p${value}`:"level-0";
 const levelUsd=(value:number|null|undefined)=>Number.isFinite(Number(value))
   ? `${new Intl.NumberFormat("nl-NL",{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value))}`
@@ -523,6 +514,13 @@ export function PortfolioKoersChart({
   const manualViewportRef=useRef<Record<string,boolean>>({});
   const savedViewportRef=useRef<Record<string,{from:number;to:number;span:number;followLatest:boolean}>>({});
   const viewportSyncGuardRef=useRef(false);
+  // Build 635: keep the user's own vertical zoom across the 45 s refresh and
+  // never rebuild the chart underneath a finger that is still moving it.
+  const savedPriceScaleRef=useRef<Record<string,{from:number;to:number}|undefined>>({});
+  const chartInteractingRef=useRef(0);
+  const pendingPayloadRef=useRef<Payload|null>(null);
+  const goToNowRef=useRef<()=>void>(()=>{});
+  const [awayFromNow,setAwayFromNow]=useState(false);
   const [timeframe,setTimeframe]=useState(PORTFOLIO_KOERS_DEFAULT_TIMEFRAME);
   const [viewMode,setViewMode]=useState<PortfolioViewMode>("account");
   const [payload,setPayload]=useState<Payload>(EMPTY);
@@ -728,7 +726,9 @@ export function PortfolioKoersChart({
     try{
       const response=await authenticatedRequest(`/api/exchanges/aster/portfolio-chart?timeframe=${encodeURIComponent(timeframe)}&limit=320`,{cache:"no-store"});
       const normalized=normalizePortfolioKoersPayload(response) as Payload;
-      setPayload(normalized);
+      // A stuck touch can never freeze the chart: after 15 s the refresh applies anyway.
+      if(chartInteractingRef.current&&Date.now()-chartInteractingRef.current<15_000)pendingPayloadRef.current=normalized;
+      else{pendingPayloadRef.current=null;setPayload(normalized)}
       setError("");
     }catch(reason){
       setError(reason instanceof Error?reason.message:"Portfolio Koers kon niet worden geladen.");
@@ -790,6 +790,20 @@ export function PortfolioKoersChart({
   if(freshChartZoneLadder?.zones?.length)lastConfirmedZoneLadderRef.current=freshChartZoneLadder;
   const chartZoneLadder=freshChartZoneLadder??lastConfirmedZoneLadderRef.current;
   const zoneContext=useMemo(()=>portfolioZoneContextFromLadder(chartZoneLadder,currentZonePrice),[chartZoneLadder,currentZonePrice]);
+  // Build 635: zone lines over the whole loaded account history (display only).
+  const candlePriceRange=useMemo(()=>{
+    let low=Number.POSITIVE_INFINITY,high=0;
+    for(const row of baseCandles){
+      if(Number.isFinite(Number(row.low))&&Number(row.low)>0)low=Math.min(low,Number(row.low));
+      if(Number.isFinite(Number(row.high))&&Number(row.high)>0)high=Math.max(high,Number(row.high));
+    }
+    return Number.isFinite(low)&&high>0?{low,high}:null;
+  },[baseCandles]);
+  const displayZoneLadder=useMemo(()=>{
+    if(!chartZoneLadder?.zones?.length||!candlePriceRange)return chartZoneLadder;
+    const span=Math.max(0,candlePriceRange.high-candlePriceRange.low);
+    return extendPortfolioZoneLadderToRange(chartZoneLadder,candlePriceRange.low-span*.15,candlePriceRange.high+span*.15,{focusPrice:currentZonePrice});
+  },[chartZoneLadder,candlePriceRange,currentZonePrice]);
   const zoneSoldierReport=advisorSeats.zoneSoldiers;
   const runtimeTruth=advisorSeats.runtimeTruth;
   const runtimeTruthCanonical=runtimeTruth.source==="SERVER_RUNTIME";
@@ -803,13 +817,13 @@ export function PortfolioKoersChart({
   // Trading runtime state stays available for the command center only. It must
   // never suppress or relocate the chart's informational price levels.
   const operationalActiveZone=runtimeZoneActive?signedIntegerOrNull(runtimeTruth.activeZone):activeZone;
-  advisorZoneLadderRef.current=chartZoneLadder;
+  advisorZoneLadderRef.current=displayZoneLadder;
   activeZoneRef.current=activeZone;
 
   // The chart and sibling snapshot expose the visual current price zone.
   useEffect(()=>{onActiveZoneChange?.(activeZone)},[activeZone,onActiveZoneChange]);
   useEffect(()=>()=>{onActiveZoneChange?.(null)},[onActiveZoneChange]);
-  useEffect(()=>{syncOverlaysRef.current()},[chartZoneLadder,activeZone]);
+  useEffect(()=>{syncOverlaysRef.current()},[displayZoneLadder,activeZone]);
   useEffect(()=>{setSelectedTpCluster(null);setTpDetailLoading(false);setTpDetailError("")},[timeframe,viewMode]);
 
   useEffect(()=>{
@@ -823,10 +837,12 @@ export function PortfolioKoersChart({
     // Build 564: exact Build 518 startup geometry. Keep the full recent visual
     // window; do not apply later arbitrary Accountwaarde caps or zone-driven
     // auto-cropping. Sparse Active Trades still reserves normal timeframe density.
-    const focusVisibleBars=Math.min(candles.length,view.visibleBars);
-    const contiguousStartupCandles=viewMode==="account"?latestContiguousPortfolioCandles(candles,timeframe):candles;
-    const accountStartupVisibleBars=Math.max(1,Math.min(view.visibleBars,contiguousStartupCandles.length||candles.length));
-    const effectiveFocusVisibleBars=viewMode==="active"?view.visibleBars:focusVisibleBars;
+    // Build 635: every timeframe opens like 15m: the latest N real candles at
+    // the same density. Gaps are not cropped away (the time axis is index-based,
+    // so a gap never creates blank space); short history keeps 15m proportions.
+    const focusVisibleBars=view.visibleBars;
+    const accountStartupVisibleBars=view.visibleBars;
+    const effectiveFocusVisibleBars=focusVisibleBars;
     const chart=createChart(container,{
       width:Math.max(1,container.clientWidth),height:Math.max(220,container.clientHeight),
       layout:{background:{type:ColorType.Solid,color:"#000000"},textColor:"#aeb6bb",fontSize:10,attributionLogo:false} as any,
@@ -843,7 +859,10 @@ export function PortfolioKoersChart({
       }},
       localization:{locale:"nl-NL",timeFormatter:(time:unknown)=>localTime(Number(time)||0)},
       handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true},
-      handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true},
+      handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true,axisDoubleClickReset:true},
+      // Build 635: a tap must never park the crosshair and swallow the next drag.
+      trackingMode:{exitMode:TrackingModeExitMode.OnTouchEnd},
+      kineticScroll:{touch:true,mouse:false},
     });
     chartRef.current=chart;
     const series=viewMode==="performance"
@@ -865,11 +884,12 @@ export function PortfolioKoersChart({
     // viewport-clipped DOM decoration. Draw the complete extended zone ladder
     // as chart-native price lines so panning/zooming never makes the ladder
     // disappear. Labels stay hidden; only the horizontal structure is shown.
-    if(viewMode==="account"&&chartZoneLadder?.zones?.length){
+    const lineLadder=advisorZoneLadderRef.current;
+    if(viewMode==="account"&&lineLadder?.zones?.length){
       const current=Number(candles.at(-1)?.close);
       const seen=new Set<string>();
       const prices:number[]=[];
-      for(const zone of chartZoneLadder.zones as any[]){
+      for(const zone of lineLadder.zones as any[]){
         for(const raw of [zone?.lower,zone?.upper]){
           const price=Number(raw);
           if(!Number.isFinite(price)||price<=0)continue;
@@ -879,7 +899,7 @@ export function PortfolioKoersChart({
         }
       }
       prices.sort((a,b)=>a-b);
-      for(const price of prices.slice(-48)){
+      for(const price of prices){
         const resistance=Number.isFinite(current)&&price>current;
         series.createPriceLine({
           price,
@@ -1118,18 +1138,57 @@ export function PortfolioKoersChart({
     chart.subscribeCrosshairMove(onCrosshair);
     const sync=()=>syncOverlaysRef.current();
     const viewportKey=`${viewMode}:${timeframe}`;
+    const latestTo=candles.length-1+view.rightOffset;
+    const priceScale=chart.priceScale("right");
+    const updateAwayFromNow=()=>{
+      const range=chart.timeScale().getVisibleLogicalRange();
+      let manualPrice=false;
+      try{manualPrice=priceScale.options().autoScale===false}catch{/* disposed */}
+      setAwayFromNow(Boolean(range&&Number(range.to)<latestTo-1.5)||manualPrice);
+    };
     const rememberViewport=()=>{
       if(!viewportSyncGuardRef.current&&manualViewportRef.current[viewportKey]){
         const range=chart.timeScale().getVisibleLogicalRange();
         if(range){
           const span=Math.max(1,Number(range.to)-Number(range.from));
-          const latestTo=candles.length-1+view.rightOffset;
           savedViewportRef.current[viewportKey]={from:Number(range.from),to:Number(range.to),span,followLatest:Number(range.to)>=latestTo-1};
         }
       }
+      if(!viewportSyncGuardRef.current)updateAwayFromNow();
       sync();
     };
     const markViewportManual=()=>{manualViewportRef.current[viewportKey]=true};
+    // Build 635: the 45 s refresh waits while a finger (or mouse) is on the
+    // chart, and for kinetic scrolling to settle, before it swaps the data.
+    let releaseTimer=0;
+    const beginInteraction=()=>{
+      markViewportManual();
+      chartInteractingRef.current=Date.now();
+      if(releaseTimer){window.clearTimeout(releaseTimer);releaseTimer=0}
+    };
+    const endInteraction=()=>{
+      if(!chartInteractingRef.current)return;
+      if(releaseTimer)window.clearTimeout(releaseTimer);
+      releaseTimer=window.setTimeout(()=>{
+        releaseTimer=0;
+        chartInteractingRef.current=0;
+        updateAwayFromNow();
+        sync();
+        const pending=pendingPayloadRef.current;
+        if(pending){pendingPayloadRef.current=null;setPayload(pending)}
+      },650);
+    };
+    goToNowRef.current=()=>{
+      manualViewportRef.current[viewportKey]=false;
+      delete savedViewportRef.current[viewportKey];
+      delete savedPriceScaleRef.current[viewportKey];
+      try{
+        priceScale.setAutoScale(true);
+        chart.timeScale().setVisibleLogicalRange({from:candles.length-(viewMode==="active"?effectiveFocusVisibleBars:accountStartupVisibleBars)-.5,to:latestTo});
+      }catch{/* disposed */}
+      setAwayFromNow(false);
+      sync();
+    };
     chart.timeScale().subscribeVisibleLogicalRangeChange(rememberViewport);
     let resizeFrame=0;
     const syncAfterResize=()=>{
@@ -1149,10 +1208,14 @@ export function PortfolioKoersChart({
     window.visualViewport?.addEventListener("resize",syncAfterResize,{passive:true});
     container.addEventListener("pointermove",rememberViewport,{passive:true});
     container.addEventListener("touchmove",rememberViewport,{passive:true});
-    container.addEventListener("pointerdown",markViewportManual,{passive:true});
-    container.addEventListener("touchstart",markViewportManual,{passive:true});
+    container.addEventListener("pointerdown",beginInteraction,{passive:true});
+    container.addEventListener("touchstart",beginInteraction,{passive:true});
     container.addEventListener("wheel",markViewportManual,{passive:true});
-    const defaultTo=candles.length-1+view.rightOffset;
+    window.addEventListener("pointerup",endInteraction,{passive:true});
+    window.addEventListener("pointercancel",endInteraction,{passive:true});
+    window.addEventListener("touchend",endInteraction,{passive:true});
+    window.addEventListener("touchcancel",endInteraction,{passive:true});
+    const defaultTo=latestTo;
     const savedViewport=savedViewportRef.current[viewportKey];
     // Build 566: restore the actual Build 518 cold-start viewport. Build 565
     // incorrectly clamped Accountwaarde to today's Amsterdam session, which
@@ -1160,22 +1223,37 @@ export function PortfolioKoersChart({
     // restart and simultaneously filter confirmed LONG/SHORT/TP markers out of
     // the visible range. Session scoping remains valid for Bollinger display
     // input only; it must never crop the chart timeline itself.
-    // Build 569: cold-start only on the latest uninterrupted real candle run.
-    // This removes misleading huge blank spans without inventing any OHLC bucket.
-    const accountDefaultFrom=Math.max(-.5,candles.length-accountStartupVisibleBars-.5);
+    // Build 635: cold-start shows the latest N candles at the 15m density for
+    // every timeframe (Build 569's contiguous-run crop made 4u start stretched).
+    const accountDefaultFrom=candles.length-accountStartupVisibleBars-.5;
     const initialRange=savedViewport
       ? (savedViewport.followLatest?{from:defaultTo-savedViewport.span,to:defaultTo}:{from:savedViewport.from,to:savedViewport.to})
       : {from:viewMode==="active"?candles.length-effectiveFocusVisibleBars-.5:accountDefaultFrom,to:defaultTo};
     viewportSyncGuardRef.current=true;
     chart.timeScale().setVisibleLogicalRange(initialRange);
-    requestAnimationFrame(()=>{viewportSyncGuardRef.current=false;sync()});
+    const savedPriceRange=savedPriceScaleRef.current[viewportKey];
+    if(savedPriceRange){
+      try{priceScale.setAutoScale(false);priceScale.setVisibleRange(savedPriceRange)}catch{/* keep auto scale */}
+    }
+    requestAnimationFrame(()=>{viewportSyncGuardRef.current=false;updateAwayFromNow();sync()});
     sync();
 
     return()=>{
+      // Keep a manual vertical zoom/pan for the rebuilt chart (45 s refresh).
+      try{
+        if(priceScale.options().autoScale===false){
+          const range=priceScale.getVisibleRange();
+          if(range&&Number.isFinite(Number(range.from))&&Number.isFinite(Number(range.to))&&Number(range.to)>Number(range.from))savedPriceScaleRef.current[viewportKey]={from:Number(range.from),to:Number(range.to)};
+        }else delete savedPriceScaleRef.current[viewportKey];
+      }catch{/* disposed */}
+      if(releaseTimer)window.clearTimeout(releaseTimer);
+      window.removeEventListener("pointerup",endInteraction);window.removeEventListener("pointercancel",endInteraction);
+      window.removeEventListener("touchend",endInteraction);window.removeEventListener("touchcancel",endInteraction);
+      goToNowRef.current=()=>{};
       resize.disconnect();if(resizeFrame)cancelAnimationFrame(resizeFrame);chart.timeScale().unsubscribeVisibleLogicalRangeChange(rememberViewport);
       window.removeEventListener("resize",syncAfterResize);window.visualViewport?.removeEventListener("resize",syncAfterResize);
       container.removeEventListener("pointermove",rememberViewport);container.removeEventListener("touchmove",rememberViewport);
-      container.removeEventListener("pointerdown",markViewportManual);container.removeEventListener("touchstart",markViewportManual);container.removeEventListener("wheel",markViewportManual);
+      container.removeEventListener("pointerdown",beginInteraction);container.removeEventListener("touchstart",beginInteraction);container.removeEventListener("wheel",markViewportManual);
       try{chart.unsubscribeCrosshairMove(onCrosshair);chart.remove()}catch{/* disposed */}
       if(chartRef.current===chart)chartRef.current=null;
       candleSeriesRef.current=null;bbRefs.current={upper:null,middle:null,lower:null};syncOverlaysRef.current=()=>{};setZoneBoundaries([]);setStructureOverlay(EMPTY_STRUCTURE_OVERLAY);setEventLabels([]);
@@ -1538,6 +1616,14 @@ export function PortfolioKoersChart({
           </button>
         </div>
       })}</div>
+      <button
+        type="button"
+        className={`portfolio-koers-now ${awayFromNow?"is-visible":""}`}
+        onClick={()=>goToNowRef.current()}
+        tabIndex={awayFromNow?0:-1}
+        aria-hidden={!awayFromNow}
+        aria-label="Terug naar de actuele koers"
+      ><span aria-hidden="true">⟶</span>Nu</button>
       {selectedTpCluster?<div className="portfolio-koers-tp-detail-shell" data-reference={PORTFOLIO_KOERS_UI41_DETAIL_REFERENCE}>
         {tpDetailConnectorStyle(selectedTpCluster)?<span className="portfolio-koers-tp-detail-leader" style={tpDetailConnectorStyle(selectedTpCluster)}/>:null}
         <section className="portfolio-koers-tp-detail" onDoubleClick={()=>setSelectedTpCluster(null)} aria-label={selectedTpCluster.tone==="tp"?"Take Profit details":"Entry-event details"}>
