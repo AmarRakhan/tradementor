@@ -1,4 +1,10 @@
-"""SHORT Recovery 2.0 — pure ladder arithmetic (no Firestore, no exchange, no orders).
+"""Hedge afbouwen (SHORT Recovery 2.0, both sides since build 623) — pure ladder arithmetic.
+
+Build 623 (Amar 23-10): the same ladder for both sides. ``direction="DOWN"`` (default) is the
+original case: a protected LONG with a SHORT hedge that is reduced while the price FALLS.
+``direction="UP"`` mirrors it: a protected SHORT with a LONG hedge reduced while the price RISES.
+In the functions below ``long_qty`` means the PROTECTED leg and ``short_qty`` the HEDGE leg.
+A step is only sold when it is profitable AFTER fees (open + close fee on the hedge entry).
 
 Model (per symbol = per position; the bot never holds two LONGs in one symbol):
 
@@ -29,6 +35,40 @@ DEFAULT_STEPS = 4
 DEFAULT_TOTAL_PCT = Decimal("8")
 MAX_STEPS = 100
 REOPEN_FRACTION = Decimal("0.9")
+DIRECTIONS = {"DOWN", "UP"}
+# Conservative taker fee per order (open and close), fraction of notional.
+DEFAULT_FEE_RATE = Decimal("0.0005")
+
+
+def _direction(value: Any) -> str:
+    text = str(value or "DOWN").upper()
+    if text not in DIRECTIONS:
+        raise ValueError("richting moet DOWN of UP zijn")
+    return text
+
+
+def hedge_side_for(protected_side: str) -> str:
+    return "SHORT" if str(protected_side).upper() == "LONG" else "LONG"
+
+
+def direction_for(protected_side: str) -> str:
+    """A protected LONG has a SHORT hedge that is reduced on a falling price; a protected SHORT the mirror."""
+    return "DOWN" if str(protected_side).upper() == "LONG" else "UP"
+
+
+def profitable_after_fees(*, direction: Any, hedge_entry: Any, price: Any,
+                          fee_rate: Any = DEFAULT_FEE_RATE) -> bool:
+    """True when closing the hedge at ``price`` beats its entry by more than open + close fees."""
+    try:
+        entry = Decimal(str(hedge_entry))
+        mark = Decimal(str(price))
+        rate = Decimal(str(fee_rate))
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+    if not (entry.is_finite() and mark.is_finite() and rate.is_finite()) or entry <= 0 or mark <= 0:
+        return False
+    gross = entry - mark if _direction(direction) == "DOWN" else mark - entry
+    return gross - (entry + mark) * rate > 0
 
 
 def _dec(value: Any, name: str) -> Decimal:
@@ -75,38 +115,42 @@ def normalize_settings(raw: Mapping[str, Any] | None) -> dict[str, Any]:
             "stepPct": _text((total / Decimal(steps)).quantize(Decimal("1e-8")))}
 
 
-def step_price(anchor: Any, k: int, n: int, total_pct: Any) -> Decimal:
-    """Level of step k: anchor * (1 - total * k / n / 100), always from the same anchor."""
+def step_price(anchor: Any, k: int, n: int, total_pct: Any, direction: Any = "DOWN") -> Decimal:
+    """Level of step k: anchor * (1 -/+ total * k / n / 100), always from the same anchor."""
     a = _dec(anchor, "anker")
     if a <= 0:
         raise ValueError("anker moet positief zijn")
-    return a * (Decimal(1) - _dec(total_pct, "totale daling") * Decimal(k) / Decimal(n) / Decimal(100))
+    move = _dec(total_pct, "totale daling") * Decimal(k) / Decimal(n) / Decimal(100)
+    return a * (Decimal(1) + move if _direction(direction) == "UP" else Decimal(1) - move)
 
 
-def ladder(anchor: Any, settings: Mapping[str, Any]) -> list[dict[str, Any]]:
+def ladder(anchor: Any, settings: Mapping[str, Any], direction: Any = "DOWN") -> list[dict[str, Any]]:
     cfg = normalize_settings(settings)
     n = cfg["steps"]
     return [
         {
             "step": k,
-            "price": step_price(anchor, k, n, cfg["totalPct"]),
+            "price": step_price(anchor, k, n, cfg["totalPct"], direction),
             "remainingFraction": Decimal(n - k) / Decimal(n),
         }
         for k in range(1, n + 1)
     ]
 
 
-def steps_reached(anchor: Any, mark: Any, settings: Mapping[str, Any], previous: int = 0) -> int:
+def steps_reached(anchor: Any, mark: Any, settings: Mapping[str, Any], previous: int = 0,
+                  direction: Any = "DOWN") -> int:
     """Highest step whose level the mark has touched; never lower than ``previous``."""
     cfg = normalize_settings(settings)
     n = cfg["steps"]
+    up = _direction(direction) == "UP"
     price = _dec(mark, "koers")
     prior = max(0, min(n, int(previous or 0)))
     if price <= 0:
         return prior
     reached = 0
     for k in range(1, n + 1):
-        if price <= step_price(anchor, k, n, cfg["totalPct"]):
+        level = step_price(anchor, k, n, cfg["totalPct"], direction)
+        if (price >= level) if up else (price <= level):
             reached = k
         else:
             break
@@ -152,14 +196,21 @@ def plan(
     min_qty: Any = 0,
     min_notional: Any = 0,
     reopen_basis_qty: Any = None,
+    direction: Any = "DOWN",
+    hedge_entry: Any = None,
+    fee_rate: Any = DEFAULT_FEE_RATE,
 ) -> dict[str, Any]:
-    """Decide the next Recovery action for one symbol. Never returns an order to OPEN beyond the LONG."""
+    """Decide the next action for one symbol. Never returns an order to OPEN beyond the protected leg.
+
+    ``hedge_entry`` (average entry of the hedge leg) enables the after-fees guard: a step that would
+    not be profitable after open + close fees waits (target unchanged) until the price is further.
+    """
     cfg = normalize_settings(settings)
     n = cfg["steps"]
     long_q = max(Decimal(0), _dec(long_qty, "LONG"))
     short_q = max(Decimal(0), _dec(short_qty, "SHORT"))
     price = _dec(mark, "koers")
-    k = steps_reached(anchor, price, cfg, previous_steps)
+    k = steps_reached(anchor, price, cfg, previous_steps, direction)
     target = desired_short(long_q, base, k, n, qty_step)
     result: dict[str, Any] = {
         "stepsReached": k,
@@ -169,8 +220,9 @@ def plan(
         "shortQty": short_q,
     }
     if short_q > long_q:
-        # Over-hedged pair: the normal Auto Hedge REDUCE handles this; Recovery adds nothing.
-        result.update(action="HOLD", reason="OVER_HEDGED_LEFT_TO_AUTO_HEDGE", quantity=Decimal(0))
+        # Over-covered pair: never sold to straighten it (build 623 vangnet); nothing changes.
+        result.update(action="HOLD", reason="OVER_HEDGED_LEFT_TO_AUTO_HEDGE", quantity=Decimal(0),
+                      targetShort=short_q)
         return result
     gap = short_q - target
     step = _dec(qty_step, "stapgrootte")
@@ -183,6 +235,12 @@ def plan(
         )
         return result
     qty = _floor(gap, step)
+    if hedge_entry is not None and not profitable_after_fees(
+            direction=direction, hedge_entry=hedge_entry, price=price, fee_rate=fee_rate):
+        # Amar 23-10: never sell a step that is not profitable after fees; wait for a better price.
+        result.update(action="HOLD", reason="STEP_WAIT_PROFIT_AFTER_FEES", quantity=Decimal(0),
+                      targetShort=short_q)
+        return result
     too_small = _below_minimum(qty, price, min_qty, min_notional)
     if too_small:
         if k >= n:

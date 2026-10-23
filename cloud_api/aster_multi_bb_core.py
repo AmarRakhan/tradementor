@@ -7,8 +7,8 @@ from typing import Any
 import copy, hashlib, math, time
 
 from aster_close_guard import CloseEvidence, AsterCloseBlocked
-from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed
-from short_recovery_pair_exit import long_tp_gate
+from aster_position_loss_auto_hedge_lock import AutoHedgeCloseBlocked, auto_hedge_symbol_managed, one_position_per_coin_active
+from short_recovery_pair_exit import pair_tp_gate
 from aster_bollinger_entry_filter import BollingerEntryRejected, DEFAULT_TIMEFRAME, normalize_bollinger_timeframe, require_bollinger_entry
 from aster_extreme_spike_filter import SpikeFilterRejected, require_extreme_spike_entry, spike_event_key, claim_spike_entry_once
 from aster_execution import NewPositionLeverageBlocked, PairExecutionPlan, is_definite_contract_rejection, plan_pair
@@ -1233,11 +1233,12 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                 tp_due = spike_tp.close and not asym["blockLongTp"] and not asym["disableShortTp"]
                 tp_price = mark
                 actions.append({"kind": "SPIKE_TP_CHECK", "symbol": symbol, "side": side, **spike_tp.public_dict()})
-        if tp_due and side == "LONG":
-            # SHORT Recovery 2.0: a recovery-managed pair with an open SHORT exits LONG+SHORT together and
-            # only when net positive. Legacy pairs are ALLOW (unchanged behaviour).
-            short_row = pmap.get(f"{symbol}|SHORT") or {}
-            verdict, why = long_tp_gate(account_uid=uid, symbol=symbol, short_qty=abs(_f(short_row.get("positionAmt"))))
+        if tp_due:
+            # Build 623 (Amar 23-10): on every Auto Hedge pair a TP (LONG or SHORT) closes both legs together
+            # and only when net positive. Symbols without an Auto Hedge pair are ALLOW (unchanged behaviour).
+            opposite_row = pmap.get(f"{symbol}|{'SHORT' if side == 'LONG' else 'LONG'}") or {}
+            verdict, why = pair_tp_gate(account_uid=uid, symbol=symbol, side=side,
+                                        opposite_qty=abs(_f(opposite_row.get("positionAmt"))))
             if verdict != "ALLOW":
                 actions.append({"kind": "TP_WAIT_JOINT_EXIT", "symbol": symbol, "side": side, "reason": why})
                 continue
@@ -1882,6 +1883,21 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         if short_requires_long_gate and side == "SHORT" and f"{symbol}|LONG" not in active:
             actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": "SHORT", "reason": "SHORT_REQUIRES_LONG", "stage": "final_side"})
             continue
+
+        if one_position_per_coin_active(uid):
+            # Build 623 (Amar 23-10): with Auto Hedge ON a coin holds ONE own position. If the coin already
+            # has a position (either side) or an Auto Hedge pair (also in Recovery), no new entry opens on
+            # it: the other side is only ever the hedge. Adding on the same side (DCA) is a separate path.
+            opposite_key = f"{symbol}|{'SHORT' if side == 'LONG' else 'LONG'}"
+            try:
+                coin_managed = auto_hedge_symbol_managed(account_uid=uid, symbol=symbol)
+            except Exception:
+                coin_managed = True
+            if opposite_key in active or opposite_key in pmap or coin_managed or settings.asymmetric_hedge_enabled:
+                actions.append({"kind": "ENTRY_SKIP", "symbol": symbol, "side": side, "stage": "final_side",
+                                "reason": "ASYMMETRIC_HEDGE_CONFLICTS_WITH_AUTO_HEDGE" if settings.asymmetric_hedge_enabled
+                                else "ONE_POSITION_PER_COIN_AUTO_HEDGE"})
+                continue
 
         paired = bool(settings.asymmetric_hedge_enabled)
         # Re-read full Aster truth immediately before any NEW initial exposure.

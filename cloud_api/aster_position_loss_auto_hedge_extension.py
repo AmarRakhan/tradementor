@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import os
 import re
 import threading
+import time
 from typing import Any
 
 from fastapi import Depends, HTTPException, Response
@@ -27,13 +28,29 @@ from aster_position_loss_auto_hedge import (
 )
 from aster_gateway import ContractRules
 from short_recovery_runtime import decide as short_recovery_decide
+from short_recovery_ladder import direction_for as short_recovery_direction
 from short_recovery_ladder import normalize_settings as normalize_short_recovery_settings
 import short_recovery_pair_exit
+from aster_position_loss_auto_hedge_lock import configure_auto_hedge_enabled_reader
 
 WORKER_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER", "true").lower() == "true"
 EXECUTION_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED", "false").lower() == "true"
-# SHORT Recovery 2.0: OFF = shadow only (decisions recorded, no target change, no orders).
-SHORT_RECOVERY_EXECUTION_ENABLED = os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "false").lower() == "true"
+# SHORT Recovery 2.0: real orders by default (besluit Amar 23-10 02:00: echt, voor iedereen gelijk).
+# Each user still switches SHORT afbouwen ON/OFF on their own account. Emergency stop: set the env to
+# "false" -> shadow only (decisions recorded, no target change, no orders) for everyone.
+SHORT_RECOVERY_EXECUTION_ENABLED = os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "true").lower() == "true"
+HEDGE_MODE_REQUIRED_MESSAGE = (
+    "Auto Hedge vereist Hedge Mode op je Aster-account. Je account staat nu op One-way mode. "
+    "Zet in Aster de positiemodus op Hedge Mode (dat kan alleen zonder open posities en open orders) "
+    "en probeer het daarna opnieuw. Er is niets gewijzigd."
+)
+HEDGE_MODE_UNKNOWN_MESSAGE = (
+    "De positiemodus van je Aster-account kon niet worden gecontroleerd. Er is niets gewijzigd; "
+    "probeer het over enkele seconden opnieuw."
+)
+HEDGE_MODE_CACHE_SECONDS = 300.0
+_hedge_mode_ok_at: dict[str, float] = {}
+_hedge_mode_lock = threading.Lock()
 WORKER_INTERVAL = max(1.0, float(os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_INTERVAL_SECONDS", "3")))
 _worker_stop = threading.Event()
 _worker_thread: threading.Thread | None = None
@@ -46,7 +63,10 @@ SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,36}USDT$")
 
 class AutoHedgeSettingsRequest(BaseModel):
     enabled: bool
+    # thresholdUsd = loss threshold for a LONG position (historic field name, kept for old clients);
+    # thresholdShortUsd = loss threshold for a SHORT position (build 623). None = keep the stored value.
     thresholdUsd: float = Field(default=DEFAULT_THRESHOLD_USD, ge=0.01, le=100_000)
+    thresholdShortUsd: float | None = Field(default=None, ge=0.01, le=100_000)
     confirmDisable: bool = False
     clientBuild: str = Field(default="", max_length=32)
     clientSource: str = Field(default="", max_length=64)
@@ -82,11 +102,27 @@ def _current(uid: str) -> dict[str, Any]:
         threshold = normalize_threshold(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD))
     except ValueError:
         threshold = DEFAULT_THRESHOLD_USD
+    try:
+        threshold_short = normalize_threshold(row.get("thresholdShortUsd", DEFAULT_THRESHOLD_USD))
+    except ValueError:
+        threshold_short = DEFAULT_THRESHOLD_USD
     return {
         **row,
         "enabled": row.get("enabled") is True,
         "thresholdUsd": threshold,
+        "thresholdShortUsd": threshold_short,
     }
+
+
+def _thresholds_by_side(settings: dict[str, Any]) -> dict[str, float]:
+    """Build 623: a LONG position triggers at -thresholdUsd, a SHORT position at -thresholdShortUsd."""
+    return {"LONG": float(settings["thresholdUsd"]), "SHORT": float(settings.get("thresholdShortUsd", DEFAULT_THRESHOLD_USD))}
+
+
+def _plan_field(protected_side: str) -> str:
+    """Settings per side: a protected LONG reduces its SHORT hedge (shortRecoveryPlan, historic name);
+    a protected SHORT reduces its LONG hedge (longRecoveryPlan)."""
+    return "shortRecoveryPlan" if str(protected_side).upper() == "LONG" else "longRecoveryPlan"
 
 
 def _pair_states(uid: str) -> dict[str, dict[str, Any]]:
@@ -140,6 +176,8 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         "legacyHedgeRecoveryAvailable": main._release_feature_enabled_for_uid(uid, "legacy_hedge_recovery"),
         "enabled": enabled,
         "thresholdUsd": float(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD)),
+        "thresholdLongUsd": float(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD)),
+        "thresholdShortUsd": float(row.get("thresholdShortUsd", DEFAULT_THRESHOLD_USD)),
         "workerEnabled": WORKER_ENABLED,
         "executionEnabled": EXECUTION_ENABLED,
         "operational": operational,
@@ -155,14 +193,15 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         "comparison": "openPnl <= -thresholdUsd",
         "targetInvariant": "ABS(LONG_QTY)==ABS(SHORT_QTY)",
         "shortRecoveryPlan": _public_short_recovery(row),
+        "longRecoveryPlan": _public_short_recovery(row, "longRecoveryPlan"),
         "shortRecoveryExecutionEnabled": SHORT_RECOVERY_EXECUTION_ENABLED,
         "referenceId": "file_00000000ecd08246bd1b15532fb478d6",
     })
 
 
-def _public_short_recovery(row: dict[str, Any]) -> dict[str, Any]:
+def _public_short_recovery(row: dict[str, Any], field: str = "shortRecoveryPlan") -> dict[str, Any]:
     try:
-        return normalize_short_recovery_settings(row.get("shortRecoveryPlan") if isinstance(row.get("shortRecoveryPlan"), dict) else {})
+        return normalize_short_recovery_settings(row.get(field) if isinstance(row.get(field), dict) else {})
     except ValueError:
         return normalize_short_recovery_settings({})
 
@@ -190,11 +229,44 @@ def _audit_global_setting_change(
         "requestedEnabled": bool(requested_enabled),
         "confirmDisable": bool(request.confirmDisable),
         "thresholdUsd": float(request.thresholdUsd),
+        "thresholdShortUsd": None if request.thresholdShortUsd is None else float(request.thresholdShortUsd),
         "clientBuild": str(request.clientBuild or "")[:32],
         "clientSource": str(request.clientSource or "")[:64],
         "sourceRoute": source_route,
         "result": result,
     })
+
+
+def _hedge_mode_ok(uid: str, client: Any = None) -> bool:
+    """True only when Aster confirms Hedge Mode (dualSidePosition). Errors propagate (fail closed).
+
+    A confirmed Hedge Mode is cached briefly (Aster only allows switching without open positions/orders);
+    a One-way answer is never cached, so switching to Hedge Mode works on the next try.
+    """
+    now = time.monotonic()
+    with _hedge_mode_lock:
+        stamp = _hedge_mode_ok_at.get(uid)
+    if stamp is not None and now - stamp < HEDGE_MODE_CACHE_SECONDS:
+        return True
+    ok = bool((client or _client(uid, live=False)).position_mode())
+    with _hedge_mode_lock:
+        if ok:
+            _hedge_mode_ok_at[uid] = now
+        else:
+            _hedge_mode_ok_at.pop(uid, None)
+    return ok
+
+
+def _require_hedge_mode(uid: str) -> None:
+    """Clean user-facing refusal before switching on anything that can place hedge orders."""
+    try:
+        ok = _hedge_mode_ok(uid)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, HEDGE_MODE_UNKNOWN_MESSAGE) from exc
+    if not ok:
+        raise HTTPException(409, HEDGE_MODE_REQUIRED_MESSAGE)
 
 
 def _client(uid: str, *, live: bool):
@@ -335,21 +407,24 @@ def _force_rehedge_cycle(
 ) -> dict[str, Any] | None:
     """Re-Hedge All: start the SAME new cycle the threshold path starts, but without waiting for a loss.
 
-    Only a surviving LONG gets a SHORT hedge. The hedge size is NOT decided here: the existing engine
-    (reconcile_auto_hedge) tops the SHORT up to exactly the live LONG quantity, counting the current SHORT and
-    pending SHORT orders, flooring to the contract step and never exceeding the LONG. Returns None to skip.
+    Build 623: the surviving leg (LONG or SHORT) gets a 1:1 hedge on the other side. The hedge size is NOT
+    decided here: the existing engine (reconcile_auto_hedge) tops the hedge up to exactly the live protected
+    quantity, counting the current hedge and pending orders, flooring to the contract step and never exceeding
+    the protected leg. Afbouwen of the new cycle counts from the price at this moment. Returns None to skip.
+    (Field names longQty/shortQty* are kept for the UI: they mean protected leg / hedge leg.)
     """
     mark = float(remaining.get("markPrice") or remaining.get("entryPrice") or 0)
-    base = {"symbol": symbol, "markPrice": mark, "longQty": position_quantity(remaining)}
+    base = {"symbol": symbol, "markPrice": mark, "longQty": position_quantity(remaining),
+            "protectedSide": remaining_side, "hedgeSide": _opposite(remaining_side)}
     if status not in REHEDGEABLE_STATUSES:
         results[symbol] = {**base, "result": "SKIPPED", "reason": "MANUAL_RELEASE_NOT_CONFIRMED"}
         return None
-    if remaining_side != "LONG":
-        results[symbol] = {**base, "result": "SKIPPED", "reason": "SURVIVOR_IS_SHORT"}
+    if remaining_side not in {"LONG", "SHORT"}:
+        results[symbol] = {**base, "result": "SKIPPED", "reason": "POSITION_UNREADABLE"}
         return None
     action = next((a for a in evaluate_auto_hedge(
         positions, threshold, open_orders=open_orders,
-        protected_sides={symbol: "LONG"}, skip_symbols=set(),
+        protected_sides={symbol: remaining_side}, skip_symbols=set(),
     ) if a.symbol == symbol), None)
     if action is None:
         results[symbol] = {**base, "result": "SKIPPED", "reason": "POSITION_UNREADABLE"}
@@ -360,11 +435,15 @@ def _force_rehedge_cycle(
         "pendingShortCloseQty": action.pending_close_qty,
         "missingShortQty": max(0.0, action.delta_qty),
     })
-    if action.delta_qty < 0:
+    if action.delta_qty < 0 or action.status == "OVER_COVERED" or action.effective_hedge_qty > action.protected_qty + 1e-12:
         # Already over-hedged: this button never opens or reduces anything for such a pair.
         results[symbol] = {**base, "result": "SKIPPED", "reason": "OVER_HEDGED"}
         return None
-    new_state = {**_new_cycle_state(action, state, threshold), "triggerReason": "USER_REHEDGE_ALL"}
+    new_state = {**_new_cycle_state(action, state, threshold), "triggerReason": "USER_REHEDGE_ALL",
+                 "pairExit": None, "pairExitRequestedAt": None}
+    # Amar 23-10: after Re-Hedge All the afbouw counts from the price at the moment of pressing.
+    new_state["shortRecovery"] = {"phase": "REFILL", "anchorAtMark": True, "generationId": new_state["generationId"],
+                                  "lastEvent": "REHEDGE_ALL", "lastTarget": str(action.protected_qty)}
     if execute:
         _pair_doc(uid, symbol).set(new_state, merge=True)
         _audit(uid, {
@@ -372,8 +451,8 @@ def _force_rehedge_cycle(
             "symbol": symbol,
             "pairCycleId": new_state["generationId"],
             "previousStatus": status,
-            "protectedSide": "LONG",
-            "hedgeSide": "SHORT",
+            "protectedSide": remaining_side,
+            "hedgeSide": _opposite(remaining_side),
             "protectedQty": action.protected_qty,
             "hedgeQtyBefore": action.existing_hedge_qty,
             "pendingOpenQty": action.pending_open_qty,
@@ -382,6 +461,112 @@ def _force_rehedge_cycle(
         })
     results[symbol] = {**base, "result": "STARTED", "reason": "USER_REHEDGE_ALL", "generationId": new_state["generationId"]}
     return new_state
+
+
+def _force_rehedge_active(
+    *, uid: str, symbol: str, state: dict[str, Any], pmap: dict[tuple[str, str], dict[str, Any]],
+    open_orders: list[dict[str, Any]], execute: bool, results: dict[str, dict[str, Any]],
+) -> None:
+    """Re-Hedge All on a pair that is still in its cycle but partly reduced (halfway the afbouw).
+
+    Amar 23-10: Re-Hedge All puts EVERYTHING back to 100%. The afbouw record goes to REFILL with
+    anchorAtMark: this tick the engine tops the hedge up to exactly the protected leg (no target), and the
+    next cycle starts at the price of that moment. Updates ``state`` in place for the current tick.
+    """
+    protected_side = str(state.get("protectedSide", "")).upper()
+    hedge_side = _opposite(protected_side)
+    protected = pmap.get((symbol, protected_side)) or {}
+    hedge = pmap.get((symbol, hedge_side)) or {}
+    protected_qty, hedge_qty = position_quantity(protected), position_quantity(hedge)
+    mark = float(protected.get("markPrice") or protected.get("entryPrice") or 0)
+    base = {"symbol": symbol, "markPrice": mark, "longQty": protected_qty, "shortQtyBefore": hedge_qty,
+            "protectedSide": protected_side, "hedgeSide": hedge_side}
+    if hedge_qty > protected_qty + 1e-12:
+        results[symbol] = {**base, "result": "SKIPPED", "reason": "OVER_HEDGED"}
+        return
+    if hedge_qty + 1e-12 >= protected_qty:
+        results[symbol] = {**base, "result": "SKIPPED", "reason": "ALREADY_FULLY_HEDGED"}
+        return
+    record = {"phase": "REFILL", "anchorAtMark": True, "generationId": str(state.get("generationId") or ""),
+              "cycleId": (state.get("shortRecovery") or {}).get("cycleId") if isinstance(state.get("shortRecovery"), dict) else None,
+              "lastEvent": "REHEDGE_ALL", "lastTarget": str(protected_qty)}
+    state["shortRecovery"] = record
+    state["pairExit"] = None
+    if execute:
+        _pair_doc(uid, symbol).set({"shortRecovery": record, "pairExit": None, "pairExitRequestedAt": None,
+                                    "triggerReason": "USER_REHEDGE_ALL"}, merge=True)
+        _audit(uid, {"eventType": "REHEDGE_ALL_MID_LADDER", "symbol": symbol, "protectedSide": protected_side,
+                     "protectedQty": protected_qty, "hedgeQtyBefore": hedge_qty, "reason": "USER_REHEDGE_ALL"})
+    results[symbol] = {**base, "result": "STARTED", "reason": "USER_REHEDGE_ALL",
+                       "missingShortQty": max(0.0, protected_qty - hedge_qty),
+                       "generationId": str(state.get("generationId") or "")}
+
+
+def _transition_closed_outside_app(
+    uid: str,
+    state: dict[str, Any],
+    pmap: dict[tuple[str, str], dict[str, Any]],
+    open_orders: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Vangnet (Amar 23-10): a leg made smaller OUTSIDE the app (e.g. on the Aster website) -> RECOVERY.
+
+    The in-app manual close already goes to RECOVERY. Without this, the engine would see the gap and
+    "straighten" the pair itself. Now nothing is bought or sold until the user presses Re-Hedge All.
+    Same convention as the in-app close: the reduced leg becomes protectedSide, the other leg hedgeSide
+    (the side Re-Hedge All protects). Only for a settled HEDGED pair without open orders on the symbol.
+    """
+    if str(state.get("status", "")).upper() != "HEDGED" or isinstance(state.get("pairExit"), dict):
+        return state
+    symbol = str(state.get("symbol", "")).upper()
+    protected_side = str(state.get("protectedSide", "")).upper()
+    hedge_side = str(state.get("hedgeSide", _opposite(protected_side))).upper()
+    stored_protected = float(state.get("currentProtectedQty") or 0)
+    stored_hedge = float(state.get("currentHedgeQty") or 0)
+    if stored_protected <= 0:
+        return state
+    if any(isinstance(o, dict) and str(o.get("symbol", "")).upper() == symbol
+           and str(o.get("status", "NEW")).upper() not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
+           for o in open_orders or []):
+        return state
+    protected = pmap.get((symbol, protected_side))
+    hedge = pmap.get((symbol, hedge_side))
+    protected_qty, hedge_qty = position_quantity(protected), position_quantity(hedge)
+    tolerance = max(1e-9, 1e-6 * max(stored_protected, stored_hedge, 1.0))
+    if protected_qty + tolerance < stored_protected:
+        closed_side, survivor_side, reason = protected_side, hedge_side, "PROTECTED_REDUCED_OUTSIDE_APP"
+    elif stored_hedge > 0 and hedge_qty + tolerance < stored_hedge:
+        closed_side, survivor_side, reason = hedge_side, protected_side, "HEDGE_REDUCED_OUTSIDE_APP"
+    else:
+        return state
+    now = datetime.now(timezone.utc)
+    survivor = protected if survivor_side == protected_side else hedge
+    closed = hedge if survivor_side == protected_side else protected
+    next_state = {
+        **state,
+        "status": "RECOVERY",
+        "protectedSide": closed_side,
+        "hedgeSide": survivor_side,
+        "reservedHedgeQty": 0.0,
+        "normalFreeQty": position_quantity(survivor),
+        "rehedgeEnabled": False,
+        "recoveryAt": now,
+        "currentProtectedQty": position_quantity(closed),
+        "currentHedgeQty": position_quantity(survivor),
+        "protectedLeg": _leg_view(closed) if closed else None,
+        "hedgeLeg": _leg_view(survivor) if survivor else None,
+        "lastReason": reason,
+        "updatedAt": now,
+    }
+    _pair_doc(uid, symbol).set(next_state, merge=True)
+    _audit(uid, {
+        "symbol": symbol,
+        "pairCycleId": str(state.get("generationId", "")),
+        "resultingStatus": "RECOVERY",
+        "reason": reason,
+        "protectedQtyBefore": stored_protected, "protectedQtyAfter": protected_qty,
+        "hedgeQtyBefore": stored_hedge, "hedgeQtyAfter": hedge_qty,
+    })
+    return next_state
 
 
 def _prepare_lifecycle(
@@ -396,6 +581,7 @@ def _prepare_lifecycle(
     force_results: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, str], set[str], dict[str, dict[str, Any]], list[dict[str, Any]]]:
     threshold = float(settings["thresholdUsd"])
+    thresholds = _thresholds_by_side(settings)
     # Re-Hedge All: user-chosen Recovery pairs start a new exact 1:1 cycle NOW, without the loss threshold.
     force = {str(item).upper() for item in (force_rehedge_symbols or set())}
     if force_results is None:
@@ -412,9 +598,18 @@ def _prepare_lifecycle(
         if status in ACTIVE_STATUSES:
             state = _transition_missing_protected(uid, state, pmap) if execute else state
             status = str(state.get("status", "")).upper()
+            if status in ACTIVE_STATUSES and execute and symbol not in force:
+                state = _transition_closed_outside_app(uid, state, pmap, open_orders)
+                status = str(state.get("status", "")).upper()
             if status in ACTIVE_STATUSES:
                 side = str(state.get("protectedSide", "")).upper()
                 if side in {"LONG", "SHORT"} and pmap.get((symbol, side)):
+                    if symbol in force:
+                        _force_rehedge_active(
+                            uid=uid, symbol=symbol, state=state, pmap=pmap, open_orders=open_orders,
+                            execute=execute, results=force_results,
+                        )
+                    states[symbol] = state   # this tick works on the updated state (also after a transition)
                     active[symbol] = side
                     continue
         if status in RECOVERY_STATUSES:
@@ -441,19 +636,19 @@ def _prepare_lifecycle(
                 )
                 if new_state is not None:
                     states[symbol] = new_state
-                    active[symbol] = "LONG"
+                    active[symbol] = remaining_side
                     created.append(new_state)
                     continue
             if state.get("rehedgeEnabled") is True and allow_new_triggers:
-                if position_open_pnl(remaining) <= -threshold:
+                if position_open_pnl(remaining) <= -thresholds.get(remaining_side, threshold):
                     synthetic = evaluate_auto_hedge(
                         positions, threshold, open_orders=open_orders,
                         protected_sides={symbol: remaining_side},
-                        skip_symbols=set(),
+                        skip_symbols=set(), thresholds_by_side=thresholds,
                     )
                     action = next((a for a in synthetic if a.symbol == symbol), None)
                     if action:
-                        new_state = _new_cycle_state(action, state, threshold)
+                        new_state = _new_cycle_state(action, state, action.threshold_usd)
                         if execute:
                             _pair_doc(uid, symbol).set(new_state, merge=True)
                         states[symbol] = new_state
@@ -476,13 +671,13 @@ def _prepare_lifecycle(
     if settings.get("enabled") is True and allow_new_triggers:
         candidates = evaluate_auto_hedge(
             positions, threshold, open_orders=open_orders,
-            protected_sides=None, skip_symbols=skip | set(active),
+            protected_sides=None, skip_symbols=skip | set(active), thresholds_by_side=thresholds,
         )
         for action in candidates:
             if action.symbol in active:
                 continue
             prior = states.get(action.symbol)
-            new_state = _new_cycle_state(action, prior, threshold)
+            new_state = _new_cycle_state(action, prior, action.threshold_usd)
             if execute:
                 _pair_doc(uid, action.symbol).set(new_state, merge=True)
             states[action.symbol] = new_state
@@ -624,68 +819,159 @@ def _as_utc(value: Any) -> datetime | None:
     return None
 
 
-def _short_recovery_pair_exit(
-    *, uid: str, symbol: str, state: dict[str, Any], prior: dict[str, Any] | None,
-    long_row: dict[str, Any], short_row: dict[str, Any], mark: Any, client: Any,
-    now: datetime, generation: str,
-) -> tuple[dict[str, Any] | None, Any, str] | None:
-    """Joint LONG+SHORT exit at LONG TP (net positive only). Returns None when not involved.
-
-    Only the SHORT is touched here (target 0 through the existing engine); the LONG is closed by
-    the Multi-BB TP path once it sees PAIR_EXIT with a flat SHORT.
-    """
-    if not prior:
-        return None
-    long_qty = position_quantity(long_row)
-    short_qty = position_quantity(short_row)
-    if prior.get("phase") == "PAIR_EXIT":
-        if long_qty <= 0:
-            return None  # decide() clears the record (NO_LONG)
-        started = _as_utc(prior.get("exitStartedAt")) or now
-        if short_qty <= 0 and (now - started).total_seconds() > PAIR_EXIT_MAX_SECONDS:
-            # LONG was not closed in time (TP no longer due): re-hedge 1:1 instead of leaving it open.
-            record = {**prior, "phase": "REFILL", "lastEvent": "JOINT_EXIT_EXPIRED_REHEDGE", "evaluatedAt": now,
-                      "lastTarget": str(long_qty)}
-            return record, None, "JOINT_EXIT_EXPIRED_REHEDGE"
-        record = {**prior, "lastTarget": "0", "evaluatedAt": now,
-                  "lastEvent": "JOINT_EXIT_SHORT_FLAT_WAIT_LONG_TP" if short_qty <= 0 else "JOINT_EXIT_CLOSING_SHORT"}
-        return record, 0, record["lastEvent"]
-    requested = _as_utc(state.get("pairExitRequestedAt"))
-    if requested is None or (now - requested).total_seconds() > PAIR_EXIT_REQUEST_MAX_AGE_SECONDS:
-        return None
-    if long_qty <= 0 or short_qty <= 0:
-        return None
-    since = _as_utc(prior.get("hedgeSince")) or _as_utc(state.get("triggerAt"))
+def _joint_exit_net(*, symbol: str, legs: tuple[dict[str, Any], dict[str, Any]], since: datetime | None,
+                    mark: Any, client: Any) -> dict[str, Any]:
+    """Net result of closing BOTH legs now: open PnL both legs - closing fees - PAID funding since the hedge."""
     funding = (short_recovery_pair_exit.paid_funding(client, symbol=symbol, start_ms=int(since.timestamp() * 1000))
                if since else None)
     price = float(mark or 0)
-    verdict = short_recovery_pair_exit.net_exit(
-        long_pnl=position_open_pnl(long_row), short_pnl=position_open_pnl(short_row),
-        long_notional=long_qty * price, short_notional=short_qty * price, funding_paid=funding,
+    first, second = legs
+    return short_recovery_pair_exit.net_exit(
+        long_pnl=position_open_pnl(first), short_pnl=position_open_pnl(second),
+        long_notional=position_quantity(first) * price, short_notional=position_quantity(second) * price,
+        funding_paid=funding,
     )
+
+
+def _fresh_exit_request(state: dict[str, Any], now: datetime) -> str | None:
+    """The TP side that asked for a joint exit within the request window, else None."""
+    requested = _as_utc(state.get("pairExitRequestedAt"))
+    if requested is None or (now - requested).total_seconds() > PAIR_EXIT_REQUEST_MAX_AGE_SECONDS:
+        return None
+    side = str(state.get("pairExitRequestedSide") or state.get("protectedSide") or "").upper()
+    return side if side in {"LONG", "SHORT"} else None
+
+
+def _active_joint_exit(
+    *, uid: str, symbol: str, state: dict[str, Any], protected_row: dict[str, Any],
+    hedge_row: dict[str, Any], mark: Any, client: Any, now: datetime, field: str,
+) -> tuple[Any, str] | None:
+    """Joint exit at TP of the PROTECTED leg (LONG or SHORT), only when net positive (build 623).
+
+    Returns (hedge target, event) while this symbol is exiting, else None. Only the hedge leg is touched
+    here (target 0 through the existing engine); the TP leg is closed by the Multi-BB TP path once the
+    hedge is flat. Applies to every Auto Hedge pair, hedge afbouwen ON or OFF.
+    """
+    protected_qty = position_quantity(protected_row)
+    hedge_qty = position_quantity(hedge_row)
+    exiting = state.get("pairExit") if isinstance(state.get("pairExit"), dict) else None
+    if exiting:
+        if protected_qty <= 0:
+            return None  # TP leg closed: the lifecycle moves the pair to CLOSED/RECOVERY
+        started = _as_utc(exiting.get("startedAt")) or now
+        if hedge_qty <= 0 and (now - started).total_seconds() > PAIR_EXIT_MAX_SECONDS:
+            # TP was no longer due: hedge 1:1 again instead of leaving the protected leg open.
+            update: dict[str, Any] = {"pairExit": None, "pairExitRequestedAt": None}
+            record = state.get(field) if isinstance(state.get(field), dict) else None
+            if record:
+                update[field] = {**record, "phase": "REFILL", "lastEvent": "JOINT_EXIT_EXPIRED_REHEDGE",
+                                 "evaluatedAt": now, "lastTarget": str(protected_qty)}
+            _pair_doc(uid, symbol).set(update, merge=True)
+            _audit(uid, {"eventType": "JOINT_EXIT_EXPIRED_REHEDGE", "symbol": symbol})
+            return None, "JOINT_EXIT_EXPIRED_REHEDGE"
+        return 0, "JOINT_EXIT_HEDGE_FLAT_WAIT_TP" if hedge_qty <= 0 else "JOINT_EXIT_CLOSING_HEDGE"
+    tp_side = _fresh_exit_request(state, now)
+    protected_side = str(state.get("protectedSide") or "").upper()
+    if tp_side is None or tp_side != protected_side or protected_qty <= 0 or hedge_qty <= 0:
+        return None
+    record = state.get(field) if isinstance(state.get(field), dict) else {}
+    since = _as_utc(state.get("triggerAt")) or _as_utc(record.get("hedgeSince")) or _as_utc(state.get("createdAt"))
+    verdict = _joint_exit_net(symbol=symbol, legs=(protected_row, hedge_row), since=since, mark=mark, client=client)
     if not verdict["allowed"]:
-        # Evaluate a request once: Multi-BB asks again on its next tick (avoids an income read every 3 s).
+        # Evaluate a request once: Multi-BB asks again on its next TP tick (no income read every 3 s).
         _pair_doc(uid, symbol).set({"pairExitRequestedAt": None}, merge=True)
-        _audit(uid, {"eventType": "SHORT_RECOVERY_JOINT_EXIT_WAIT", "symbol": symbol,
+        _audit(uid, {"eventType": "JOINT_EXIT_WAIT", "symbol": symbol, "tpSide": tp_side,
                      "reason": verdict["reason"], "net": None if verdict["net"] is None else str(verdict["net"])})
-        return None  # normal ladder continues; the LONG keeps waiting
-    record = {**prior, "phase": "PAIR_EXIT", "exitStartedAt": now, "lastTarget": "0", "evaluatedAt": now,
-              "lastEvent": "JOINT_EXIT_NET_POSITIVE_CLOSING_SHORT", "exitNet": str(verdict["net"]),
-              "generationId": generation}
-    _audit(uid, {"eventType": "SHORT_RECOVERY_JOINT_EXIT_START", "symbol": symbol, "net": str(verdict["net"]),
+        return None
+    _pair_doc(uid, symbol).set({
+        "pairExit": {"phase": "CLOSING_OPPOSITE", "tpSide": tp_side, "startedAt": now, "net": str(verdict["net"])},
+        "pairExitRequestedAt": None,
+    }, merge=True)
+    _audit(uid, {"eventType": "JOINT_EXIT_START", "symbol": symbol, "tpSide": tp_side, "net": str(verdict["net"]),
                  "fees": str(verdict["fees"]), "fundingPaid": str(verdict["fundingPaid"])})
-    return record, 0, "JOINT_EXIT_NET_POSITIVE_CLOSING_SHORT"
+    return 0, "JOINT_EXIT_NET_POSITIVE_CLOSING_HEDGE"
+
+
+def _recovery_joint_exits(
+    *, uid: str, states: dict[str, dict[str, Any]], positions: list[dict[str, Any]], client: Any, now: datetime,
+) -> dict[str, str]:
+    """Joint exit for Recovery pairs that still have BOTH legs (e.g. after a partial manual close).
+
+    Returns {symbol: tp_side}: the caller closes the OTHER leg to 0 through the engine; the TP leg follows
+    via the Multi-BB TP path. Net positive only; never for a manual release that is still in progress.
+    """
+    pmap = _position_map(positions)
+    exits: dict[str, str] = {}
+    for symbol, state in states.items():
+        if str(state.get("status", "")).upper() not in REHEDGEABLE_STATUSES:
+            continue
+        exiting = state.get("pairExit") if isinstance(state.get("pairExit"), dict) else None
+        if exiting:
+            tp_side = str(exiting.get("tpSide") or "").upper()
+            other = _opposite(tp_side)
+            tp_row, other_row = pmap.get((symbol, tp_side)), pmap.get((symbol, other))
+            started = _as_utc(exiting.get("startedAt")) or now
+            if not tp_row or (not other_row and (now - started).total_seconds() > PAIR_EXIT_MAX_SECONDS):
+                _pair_doc(uid, symbol).set({"pairExit": None}, merge=True)
+                continue
+            if other_row:
+                exits[symbol] = tp_side
+            continue
+        tp_side = _fresh_exit_request(state, now)
+        if tp_side is None:
+            continue
+        tp_row, other_row = pmap.get((symbol, tp_side)), pmap.get((symbol, _opposite(tp_side)))
+        if not tp_row or not other_row:
+            continue
+        since = _as_utc(state.get("triggerAt")) or _as_utc(state.get("createdAt"))
+        mark = tp_row.get("markPrice") or other_row.get("markPrice") or 0
+        verdict = _joint_exit_net(symbol=symbol, legs=(tp_row, other_row), since=since, mark=mark, client=client)
+        if not verdict["allowed"]:
+            _pair_doc(uid, symbol).set({"pairExitRequestedAt": None}, merge=True)
+            _audit(uid, {"eventType": "JOINT_EXIT_WAIT", "symbol": symbol, "tpSide": tp_side, "status": "RECOVERY",
+                         "reason": verdict["reason"], "net": None if verdict["net"] is None else str(verdict["net"])})
+            continue
+        _pair_doc(uid, symbol).set({
+            "pairExit": {"phase": "CLOSING_OPPOSITE", "tpSide": tp_side, "startedAt": now, "net": str(verdict["net"])},
+            "pairExitRequestedAt": None,
+        }, merge=True)
+        _audit(uid, {"eventType": "JOINT_EXIT_START", "symbol": symbol, "tpSide": tp_side, "status": "RECOVERY",
+                     "net": str(verdict["net"])})
+        exits[symbol] = tp_side
+    return exits
 
 
 def _short_recovery_exit_reader(uid: str, symbol: str) -> dict[str, Any]:
     return _pair_doc(uid, symbol).get().to_dict() or {}
 
 
-def _short_recovery_exit_requester(uid: str, symbol: str) -> None:
-    _pair_doc(uid, symbol).set({"pairExitRequestedAt": datetime.now(timezone.utc)}, merge=True)
+def _short_recovery_exit_requester(uid: str, symbol: str, side: str = "LONG") -> None:
+    _pair_doc(uid, symbol).set({"pairExitRequestedAt": datetime.now(timezone.utc),
+                                "pairExitRequestedSide": str(side or "LONG").upper()}, merge=True)
 
 
 short_recovery_pair_exit.configure(_short_recovery_exit_reader, _short_recovery_exit_requester)
+
+
+_ENABLED_CACHE_SECONDS = 10.0
+_enabled_cache: dict[str, tuple[float, bool]] = {}
+_enabled_cache_lock = threading.Lock()
+
+
+def _auto_hedge_enabled_for_entries(uid: str) -> bool:
+    """One-position-per-coin gate for the bot's entry path; cached briefly (entry loops ask per candidate)."""
+    now = time.monotonic()
+    with _enabled_cache_lock:
+        hit = _enabled_cache.get(uid)
+    if hit and now - hit[0] < _ENABLED_CACHE_SECONDS:
+        return hit[1]
+    value = _current(uid).get("enabled") is True
+    with _enabled_cache_lock:
+        _enabled_cache[uid] = (now, value)
+    return value
+
+
+configure_auto_hedge_enabled_reader(_auto_hedge_enabled_for_entries)
 
 
 _RECORD_VOLATILE_KEYS = {"evaluatedAt"}
@@ -720,59 +1006,80 @@ def _short_recovery_targets(
     client: Any,
     execute: bool,
 ) -> tuple[dict[str, float], list[dict[str, Any]], set[str]]:
-    """SHORT Recovery 2.0: per-symbol SHORT targets for the existing engine (+ symbols to hold this tick).
+    """Hedge targets for the existing engine (+ symbols to hold this tick), both sides (build 623).
 
-    Live targets are returned only when ASTER_SHORT_RECOVERY_EXECUTION_ENABLED=true AND this is a live run.
-    Otherwise the decisions are recorded under ``shortRecoveryShadow`` and the engine keeps legacy 1:1.
+    Per active pair: (1) a joint TP exit (every pair, afbouwen ON or OFF); otherwise (2) hedge afbouwen with
+    the settings of the protected side: a protected LONG reduces its SHORT hedge on a falling price
+    (shortRecoveryPlan), a protected SHORT reduces its LONG hedge on a rising price (longRecoveryPlan).
+    Live targets only when ASTER_SHORT_RECOVERY_EXECUTION_ENABLED=true (default) AND this is a live run;
+    otherwise ladder decisions are recorded under ``shortRecoveryShadow`` and the engine keeps 1:1.
     A symbol whose inputs cannot be read keeps its last confirmed target (never a blind top-up or cut).
     """
-    plan_settings = settings.get("shortRecoveryPlan") if isinstance(settings.get("shortRecoveryPlan"), dict) else {}
     live = bool(SHORT_RECOVERY_EXECUTION_ENABLED and execute)
     field = "shortRecovery" if live else "shortRecoveryShadow"
-    symbols = [s for s, side in protected_sides.items() if side == "LONG"]
-    if not symbols or plan_settings.get("enabled") is not True:
-        # Feature off: clear any live record so the engine restores the legacy 1:1 hedge.
-        if execute:
-            for symbol in symbols:
-                if (states.get(symbol) or {}).get(field):
-                    _pair_doc(uid, symbol).set({field: None}, merge=True)
-        return {}, [], set()
     pmap = _position_map(positions)
-    try:
-        info = client.public_exchange_info() or {}
-        rules = {
-            str(row.get("symbol", "")).upper(): ContractRules.from_exchange_info(row)
-            for row in (info.get("symbols", []) if isinstance(info, dict) else [])
-            if isinstance(row, dict)
-        }
-    except Exception:
-        rules = {}
-    try:
-        available = (client.account_information() or {}).get("availableBalance")
-    except Exception:
-        available = None
-    pending = {
-        str(o.get("symbol", "")).upper()
-        for o in open_orders or []
-        if isinstance(o, dict) and str(o.get("positionSide", "")).upper() == "SHORT"
-        and str(o.get("status", "NEW")).upper() not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
-    }
+    now = datetime.now(timezone.utc)
     overrides: dict[str, float] = {}
     hold: set[str] = set()
     rows: list[dict[str, Any]] = []
-    now = datetime.now(timezone.utc)
-    for symbol in symbols:
+    rules: dict[str, Any] | None = None
+    available: Any = None
+    available_read = False
+    pending = {
+        (str(o.get("symbol", "")).upper(), str(o.get("positionSide", "")).upper())
+        for o in open_orders or []
+        if isinstance(o, dict)
+        and str(o.get("status", "NEW")).upper() not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
+    }
+    for symbol, protected_side in protected_sides.items():
         state = states.get(symbol) or {}
         if str(state.get("status", "")).upper() not in ACTIVE_STATUSES:
             continue
+        protected_side = str(protected_side).upper()
+        hedge_side = _opposite(protected_side)
+        protected_row = pmap.get((symbol, protected_side)) or {}
+        hedge_row = pmap.get((symbol, hedge_side)) or {}
+        mark = protected_row.get("markPrice") or hedge_row.get("markPrice") or 0
+
+        if execute:
+            exit_result = _active_joint_exit(
+                uid=uid, symbol=symbol, state=state, protected_row=protected_row, hedge_row=hedge_row,
+                mark=mark, client=client, now=now, field=field,
+            )
+            if exit_result is not None:
+                target, event = exit_result
+                if target is not None:
+                    overrides[symbol] = float(target)
+                rows.append({"symbol": symbol, "mode": field, "event": event, "hedgeSide": hedge_side,
+                             "targetShort": None if target is None else float(target), "phase": "PAIR_EXIT"})
+                continue
+
+        plan_settings = settings.get(_plan_field(protected_side))
+        plan_settings = plan_settings if isinstance(plan_settings, dict) else {}
+        if plan_settings.get("enabled") is not True:
+            # Afbouwen OFF for this side: clear any record so the engine keeps the plain 1:1 hedge.
+            if execute and state.get(field):
+                _pair_doc(uid, symbol).set({field: None}, merge=True)
+            continue
+        direction = short_recovery_direction(protected_side)
         prior = state.get(field) if isinstance(state.get(field), dict) else None
         generation = str(state.get("generationId") or "")
         if prior and str(prior.get("generationId") or "") != generation:
             prior = None  # a new Auto Hedge generation never inherits an old ladder
         if prior and prior.get("startReason") == "ANCHOR_AT_SWITCH_ON":
-            prior = None  # Amar 21:36: anchor = hedge moment (SHORT entry); restart cycles anchored at switch-on
-        long_row = pmap.get((symbol, "LONG")) or {}
-        short_row = pmap.get((symbol, "SHORT")) or {}
+            prior = None  # Amar 21:36: anchor = hedge moment (hedge entry); restart cycles anchored at switch-on
+        if prior and prior.get("direction") and str(prior.get("direction")).upper() != direction:
+            prior = None  # protected side changed: never continue a ladder of the other direction
+        if rules is None:
+            try:
+                info = client.public_exchange_info() or {}
+                rules = {
+                    str(row.get("symbol", "")).upper(): ContractRules.from_exchange_info(row)
+                    for row in (info.get("symbols", []) if isinstance(info, dict) else [])
+                    if isinstance(row, dict)
+                }
+            except Exception:
+                rules = {}
         rule = rules.get(symbol)
         if rule is None:
             last = prior.get("lastTarget") if prior else None
@@ -780,47 +1087,41 @@ def _short_recovery_targets(
                 overrides[symbol] = float(last)
             rows.append({"symbol": symbol, "event": "RULES_UNAVAILABLE_HOLD", "mode": field})
             continue
-        mark = long_row.get("markPrice") or short_row.get("markPrice") or 0
-        if live:
-            exit_result = _short_recovery_pair_exit(
-                uid=uid, symbol=symbol, state=state, prior=prior, long_row=long_row,
-                short_row=short_row, mark=mark, client=client, now=now, generation=generation,
-            )
-            if exit_result is not None:
-                record, target, event = exit_result
-                if target is not None:
-                    overrides[symbol] = float(target)
-                _pair_doc(uid, symbol).set({field: record, "pairExitRequestedAt": None}, merge=True)
-                rows.append({"symbol": symbol, "mode": field, "event": event,
-                             "targetShort": None if target is None else float(target),
-                             "phase": (record or {}).get("phase")})
-                continue
-        short_qty: Any = position_quantity(short_row)
-        short_entry: Any = short_row.get("entryPrice") or 0
+        if not available_read:
+            try:
+                available = (client.account_information() or {}).get("availableBalance")
+            except Exception:
+                available = None
+            available_read = True
+        hedge_qty: Any = position_quantity(hedge_row)
+        hedge_entry: Any = hedge_row.get("entryPrice") or 0
         if not live and prior and prior.get("lastTarget") is not None:
-            # Shadow simulates its own SHORT: the real SHORT stays legacy 1:1, so the simulated
-            # quantity is the last target and a simulated (re)open fills at the current mark.
+            # Shadow simulates its own hedge: the real hedge stays 1:1, so the simulated quantity is the
+            # last target and a simulated (re)open fills at the current mark.
             virtual = float(prior["lastTarget"])
-            if abs(virtual - float(short_qty)) > 1e-12 or prior.get("phase") in {"REFILL", "REOPEN_OPEN"}:
-                short_qty, short_entry = virtual, mark
+            if prior.get("phase") in {"REFILL", "REOPEN_OPEN"}:
+                hedge_qty, hedge_entry = virtual, mark       # simulated (re)open fills at the current mark
+            elif abs(virtual - float(hedge_qty)) > 1e-12:
+                hedge_qty = virtual                          # simulated partial sale keeps the real entry
         result = short_recovery_decide(
             record=prior, settings=plan_settings,
-            long_qty=position_quantity(long_row), short_qty=short_qty,
-            short_entry=short_entry,
+            long_qty=position_quantity(protected_row), short_qty=hedge_qty,
+            short_entry=hedge_entry,
             mark=mark,
-            has_pending_short_order=symbol in pending,
-            start_at_mark=False,  # Amar 21:36: always anchor at the hedge moment (confirmed SHORT entry)
+            has_pending_short_order=(symbol, hedge_side) in pending,
+            start_at_mark=False,  # Amar 21:36: always anchor at the hedge moment (confirmed hedge entry)
             qty_step=rule.market_quantity_step, min_qty=rule.market_min_quantity,
             min_notional=rule.min_notional, available_balance=available,
-            leverage=long_row.get("leverage") or 1,
+            leverage=protected_row.get("leverage") or 1,
+            direction=direction,
         )
         record = result["record"]
         if record is not None:
             record = {**record, "generationId": generation, "lastEvent": result["event"], "evaluatedAt": now,
                       "hedgeSince": (prior or {}).get("hedgeSince") or state.get("triggerAt") or now}
         if live and result["event"] == "PENDING_ORDER_HOLD":
-            # An order on the SHORT is still open: send nothing for this symbol until it is final
-            # (a held target next to a pending close could otherwise open extra SHORT).
+            # An order on the hedge is still open: send nothing for this symbol until it is final
+            # (a held target next to a pending close could otherwise open extra hedge).
             hold.add(symbol)
         elif live and result["override"] is not None:
             overrides[symbol] = float(result["override"])
@@ -828,7 +1129,7 @@ def _short_recovery_targets(
             # Write only on a real change (the worker ticks every few seconds; Firestore cost).
             _pair_doc(uid, symbol).set({field: record}, merge=True)
         rows.append({
-            "symbol": symbol, "mode": field, "event": result["event"],
+            "symbol": symbol, "mode": field, "event": result["event"], "hedgeSide": hedge_side,
             "targetShort": None if result["override"] is None else float(result["override"]),
             "stepsReached": (record or {}).get("stepsReached"), "phase": (record or {}).get("phase"),
         })
@@ -885,6 +1186,18 @@ def _run_uid(
                 }, merge=True)
                 return report
         client = _client(uid, live=execute)
+        if execute and not _hedge_mode_ok(uid, client):
+            # Never send positionSide orders to a One-way account; existing state stays untouched.
+            report = {
+                "mode": "LIVE", "ordersSent": 0, "status": "BLOCKED",
+                "reason": "HEDGE_MODE_REQUIRED", "actions": [],
+            }
+            _doc(uid).set({
+                "lastReport": report,
+                "lastCheckedAt": datetime.now(timezone.utc),
+                "lastError": HEDGE_MODE_REQUIRED_MESSAGE,
+            }, merge=True)
+            return report
         positions = list(client.position_risk() or [])
         open_orders = list(client.open_orders() or [])
         protected_sides, skip_symbols, states, created = _prepare_lifecycle(
@@ -943,7 +1256,30 @@ def _run_uid(
             target_overrides=recovery_targets or None,
             positions=positions,
             open_orders=open_orders,
+            thresholds_by_side=_thresholds_by_side(settings),
         )
+        if execute:
+            # Joint TP exit of Recovery pairs that still hold both legs: close the non-TP leg to 0.
+            recovery_exits = _recovery_joint_exits(
+                uid=uid, states=_pair_states(uid), positions=positions, client=client,
+                now=datetime.now(timezone.utc),
+            )
+            if recovery_exits:
+                all_symbols = {str(row.get("symbol", "")).upper() for row in positions if isinstance(row, dict)}
+                exit_report = reconcile_auto_hedge(
+                    client=client, uid=uid, threshold_usd=settings["thresholdUsd"], execute=True,
+                    audit=(lambda payload: _audit(uid, payload)),
+                    protected_sides=recovery_exits,
+                    skip_symbols=all_symbols - set(recovery_exits),
+                    intent_context={
+                        symbol: {"generationId": f"{(states.get(symbol) or {}).get('generationId') or 'g0'}-exit",
+                                 "revision": 0}
+                        for symbol in recovery_exits
+                    },
+                    target_overrides={symbol: 0.0 for symbol in recovery_exits},
+                    thresholds_by_side=_thresholds_by_side(settings),
+                )
+                report["recoveryJointExit"] = exit_report
         if recovery_rows:
             report["shortRecovery"] = recovery_rows
         report["createdCycles"] = [
@@ -1015,12 +1351,18 @@ def put_position_loss_auto_hedge(
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
     try:
         threshold = normalize_threshold(request.thresholdUsd)
+        threshold_short = normalize_threshold(
+            current.get("thresholdShortUsd", DEFAULT_THRESHOLD_USD) if request.thresholdShortUsd is None
+            else request.thresholdShortUsd)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if request.enabled and not previous_enabled:
+        _require_hedge_mode(uid)
     now = datetime.now(timezone.utc)
     _doc(uid).set({
         "enabled": bool(request.enabled),
         "thresholdUsd": threshold,
+        "thresholdShortUsd": threshold_short,
         "updatedAt": now,
     }, merge=True)
     if previous_enabled != bool(request.enabled):
@@ -1061,11 +1403,17 @@ def apply_position_loss_auto_hedge(
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
     try:
         threshold = normalize_threshold(request.thresholdUsd)
+        threshold_short = normalize_threshold(
+            current.get("thresholdShortUsd", DEFAULT_THRESHOLD_USD) if request.thresholdShortUsd is None
+            else request.thresholdShortUsd)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if request.enabled and not previous_enabled:
+        _require_hedge_mode(uid)
     _doc(uid).set({
         "enabled": bool(request.enabled),
         "thresholdUsd": threshold,
+        "thresholdShortUsd": threshold_short,
         "updatedAt": datetime.now(timezone.utc),
     }, merge=True)
     if previous_enabled != bool(request.enabled):
@@ -1102,6 +1450,8 @@ def put_position_loss_auto_hedge_rehedge(
         raise HTTPException(409, "Zet Auto Hedge eerst AAN voordat je deze recovery opnieuw bewapent")
     if request.enabled and _dynamic_hedge_enabled(uid):
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
+    if request.enabled:
+        _require_hedge_mode(uid)
     now = datetime.now(timezone.utc)
     next_status = (
         "REHEDGE_ARMED" if request.enabled
@@ -1128,6 +1478,9 @@ class ShortRecoverySettingsRequest(BaseModel):
     steps: int = Field(ge=1, le=100)
     totalPct: str = Field(min_length=1, max_length=16)
     clientBuild: str = Field(default="", max_length=32)
+    # Build 623: which hedge this card reduces. SHORT = SHORT-hedge of a protected LONG (price falls);
+    # LONG = LONG-hedge of a protected SHORT (price rises). Old clients send nothing -> SHORT.
+    hedgeSide: str = Field(default="SHORT", pattern="^(LONG|SHORT)$")
 
 
 @main.app.put("/v1/me/aster/position-loss-auto-hedge/short-recovery")
@@ -1136,22 +1489,26 @@ def put_position_loss_auto_hedge_short_recovery(
     response: Response,
     user: dict[str, Any] = Depends(main.authenticated_user),
 ) -> dict[str, Any]:
-    """Save SHORT Recovery 2.0 settings. Never places an order itself; the worker applies them."""
+    """Save hedge afbouwen settings for one side. Never places an order itself; the worker applies them."""
     uid = main.require_release_feature(user, "auto_hedge_v2")
     try:
         plan = normalize_short_recovery_settings(
             {"enabled": request.enabled, "steps": request.steps, "totalPct": request.totalPct})
     except ValueError as exc:
         raise HTTPException(422, str(exc))
+    hedge_side = request.hedgeSide.upper()
+    field = "shortRecoveryPlan" if hedge_side == "SHORT" else "longRecoveryPlan"
     if plan["enabled"] and _current(uid).get("enabled") is not True:
-        raise HTTPException(409, "Zet Auto Hedge eerst AAN; SHORT Recovery bouwt alleen Auto Hedge-SHORTs af")
+        raise HTTPException(409, f"Zet Auto Hedge eerst AAN; afbouwen werkt alleen op Auto Hedge-{hedge_side}-hedges")
     now = datetime.now(timezone.utc)
-    previous = _public_short_recovery(_current(uid))
+    previous = _public_short_recovery(_current(uid), field)
     switched_on = plan["enabled"] and not previous.get("enabled")
-    enabled_at = now if switched_on else ((_current(uid).get("shortRecoveryPlan") or {}).get("enabledAt") if plan["enabled"] else None)
-    _doc(uid).set({"shortRecoveryPlan": {**plan, "updatedAt": now, "enabledAt": enabled_at}, "updatedAt": now}, merge=True)
-    _audit(uid, {"eventType": "SHORT_RECOVERY_SETTINGS_CHANGED", "previous": previous, "next": plan,
-                 "clientBuild": request.clientBuild})
+    if switched_on:
+        _require_hedge_mode(uid)
+    enabled_at = now if switched_on else ((_current(uid).get(field) or {}).get("enabledAt") if plan["enabled"] else None)
+    _doc(uid).set({field: {**plan, "updatedAt": now, "enabledAt": enabled_at}, "updatedAt": now}, merge=True)
+    _audit(uid, {"eventType": "SHORT_RECOVERY_SETTINGS_CHANGED", "hedgeSide": hedge_side, "previous": previous,
+                 "next": plan, "clientBuild": request.clientBuild})
     response.headers["Cache-Control"] = "no-store"
     return _public(uid)
 
@@ -1235,9 +1592,22 @@ def post_position_loss_auto_hedge_rehedge_all(
         raise HTTPException(409, "Zet Auto Hedge eerst AAN voordat je Recovery-posities opnieuw hedget")
     if _dynamic_hedge_enabled(uid):
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
+    _require_hedge_mode(uid)
+    def _mid_ladder(row: dict[str, Any]) -> bool:
+        record = row.get("shortRecovery") if isinstance(row.get("shortRecovery"), dict) else {}
+        if not record.get("phase"):
+            return False
+        if record.get("phase") in {"REOPEN_CLOSE", "REOPEN_OPEN"} or int(float(record.get("stepsReached") or 0)) > 0:
+            return True
+        try:
+            return float(record.get("lastTarget")) + 1e-12 < float(row.get("currentProtectedQty") or 0)
+        except (TypeError, ValueError):
+            return False
+
     candidates = sorted(
         symbol for symbol, row in _pair_states(uid).items()
         if str(row.get("status", "")).upper() in RECOVERY_STATUSES
+        or (str(row.get("status", "")).upper() in ACTIVE_STATUSES and _mid_ladder(row))
     )
     response.headers["Cache-Control"] = "no-store"
     if not candidates:

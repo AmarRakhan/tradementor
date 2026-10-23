@@ -17,6 +17,11 @@ Phases of the per-pair ``shortRecovery`` record:
 
 Settings changes apply from the next cycle (steps/totalPct are snapshotted at cycle start).
 Switching the feature off clears the record: the engine then restores the legacy 1:1 hedge.
+
+Build 623 (Amar 23-10): both sides. ``direction="DOWN"`` = protected LONG / SHORT hedge (original),
+``direction="UP"`` = protected SHORT / LONG hedge reduced while the price rises. ``long_qty`` is the
+PROTECTED leg, ``short_qty``/``short_entry`` the HEDGE leg. A REFILL record with ``anchorAtMark``
+(set by Re-Hedge All) anchors its next cycle at the price of that moment instead of the hedge entry.
 """
 from __future__ import annotations
 
@@ -82,6 +87,7 @@ def decide(
     available_balance: Any = None,
     leverage: Any = 1,
     start_at_mark: bool = False,
+    direction: str = "DOWN",
 ) -> dict[str, Any]:
     """Return {override, record, event}.
 
@@ -114,9 +120,12 @@ def decide(
 
     if rec is None or phase == PHASE_REFILL:
         if _same(short_q, long_q, step) and _d(short_entry) > 0:
-            at_mark = start_at_mark and rec is None
+            rehedge_all = bool(rec and rec.get("anchorAtMark"))
+            at_mark = (start_at_mark and rec is None) or rehedge_all
+            reason = "REHEDGE_ALL_AT_MARK" if rehedge_all else ("ANCHOR_AT_SWITCH_ON" if at_mark else "HEDGED_1_TO_1")
             new = _start_cycle(rec, long_q=long_q, short_q=short_q, short_entry=price if at_mark else _d(short_entry),
-                               cfg=cfg, reason="ANCHOR_AT_SWITCH_ON" if at_mark else "HEDGED_1_TO_1")
+                               cfg=cfg, reason=reason)
+            new["direction"] = direction
             return {"override": short_q, "record": new, "event": "CYCLE_STARTED"}
         return {"override": None, "record": rec, "event": "WAIT_FOR_1_TO_1"}
 
@@ -132,6 +141,7 @@ def decide(
         if _same(short_q, reopen, step) and _d(short_entry) > 0:
             new = _start_cycle(rec, long_q=long_q, short_q=short_q, short_entry=_d(short_entry), cfg=cfg,
                                reason="REOPENED_90")
+            new["direction"] = direction
             return {"override": short_q, "record": new, "event": "CYCLE_STARTED_AFTER_REOPEN"}
         rec["lastTarget"] = str(reopen)
         return {"override": reopen, "record": rec, "event": "REOPENING_90"}
@@ -149,7 +159,8 @@ def decide(
         snapshot = {"enabled": True, "steps": cfg["steps"], "totalPct": cfg["totalPct"]}
     decision = plan(long_qty=cap, short_qty=min(short_q, cap), base=base, anchor=_d(rec.get("anchor")), mark=price,
                     settings=snapshot, previous_steps=int(rec.get("stepsReached") or 0), qty_step=step,
-                    min_qty=min_qty, min_notional=min_notional, reopen_basis_qty=long_q)
+                    min_qty=min_qty, min_notional=min_notional, reopen_basis_qty=long_q,
+                    direction=str(rec.get("direction") or direction), hedge_entry=_d(short_entry))
     rec["stepsReached"] = max(int(rec.get("stepsReached") or 0), int(decision["stepsReached"]))
     target = min(long_q, decision["targetShort"])
     action = decision["action"]
@@ -174,6 +185,15 @@ def decide(
         rec["lastTarget"] = str(keep)
         return {"override": keep, "record": rec, "event": "SKIPPED_BELOW_MINIMUM"}
 
+    if action == "HOLD" and decision["reason"] == "OVER_HEDGED_LEFT_TO_AUTO_HEDGE":
+        # Over-covered (own position on the hedge side): no target, the engine never sells it (vangnet).
+        return {"override": None, "record": rec, "event": "OVER_COVERED_HOLD"}
+
+    if action == "HOLD" and decision["reason"] == "STEP_WAIT_PROFIT_AFTER_FEES":
+        keep = min(long_q, short_q)
+        rec["lastTarget"] = str(keep)
+        return {"override": keep, "record": rec, "event": "STEP_WAIT_PROFIT_AFTER_FEES"}
+
     rec["lastTarget"] = str(target)
     return {"override": target, "record": rec, "event": "STEP_REDUCE" if action == "REDUCE_SHORT" else "LADDER_HOLD"}
 
@@ -197,6 +217,7 @@ def public_unwind(pair: Mapping[str, Any] | None) -> dict[str, Any] | None:
             "steps": int(_d(rec.get("steps"))),
             "cycleId": int(_d(rec.get("cycleId"))),
             "hedgePct": hedge_pct,
+            "hedgeSide": str(pair.get("hedgeSide") or "SHORT").upper(),
             "lastEvent": str(rec.get("lastEvent") or ""),
         }
     return None

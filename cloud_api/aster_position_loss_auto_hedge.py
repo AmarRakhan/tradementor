@@ -191,11 +191,10 @@ def _build_action(
     pending_open = max(0.0, _f(pending_row.get("open")))
     pending_close = max(0.0, _f(pending_row.get("close")))
     effective = max(0.0, hedge_qty + pending_open - pending_close)
-    # SHORT Recovery 2.0 may lower the hedge target for a LONG-protected pair. The target
-    # can never exceed the protected quantity (never net short) and never drop below zero.
+    # Hedge afbouwen (build 623: both sides) may lower the hedge target. The target can never
+    # exceed the protected quantity and never drop below zero.
     recovery_target = (
         target_override is not None
-        and protected_side == "LONG"
         and math.isfinite(_f(target_override, -1.0))
     )
     target = (
@@ -215,10 +214,18 @@ def _build_action(
         operation = "OPEN"
         status = "NEEDS_HEDGE"
         reason = "SHORT_RECOVERY_REOPEN" if recovery_target and target + EPSILON < protected_qty else "LOSS_THRESHOLD_REACHED_OR_PROTECTION_DRIFT"
-    else:
+    elif recovery_target:
         operation = "REDUCE"
         status = "NEEDS_REDUCE"
-        reason = "SHORT_RECOVERY_STEP" if recovery_target and target + EPSILON < protected_qty else "OVER_HEDGED_EXACT_1_TO_1_REQUIRED"
+        reason = "SHORT_RECOVERY_STEP" if target + EPSILON < protected_qty else "OVER_HEDGED_EXACT_1_TO_1_REQUIRED"
+    else:
+        # Vangnet (build 623, Amar 23-10): Auto Hedge only ever ADDS. A hedge leg that is larger than the
+        # protected leg (an own position on that side, or a protected leg made smaller outside the app) is
+        # never sold to "straighten" the pair: that sale could be at a loss.
+        operation = "HOLD"
+        status = "OVER_COVERED"
+        reason = "OVER_COVERED_NEVER_REDUCE"
+        delta = 0.0
     return AutoHedgeAction(
         symbol=symbol,
         protected_side=protected_side,
@@ -247,8 +254,12 @@ def evaluate_auto_hedge(
     protected_sides: Mapping[str, str] | None = None,
     skip_symbols: set[str] | None = None,
     target_overrides: Mapping[str, float] | None = None,
+    thresholds_by_side: Mapping[str, Any] | None = None,
 ) -> list[AutoHedgeAction]:
     """Return deterministic exact-quantity decisions.
+
+    thresholds_by_side (build 623, Amar 23-10): a separate loss threshold for a LONG and for a SHORT
+    position; a side without its own value uses ``threshold_usd``.
 
     protected_sides keeps an existing protection cycle active even after its
     protected leg recovers above the loss threshold. For symbols not present in
@@ -256,6 +267,10 @@ def evaluate_auto_hedge(
     A symbol is evaluated at most once per reconciliation.
     """
     threshold = normalize_threshold(threshold_usd)
+    side_thresholds = {
+        side: normalize_threshold((thresholds_by_side or {}).get(side, threshold))
+        for side in ("LONG", "SHORT")
+    }
     pmap = _active_positions(positions)
     pending = _pending_adjustments(open_orders or [])
     protected = {str(k).upper(): str(v).upper() for k, v in (protected_sides or {}).items()}
@@ -279,7 +294,7 @@ def evaluate_auto_hedge(
                 if not row:
                     continue
                 pnl = position_open_pnl(row)
-                if pnl <= -threshold:
+                if pnl <= -side_thresholds[side]:
                     candidates.append((pnl, side, row))
             if not candidates:
                 continue
@@ -292,7 +307,7 @@ def evaluate_auto_hedge(
             protected_side=chosen_side,
             protected_row=protected_row,
             hedge_row=pmap.get((symbol, hedge_side)),
-            threshold=threshold,
+            threshold=side_thresholds.get(chosen_side, threshold),
             pending=pending,
             target_override=overrides.get(symbol),
         ))
@@ -408,6 +423,7 @@ def reconcile_auto_hedge(
     target_overrides: Mapping[str, float] | None = None,
     positions: list[dict[str, Any]] | None = None,
     open_orders: list[dict[str, Any]] | None = None,
+    thresholds_by_side: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Reconcile exchange legs and optionally submit exact OPEN/REDUCE deltas."""
     threshold = normalize_threshold(threshold_usd)
@@ -416,7 +432,7 @@ def reconcile_auto_hedge(
     actions = evaluate_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
-        target_overrides=target_overrides,
+        target_overrides=target_overrides, thresholds_by_side=thresholds_by_side,
     )
     public_actions: list[dict[str, Any]] = []
     orders_sent = 0
@@ -558,7 +574,7 @@ def reconcile_auto_hedge(
     final_actions = evaluate_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
-        target_overrides=target_overrides,
+        target_overrides=target_overrides, thresholds_by_side=thresholds_by_side,
     )
     return {
         "thresholdUsd": threshold,

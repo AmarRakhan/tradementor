@@ -49,39 +49,69 @@ class Funding(unittest.TestCase):
 
 
 class Gate(unittest.TestCase):
+    """Build 623 (Amar 23-10): every Auto Hedge pair, both sides, joint exit only when net positive."""
+
     def setUp(self):
         self.requests = []
         self.pair = {}
-        X.configure(lambda u, s: self.pair, lambda u, s: self.requests.append(s))
+        X.configure(lambda u, s: self.pair, lambda u, s, side: self.requests.append((s, side)))
 
     def tearDown(self):
         X.configure(None, None)
 
-    def test_legacy_pair_unchanged(self):
-        self.pair = {"status": "HEDGED"}
-        self.assertEqual(X.long_tp_gate(account_uid="u", symbol="SOLUSDT", short_qty=5)[0], "ALLOW")
+    def gate(self, side="LONG", opposite=5, symbol="SOLUSDT"):
+        return X.pair_tp_gate(account_uid="u", symbol=symbol, side=side, opposite_qty=opposite)
+
+    def test_no_auto_hedge_pair_is_unchanged(self):
+        for pair in ({}, {"status": "CLOSED"}):
+            self.pair = pair
+            self.assertEqual(self.gate(), ("ALLOW", "NOT_AUTO_HEDGE_PAIR"))
         self.assertEqual(self.requests, [])
 
-    def test_managed_pair_with_short_waits_and_requests(self):
-        self.pair = {"shortRecovery": {"phase": "LADDER"}}
-        self.assertEqual(X.long_tp_gate(account_uid="u", symbol="solusdt", short_qty=5),
-                         ("WAIT", "JOINT_EXIT_REQUESTED_WAIT_FOR_NET_CHECK"))
-        self.assertEqual(self.requests, ["SOLUSDT"])
+    def test_hedged_pair_without_afbouw_record_now_waits_for_joint_exit(self):
+        # Was ALLOW before build 623 (LONG closed alone, SHORT left open = net SHORT).
+        self.pair = {"status": "HEDGED", "protectedSide": "LONG"}
+        self.assertEqual(self.gate(), ("WAIT", "JOINT_EXIT_REQUESTED_WAIT_FOR_NET_CHECK"))
+        self.assertEqual(self.requests, [("SOLUSDT", "LONG")])
 
-    def test_short_flat_allows(self):
-        self.pair = {"shortRecovery": {"phase": "PAIR_EXIT"}}
-        self.assertEqual(X.long_tp_gate(account_uid="u", symbol="SOLUSDT", short_qty=0),
-                         ("ALLOW", "SHORT_FLAT_JOINT_EXIT"))
+    def test_protected_short_tp_waits_for_joint_exit(self):
+        self.pair = {"status": "HEDGED", "protectedSide": "SHORT"}
+        self.assertEqual(self.gate(side="SHORT", symbol="solusdt"), ("WAIT", "JOINT_EXIT_REQUESTED_WAIT_FOR_NET_CHECK"))
+        self.assertEqual(self.requests, [("SOLUSDT", "SHORT")])
+
+    def test_tp_on_hedge_side_of_active_pair_is_not_joint(self):
+        self.pair = {"status": "HEDGED", "protectedSide": "LONG"}
+        self.assertEqual(self.gate(side="SHORT"), ("ALLOW", "TP_ON_HEDGE_SIDE"))
+        self.assertEqual(self.requests, [])
+
+    def test_recovery_pair_with_both_legs_waits_for_joint_exit(self):
+        self.pair = {"status": "RECOVERY", "protectedSide": "SHORT", "hedgeSide": "LONG"}
+        self.assertEqual(self.gate(side="LONG"), ("WAIT", "JOINT_EXIT_REQUESTED_WAIT_FOR_NET_CHECK"))
+
+    def test_manual_release_in_progress_waits_without_request(self):
+        self.pair = {"status": "MANUAL_RELEASE_PENDING", "protectedSide": "LONG"}
+        self.assertEqual(self.gate(), ("WAIT", "MANUAL_RELEASE_IN_PROGRESS"))
+        self.assertEqual(self.requests, [])
+
+    def test_opposite_flat_allows(self):
+        self.pair = {"status": "HEDGED", "protectedSide": "LONG", "pairExit": {"phase": "CLOSING_OPPOSITE"}}
+        self.assertEqual(self.gate(opposite=0), ("ALLOW", "OPPOSITE_FLAT_JOINT_EXIT"))
+        self.pair = {"status": "HEDGED", "protectedSide": "LONG"}
+        self.assertEqual(self.gate(opposite=0), ("ALLOW", "OPPOSITE_FLAT"))
+
+    def test_long_tp_gate_wrapper(self):
+        self.pair = {"status": "HEDGED", "protectedSide": "LONG"}
+        self.assertEqual(X.long_tp_gate(account_uid="u", symbol="SOLUSDT", short_qty=5)[0], "WAIT")
 
     def test_unreadable_pair_waits(self):
         def boom(u, s):
             raise RuntimeError("down")
         X.configure(boom, None)
-        self.assertEqual(X.long_tp_gate(account_uid="u", symbol="SOLUSDT", short_qty=5)[0], "WAIT")
+        self.assertEqual(self.gate()[0], "WAIT")
 
     def test_not_configured_is_legacy(self):
         X.configure(None, None)
-        self.assertEqual(X.long_tp_gate(account_uid="u", symbol="SOLUSDT", short_qty=5)[0], "ALLOW")
+        self.assertEqual(self.gate()[0], "ALLOW")
 
 
 if __name__ == "__main__":

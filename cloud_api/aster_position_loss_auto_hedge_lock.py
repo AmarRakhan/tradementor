@@ -38,6 +38,32 @@ def configure_auto_hedge_lock_reader(reader: Callable[[str, str], dict[str, Any]
         _reader = reader
 
 
+_enabled_reader: Callable[[str], bool] | None = None
+
+
+def configure_auto_hedge_enabled_reader(reader: Callable[[str], bool] | None) -> None:
+    """Installed by the Auto Hedge extension: is Auto Hedge switched ON for this account?"""
+    global _enabled_reader
+    with _lock:
+        _enabled_reader = reader
+
+
+def one_position_per_coin_active(account_uid: str) -> bool:
+    """Build 623 (Amar 23-10): with Auto Hedge ON a coin holds ONE own position; the other side is only hedge.
+
+    Not configured (tests, other runtimes) -> False (unchanged behaviour). Unreadable -> True (fail safe:
+    blocking an opposite-side ENTRY never closes or sells anything).
+    """
+    with _lock:
+        reader = _enabled_reader
+    if not callable(reader) or not account_uid:
+        return False
+    try:
+        return bool(reader(str(account_uid)))
+    except Exception:
+        return True
+
+
 def _f(value: Any, default: float = 0.0) -> float:
     try:
         parsed = float(value)

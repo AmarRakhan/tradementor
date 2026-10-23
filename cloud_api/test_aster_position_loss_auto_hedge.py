@@ -63,22 +63,41 @@ class PositionLossAutoHedgeTest(unittest.TestCase):
         self.assertEqual(action.operation, "HOLD")
         self.assertEqual(action.status, "HEDGED")
 
-    def test_over_hedged_hype_requires_reduce(self):
+    def test_over_covered_hype_is_never_reduced(self):
+        # Build 623 vangnet (Amar 23-10): Auto Hedge only adds; an own larger LONG is never sold to make 1:1.
         action = self.action([
             leg("HYPEUSDT", "SHORT", 2.4, -26.53),
             leg("HYPEUSDT", "LONG", 3.0, 25.8),
         ])
-        self.assertEqual(action.operation, "REDUCE")
-        self.assertAlmostEqual(action.delta_qty, -0.6, places=12)
-        self.assertAlmostEqual(action.required_delta, 0.6, places=12)
+        self.assertEqual((action.operation, action.status, action.reason), ("HOLD", "OVER_COVERED", "OVER_COVERED_NEVER_REDUCE"))
+        self.assertEqual(action.required_delta, 0)
 
-    def test_over_hedged_zec_requires_exact_reduce(self):
+    def test_over_covered_zec_is_never_reduced(self):
         action = self.action([
             leg("ZECUSDT", "SHORT", 0.194, -61.94),
             leg("ZECUSDT", "LONG", 0.200, 60.2),
         ])
-        self.assertEqual(action.operation, "REDUCE")
-        self.assertAlmostEqual(action.required_delta, 0.006, places=12)
+        self.assertEqual(action.operation, "HOLD")
+        self.assertEqual(action.required_delta, 0)
+
+    def test_afbouw_target_still_reduces_for_both_protected_sides(self):
+        for protected, hedge in (("LONG", "SHORT"), ("SHORT", "LONG")):
+            with self.subTest(protected=protected):
+                rows = [leg("SOLUSDT", protected, 10, -5), leg("SOLUSDT", hedge, 10, 5)]
+                action = evaluate_auto_hedge(rows, 10, protected_sides={"SOLUSDT": protected},
+                                             target_overrides={"SOLUSDT": 7.5})[0]
+                self.assertEqual((action.operation, action.hedge_side), ("REDUCE", hedge))
+                self.assertAlmostEqual(action.required_delta, 2.5)
+
+    def test_separate_threshold_per_side(self):
+        rows = [leg("AAAUSDT", "LONG", 1, -0.30), leg("BBBUSDT", "SHORT", 1, -0.30)]
+        actions = {a.symbol: a for a in evaluate_auto_hedge(
+            rows, 10, thresholds_by_side={"LONG": 0.25, "SHORT": 10})}
+        self.assertEqual(set(actions), {"AAAUSDT"})                       # SHORT needs -$10
+        self.assertEqual(actions["AAAUSDT"].threshold_usd, 0.25)
+        actions = {a.symbol: a for a in evaluate_auto_hedge(
+            rows + [leg("CCCUSDT", "SHORT", 1, -12)], 10, thresholds_by_side={"LONG": 0.25, "SHORT": 10})}
+        self.assertEqual((actions["CCCUSDT"].protected_side, actions["CCCUSDT"].hedge_side), ("SHORT", "LONG"))
 
     def test_pending_open_prevents_duplicate(self):
         order = {
@@ -121,13 +140,14 @@ class PositionLossAutoHedgeTest(unittest.TestCase):
         self.assertEqual(action.operation, "OPEN")
         self.assertEqual(action.required_delta, 179)
 
-    def test_partial_protected_close_reduces_hedge_to_new_exact_target(self):
+    def test_partial_protected_close_never_sells_the_hedge(self):
+        # Build 623: the lifecycle moves such a pair to RECOVERY; the engine itself never sells the gap.
         action = self.action([
             leg("DOGEUSDT", "SHORT", 700, 5),
             leg("DOGEUSDT", "LONG", 1100, -3),
         ], protected={"DOGEUSDT": "SHORT"})
-        self.assertEqual(action.operation, "REDUCE")
-        self.assertEqual(action.required_delta, 400)
+        self.assertEqual(action.operation, "HOLD")
+        self.assertEqual(action.required_delta, 0)
 
     def test_recovery_symbol_can_be_skipped_even_when_below_threshold(self):
         self.assertIsNone(self.action(
@@ -162,7 +182,8 @@ class PositionLossAutoHedgeTest(unittest.TestCase):
                 raise AssertionError("shadow mode must not submit")
 
         client = Client()
-        report = reconcile_auto_hedge(client=client, uid="u1", threshold_usd=10, execute=False)
+        report = reconcile_auto_hedge(client=client, uid="u1", threshold_usd=10, execute=False,
+                                      protected_sides={"HYPEUSDT": "SHORT"}, target_overrides={"HYPEUSDT": 2.0})
         self.assertEqual(report["mode"], "SHADOW")
         self.assertEqual(report["ordersSent"], 0)
         self.assertEqual(client.submits, 0)
@@ -207,7 +228,8 @@ class PositionLossAutoHedgeTest(unittest.TestCase):
             def submit_order_once(self, *args, **kwargs):
                 raise AssertionError("precision block must happen before submit")
 
-        report = reconcile_auto_hedge(client=Client(), uid="u1", threshold_usd=10, execute=True)
+        report = reconcile_auto_hedge(client=Client(), uid="u1", threshold_usd=10, execute=True,
+                                      protected_sides={"ZECUSDT": "SHORT"}, target_overrides={"ZECUSDT": 0.194})
         self.assertEqual(report["ordersSent"], 0)
         self.assertEqual(report["actions"][0]["status"], "PRECISION_BLOCKED")
 
@@ -237,6 +259,7 @@ class PositionLossAutoHedgeTest(unittest.TestCase):
             client=client, uid="u1", threshold_usd=10, execute=True,
             protected_sides={"HYPEUSDT": "SHORT"},
             intent_context={"HYPEUSDT": {"generationId": "g1", "revision": 0}},
+            target_overrides={"HYPEUSDT": 2.0},
         )
         self.assertEqual(client.intents[0].action, "CLOSE")
         self.assertEqual(client.intents[0].position_side.value, "LONG")
@@ -329,12 +352,12 @@ class PositionLossAutoHedgeTest(unittest.TestCase):
                 self.assertEqual(actions[symbol].hedge_side, "LONG")
                 self.assertAlmostEqual(actions[symbol].required_delta, quantity, places=12)
 
-        self.assertEqual(actions["HYPEUSDT"].operation, "REDUCE")
+        # Build 623 vangnet: over-covered pairs are held, never reduced.
+        self.assertEqual(actions["HYPEUSDT"].operation, "HOLD")
         self.assertEqual(actions["HYPEUSDT"].hedge_side, "LONG")
-        self.assertAlmostEqual(actions["HYPEUSDT"].required_delta, 0.6, places=12)
-        self.assertEqual(actions["ZECUSDT"].operation, "REDUCE")
-        self.assertEqual(actions["ZECUSDT"].hedge_side, "LONG")
-        self.assertAlmostEqual(actions["ZECUSDT"].required_delta, 0.006, places=12)
+        self.assertEqual(actions["HYPEUSDT"].required_delta, 0)
+        self.assertEqual(actions["ZECUSDT"].operation, "HOLD")
+        self.assertEqual(actions["ZECUSDT"].required_delta, 0)
 
 
 if __name__ == "__main__":

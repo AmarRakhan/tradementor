@@ -91,10 +91,11 @@ class Evaluate(unittest.TestCase):
         a = self.one([leg("SOLUSDT", "LONG", 100, -40)], {"SOLUSDT": 90})
         self.assertEqual((a.operation, a.required_delta, a.reason), ("OPEN", 90, "SHORT_RECOVERY_REOPEN"))
 
-    def test_override_ignored_for_short_protected_pair(self):
+    def test_override_applies_to_short_protected_pair(self):
+        # Build 623 (Amar 23-10): afbouwen also reduces the LONG hedge of a protected SHORT.
         rows = [leg("SOLUSDT", "SHORT", 100, -40), leg("SOLUSDT", "LONG", 100, 40)]
         a = self.one(rows, {"SOLUSDT": 10}, protected={"SOLUSDT": "SHORT"})
-        self.assertEqual((a.operation, a.target_qty), ("HOLD", 100))
+        self.assertEqual((a.operation, a.hedge_side, a.target_qty, a.required_delta), ("REDUCE", "LONG", 10, 90))
 
     def test_override_only_for_its_symbol(self):
         rows = HEDGED + [leg("ETHUSDT", "LONG", 5, -1), leg("ETHUSDT", "SHORT", 3, 1)]

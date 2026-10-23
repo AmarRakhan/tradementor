@@ -288,12 +288,15 @@ class SelectionTests(Base):
         result = self.press()
         self.assertEqual((result["status"], result["found"], self.L.hedge_orders), ("NOTHING_TO_DO", 0, []))
 
-    def test_survivor_short_is_skipped_and_no_long_is_ever_opened(self):
+    def test_survivor_short_gets_an_exact_long_hedge(self):
+        # Build 623 (Amar 23-10): Re-Hedge All works for both sides; a surviving SHORT gets a 1:1 LONG hedge.
         self.L.add("ABCUSDT", "SHORT", 5.0)
         self.put("asterPositionLossAutoHedge", self.uid, "pairs", "ABCUSDT", recovery_pair("ABCUSDT", survivor="SHORT"))
         result = self.press()
-        self.assertEqual(self.L.hedge_orders, [])
-        self.assertEqual(self.item(result, "ABCUSDT")["reason"], "SURVIVOR_IS_SHORT")
+        self.assertEqual([(o["symbol"], o["positionSide"], o["action"], o["qty"]) for o in self.L.hedge_orders],
+                         [("ABCUSDT", "LONG", "OPEN", 5.0)])
+        self.assertEqual(self.item(result, "ABCUSDT")["outcome"], "PROTECTED")
+        self.assertEqual((self.pair("ABCUSDT")["protectedSide"], self.pair("ABCUSDT")["hedgeSide"]), ("SHORT", "LONG"))
 
     def test_unconfirmed_manual_release_is_skipped(self):
         self.seed("ICPUSDT", 10.0, pair=recovery_pair("ICPUSDT", status="MANUAL_RELEASE_UNCERTAIN"))
@@ -380,14 +383,15 @@ class ExecutionSafetyTests(Base):
         self.assertEqual(self.item(result, "ICPUSDT")["outcome"], "UNKNOWN")
         self.assertEqual(self.short("ICPUSDT"), 0.0)
 
-    def test_long_shrinking_during_processing_is_brought_back_by_the_existing_reduce_rule(self):
+    def test_long_shrinking_during_processing_is_never_sold_back(self):
+        # Build 623 vangnet: the engine no longer sells the SHORT to "straighten" an over-covered pair.
         self.seed("ICPUSDT", 10.0)
-        self.L.on_before_order = lambda sym: self.L.pos.__setitem__((sym, "LONG"), 6.0)   # TP fires mid-order
-        result = self.press()
+        self.L.on_before_order = lambda sym: self.L.pos.__setitem__((sym, "LONG"), 6.0)   # LONG shrinks mid-order
+        self.press()
         self.L.on_before_order = None
-        self.assertEqual(self.item(result, "ICPUSDT")["outcome"], "PENDING")
-        self.worker_tick()                                                        # existing 1:1 rule reduces
-        self.assertAlmostEqual(self.short("ICPUSDT"), 6.0)
+        self.worker_tick()
+        self.assertAlmostEqual(self.short("ICPUSDT"), 10.0)
+        self.assertEqual([o["action"] for o in self.L.hedge_orders], ["OPEN"])
 
     def test_second_press_after_success_does_nothing(self):
         self.seed("ICPUSDT", 10.0)
@@ -558,8 +562,8 @@ class SourceContractTests(unittest.TestCase):
         for forbidden in ("submit_order", "AsterOrderIntent", "position_risk(", ".where(", ".order_by("):
             self.assertNotIn(forbidden, route)
         force = src[src.index("def _force_rehedge_cycle("):src.index("def _prepare_lifecycle(")]
-        self.assertIn('remaining_side != "LONG"', force)
-        self.assertIn("action.delta_qty < 0", force)
+        self.assertIn("protected_sides={symbol: remaining_side}", force)
+        self.assertIn('action.status == "OVER_COVERED"', force)
         self.assertNotIn("submit_order", force)
 
 

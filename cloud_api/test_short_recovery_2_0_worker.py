@@ -286,9 +286,9 @@ class JointExit(Recovery):
         self.check_invariant()
         self.assertEqual(self.short("SOLUSDT"), 0.0)
         self.assertEqual(self.long("SOLUSDT"), 10.0)
-        self.assertEqual(self.rec("SOLUSDT")["phase"], "PAIR_EXIT")
+        self.assertEqual(self.pair("SOLUSDT")["pairExit"]["phase"], "CLOSING_OPPOSITE")   # build 623: own field
         self.assertEqual(pair_exit.long_tp_gate(account_uid=self.uid, symbol="SOLUSDT", short_qty=0),
-                         ("ALLOW", "SHORT_FLAT_JOINT_EXIT"))
+                         ("ALLOW", "OPPOSITE_FLAT_JOINT_EXIT"))
         self.worker_tick()                                          # SHORT stays flat while LONG TP runs
         self.assertEqual(self.short("SOLUSDT"), 0.0)
 
@@ -323,11 +323,12 @@ class JointExit(Recovery):
         self.worker_tick()
         self.assertEqual(self.short("SOLUSDT"), 10.0)
 
-    def test_legacy_pair_tp_is_unchanged(self):
+    def test_plain_hedged_pair_tp_now_also_waits_for_joint_exit(self):
+        # Build 623 (Amar 23-10): every Auto Hedge pair, also with afbouwen OFF / test mode: LONG never alone.
         self.ext.SHORT_RECOVERY_EXECUTION_ENABLED = False
         self.open_pair("SOLUSDT")
         self.at("SOLUSDT", 100)
-        self.assertEqual(pair_exit.long_tp_gate(account_uid=self.uid, symbol="SOLUSDT", short_qty=10)[0], "ALLOW")
+        self.assertEqual(pair_exit.long_tp_gate(account_uid=self.uid, symbol="SOLUSDT", short_qty=10)[0], "WAIT")
 
 
 class SettingsRoute(Recovery):
