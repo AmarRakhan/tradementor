@@ -101,6 +101,7 @@ from aster_strategy2_focus_adapter import current_focus_markets
 from aster_strategy2_focus import FocusState, rank_focus_pairs, next_dca_trigger
 from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
+from aster_attribution_archive import compact_for_write as compact_attributions_for_write, compact_document as compact_attribution_document
 from aster_spike_realtime import MAX_CONNECTIONS as SPIKE_MAX_CONNECTIONS, SpikeTrigger, make_spike_evaluator, shard_mapping, watch_from_control
 from aster_extreme_spike_filter import warm_spike_reference
 from aster_strategy2_focus_cycle import cycle_state_to_mapping, reset_cycle
@@ -1769,7 +1770,8 @@ def _record_aster_order_attribution(ref: Any, result: dict[str, Any], *, strateg
     rows.append({"orderId":order_id,"clientOrderId":client_order_id,"strategyId":strategy_id,
         "strategyName":strategy_name,"cycleId":cycle_id,"configVersion":config_version,
         "symbol":symbol,"side":side,"action":action,"recordedAt":datetime.now(timezone.utc)})
-    ref.set({"orderAttributions":rows[-2000:]}, merge=True)
+    # Build 620: oude rijen naar de archief-subcollectie, document blijft klein.
+    ref.set({"orderAttributions":compact_attributions_for_write(ref,rows)}, merge=True)
 
 
 def _configured_universe_contract(raw: dict[str, Any], requested_top_n: int) -> dict[str, Any]:
@@ -2275,6 +2277,9 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     ref=aster_strategy2_reference(uid);raw=ref.get().to_dict() or {};now=datetime.now(timezone.utc)
     # Build 619: ook hier (instellingen opslaan en realtime roepen de tick direct aan).
     raw=_prune_expired_entry_cooldowns(ref,raw,int(now.timestamp()*1000))
+    # Build 620: ordergeschiedenis compact houden (alleen schrijven als er >= 50 rijen naar het archief kunnen).
+    if compact_attribution_document(ref,raw,now=now):
+        raw=ref.get().to_dict() or {}
     pending_reopens=list(raw.get("pendingReopens",[])) if isinstance(raw.get("pendingReopens"),list) else []
     raw_settings=raw.get("settings") if isinstance(raw.get("settings"),dict) else {}
     raw_settings=_strip_unreleased_beta_settings_for_uid(raw_settings, uid)

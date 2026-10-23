@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 620 (alleen backend): ordergeschiedenis compact in het accountdocument (laatste 7 dagen, lopende cycli en nieuwste rij per munt); oudere rijen naar de subcollectie orderAttributionArchive. Document blijft ruim onder de Firestore-limiet.
 // Build 619 (alleen backend): bot ging in DATA_HOLD doordat het accountdocument over de Firestore-limiet van 1 MiB groeide; verlopen instap-cooldowns (1022, ~285 kB) worden nu opgeruimd vóór elke scan.
 // Build 618: Extreme Spike realtime werkt weer: Aster sloot de Spike-websocket met 3001 bij 200 munten in één aanmelding; nu in porties van 25. Status "Wacht op spike" in plaats van ORDERFOUT; Spike-verbindingen zichtbaar in systemStatus. Bouwt op live 616 (2f07a076), zonder Auto Hedge per gebruiker (617).
 // Build 616: Spike-check gebruikt in productie de echte klok (614 telde het voorwerk vóór de scan nog niet mee; live nog 18/69 SPIKE_INVALID_LIVE_CANDLE).

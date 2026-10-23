@@ -87,7 +87,9 @@ def _record_order_attribution(ref: Any, result: dict[str, Any], *, settings: Any
         ),
         "recordedAt": datetime.now(timezone.utc),
     })
-    ref.set({"orderAttributions": rows[-2000:]}, merge=True)
+    # Build 620: oude rijen naar de archief-subcollectie, document blijft klein.
+    from aster_attribution_archive import compact_for_write
+    ref.set({"orderAttributions": compact_for_write(ref, rows)}, merge=True)
 
 
 def _effective_entry_filter_mode(raw: dict[str, Any]) -> str:
