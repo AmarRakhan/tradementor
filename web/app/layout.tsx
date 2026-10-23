@@ -47,6 +47,7 @@ import "./sniper-bridge.css";
 import "./friends-bridge.css";
 import "./ultra-rivalry.css";
 import "./bottom-nav-viewport.css";
+import "./black-luxe.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });

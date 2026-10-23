@@ -159,7 +159,8 @@ export function TradingChart({ selection, mode = "default", focusAtMs, breakEven
   const [focusLevelY, setFocusLevelY] = useState<Record<string, {realY:number;labelY:number}>>({});
 
   useEffect(() => {
-    const readSkin = () => setSkin(document.documentElement.dataset.appSkin === "suriname-heritage" ? "suriname-heritage" : "original");
+    // Black Luxe keeps the chart exactly as it looks under Suriname Heritage.
+    const readSkin = () => { const current = document.documentElement.dataset.appSkin; setSkin(current === "suriname-heritage" || current === "black-luxe" ? "suriname-heritage" : "original"); };
     readSkin();
     window.addEventListener("tradementor:skin-change", readSkin);
     return () => window.removeEventListener("tradementor:skin-change", readSkin);

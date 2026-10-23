@@ -42,7 +42,8 @@ import {
 type Destination = "hyperliquid" | "aster" | "journey" | "positions" | "risk" | "wallet" | "admin";
 type TradingExchange = "hyperliquid" | "aster";
 type InterfaceMode = "legacy" | "premium";
-type AppSkin = "original" | "suriname-heritage" | "ultra-rivalry";
+type AppSkin = "original" | "suriname-heritage" | "ultra-rivalry" | "black-luxe";
+const DEFAULT_APP_SKIN: AppSkin = "black-luxe";
 type ChartScope = TradingExchange | "portfolio";
 type PremiumSection = "dashboard" | "screener" | "bots" | "risk" | "portfolio" | "exchanges" | "wallet" | "academy" | "settings";
 
@@ -117,7 +118,7 @@ function TradeMentorHome() {
   const [navigationPreferences, setNavigationPreferences] = useState<NavigationPreferences>({ ...DEFAULT_NAVIGATION_PREFERENCES });
   const [navigationPreferenceReady, setNavigationPreferenceReady] = useState(false);
   const [navigationPreferenceMessage, setNavigationPreferenceMessage] = useState("");
-  const [appSkin, setAppSkin] = useState<AppSkin>("original");
+  const [appSkin, setAppSkin] = useState<AppSkin>(DEFAULT_APP_SKIN);
   const adminAccount = String(user?.email || "").toLowerCase() === "amar_rakhan@hotmail.com";
   const [adminDeviceAllowed, setAdminDeviceAllowed] = useState(false);
   const [adminDeviceEnrolled, setAdminDeviceEnrolled] = useState(false);
@@ -143,7 +144,8 @@ function TradeMentorHome() {
     if (route !== initial) window.history.replaceState({ destination: initial }, "", destinationHref(initial));
     if (initial === "aster") requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "auto" }));
     const savedSkin = window.localStorage.getItem("tradementor.appSkin");
-    const skin: AppSkin = savedSkin === "suriname-heritage" || savedSkin === "ultra-rivalry" ? savedSkin : "original";
+    // No saved choice yet → Black Luxe (standard since build 639). A saved choice is always kept.
+    const skin: AppSkin = savedSkin === "original" || savedSkin === "suriname-heritage" || savedSkin === "ultra-rivalry" || savedSkin === "black-luxe" ? savedSkin : DEFAULT_APP_SKIN;
     setAppSkin(skin);
     document.documentElement.dataset.appSkin = skin;
   }, []);
@@ -780,6 +782,7 @@ function AppSkinSelector({ skin, onChange }: { skin: AppSkin; onChange: (skin: A
     <div className="interface-mode-heading"><div><span className="kicker">APPEARANCE · APP SKIN</span><h2 id="app-skin-title">Kies jouw uitstraling</h2></div><span className="interface-safe-badge">Alleen visueel</span></div>
     <p>De skin verandert uitsluitend kleuren, achtergronden en afwerking. Posities, bots, berekeningen en exchangegegevens blijven exact hetzelfde.</p>
     <div className="app-skin-options">
+      <button type="button" className={skin === "black-luxe" ? "active" : ""} aria-pressed={skin === "black-luxe"} onClick={() => onChange("black-luxe")}><span className="skin-preview luxe" /><strong>Black Luxe</strong><small>Standaard · diep zwart, goud en felle accenten.</small></button>
       <button type="button" className={skin === "original" ? "active" : ""} aria-pressed={skin === "original"} onClick={() => onChange("original")}><span className="skin-preview original" /><strong>TradeMentor Original</strong><small>De vertrouwde blauw-donkere stijl.</small></button>
       <button type="button" className={skin === "suriname-heritage" ? "active" : ""} aria-pressed={skin === "suriname-heritage"} onClick={() => onChange("suriname-heritage")}><span className="skin-preview heritage" /><strong>Suriname Heritage</strong><small>Diep groen, warm goud en tropische diepte.</small></button>
       <button type="button" className={skin === "ultra-rivalry" ? "active" : ""} aria-pressed={skin === "ultra-rivalry"} onClick={() => onChange("ultra-rivalry")}><span className="skin-preview rivalry" /><strong>Ultra Rivalry</strong><small>ASTER-only · Goku LONG · Vegeta SHORT · Zeno balance.</small></button>

@@ -505,6 +505,64 @@ def _force_rehedge_active(
                        "generationId": str(state.get("generationId") or "")}
 
 
+def _flip_roles_to_active_plan(
+    uid: str,
+    state: dict[str, Any],
+    pmap: dict[tuple[str, str], dict[str, Any]],
+    open_orders: list[dict[str, Any]],
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    """Build 638 (Amar 23-10): an exactly 1:1 pair follows the afbouw setting that is switched ON.
+
+    For a 1:1 pair "protected" vs "hedge" is only a label: the protection is the same either way. When afbouwen is
+    OFF for the current protected side and ON for the other side, swap the labels so the pair joins the grid that
+    is switched on (e.g. an old SHORT position with an Auto Hedge LONG, while only SHORT-hedge afbouwen is ON).
+    No order is ever placed here; the afbouw record restarts (new cycle anchored on the new hedge's entry).
+    Only for a settled HEDGED pair without joint exit and without open orders on the symbol.
+    """
+    if str(state.get("status", "")).upper() != "HEDGED" or isinstance(state.get("pairExit"), dict):
+        return state
+    protected_side = str(state.get("protectedSide", "")).upper()
+    if protected_side not in {"LONG", "SHORT"}:
+        return state
+    other = _opposite(protected_side)
+    own_plan = settings.get(_plan_field(protected_side))
+    other_plan = settings.get(_plan_field(other))
+    if (isinstance(own_plan, dict) and own_plan.get("enabled") is True) or not (
+            isinstance(other_plan, dict) and other_plan.get("enabled") is True):
+        return state
+    symbol = str(state.get("symbol", "")).upper()
+    if any(isinstance(o, dict) and str(o.get("symbol", "")).upper() == symbol
+           and str(o.get("status", "NEW")).upper() not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
+           for o in open_orders or []):
+        return state
+    protected_qty = position_quantity(pmap.get((symbol, protected_side)))
+    hedge_qty = position_quantity(pmap.get((symbol, other)))
+    if protected_qty <= 0 or hedge_qty <= 0 or abs(protected_qty - hedge_qty) > max(1e-9, 1e-6 * protected_qty):
+        return state
+    now = datetime.now(timezone.utc)
+    update = {
+        "protectedSide": other,
+        "hedgeSide": protected_side,
+        "currentProtectedQty": hedge_qty,
+        "currentHedgeQty": protected_qty,
+        "reservedHedgeQty": protected_qty,
+        "normalFreeQty": 0.0,
+        "protectedLeg": _leg_view(pmap.get((symbol, other))),
+        "hedgeLeg": _leg_view(pmap.get((symbol, protected_side))),
+        "shortRecovery": None,
+        "shortRecoveryShadow": None,
+        "rolesFlippedAt": now,
+        "lastReason": "ROLES_FLIPPED_TO_ACTIVE_AFBOUW_PLAN",
+        "updatedAt": now,
+    }
+    _pair_doc(uid, symbol).set(update, merge=True)
+    _audit(uid, {"eventType": "ROLES_FLIPPED_TO_ACTIVE_AFBOUW_PLAN", "symbol": symbol,
+                 "previousProtectedSide": protected_side, "protectedSide": other,
+                 "qty": protected_qty, "reason": "AFBOUW_ON_FOR_OTHER_SIDE_ONLY"})
+    return {**state, **update}
+
+
 def _transition_closed_outside_app(
     uid: str,
     state: dict[str, Any],
@@ -625,6 +683,9 @@ def _prepare_lifecycle(
                             uid=uid, symbol=symbol, state=state, pmap=pmap, open_orders=open_orders,
                             execute=execute, results=force_results,
                         )
+                    if execute and symbol not in force:
+                        state = _flip_roles_to_active_plan(uid, state, pmap, open_orders, settings)
+                        side = str(state.get("protectedSide", side)).upper()
                     states[symbol] = state   # this tick works on the updated state (also after a transition)
                     active[symbol] = side
                     continue
