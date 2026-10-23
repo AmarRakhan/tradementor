@@ -16,6 +16,6 @@ jobs:
           b=$(curl -sS -m 30 -w '%{http_code}' https://fapi.asterdex.com/fapi/v1/ticker/24hr -o probe-out/ticker24h.json || echo fail)
           echo "::notice::exchangeInfo=$a ticker=$b sizes=$(wc -c probe-out/* | tr '\n' ' ')"
           git config user.name "markets-probe"; git config user.email "noreply@anthropic.com"
-          git checkout -b claude/markets-probe-data
+          mv probe-out /tmp/probe-out; git checkout --orphan claude/markets-probe-data; git rm -rqf .; mv /tmp/probe-out probe-out
           git add probe-out && git commit -qm "Publieke Aster-data voor Markets-ontwerp [skip ci]"
           git push -f origin claude/markets-probe-data 2>&1 | tail -3 | tr '\n' ' ' | sed 's/^/::notice::push /'
