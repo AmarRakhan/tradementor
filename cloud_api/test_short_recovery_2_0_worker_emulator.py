@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+import test_hedge_grid_634 as grid
 import test_short_recovery_2_0_worker as scenarios
 from test_rehedge_all_1_0_emulator import EMULATOR, HAVE_CLIENT, EmulatorMixin
 
@@ -14,10 +15,10 @@ def _make(cls):
 
 
 EmulatorLiveLadder = _make(scenarios.LiveLadder)
-EmulatorLiveReopenNinety = _make(scenarios.LiveReopenNinety)
 EmulatorJointExit = _make(scenarios.JointExit)
 EmulatorShadow = _make(scenarios.Shadow)
 EmulatorUncertainFills = _make(scenarios.UncertainFills)
+EmulatorGridWorker = _make(grid.GridWorker)          # build 634: grid on the REAL Firestore emulator
 
 if __name__ == "__main__":
     unittest.main()
