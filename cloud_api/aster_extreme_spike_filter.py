@@ -72,7 +72,7 @@ def validate_settings(*, mode: str, level: str, long_tf: str, short_tf: str, leg
 def evaluate_spike(*, side: str, level: str, timeframe: str,
                    previous_closes: list[float], candle_high: float,
                    candle_low: float, candle_close_ms: int, now_ms: int,
-                   max_staleness_ms: int) -> SpikeSnapshot:
+                   max_staleness_ms: int, min_distance_pct: float = 0.0) -> SpikeSnapshot:
     level = normalize_level(level)
     if side not in ("LONG","SHORT") or level not in LEVELS or timeframe not in TIMEFRAMES:
         raise SpikeFilterRejected("SPIKE_INVALID_SETTINGS")
@@ -93,6 +93,12 @@ def evaluate_spike(*, side: str, level: str, timeframe: str,
     minimum,maximum = LEVELS[level]
     if score < minimum or (maximum is not None and score >= maximum):
         raise SpikeFilterRejected("SPIKE_OUTSIDE_SELECTED_RANGE")
+    # Build 624 (besluit Amar 23-10 13:45): naast k sigma ook een minimale afstand in %
+    # tot het gemiddelde. In een rustige markt is 4σ soms maar 0,5-1 %; dat is dan geen
+    # spike maar een gewone daling/stijging. Beide eisen moeten gelden.
+    distance_pct = (mean - wick) / mean * 100 if side == "LONG" else (wick - mean) / mean * 100
+    if min_distance_pct > 0 and distance_pct < min_distance_pct:
+        raise SpikeFilterRejected("SPIKE_BELOW_MIN_DISTANCE")
     band = mean + (-2 if side == "LONG" else 2)*deviation
     if band <= 0:
         raise SpikeFilterRejected("SPIKE_INVALID_BAND")
@@ -136,7 +142,8 @@ def clear_reference_cache() -> None:
 
 
 def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: str,
-                                timeframe: str, now_ms: int, live_price: float | None = None) -> SpikeSnapshot:
+                                timeframe: str, now_ms: int, live_price: float | None = None,
+                                min_distance_pct: float = 0.0) -> SpikeSnapshot:
     """Fail-closed adapter: use fresh ticker price when supplied by scanner.
 
     The candidate gate and final pre-order gate must both call this same
@@ -179,7 +186,7 @@ def require_extreme_spike_entry(client: Any, *, symbol: str, side: str, level: s
             previous_closes=previous_closes,
             candle_high=current_price,candle_low=current_price,
             candle_close_ms=live_close_ms,now_ms=now_ms,
-            max_staleness_ms=interval_ms+300000)
+            max_staleness_ms=interval_ms+300000,min_distance_pct=float(min_distance_pct or 0.0))
     except SpikeFilterRejected:
         raise
     except Exception as exc:
@@ -228,6 +235,9 @@ SPIKE_TP_MIN_PCT = 0.1
 SPIKE_TP_MAX_PCT = 50.0
 DEFAULT_SPIKE_TP_PCT = 1.0
 DEFAULT_TRAILING_PCT = 0.3
+# Build 624: minimale afstand tot het gemiddelde (%), per kant. 0 = uit.
+DEFAULT_MIN_DISTANCE_PCT = 2.0
+SPIKE_MIN_DISTANCE_MAX_PCT = 20.0
 
 
 def _flag(raw: Any, default: bool) -> bool:
@@ -264,6 +274,7 @@ def spike_settings_from_mapping(raw: dict[str, Any] | None) -> dict[str, Any]:
         out[f"{side.lower()}TakeProfitPct"] = _pct(raw.get(f"extremeSpike{side}TakeProfitPct"), DEFAULT_SPIKE_TP_PCT)
         out[f"{side.lower()}TrailingEnabled"] = _flag(raw.get(f"extremeSpike{side}TrailingEnabled"), False)
         out[f"{side.lower()}TrailingPct"] = _pct(raw.get(f"extremeSpike{side}TrailingPct"), DEFAULT_TRAILING_PCT)
+        out[f"{side.lower()}MinDistancePct"] = _pct(raw.get(f"extremeSpike{side}MinDistancePct"), DEFAULT_MIN_DISTANCE_PCT)
     return out
 
 
@@ -272,6 +283,9 @@ def validate_side_settings(spike: dict[str, Any]) -> None:
         tp = spike[f"{side}TakeProfitPct"]
         if not SPIKE_TP_MIN_PCT <= tp <= SPIKE_TP_MAX_PCT:
             raise ValueError("INVALID_SPIKE_TAKE_PROFIT")
+        min_distance = spike.get(f"{side}MinDistancePct", 0.0)
+        if not 0 <= min_distance <= SPIKE_MIN_DISTANCE_MAX_PCT:
+            raise ValueError("INVALID_SPIKE_MIN_DISTANCE")
         if spike[f"{side}TrailingEnabled"]:
             trail = spike[f"{side}TrailingPct"]
             # Terugval moet kleiner zijn dan de TP, anders kan trailing met verlies sluiten.
@@ -283,7 +297,8 @@ def spike_side_enabled(spike: dict[str, Any], side: str) -> bool:
     return bool(spike["longEnabled"] if side == "LONG" else spike["shortEnabled"])
 
 
-def spike_band_price(previous_closes: list[float], *, side: str, level: str) -> float | None:
+def spike_band_price(previous_closes: list[float], *, side: str, level: str,
+                     min_distance_pct: float = 0.0) -> float | None:
     """Vaste instapprijs voor de lopende candle: BB(20,k)-onder/bovenband.
 
     Hangt alleen af van de 20 afgesloten closes en ligt dus vast vanaf het begin
@@ -301,6 +316,10 @@ def spike_band_price(previous_closes: list[float], *, side: str, level: str) -> 
         return None
     k = LEVELS[level][0]
     price = mean - k * deviation if side == "LONG" else mean + k * deviation
+    # Build 624: de verste van de twee grenzen (k sigma of minimale afstand in %).
+    if min_distance_pct and min_distance_pct > 0:
+        floor = mean * (1 - min_distance_pct / 100) if side == "LONG" else mean * (1 + min_distance_pct / 100)
+        price = min(price, floor) if side == "LONG" else max(price, floor)
     return price if price > 0 else None
 
 

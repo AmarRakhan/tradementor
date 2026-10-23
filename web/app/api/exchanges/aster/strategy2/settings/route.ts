@@ -19,6 +19,8 @@ const preserveKeys = [
   "extremeSpikeShortTrailingEnabled",
   "extremeSpikeLongTrailingPct",
   "extremeSpikeShortTrailingPct",
+  "extremeSpikeLongMinDistancePct",
+  "extremeSpikeShortMinDistancePct",
   "takeProfitMode",
   "portfolioTpPercent",
   "portfolioTpInputMode",

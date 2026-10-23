@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 // - LONG en SHORT apart aan/uit, elk met een eigen tijdframe, Spike-TP en optionele trailing.
 // - De bot stapt in op de actuele prijs tijdens de lopende candle (realtime), niet op candle-close.
 import {
-  SPIKE_LEVELS, SPIKE_TIMEFRAMES, SPIKE_TP_MAX, SPIKE_TP_MIN, spikeValidationError,
+  SPIKE_LEVELS, SPIKE_MIN_DISTANCE_MAX, SPIKE_MIN_DISTANCE_RECOMMENDED, SPIKE_TIMEFRAMES, SPIKE_TP_MAX, SPIKE_TP_MIN, spikeValidationError,
   type SpikeConfig, type SpikeSideConfig,
 } from "@/lib/extreme-spike-settings.mjs";
 export {
@@ -32,6 +32,11 @@ function SideEditor({ label, value, disabled, onChange }: { label: "LONG" | "SHO
     </div>
     {value.enabled ? <>
       <div className="es-timeframe"><small>Tijdframe</small><div>{FRAMES.map((tf) => <button type="button" key={tf} disabled={disabled} aria-pressed={value.timeframe === tf} className={value.timeframe === tf ? "selected" : ""} onClick={() => set({ timeframe: tf })}>{value.timeframe === tf ? "✓ " : ""}{tf === "1h" ? "1u" : tf === "4h" ? "4u" : tf}</button>)}</div></div>
+      <label className="es-field"><small>Minimale afstand tot het gemiddelde (%) · aanbevolen {SPIKE_MIN_DISTANCE_RECOMMENDED}%</small>
+        <input type="number" inputMode="decimal" min="0" max={SPIKE_MIN_DISTANCE_MAX} step="0.1" disabled={disabled} value={value.minDistancePct} data-testid={`spike-min-distance-${label.toLowerCase()}`} onChange={(e) => set({ minDistancePct: Number(e.target.value) })} /></label>
+      <p className="es-hint">{value.minDistancePct > 0
+        ? `De bot stapt pas in als de koers minstens ${value.minDistancePct}% ${label === "LONG" ? "onder" : "boven"} het gemiddelde van de laatste 20 candles staat én de gekozen Bollinger-band raakt. In een rustige markt is de band soms maar 0,5–1% van het gemiddelde; dat is dan een gewone ${label === "LONG" ? "daling" : "stijging"} en geen spike. Hoger = minder, maar echtere spikes. Lager = meer instappen, ook in rustige markten. 0 = uit.`
+        : `Uit: de bot stapt in zodra de band geraakt wordt, ook als die maar een fractie van een procent van het gemiddelde ligt (rustige markt). Aanbevolen is ${SPIKE_MIN_DISTANCE_RECOMMENDED}%.`}</p>
       <label className="es-field"><small>Spike take profit (% koersbeweging)</small>
         <input type="number" inputMode="decimal" min={SPIKE_TP_MIN} max={SPIKE_TP_MAX} step="0.1" disabled={disabled} value={value.takeProfitPct} onChange={(e) => set({ takeProfitPct: Number(e.target.value) })} /></label>
       <div className="es-trailing">

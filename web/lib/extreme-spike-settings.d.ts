@@ -1,12 +1,14 @@
 export type SpikeTimeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 export type EntryFilterMode = "OFF" | "BOLLINGER" | "EXTREME_SPIKE";
 export type SpikeLevel = "2" | "3" | "4" | "5" | "6" | "7";
-export type SpikeSideConfig = { enabled: boolean; timeframe: SpikeTimeframe; takeProfitPct: number; trailingEnabled: boolean; trailingPct: number };
+export type SpikeSideConfig = { enabled: boolean; timeframe: SpikeTimeframe; takeProfitPct: number; trailingEnabled: boolean; trailingPct: number; minDistancePct: number };
 export type SpikeConfig = { mode: EntryFilterMode; level: SpikeLevel; long: SpikeSideConfig; short: SpikeSideConfig };
 export declare const SPIKE_LEVELS: SpikeLevel[];
 export declare const SPIKE_TIMEFRAMES: SpikeTimeframe[];
 export declare const SPIKE_TP_MIN: number;
 export declare const SPIKE_TP_MAX: number;
+export declare const SPIKE_MIN_DISTANCE_MAX: number;
+export declare const SPIKE_MIN_DISTANCE_RECOMMENDED: number;
 export declare function normalizeSpikeLevel(value: unknown): SpikeLevel;
 export declare function spikeConfigFromSettings(settings: Record<string, unknown>): SpikeConfig;
 export declare function spikeSettingsPayload(config: SpikeConfig): Record<string, unknown>;

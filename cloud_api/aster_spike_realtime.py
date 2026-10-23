@@ -49,6 +49,8 @@ class SpikeWatch:
     short_enabled: bool
     # Build 621 (statistiek): munten met genoeg hefboom volgens de scanner, en munten
     # met al een open positie per kant. Leeg = onbekend (telt niet als verhandelbaar).
+    long_min_distance_pct: float = 0.0
+    short_min_distance_pct: float = 0.0
     tradable: frozenset[str] = frozenset()
     open_long: frozenset[str] = frozenset()
     open_short: frozenset[str] = frozenset()
@@ -65,6 +67,14 @@ class SpikeWatch:
         if self.short_enabled:
             out.append(("SHORT", self.short_timeframe))
         return tuple(out)
+
+
+def _float(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) and number > 0 else 0.0
 
 
 def watch_from_control(uid: str, raw: dict[str, Any], *, now_ms: int) -> SpikeWatch | None:
@@ -92,6 +102,8 @@ def watch_from_control(uid: str, raw: dict[str, Any], *, now_ms: int) -> SpikeWa
                         long_timeframe=long_tf, short_timeframe=short_tf,
                         long_enabled=bool(watch.get("longEnabled")) and long_tf in TIMEFRAMES,
                         short_enabled=bool(watch.get("shortEnabled")) and short_tf in TIMEFRAMES,
+                        long_min_distance_pct=_float(watch.get("longMinDistancePct")),
+                        short_min_distance_pct=_float(watch.get("shortMinDistancePct")),
                         tradable=symbol_set("tradableSymbols"), open_long=symbol_set("openLong"),
                         open_short=symbol_set("openShort"))
     return result if result.symbols and result.sides() else None
@@ -177,7 +189,9 @@ class SpikeTrigger:
                                         now_ms=now_ms)
                 except Exception:
                     pass  # statistiek mag de trigger nooit hinderen
-            band = spike_band_price(list(closes), side=side, level=watch.level)
+            band = spike_band_price(list(closes), side=side, level=watch.level,
+                                    min_distance_pct=(watch.long_min_distance_pct if side == "LONG"
+                                                      else watch.short_min_distance_pct))
             if band is None:
                 continue
             hit = price <= band if side == "LONG" else price >= band
