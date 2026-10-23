@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 617: samenvoeging — Spike-klokfix (616, SR-sessie) + Hedge Mode-check en SHORT Recovery echte orders als standaard (616, Auto Hedge-sessie). Geen nieuwe functies.
 // Build 616: Spike-check gebruikt in productie de echte klok (614 telde het voorwerk vóór de scan nog niet mee; live nog 18/69 SPIKE_INVALID_LIVE_CANDLE).
 // Build 615: terug van Extreme Spike naar Bollinger (of Geen filter) werkt weer: die keuze wordt direct opgeslagen en de Bollinger-kaart met schakelaar en tijdframes verschijnt meteen; alleen weergave/instellingen.
 // Build 614: Extreme Spike keurde vrijwel elke munt af (SPIKE_INVALID_LIVE_CANDLE) doordat de scanner de begintijd van de tick gebruikte; nu een verse klok. Gekozen tijdframe licht ook op onder het app-thema.
@@ -41,7 +42,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "616";
+export const WEBAPP_BUILD_NUMBER = "617";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

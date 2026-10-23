@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-23",
-  title: "Extreme Spike: klok helemaal goed · build 616",
+  title: "Spike-klok en Auto Hedge voor iedereen samen · build 617",
   newItems: [
+    "Build 617: twee wijzigingen die tegelijk onder nummer 616 klaarstonden, nu samen in één versie: de Extreme Spike-check gebruikt de echte klok (geen onterecht afgekeurde munten meer), en Auto Hedge controleert Hedge Mode met SHORT afbouwen standaard met echte orders. Geen nieuwe functies.",
     "Build 616: vervolg op 614. Na 614 werd nog ongeveer een kwart van de munten afgekeurd met 'ongeldige live candle', omdat het ophalen van je account en posities vóór de scan ook tijd kost. Nu gebruikt de Spike-check altijd de echte klok van dat moment. Alleen de Spike-beoordeling verandert; stoelen, zones en orderroute blijven gelijk.",
     "Build 615: kies je in het Instapfilter weer Bollinger Band (of Geen extra filter) nadat Extreme Spike aan stond, dan wordt die keuze direct opgeslagen en verschijnt de Bollinger-kaart meteen, met de schakelaar en de LONG/SHORT-tijdframes. Eerder bleef de Bollinger-kaart verborgen tot je op opslaan drukte, waardoor je hem niet kon aanzetten. Extreme Spike zelf werkt ongewijzigd: instellingen kiezen en dan opslaan.",
     "Build 614: Extreme Spike keurde vrijwel elke munt af met 'ongeldige live candle'. Oorzaak: de scanner gebruikte de tijd van het begin van de scanronde, en zo'n ronde duurt soms langer dan een minuut. Daardoor leek de lopende 1m-candle in de toekomst te liggen. Nu kijkt de bot bij elke munt op de klok van dat moment, zodat Spike echt elke munt beoordeelt. Ook licht het gekozen tijdframe nu groen op, ook met het app-thema aan.",
