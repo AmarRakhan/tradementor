@@ -104,3 +104,12 @@ test("Build 637 vertical drag in the pane works without touching the price axis 
   assert.ok(source.includes("if(gesture.frozen&&!gesture.decided){try{priceScale.setAutoScale(true)}"));
   assert.ok(source.includes('container.removeEventListener("pointerdown",onGestureDown,{capture:true});'));
 });
+
+test("Build 642 R/S lines continue over the visible price range only, thinned to 10 px",async()=>{
+  const source=await component();
+  assert.ok(source.includes("const topPrice=series.coordinateToPrice(0),bottomPrice=series.coordinateToPrice(height);"));
+  assert.ok(source.includes("extendPortfolioZoneLadderToRange(zoneLadder,visLow,visHigh,{focusPrice:structurePrice,maxZones:160})"));
+  assert.ok(source.includes("const placedLevels=[...rawLevels,...visibleExtraLevels]"));
+  assert.ok(source.includes("level.top-last.top>=10"));
+  assert.equal((source.match(/series\.createPriceLine\(/g)||[]).length,2);
+});

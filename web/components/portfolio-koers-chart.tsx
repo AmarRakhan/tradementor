@@ -9,7 +9,7 @@ import { AsterSlotOverview } from "@/components/aster-slot-overview";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersMarkers, normalizePortfolioKoersPayload, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, markerCoordinateInViewport, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
-import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
+import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, extendPortfolioZoneLadderToRange, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
@@ -980,14 +980,38 @@ export function PortfolioKoersChart({
           return {label:`S${offset+1}`,price:Number.isFinite(Number(row?.lower))?Number(row.lower):null,side:"support" as const};
         });
         const rawLevels=[...resistanceLevels,...supportLevels];
-        const levels=rawLevels.flatMap((level)=>{
+        // Build 642: beyond R4/S4, continue the same R/S lines over the visible
+        // price range only, so every candle on screen sits between two lines.
+        // Nothing is drawn off-screen and there is no second (canvas) layer.
+        const visibleExtraLevels:{label:string;price:number|null;side:"resistance"|"support"}[]=[];
+        const topPrice=series.coordinateToPrice(0),bottomPrice=series.coordinateToPrice(height);
+        if(Number.isFinite(Number(activeIndex))&&topPrice!==null&&bottomPrice!==null){
+          const visLow=Math.min(Number(topPrice),Number(bottomPrice)),visHigh=Math.max(Number(topPrice),Number(bottomPrice));
+          const visibleLadder=extendPortfolioZoneLadderToRange(zoneLadder,visLow,visHigh,{focusPrice:structurePrice,maxZones:160});
+          for(const row of (Array.isArray(visibleLadder?.zones)?visibleLadder.zones:[]) as any[]){
+            const index=Number(row.index),active=Number(activeIndex);
+            if(index>=active+4&&Number.isFinite(Number(row.upper)))visibleExtraLevels.push({label:`R${index-active+1}`,price:Number(row.upper),side:"resistance"});
+            if(index<=active-4&&Number.isFinite(Number(row.lower)))visibleExtraLevels.push({label:`S${active-index+1}`,price:Number(row.lower),side:"support"});
+          }
+        }
+        const placedLevels=[...rawLevels,...visibleExtraLevels].flatMap((level)=>{
           if(!Number.isFinite(Number(level.price))||Number(level.price)<=0)return [];
           const coordinate=series.priceToCoordinate(Number(level.price));
           if(coordinate===null)return [];
           const top=Number(coordinate);
           if(top<0||top>height)return [];
           return [{label:level.label,price:Number(level.price),top,side:level.side}] as StructureLevelLayout[];
-        });
+        }).sort((a,b)=>a.top-b.top);
+        // Zoomed far out the lines would crowd together: keep at least 10 px
+        // between lines (R1 and S1 always stay).
+        const levels:StructureLevelLayout[]=[];
+        for(const level of placedLevels){
+          const last=levels.at(-1);
+          if(!last||level.top-last.top>=10||level.label==="R1"||level.label==="S1"){
+            if(last&&level.top-last.top<10&&last.label!=="R1"&&last.label!=="S1")levels.pop();
+            levels.push(level);
+          }
+        }
         const activeUpperY=Number.isFinite(Number(activeUpper))?series.priceToCoordinate(Number(activeUpper)):null;
         const activeLowerY=Number.isFinite(Number(activeLower))?series.priceToCoordinate(Number(activeLower)):null;
         const activeTop=activeUpperY!==null&&activeLowerY!==null?Math.min(Number(activeUpperY),Number(activeLowerY)):null;

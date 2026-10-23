@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-23",
-  title: "Zonelijnen één keer · build 641",
+  title: "Zonelijnen over het hele scherm · build 642",
   newItems: [
+    "Build 642: de rode en groene zonelijnen in de Portfolio Koers-grafiek stopten na vier lijnen boven en onder de actieve zone, waardoor candles verderop niet meer tussen twee lijnen vielen. Nu lopen dezelfde lijnen door over het hele stuk dat je op het scherm ziet, ook als je schuift of zoomt; daarbuiten wordt niets getekend. Zoom je ver uit, dan houdt de grafiek minstens 10 pixels tussen de lijnen zodat het rustig blijft. Alleen weergave.",
     "Build 641: in de Portfolio Koers-grafiek stonden de zonelijnen dubbel: de lijnen rond de actieve zone en daarachter nog een tweede laag stippellijnen over de hele hoogte. Die achtergrondlaag is weg. De rode en groene lijnen rond de koers (boven en onder de actieve zone) blijven precies zoals ze waren. Alleen weergave.",
     "Build 640: de gestippelde prijszonelijnen in de Portfolio Koers-grafiek zijn minder fel. Opbouw, plek en kleuren blijven hetzelfde (rood boven de koers, groen eronder), alleen ongeveer de helft zo sterk, zodat candles en labels weer voorop staan. Alleen weergave.",
     "Build 639: nieuw thema Black Luxe. Je vindt het onder Wallet → Kies jouw uitstraling, naast Original, Suriname Heritage en Ultra Rivalry. Achtergronden en kaarten zijn diep zwart in plaats van groen of bruin getint, de gouden randen en labels blijven, en groen en rood voor winst, verlies, LONG en SHORT lichten feller op. De Totaal-balk in het Slot-overzicht is felgoud gevuld. Alleen de kleuren veranderen: alle blokken, de grafiek en het stier/beer-filmpje blijven precies zoals ze waren. Black Luxe is de standaard voor wie nog nooit een thema koos; heb je al een thema gekozen, dan blijft dat staan tot je zelf Black Luxe aantikt.",
