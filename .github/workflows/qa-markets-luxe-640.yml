@@ -1,4 +1,4 @@
-name: QA 640 Markets Black Luxe
+name: QA 644 Markets Black Luxe
 on:
   push:
     branches: [claude/markets-luxe-qa]
@@ -23,17 +23,17 @@ jobs:
         working-directory: web
         continue-on-error: true
         run: |
-          npx vite --config tests/visual/markets-v640-vite.config.ts >/tmp/vite.log 2>&1 &
-          for i in {1..40}; do curl --fail --silent http://127.0.0.1:4176/tests/visual/markets-v640.html >/dev/null && break; sleep 1; done
-          node tests/visual/markets-v640-screenshots.mjs > /tmp/qa.log 2>&1; code=$?
-          cp /tmp/qa.log artifacts/markets-v640/qa.log; tail -40 /tmp/vite.log > artifacts/markets-v640/vite.log || true
+          npx vite --config tests/visual/markets-v644-vite.config.ts >/tmp/vite.log 2>&1 &
+          for i in {1..40}; do curl --fail --silent http://127.0.0.1:4176/tests/visual/markets-v644.html >/dev/null && break; sleep 1; done
+          node tests/visual/markets-v644-screenshots.mjs > /tmp/qa.log 2>&1; code=$?
+          cp /tmp/qa.log artifacts/markets-v644/qa.log; tail -40 /tmp/vite.log > artifacts/markets-v644/vite.log || true
           exit $code
       - name: Results to data branch
         if: always()
         run: |
           echo "::notice::QA outcome=${{ steps.qa.outcome }}"
-          mv web/artifacts/markets-v640 /tmp/qa-out
+          mv web/artifacts/markets-v644 /tmp/qa-out
           git config user.name "markets-qa"; git config user.email "noreply@anthropic.com"
           git checkout --orphan claude/markets-luxe-qa-data; git rm -rqf .; mkdir -p qa; cp -r /tmp/qa-out/. qa/
           echo "${{ steps.qa.outcome }} ${{ github.sha }}" > qa/outcome.txt
-          git add qa && git commit -qm "QA 640 screenshots [skip ci]" && git push -f origin claude/markets-luxe-qa-data
+          git add qa && git commit -qm "QA 644 screenshots [skip ci]" && git push -f origin claude/markets-luxe-qa-data
