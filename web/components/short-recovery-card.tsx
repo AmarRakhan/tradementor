@@ -63,7 +63,7 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
         body: JSON.stringify({ ...payload, hedgeSide, clientBuild: String(WEBAPP_BUILD_NUMBER) }),
       }) as AutoHedgeLike;
       onSaved(next);
-      setMessage(nextEnabled ? "Opgeslagen · geldt vanaf de volgende afbouwcyclus." : `${hedgeSide}-hedge afbouwen staat UIT · posities blijven 100% gehedged.`);
+      setMessage(nextEnabled ? "Opgeslagen · geldt direct voor alle posities. Staat een hedge al verder in de plus, dan verkoopt hij die stappen nu." : `${hedgeSide}-hedge afbouwen staat UIT · posities blijven 100% gehedged.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Opslaan mislukt");
     } finally {
@@ -101,7 +101,7 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
         <div className="plah-threshold-value plah-unwind-value">elke {fmt(check.stepPct, 4)}% · {fmt(check.sellPct, 4)}%</div>
         <p className="plah-info"><span>i</span>
           Vanaf de instapkoers van de hedge verkoopt de bot bij elke {fmt(check.stepPct, 4)}% {move} {fmt(check.sellPct, 4)}% van de {hedgeSide}
-          (eerste stap {sign}{fmt(ladder[0]?.dropPct ?? 0, 4)}%, leeg bij {sign}{fmt(check.totalPct, 4)}%). Alleen met winst na fees. Leeg = weer 100% hedgen.
+          (eerste stap {sign}{fmt(ladder[0]?.dropPct ?? 0, 4)}%, leeg bij {sign}{fmt(check.totalPct, 4)}%). Alleen met winst na fees. Leeg = weer 100% hedgen. Een wijziging geldt direct voor alle lopende posities.
           Stap te klein voor Aster: {hedgeSide} 100% sluiten en 90% van de {protectedSide} terugzetten.
         </p>
       </> : <p className="plah-info plah-unwind-error" role="alert"><span>!</span> {check.message}</p>}

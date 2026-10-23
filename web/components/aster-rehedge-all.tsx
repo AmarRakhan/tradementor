@@ -102,7 +102,7 @@ export function RehedgeAllButton() {
             ook als hij in de plus staat. Bij een LONG wordt de SHORT aangevuld, bij een SHORT de LONG, tot de{" "}
             <strong>actuele hoeveelheid</strong> bij Aster; bestaande hedge en openstaande orders tellen mee. Er wordt
             altijd naar beneden afgerond: de hedge wordt nooit groter dan de positie. Een hedge die al groter is, wordt
-            overgeslagen en gemeld. Afbouwen telt daarna vanaf de koers van nu.
+            overgeslagen en gemeld. Afbouwen telt vanaf de gemiddelde instapkoers van de hedge: staat die na het aanvullen nog in de plus, dan kan meteen een stap verkocht worden.
           </p>
           <p style={{ wordBreak: "break-word" }}>{confirming.map((pair) => String(pair.symbol || "").replace(/USDT$/i, "")).join(" · ")}</p>
           <footer>

@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 629: hedge afbouwen — een gewijzigde instelling geldt direct voor alle lopende posities (geen vastgezette instellingen per cyclus meer); de ladder meet vanaf de eigen gemiddelde instapkoers van de hedge (de winst die je ziet), een hedge die al voorbij stappen is verkoopt die meteen en wordt na de laatste stap weer 100% gehedged; nooit terugkopen midden in een cyclus. Bevat 628: alles-sluiten-fase sluit nooit met verlies.
 // Build 626: Auto Hedge voor LONG én SHORT — apart verliesbedrag per kant, hedge afbouwen gespiegeld met eigen instellingen per kant (standaard UIT), stap alleen met winst na fees, TP sluit beide samen en alleen netto groen (elk pair), Re-Hedge All voor beide kanten en ook halverwege de afbouw, nooit verkopen om recht te trekken, één positie per munt met Auto Hedge AAN, Hedge Mode-check, echte afbouworders.
 // Build 625: Extreme Spike — minimale afstand tot het gemiddelde (%) per kant, naast de Bollinger-band; aanbevolen 2 %, instelbaar 0–20 %, met uitleg. Stopt instappen in rustige markten waar 4σ maar 0,5–1 % is.
 // Build 623 (alleen backend): Spike-statistiek "verhandelbaar" werkt ook als de stoelen vol zijn — hefboomgrenzen eens per 6 uur in één bulk-aanvraag.
@@ -49,7 +50,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "626";
+export const WEBAPP_BUILD_NUMBER = "629";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

@@ -26,12 +26,13 @@ class Lifecycle(unittest.TestCase):
         r = go(short_qty=0)
         self.assertEqual((r["override"], r["event"]), (None, "WAIT_FOR_1_TO_1"))
 
-    def test_existing_hedge_anchors_at_switch_on_mark(self):
-        # Amar 19:45: a pair hedged before switching ON starts at the current price, not the old entry.
+    def test_existing_hedge_catches_up_from_hedge_entry(self):
+        # Build 629 (Amar 23-10, keuze B): the ladder measures from the hedge's own entry, so a hedge that is
+        # already past every step sells them now in one catch-up order (was: start at the switch-on mark).
         r = go(short_entry=100, mark=85, start_at_mark=True)
-        self.assertEqual((r["record"]["anchor"], r["record"]["startReason"]), ("85", "ANCHOR_AT_SWITCH_ON"))
         r2 = go(r["record"], mark=85, start_at_mark=True)
-        self.assertEqual((r2["event"], r2["record"]["stepsReached"]), ("LADDER_HOLD", 0))   # no catch-up burst
+        self.assertEqual((r2["event"], r2["override"], r2["record"]["stepsReached"]), ("STEP_REDUCE", D(0), 4))
+        self.assertEqual(r2["record"]["anchor"], "100")
 
     def test_refill_after_switch_on_uses_short_entry(self):
         rec = {"cycleId": 1, "phase": "REFILL", "lastTarget": "100"}
@@ -111,7 +112,7 @@ class ReopenNinety(unittest.TestCase):
         # Decision Amar 17:57: reopen is always 90% of the LONG, never 81% / 72.9%.
         rec = {"cycleId": 2, "phase": "LADDER", "anchor": "97", "base": "90", "longAtStart": "100",
                "stepsReached": 0, "steps": 4, "stepPct": "2", "lastTarget": "90"}
-        r = go(rec, mark="95.06", short_qty=90, min_qty=40)
+        r = go(rec, mark="95.06", short_qty=90, short_entry="97", min_qty=40)
         self.assertEqual(r["event"], "STEP_TOO_SMALL_CLOSE_ALL")
         self.assertEqual(r["record"]["reopenQty"], "90")
 
@@ -190,3 +191,49 @@ class CloseAllNeverAtLoss(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveSettings629(unittest.TestCase):
+    """Build 629 (Amar 23-10): a settings change applies at once to running ladders, measured from the hedge entry."""
+
+    OLD = {"cycleId": 1, "phase": "LADDER", "anchor": "100", "base": "100", "longAtStart": "100",
+           "stepsReached": 0, "steps": 3, "totalPct": "6", "stepPct": "2", "lastTarget": "100"}
+
+    def test_new_settings_apply_to_running_cycle_with_catch_up(self):
+        r = go(dict(self.OLD), settings={"enabled": True, "steps": 3, "totalPct": "1"}, mark="99")
+        self.assertEqual((r["event"], r["override"]), ("STEP_REDUCE", D(0)))
+        self.assertEqual((r["record"]["steps"], r["record"]["totalPct"], r["record"]["stepsReached"]), (3, "1", 3))
+
+    def test_three_sales_at_three_levels(self):
+        cfg = {"enabled": True, "steps": 3, "totalPct": "1"}
+        rec = go(settings=cfg)["record"]
+        targets = []
+        for mark, qty in (("99.66", 100), ("99.33", 67), ("99", 34)):
+            r = go(rec, settings=cfg, mark=mark, short_qty=qty)
+            rec = r["record"]
+            targets.append(r["override"])
+        self.assertEqual(targets, [D(67), D(34), D(0)])
+        done = go(rec, settings=cfg, mark="99", short_qty=0)
+        self.assertEqual((done["event"], done["override"]), ("LADDER_DONE_REFILL_1_TO_1", None))
+
+    def test_settings_change_never_buys_back(self):
+        rec = {**self.OLD, "steps": 3, "totalPct": "1", "stepsReached": 2, "lastTarget": "34", "longAtLastTarget": "100"}
+        r = go(rec, settings={"enabled": True, "steps": 3, "totalPct": "6"}, mark="99.3", short_qty=34)
+        self.assertEqual(r["override"], D(34))
+
+    def test_dca_growth_still_hedged_under_ceiling(self):
+        rec = {**self.OLD, "steps": 3, "totalPct": "6", "stepsReached": 0, "lastTarget": "100", "longAtLastTarget": "100"}
+        r = go(rec, settings={"enabled": True, "steps": 3, "totalPct": "6"}, long_qty=110, short_qty=100, mark="100")
+        self.assertEqual(r["override"], D(110))
+
+    def test_measures_from_live_hedge_entry_not_cycle_anchor(self):
+        # Re-Hedge All topped up at a lower price: the averaged hedge entry is the reference (keuze B).
+        rec = {**self.OLD, "anchor": "95", "startReason": "REHEDGE_ALL_AT_MARK"}
+        r = go(rec, short_entry="100", mark="97.9")
+        self.assertEqual((r["event"], r["record"]["stepsReached"], r["record"]["anchor"]), ("STEP_REDUCE", 1, "100"))
+
+    def test_tiny_steps_still_wait_for_profit_after_fees(self):
+        cfg = {"enabled": True, "steps": 3, "totalPct": "0.03"}
+        rec = go(settings=cfg)["record"]
+        r = go(rec, settings=cfg, mark="99.98")
+        self.assertEqual((r["event"], r["override"]), ("STEP_WAIT_PROFIT_AFTER_FEES", D(100)))

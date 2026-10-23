@@ -15,13 +15,15 @@ Phases of the per-pair ``shortRecovery`` record:
 * REOPEN_OPEN — target = reopenQty (90% of the LONG: always a 10% gap); once reached a new
   LADDER cycle starts on that reopened SHORT.
 
-Settings changes apply from the next cycle (steps/totalPct are snapshotted at cycle start).
+Build 629 (Amar 23-10, keuze B): settings changes apply AT ONCE to running ladders, and the LADDER measures from
+the hedge's live average entry (the profit the user sees), so a hedge already past steps sells them in one
+catch-up order. Nothing sold is bought back within a cycle (ceiling = last target + new protected quantity).
 Switching the feature off clears the record: the engine then restores the legacy 1:1 hedge.
 
 Build 623 (Amar 23-10): both sides. ``direction="DOWN"`` = protected LONG / SHORT hedge (original),
 ``direction="UP"`` = protected SHORT / LONG hedge reduced while the price rises. ``long_qty`` is the
 PROTECTED leg, ``short_qty``/``short_entry`` the HEDGE leg. A REFILL record with ``anchorAtMark``
-(set by Re-Hedge All) anchors its next cycle at the price of that moment instead of the hedge entry.
+(set by Re-Hedge All) is still recorded, but since build 629 the ladder measures from the live hedge entry.
 """
 from __future__ import annotations
 
@@ -156,22 +158,34 @@ def decide(
         return {"override": reopen, "record": rec, "event": "REOPENING_90"}
 
     # LADDER
+    # Build 629 (Amar 23-10, keuze B): the CURRENT settings apply at once to every running ladder (no snapshot
+    # per cycle any more), and the ladder measures from the hedge's own live average entry, i.e. exactly the
+    # profit the user sees on the hedge. A pair that is already past steps under the new settings sells them
+    # now (one catch-up order); past the last step it sells the whole hedge and is re-hedged 1:1.
     base = _d(rec.get("base"))
     growth = max(Decimal(0), long_q - _d(rec.get("longAtStart")))
     cap = base + growth
-    snap_steps = int(rec.get("steps") or cfg["steps"])
-    if rec.get("totalPct") is not None:
-        snapshot = {"enabled": True, "steps": snap_steps, "totalPct": str(rec["totalPct"])}
-    elif rec.get("stepPct") is not None:
-        snapshot = {"enabled": True, "steps": snap_steps, "stepPct": str(rec["stepPct"])}
-    else:
-        snapshot = {"enabled": True, "steps": cfg["steps"], "totalPct": cfg["totalPct"]}
-    decision = plan(long_qty=cap, short_qty=min(short_q, cap), base=base, anchor=_d(rec.get("anchor")), mark=price,
-                    settings=snapshot, previous_steps=int(rec.get("stepsReached") or 0), qty_step=step,
+    live = {"enabled": True, "steps": cfg["steps"], "totalPct": cfg["totalPct"]}
+    settings_changed = (str(rec.get("totalPct")) != str(cfg["totalPct"])
+                        or int(rec.get("steps") or 0) != int(cfg["steps"]))
+    entry = _d(short_entry)
+    anchor = entry if entry > 0 else _d(rec.get("anchor"))
+    # Steps of an older setting mean something else: recount on the new grid. The ceiling below still
+    # guarantees that nothing already sold is bought back.
+    previous = 0 if settings_changed else int(rec.get("stepsReached") or 0)
+    decision = plan(long_qty=cap, short_qty=min(short_q, cap), base=base, anchor=anchor, mark=price,
+                    settings=live, previous_steps=previous, qty_step=step,
                     min_qty=min_qty, min_notional=min_notional, reopen_basis_qty=long_q,
-                    direction=str(rec.get("direction") or direction), hedge_entry=_d(short_entry))
-    rec["stepsReached"] = max(int(rec.get("stepsReached") or 0), int(decision["stepsReached"]))
-    target = min(long_q, decision["targetShort"])
+                    direction=str(rec.get("direction") or direction), hedge_entry=entry)
+    rec.update(stepsReached=int(decision["stepsReached"]), steps=cfg["steps"], totalPct=cfg["totalPct"],
+               stepPct=cfg["stepPct"], anchor=_txt(anchor) if anchor > 0 else rec.get("anchor"))
+    # Never buy back within a cycle (also not after a settings change): the hedge only grows with new
+    # protected quantity (DCA) since the last confirmed target; refilling is for cycle end / Re-Hedge All.
+    last = _d(rec.get("lastTarget"), str(short_q))
+    long_at_last = _d(rec.get("longAtLastTarget"), str(rec.get("longAtStart") or long_q))
+    ceiling = last + max(Decimal(0), long_q - long_at_last)
+    target = min(long_q, decision["targetShort"], ceiling)
+    rec["longAtLastTarget"] = _txt(long_q)
     action = decision["action"]
 
     if action == "CYCLE_COMPLETE":
