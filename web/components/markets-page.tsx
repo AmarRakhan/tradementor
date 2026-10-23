@@ -110,11 +110,13 @@ export function MarketsPage() {
 
   const ownership = useMemo(() => ownershipBySymbol(positions), [positions]);
 
-  const enrich = useCallback(async (interval: MarketBbTimeframe, generation: number) => {
+  const enrich = useCallback(async (interval: MarketBbTimeframe, generation: number, fallbackOrder: string[]) => {
     let failures = 0;
     for (;;) {
       if (generationRef.current !== generation) return;
-      const batch = orderRef.current.filter((symbol) => !enrichedRef.current.has(symbol)).slice(0, ENRICH_BATCH_SIZE);
+      // The shown order once it exists (what you see fills first), else the server order.
+      const order = orderRef.current.length ? orderRef.current : fallbackOrder;
+      const batch = order.filter((symbol) => !enrichedRef.current.has(symbol)).slice(0, ENRICH_BATCH_SIZE);
       if (!batch.length) break;
       batch.forEach((symbol) => enrichedRef.current.add(symbol));
       try {
@@ -158,7 +160,7 @@ export function MarketsPage() {
         };
       });
       setLoading(false);
-      if (!background) window.setTimeout(() => void enrich(payload.interval, generation), 0);
+      if (!background) window.setTimeout(() => void enrich(payload.interval, generation, payload.markets.map((row) => row.symbol)), 0);
     } catch (reason) {
       if (generationRef.current !== generation) return;
       setError(reason instanceof Error ? reason.message : "Markets kon niet worden geladen");
@@ -265,10 +267,12 @@ export function MarketsPage() {
             return <li key={row.symbol} className={styles.row} data-market-symbol={row.symbol}>
               <button type="button" className={styles.rowMain} onClick={(event) => onRowTap(row, event)} aria-label={`${row.baseAsset}${row.quoteAsset !== "USDT" ? ` ${row.quoteAsset}` : ""}: tik om te handelen, dubbeltik voor de koers`}>
                 <span className={styles.cellSymbol}>
-                  <MarketIcon row={row} />
+                  <span className={styles.iconWrap}>
+                    <MarketIcon row={row} />
+                    {row.quoteAsset !== "USDT" ? <em className={styles.quote}>{row.quoteAsset}</em> : null}
+                  </span>
                   <span className={styles.nameLine}>
                     <strong>{row.baseAsset}</strong>
-                    {row.quoteAsset !== "USDT" ? <em className={styles.quote}>{row.quoteAsset}</em> : null}
                     <small>{row.maxLeverage ? `${row.maxLeverage}x` : ""}</small>
                     {own?.bot ? <span className={styles.tagBot}>BOT</span> : null}
                     {own?.manual ? <span className={styles.tagManual}>MANUAL</span> : null}
