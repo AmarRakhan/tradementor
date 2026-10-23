@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 638 (alleen web): nieuw thema Black Luxe onder Wallet → Kies jouw uitstraling — diep zwart, goud en felle accenten; standaard voor wie nog geen thema koos. Alleen kleuren: blokken, grafiek en stier/beer-filmpje ongewijzigd.
+// Build 639 (alleen web): nieuw thema Black Luxe onder Wallet → Kies jouw uitstraling — diep zwart, goud en felle accenten; standaard voor wie nog geen thema koos. Alleen kleuren: blokken, grafiek en stier/beer-filmpje ongewijzigd.
 // Build 637 (alleen web): Portfolio Koers — omhoog en omlaag slepen werkt direct in de grafiek (prijsas niet eerst aanraken); links/rechts vegen houdt automatische schaal; alleen weergave.
 // Build 636 (alleen web): Hoorn bij Portfolio TP klinkt tegelijk met de pushmelding als de app open is (ook in een ander tabblad); geen late hoorn meer bij later openen (venster 1 min). Bevat 635.
 // Build 635 (alleen web): Portfolio Koers — slepen werkt direct na een tik, zones over de hele koershistorie, elk tijdframe start zoals 15m, verversen wacht op je vinger en houdt je zoom, knop "Nu" terug naar de actuele koers; alleen weergave.
@@ -58,7 +58,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "638";
+export const WEBAPP_BUILD_NUMBER = "639";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

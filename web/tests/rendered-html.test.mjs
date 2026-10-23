@@ -448,7 +448,7 @@ test("Suriname Heritage is a persistent presentation-only skin", async () => {
   assert.match(page, /Alleen visueel/);
   assert.match(layout, /suriname-heritage\.css/);
   assert.match(skinStyles, /suriname-heritage-hero-v1\.png/);
-  // Build 638: Black Luxe shares Heritage's sizing rules via html:is([...heritage],[...black-luxe]).
+  // Build 639: Black Luxe shares Heritage's sizing rules via html:is([...heritage],[...black-luxe]).
   assert.match(skinStyles, /html:is\(\[data-app-skin="suriname-heritage"\],\[data-app-skin="black-luxe"\]\)/);
   assert.match(chart, /tradementor:skin-change/);
   assert.match(chart, /heritage\?"#031008":"#061225"/);

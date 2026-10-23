@@ -1,5 +1,5 @@
 /* Suriname Heritage is a presentation-only skin. No trading or data rules live here.
-   Black Luxe (build 638) shares these rules for sizes/finishing at this exact cascade position;
+   Black Luxe (build 639) shares these rules for sizes/finishing at this exact cascade position;
    app/black-luxe.css only re-colours them. */
 .app-skin-card{margin-top:18px;padding:clamp(20px,3vw,30px);border:1px solid var(--tm-line);border-radius:var(--tm-radius-lg);background:var(--tm-surface);box-shadow:var(--tm-shadow-card)}
 .app-skin-card>p{max-width:760px;color:var(--tm-text-2);font-size:11px;line-height:1.65}

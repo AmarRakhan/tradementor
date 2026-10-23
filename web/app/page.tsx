@@ -138,7 +138,7 @@ function TradeMentorHome() {
     if (route !== initial) window.history.replaceState({ destination: initial }, "", destinationHref(initial));
     if (initial === "aster") requestAnimationFrame(() => window.scrollTo({ top: 0, left: 0, behavior: "auto" }));
     const savedSkin = window.localStorage.getItem("tradementor.appSkin");
-    // No saved choice yet → Black Luxe (standard since build 638). A saved choice is always kept.
+    // No saved choice yet → Black Luxe (standard since build 639). A saved choice is always kept.
     const skin: AppSkin = savedSkin === "original" || savedSkin === "suriname-heritage" || savedSkin === "ultra-rivalry" || savedSkin === "black-luxe" ? savedSkin : DEFAULT_APP_SKIN;
     setAppSkin(skin);
     document.documentElement.dataset.appSkin = skin;
