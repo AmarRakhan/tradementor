@@ -27,6 +27,7 @@ CLUSTER_ATR = 0.6
 BREAK_ATR = 0.25
 RETEST_ATR = 0.5
 MAX_LEVELS = 24
+TOP_LEVELS = 5
 MIN_COVERAGE = 0.9
 
 
@@ -200,6 +201,19 @@ def _role_history(level: float, candles: list[dict[str, Any]], atr: float, start
     return {"flips": flips, "lastFlipIndex": last_flip_index, "pendingBreak": pending_break}
 
 
+def _strongest_levels(levels: list[dict[str, Any]], last_close: float, top: int = TOP_LEVELS) -> list[dict[str, Any]]:
+    if len(levels) <= top:
+        return levels
+    rank = lambda level: (-int(level["touches"]), -int(level["lastTouchAtMs"] or 0))
+    keep = {id(level) for level in sorted(levels, key=rank)[:top]}
+    below = [level for level in levels if level["price"] < last_close]
+    above = [level for level in levels if level["price"] >= last_close]
+    for side in (below, above):
+        if side and not any(id(level) in keep for level in side):
+            keep.add(id(min(side, key=rank)))
+    return [level for level in levels if id(level) in keep]
+
+
 def derive_sr_zones(candles: list[dict[str, Any]] | None) -> dict[str, Any]:
     rows = [row for row in candles or [] if isinstance(row, dict) and _number(row.get("close")) > 0]
     if len(rows) < SWING_WING * 2 + 8:
@@ -248,6 +262,10 @@ def derive_sr_zones(candles: list[dict[str, Any]] | None) -> dict[str, Any]:
             "provisional": False,
             "lastTouchAtMs": rows[cluster["lastIndex"]]["atMs"],
         })
+    # Build 645 (keuze Amar): only the most-touched levels, so the chart stays
+    # calm. Keep the TOP_LEVELS strongest, plus the strongest level directly
+    # below and above the price so there is always a zone around the price.
+    levels = _strongest_levels(levels, last_close)
     # Price beyond every confirmed level (fresh breakdown/breakout): the recent
     # extreme is not a confirmed swing yet, so add it as a provisional level.
     recent = rows[-(SWING_WING * 2 + 1):]

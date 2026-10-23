@@ -117,6 +117,17 @@ class SupportResistanceTests(unittest.TestCase):
         self.assertIsNotNone(result["activeZone"])
         self.assertLessEqual(result["activeZone"]["lower"], result["lastClose"])
 
+    def test_only_most_touched_levels_are_kept_with_a_zone_around_price(self):
+        from active_trades_zones import TOP_LEVELS, _strongest_levels
+        levels = [{"price": float(p), "touches": t, "lastTouchAtMs": p} for p, t in
+                  [(90, 1), (92, 6), (94, 2), (96, 8), (98, 1), (100, 2), (102, 9), (104, 7), (106, 5), (108, 3)]]
+        kept = _strongest_levels(levels, 99.0)
+        prices = [level["price"] for level in kept]
+        self.assertEqual(len([p for p in prices if p in (92, 96, 102, 104, 106)]), TOP_LEVELS)
+        self.assertTrue(any(p < 99 for p in prices) and any(p >= 99 for p in prices))
+        kept_low = _strongest_levels(levels, 91.0)
+        self.assertIn(90.0, [level["price"] for level in kept_low])
+
     def test_too_few_candles(self):
         self.assertEqual(derive_sr_zones(bars([1, 2, 3]))["reason"], "TOO_FEW_CANDLES")
 
