@@ -1,0 +1,42 @@
+name: QA Black Luxe skin
+on:
+  push:
+    branches: [claude/black-luxe-skin-qa]
+permissions:
+  contents: read
+jobs:
+  shots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build web
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+      - name: Start production server
+        working-directory: web
+        run: |
+          (PORT=4310 HOST=0.0.0.0 npm start -- --port 4310 > /tmp/web.log 2>&1 &)
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:4310/ && break; sleep 2; done
+          curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:4310/ || (cat /tmp/web.log; exit 1)
+      - name: Screenshots
+        working-directory: tools/qa-black-luxe
+        run: |
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright@1.55.0
+          npx playwright install --with-deps chromium
+          node shots.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-black-luxe
+          path: |
+            tools/qa-black-luxe/*.png
+            tools/qa-black-luxe/result.json
