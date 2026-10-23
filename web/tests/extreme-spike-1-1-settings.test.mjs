@@ -34,8 +34,8 @@ test("niveaus zijn 'vanaf'; oude vensters worden hun ondergrens", () => {
 test("payload heeft dezelfde veldnamen als de backend en rondt terug", () => {
   const config = {
     mode: "EXTREME_SPIKE", level: "6",
-    long: { enabled: true, timeframe: "15m", takeProfitPct: 0.5, trailingEnabled: true, trailingPct: 0.2 },
-    short: { enabled: true, timeframe: "1m", takeProfitPct: 2, trailingEnabled: false, trailingPct: 0.3 },
+    long: { enabled: true, timeframe: "15m", takeProfitPct: 0.5, trailingEnabled: true, trailingPct: 0.2, minDistancePct: 2.5 },
+    short: { enabled: true, timeframe: "1m", takeProfitPct: 2, trailingEnabled: false, trailingPct: 0.3, minDistancePct: 0 },
   };
   const payload = spikeSettingsPayload(config);
   assert.equal(payload.entryFilterMode, "EXTREME_SPIKE");
@@ -43,6 +43,8 @@ test("payload heeft dezelfde veldnamen als de backend en rondt terug", () => {
   assert.equal(payload.extremeSpikeSettingsVersion, 2);
   assert.equal(payload.extremeSpikeShortTakeProfitPct, 2);
   assert.equal(payload.extremeSpikeLongTrailingPct, 0.2);
+  assert.equal(payload.extremeSpikeLongMinDistancePct, 2.5);
+  assert.equal(payload.extremeSpikeShortMinDistancePct, 0);
   assert.ok(sameSpikeConfig(spikeConfigFromSettings(payload), config));
 });
 
@@ -107,4 +109,21 @@ test("terug naar Bollinger/Geen filter slaat direct op (Amar 23-10 01:28, build 
   assert.equal(payload.entryFilterMode, "BOLLINGER");
   assert.equal(payload.bollingerEntryFilter15mEnabled, true);
   assert.equal(spikeConfigFromSettings(payload).mode, "BOLLINGER");
+});
+
+test("build 624: minimale afstand per kant, aanbevolen 2%, 0 = uit, max 20%, met uitleg", async () => {
+  const config = spikeConfigFromSettings({ entryFilterMode: "EXTREME_SPIKE", extremeSpikeSettingsVersion: 2 });
+  assert.equal(config.long.minDistancePct, 2);
+  assert.equal(config.short.minDistancePct, 2);
+  assert.equal(spikeValidationError({ ...config, long: { ...config.long, minDistancePct: 0 } }), "");
+  assert.notEqual(spikeValidationError({ ...config, long: { ...config.long, minDistancePct: 25 } }), "");
+  assert.notEqual(spikeValidationError({ ...config, short: { ...config.short, minDistancePct: -1 } }), "");
+  const [card, route] = await Promise.all([
+    readFile(new URL("../components/aster-extreme-spike-entry-card.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/exchanges/aster/strategy2/settings/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(card, /Minimale afstand tot het gemiddelde/);
+  assert.match(card, /aanbevolen \{SPIKE_MIN_DISTANCE_RECOMMENDED\}%/);
+  assert.match(card, /geen spike/);
+  for (const key of ["extremeSpikeLongMinDistancePct", "extremeSpikeShortMinDistancePct"]) assert.ok(route.includes(`"${key}"`), key);
 });

@@ -113,6 +113,8 @@ def _spike_config_kwargs(raw: dict[str, Any]) -> dict[str, Any]:
         "extreme_spike_short_trailing_enabled": spike["shortTrailingEnabled"],
         "extreme_spike_long_trailing_pct": spike["longTrailingPct"],
         "extreme_spike_short_trailing_pct": spike["shortTrailingPct"],
+        "extreme_spike_long_min_distance_pct": spike["longMinDistancePct"],
+        "extreme_spike_short_min_distance_pct": spike["shortMinDistancePct"],
     }
 
 
@@ -143,6 +145,8 @@ class MultiBbConfig:
     extreme_spike_short_trailing_enabled: bool = False
     extreme_spike_long_trailing_pct: float = 0.3
     extreme_spike_short_trailing_pct: float = 0.3
+    extreme_spike_long_min_distance_pct: float = 2.0
+    extreme_spike_short_min_distance_pct: float = 2.0
     directional_bollinger_enabled: bool = False
     bollinger_long_timeframe: str = DEFAULT_TIMEFRAME
     bollinger_short_timeframe: str = DEFAULT_TIMEFRAME
@@ -250,6 +254,7 @@ class MultiBbConfig:
             "longTakeProfitPct": self.extreme_spike_long_take_profit_pct, "shortTakeProfitPct": self.extreme_spike_short_take_profit_pct,
             "longTrailingEnabled": self.extreme_spike_long_trailing_enabled, "shortTrailingEnabled": self.extreme_spike_short_trailing_enabled,
             "longTrailingPct": self.extreme_spike_long_trailing_pct, "shortTrailingPct": self.extreme_spike_short_trailing_pct,
+            "longMinDistancePct": self.extreme_spike_long_min_distance_pct, "shortMinDistancePct": self.extreme_spike_short_min_distance_pct,
         }
 
     def validated(self) -> "MultiBbConfig":
@@ -316,6 +321,8 @@ class MultiBbConfig:
             "extremeSpikeShortTrailingEnabled": self.extreme_spike_short_trailing_enabled,
             "extremeSpikeLongTrailingPct": self.extreme_spike_long_trailing_pct,
             "extremeSpikeShortTrailingPct": self.extreme_spike_short_trailing_pct,
+            "extremeSpikeLongMinDistancePct": self.extreme_spike_long_min_distance_pct,
+            "extremeSpikeShortMinDistancePct": self.extreme_spike_short_min_distance_pct,
             "bollingerEntryFilterTimeframe": self.bollinger_entry_filter_timeframe,
             "directionalBollingerEnabled": self.directional_bollinger_enabled,
             "bollingerLongTimeframe": self.bollinger_long_timeframe,
@@ -1817,7 +1824,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         # Build 614: meelopende klok. timestamp_ms is het begin van de tick; een scan duurt
                         # soms minuten, waardoor de live 1m-candle "te ver in de toekomst" leek en vrijwel
                         # elke munt werd afgekeurd met SPIKE_INVALID_LIVE_CANDLE (live 23-10 01:14).
-                        timeframe=spike_timeframe, now_ms=tick_now_ms(), live_price=prices[symbol])
+                        timeframe=spike_timeframe, now_ms=tick_now_ms(), live_price=prices[symbol],
+                        min_distance_pct=(settings.extreme_spike_long_min_distance_pct if candidate_side == "LONG"
+                                          else settings.extreme_spike_short_min_distance_pct))
                     spike_candidates[candidate_side]=spike_event_key(
                         symbol=symbol, side=candidate_side, timeframe=spike_timeframe,
                         candle_close_ms=spike_snapshot.candle_close_ms)
@@ -2138,7 +2147,9 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                         raise SpikeFilterRejected("SPIKE_LIVE_PRICE_UNAVAILABLE")
                     final_spike=require_extreme_spike_entry(client, symbol=symbol, side=side,
                         level=settings.extreme_spike_level, timeframe=spike_timeframe,
-                        now_ms=int(time.time() * 1000), live_price=final_live_price)
+                        now_ms=int(time.time() * 1000), live_price=final_live_price,
+                        min_distance_pct=(settings.extreme_spike_long_min_distance_pct if side == "LONG"
+                                          else settings.extreme_spike_short_min_distance_pct))
                     final_event_key=spike_event_key(symbol=symbol,side=side,timeframe=spike_timeframe,
                         candle_close_ms=final_spike.candle_close_ms)
                     if spike_candidates.get(side) != final_event_key:
@@ -2173,7 +2184,8 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
                     side_key="long" if side=="LONG" else "short"
                     if (latest_spike["level"] != current_spike["level"]
                         or latest_spike[f"{side_key}Timeframe"] != current_spike[f"{side_key}Timeframe"]
-                        or not latest_spike[f"{side_key}Enabled"]):
+                        or not latest_spike[f"{side_key}Enabled"]
+                        or latest_spike[f"{side_key}MinDistancePct"] != current_spike[f"{side_key}MinDistancePct"]):
                         raise PermissionError("ASTERBOT_ACTION_DENIED:ENTRY_FILTER_SETTINGS_CHANGED")
                 # Explicit false always blocks. Absence is a legacy-record
                 # compatibility case and preserves pre-migration AsterBot parity.
@@ -2614,7 +2626,7 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
         # ze uit hetzelfde document dat hij al ophaalt: geen extra Firestore-reads.
         report["spikeWatch"] = {
             "symbols": [str(row.get("symbol", "")).upper() for row in candidates if row.get("symbol")][:400],
-            **{k: v for k, v in settings.spike_settings().items() if k in ("level", "longTimeframe", "shortTimeframe", "longEnabled", "shortEnabled")},
+            **{k: v for k, v in settings.spike_settings().items() if k in ("level", "longTimeframe", "shortTimeframe", "longEnabled", "shortEnabled", "longMinDistancePct", "shortMinDistancePct")},
             "updatedAtMs": timestamp_ms,
         }
         # Build 621 (statistiek): hefboom-geschikte munten blijven bewaard tussen scans,
