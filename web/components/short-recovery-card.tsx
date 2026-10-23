@@ -10,7 +10,7 @@ import { recoveryLadder, validateRecoverySettings } from "@/lib/short-recovery.m
 // reduced while the price falls; hedgeSide "LONG" = LONG-hedge of a SHORT position, reduced while it rises.
 // Saving only stores settings; the server worker decides and places every order through the Auto Hedge engine.
 
-type Plan = { enabled: boolean; steps: number; totalPct: string; stepPct?: string; rebuySteps?: number; safetyNetPct?: string };
+type Plan = { enabled: boolean; steps: number; totalPct: string; stepPct?: string; rebuySteps?: number; safetyNetPct?: string; rehedgeAfterAfbouw?: boolean };
 type HedgeSide = "SHORT" | "LONG";
 type AutoHedgeLike = {
   enabled: boolean;
@@ -40,6 +40,8 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
   // Build 634 (grid): buy back after N levels up, and the vangnet beyond the last level.
   const [rebuy, setRebuy] = useState(String(plan.rebuySteps ?? 1));
   const [safety, setSafety] = useState(String(plan.safetyNetPct ?? plan.totalPct));
+  // Build 644: "Opnieuw hedgen na afbouw" (default AAN). UIT = na volledige afbouw niets meer voor dat pair.
+  const [rehedge, setRehedge] = useState(plan.rehedgeAfterAfbouw !== false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -47,7 +49,8 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
   useEffect(() => {
     setEnabled(plan.enabled); setSteps(String(plan.steps)); setTotalPct(String(plan.totalPct));
     setRebuy(String(plan.rebuySteps ?? 1)); setSafety(String(plan.safetyNetPct ?? plan.totalPct));
-  }, [plan.enabled, plan.steps, plan.totalPct, plan.rebuySteps, plan.safetyNetPct]);
+    setRehedge(plan.rehedgeAfterAfbouw !== false);
+  }, [plan.enabled, plan.steps, plan.totalPct, plan.rebuySteps, plan.safetyNetPct, plan.rehedgeAfterAfbouw]);
 
   const check = validateRecoverySettings(steps, totalPct, hedgeSide);
   const ladder = useMemo(() => recoveryLadder(steps, totalPct, 100, hedgeSide), [steps, totalPct, hedgeSide]);
@@ -55,7 +58,8 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
   const safetyN = Number(String(safety).replace(",", "."));
   const gridOk = Number.isInteger(rebuyN) && rebuyN >= 1 && rebuyN <= 100 && Number.isFinite(safetyN) && safetyN > 0 && safetyN < 100;
   const dirty = enabled !== plan.enabled || steps !== String(plan.steps) || totalPct !== String(plan.totalPct)
-    || rebuy !== String(plan.rebuySteps ?? 1) || safety !== String(plan.safetyNetPct ?? plan.totalPct);
+    || rebuy !== String(plan.rebuySteps ?? 1) || safety !== String(plan.safetyNetPct ?? plan.totalPct)
+    || rehedge !== (plan.rehedgeAfterAfbouw !== false);
 
   async function save(nextEnabled = enabled) {
     if (nextEnabled && !check.ok) { setError(check.message); return; }
@@ -63,8 +67,8 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
     // Switching OFF always works, even with half-typed inputs: keep the last saved values.
     const payload = check.ok
       ? { enabled: nextEnabled, steps: check.steps, totalPct: String(check.totalPct),
-          ...(gridOk ? { rebuySteps: rebuyN, safetyNetPct: String(safetyN) } : {}) }
-      : { enabled: false, steps: plan.steps, totalPct: String(plan.totalPct) };
+          ...(gridOk ? { rebuySteps: rebuyN, safetyNetPct: String(safetyN) } : {}), rehedgeAfterAfbouw: rehedge }
+      : { enabled: false, steps: plan.steps, totalPct: String(plan.totalPct), rehedgeAfterAfbouw: plan.rehedgeAfterAfbouw !== false };
     setSaving(true); setError(""); setMessage("");
     try {
       const next = await authenticatedRequest("/api/exchanges/aster/position-loss-auto-hedge/short-recovery", {
@@ -73,7 +77,7 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
         body: JSON.stringify({ ...payload, hedgeSide, clientBuild: String(WEBAPP_BUILD_NUMBER) }),
       }) as AutoHedgeLike;
       onSaved(next);
-      setMessage(nextEnabled ? "Opgeslagen · geldt direct voor alle posities. Staat een hedge al verder in de plus, dan verkoopt hij die stappen nu." : `${hedgeSide}-hedge afbouwen staat UIT · posities blijven 100% gehedged.`);
+      setMessage(nextEnabled ? "Opgeslagen · geldt direct voor alle lopende posities aan deze kant." : `${hedgeSide}-hedge afbouwen staat UIT · posities blijven 100% gehedged.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Opslaan mislukt");
     } finally {
@@ -113,13 +117,25 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
           <label><b>%</b><input aria-label={`Vangnet in procent (${hedgeSide}-hedge)`} type="text" inputMode="decimal" value={safety} onChange={(e) => setSafety(e.target.value)} disabled={saving} /></label>
         </div>
       </div>
+      <div className="plah-threshold-head plah-unwind-rehedge">
+        <div className="plah-unwind-title">
+          <label>Opnieuw hedgen na afbouw</label>
+          <small>{rehedge ? `AAN · na de afbouw koopt de bot terug als de koers terugkomt en vangt het vangnet je op` : `UIT · is de ${hedgeSide}-hedge helemaal afgebouwd, dan stopt het voor die munt`}</small>
+        </div>
+        {renderToggle({ checked: rehedge, disabled: saving, onChange: () => setRehedge(!rehedge), label: "Opnieuw hedgen na afbouw aan of uit" })}
+      </div>
+      {!rehedge && <p className="plah-info plah-unwind-error" role="note"><span>!</span>
+        Let op: na volledige afbouw heeft je {protectedSide} geen bescherming meer. Geen terugkopen, geen vangnet en geen nieuwe Auto Hedge op die munt; de {protectedSide} moet het zelf redden via TP of Portfolio TP. Tijdens de afbouw koopt de bot wel gewoon terug. Zet je dit later weer AAN, dan gaat de grid verder waar hij staat en wordt er niet meteen opnieuw gehedged.
+      </p>}
       {check.ok ? <>
         <div className="plah-threshold-value plah-unwind-value">elke {fmt(check.stepPct, 4)}% · {fmt(check.sellPct, 4)}%</div>
         <p className="plah-info"><span>i</span>
           Vanaf de instapkoers van de hedge verkoopt de bot bij elke {fmt(check.stepPct, 4)}% {move} {fmt(check.sellPct, 4)}% van de {hedgeSide}
           (eerste stap {sign}{fmt(ladder[0]?.dropPct ?? 0, 4)}%, leeg bij {sign}{fmt(check.totalPct, 4)}%). Alleen met winst na fees.
           Grid: komt de koers {gridOk ? rebuyN : 1} stap{gridOk && rebuyN === 1 ? "" : "pen"} terug, dan koopt de bot dat deel van de {hedgeSide} weer terug; zo groeit je netto {protectedSide} hoe verder de koers {up ? "stijgt" : "daalt"} en pak je bij elke schommeling een stap winst.
-          Alles afgebouwd en nog {gridOk ? fmt(safetyN, 4) : "…"}% verder: vangnet, weer 100% hedgen en een nieuw grid vanaf daar.
+          {rehedge
+            ? <>Alles afgebouwd en nog {gridOk ? fmt(safetyN, 4) : "…"}% verder: vangnet, weer 100% hedgen en een nieuw grid vanaf daar.</>
+            : <>Alles afgebouwd: klaar voor die munt, er wordt niet opnieuw gehedged.</>}
           Kleine munt: minder, grotere stappen (elke order minstens het Aster-minimum). Een wijziging geldt direct voor alle lopende posities.
         </p>
       </> : <p className="plah-info plah-unwind-error" role="alert"><span>!</span> {check.message}</p>}

@@ -25,9 +25,10 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   id: `v${WEBAPP_VERSION}-build-${WEBAPP_BUILD_NUMBER}-release-history`,
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
-  releasedAt: "2026-10-23",
-  title: "Zonelijnen over het hele scherm · build 643",
+  releasedAt: "2026-10-24",
+  title: "Opnieuw hedgen na afbouw · build 644",
   newItems: [
+    "Build 644: in de afbouwkaart (SHORT-hedge en LONG-hedge apart) staat een nieuwe schakelaar 'Opnieuw hedgen na afbouw'. AAN (standaard) werkt zoals je gewend bent: na de afbouw koopt de bot terug als de koers terugkomt en vangt het vangnet je op. Zet je hem UIT, dan stopt het voor een munt zodra de hedge helemaal is afgebouwd: geen terugkopen, geen vangnet en geen nieuwe Auto Hedge; de positie moet het dan zelf redden via TP of Portfolio TP. Tijdens de afbouw koopt de bot wel gewoon terug. Zet je hem later weer AAN, dan gaat de grid verder waar hij staat en wordt er niet meteen opnieuw gehedged: het vangnet telt dan vanaf de koers van dat moment. Re-Hedge All zet ook deze munten weer op 100%. Er wordt nooit iets met verlies verkocht.",
     "Build 643: de rode en groene zonelijnen in de Portfolio Koers-grafiek stopten na vier lijnen boven en onder de actieve zone, waardoor candles verderop niet meer tussen twee lijnen vielen. Nu lopen dezelfde lijnen door over het hele stuk dat je op het scherm ziet, ook als je schuift of zoomt; daarbuiten wordt niets getekend. Zoom je ver uit, dan houdt de grafiek minstens 10 pixels tussen de lijnen zodat het rustig blijft. Alleen weergave.",
     "Build 641: in de Portfolio Koers-grafiek stonden de zonelijnen dubbel: de lijnen rond de actieve zone en daarachter nog een tweede laag stippellijnen over de hele hoogte. Die achtergrondlaag is weg. De rode en groene lijnen rond de koers (boven en onder de actieve zone) blijven precies zoals ze waren. Alleen weergave.",
     "Build 640: de gestippelde prijszonelijnen in de Portfolio Koers-grafiek zijn minder fel. Opbouw, plek en kleuren blijven hetzelfde (rood boven de koers, groen eronder), alleen ongeveer de helft zo sterk, zodat candles en labels weer voorop staan. Alleen weergave.",

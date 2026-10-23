@@ -1562,6 +1562,8 @@ class ShortRecoverySettingsRequest(BaseModel):
     # Build 634 (grid): buy a sold part back after this many levels up; re-hedge 100% this % beyond the last level.
     rebuySteps: int = Field(default=1, ge=1, le=100)
     safetyNetPct: str | None = Field(default=None, max_length=16)
+    # Build 644: "Opnieuw hedgen na afbouw" (default ON). OFF = after a full reduction the pair is left alone.
+    rehedgeAfterAfbouw: bool = True
 
 
 @main.app.put("/v1/me/aster/position-loss-auto-hedge/short-recovery")
@@ -1575,7 +1577,8 @@ def put_position_loss_auto_hedge_short_recovery(
     try:
         plan = normalize_short_recovery_settings(
             {"enabled": request.enabled, "steps": request.steps, "totalPct": request.totalPct,
-             "rebuySteps": request.rebuySteps, "safetyNetPct": request.safetyNetPct})
+             "rebuySteps": request.rebuySteps, "safetyNetPct": request.safetyNetPct,
+             "rehedgeAfterAfbouw": request.rehedgeAfterAfbouw})
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     hedge_side = request.hedgeSide.upper()
