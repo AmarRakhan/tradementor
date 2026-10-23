@@ -331,6 +331,9 @@ def _new_cycle_state(action: Any, prior: dict[str, Any] | None, threshold: float
         "normalFreeQty": action.existing_hedge_qty,
         "exchangeOrderIds": [],
         "clientOrderIds": [],
+        # A new cycle never inherits a joint-exit of an earlier cycle (it would close the new hedge).
+        "pairExit": None,
+        "pairExitRequestedAt": None,
         "createdAt": (prior or {}).get("createdAt") or now,
         "updatedAt": now,
     }
@@ -528,10 +531,23 @@ def _transition_closed_outside_app(
            and str(o.get("status", "NEW")).upper() not in {"FILLED", "CANCELED", "REJECTED", "EXPIRED"}
            for o in open_orders or []):
         return state
+    # The bot's own order may not be visible yet in Aster's position endpoint (lag): never call that "outside".
+    last_action = state.get("lastAction") if isinstance(state.get("lastAction"), dict) else {}
+    reconciled = _as_utc(state.get("lastReconciledAt"))
+    if last_action.get("exchangeOrderId") is not None and (
+            reconciled is None or (datetime.now(timezone.utc) - reconciled).total_seconds() < OUTSIDE_APP_ORDER_GRACE_SECONDS):
+        return state
     protected = pmap.get((symbol, protected_side))
     hedge = pmap.get((symbol, hedge_side))
     protected_qty, hedge_qty = position_quantity(protected), position_quantity(hedge)
     tolerance = max(1e-9, 1e-6 * max(stored_protected, stored_hedge, 1.0))
+    record = state.get("shortRecovery") if isinstance(state.get("shortRecovery"), dict) else {}
+    try:
+        expected_hedge = float(record["lastTarget"]) if record.get("lastTarget") is not None else None
+    except (TypeError, ValueError):
+        expected_hedge = None
+    if expected_hedge is not None and abs(hedge_qty - expected_hedge) <= max(tolerance, 1e-6 * max(expected_hedge, 1.0)):
+        stored_hedge = hedge_qty            # the hedge is exactly where the afbouw put it: not outside the app
     if protected_qty + tolerance < stored_protected:
         closed_side, survivor_side, reason = protected_side, hedge_side, "PROTECTED_REDUCED_OUTSIDE_APP"
     elif stored_hedge > 0 and hedge_qty + tolerance < stored_hedge:
@@ -810,6 +826,7 @@ def _sync_pair_views(
 
 
 PAIR_EXIT_REQUEST_MAX_AGE_SECONDS = 120
+OUTSIDE_APP_ORDER_GRACE_SECONDS = 120
 PAIR_EXIT_MAX_SECONDS = 180
 
 

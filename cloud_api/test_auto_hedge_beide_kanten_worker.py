@@ -233,6 +233,28 @@ class BothSides(Base):
         self.press()
         self.assertEqual(self.orders(), [("SHORT", "OPEN", 4.0)])           # Re-Hedge All: LONG protected again
 
+    def test_own_afbouw_step_with_lagging_positions_is_not_outside_the_app(self):
+        self.settings(shortRecoveryPlan=dict(SIX_IN_THREE))
+        self.open_pair("SOLUSDT", "LONG", hedge_entry=100)
+        self.at("SOLUSDT", 100)
+        self.at("SOLUSDT", 98)                                              # own step: SHORT 10 -> 6.667
+        pair = self.pair("SOLUSDT")
+        self.put("asterPositionLossAutoHedge", self.uid, "pairs", "SOLUSDT", {**pair, "currentHedgeQty": 10.0})  # stale view
+        self.at("SOLUSDT", "97.9")
+        self.assertEqual(self.pair("SOLUSDT")["status"], "HEDGED")
+        self.assertEqual(len(self.orders()), 1)
+
+    def test_new_cycle_never_inherits_an_old_joint_exit(self):
+        self.L.add("NEWUSDT", "LONG", 10.0, mark=100.0, entry=101.0)        # -$10 -> new cycle
+        old = {"symbol": "NEWUSDT", "status": "CLOSED", "generation": 3, "generationId": "g3",
+               "pairExit": {"phase": "CLOSING_OPPOSITE", "tpSide": "LONG"}}
+        self.put("asterPositionLossAutoHedge", self.uid, "pairs", "NEWUSDT", old)
+        self.worker_tick()
+        self.worker_tick()
+        self.assertEqual(self.orders(), [("SHORT", "OPEN", 10.0)])          # hedged, never closed again
+        self.assertIsNone(self.pair("NEWUSDT").get("pairExit"))
+        self.assertEqual(self.short("NEWUSDT"), 10.0)
+
     def test_one_position_per_coin_reader_follows_auto_hedge_switch(self):
         import aster_position_loss_auto_hedge_lock as lock
         self.ext._enabled_cache.clear()
