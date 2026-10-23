@@ -122,5 +122,12 @@ class HedgeModeGuard(Base):
         self.assertNotIn(self.uid, self.ext._hedge_mode_ok_at)
 
 
+class RealOrdersDefault(unittest.TestCase):
+    def test_short_recovery_executes_by_default_and_env_false_is_the_emergency_stop(self):
+        from pathlib import Path
+        src = (Path(__file__).parent / "aster_position_loss_auto_hedge_extension.py").read_text()
+        self.assertIn('os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "true").lower() == "true"', src)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -33,8 +33,10 @@ import short_recovery_pair_exit
 
 WORKER_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER", "true").lower() == "true"
 EXECUTION_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED", "false").lower() == "true"
-# SHORT Recovery 2.0: OFF = shadow only (decisions recorded, no target change, no orders).
-SHORT_RECOVERY_EXECUTION_ENABLED = os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "false").lower() == "true"
+# SHORT Recovery 2.0: real orders by default (besluit Amar 23-10 02:00: echt, voor iedereen gelijk).
+# Each user still switches SHORT afbouwen ON/OFF on their own account. Emergency stop: set the env to
+# "false" -> shadow only (decisions recorded, no target change, no orders) for everyone.
+SHORT_RECOVERY_EXECUTION_ENABLED = os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "true").lower() == "true"
 HEDGE_MODE_REQUIRED_MESSAGE = (
     "Auto Hedge vereist Hedge Mode op je Aster-account. Je account staat nu op One-way mode. "
     "Zet in Aster de positiemodus op Hedge Mode (dat kan alleen zonder open posities en open orders) "
