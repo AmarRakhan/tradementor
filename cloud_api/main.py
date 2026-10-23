@@ -10506,6 +10506,12 @@ def _run_spike_account_tick(uid:str,symbol:str)->dict[str,Any]:
         _release_strategy2_queue_lease(ref,str(token))
         _release_aster_account_coordination(uid,str(account_token))
 
+def _spike_health_persister(index:int):
+    def persist(payload:dict[str,Any])->None:
+        db.collection("systemStatus").document(f"asterSpikeRealtime{index}").set(
+            {**payload,"shard":index,"updatedAt":datetime.now(timezone.utc)},merge=True)
+    return persist
+
 def _start_spike_realtime_workers()->None:
     global _spike_trigger
     if os.getenv("ASTER_REALTIME_WORKER","false").lower()!="true":return
@@ -10514,7 +10520,10 @@ def _start_spike_realtime_workers()->None:
     evaluate=make_spike_evaluator(_spike_trigger,_run_spike_account_tick)
     execution=os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true"
     for index in range(SPIKE_MAX_CONNECTIONS):
+        # Build 618: health ook in Firestore (zoals de positie-worker), zodat een dode
+        # Spike-verbinding zichtbaar is zonder het interne endpoint.
         worker=AsterRealtimeWorker(load_subscriptions=_spike_shard_loader(index),evaluate=evaluate,
+            persist_health=_spike_health_persister(index),
             execution_enabled=execution,force_evaluate=lambda uid,symbol:True)
         _spike_workers.append(worker)
         threading.Thread(target=lambda w=worker:asyncio.run(w.run()),name=f"aster-spike-{index}",daemon=True).start()
