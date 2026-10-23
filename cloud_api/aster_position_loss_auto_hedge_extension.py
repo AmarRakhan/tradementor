@@ -1667,7 +1667,10 @@ def post_position_loss_auto_hedge_rehedge_all(
 
 
 def _worker_loop() -> None:
+    from serving_revision_gate import is_serving
     while not _worker_stop.wait(WORKER_INTERVAL):
+        if not is_serving():
+            continue  # Build 626: stand-by op een revisie zonder verkeer
         try:
             snapshots = list(main.db.collection("asterPositionLossAutoHedge").stream())
         except Exception:

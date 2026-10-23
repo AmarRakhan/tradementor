@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 627 (alleen backend): alleen de Cloud Run-revisie met verkeer doet achtergrond-botwerk (tick, realtime, Spike, Auto Hedge, noodhedge); oude en kandidaat-revisies staan stand-by. Bij twijfel werkt hij door.
 // Build 626: Auto Hedge voor LONG én SHORT — apart verliesbedrag per kant, hedge afbouwen gespiegeld met eigen instellingen per kant (standaard UIT), stap alleen met winst na fees, TP sluit beide samen en alleen netto groen (elk pair), Re-Hedge All voor beide kanten en ook halverwege de afbouw, nooit verkopen om recht te trekken, één positie per munt met Auto Hedge AAN, Hedge Mode-check, echte afbouworders.
 // Build 625: Extreme Spike — minimale afstand tot het gemiddelde (%) per kant, naast de Bollinger-band; aanbevolen 2 %, instelbaar 0–20 %, met uitleg. Stopt instappen in rustige markten waar 4σ maar 0,5–1 % is.
 // Build 623 (alleen backend): Spike-statistiek "verhandelbaar" werkt ook als de stoelen vol zijn — hefboomgrenzen eens per 6 uur in één bulk-aanvraag.

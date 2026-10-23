@@ -1148,10 +1148,22 @@ def _recover_user_confirmed_operations() -> None:
                 continue
 
 
+def _recover_when_serving() -> None:
+    """Build 626: pas hervatten als deze revisie het verkeer krijgt (niet op een kandidaat of oude revisie)."""
+    import time as _time
+    from serving_revision_gate import is_serving
+    deadline = _time.monotonic() + 3600
+    while not is_serving():
+        if _time.monotonic() > deadline:
+            return
+        _time.sleep(30)
+    _recover_user_confirmed_operations()
+
+
 @main.app.on_event("startup")
 def recover_interrupted_legacy_hedge_scale() -> None:
     thread = threading.Thread(
-        target=_recover_user_confirmed_operations,
+        target=_recover_when_serving,
         name="legacy-hedge-scale-recovery",
         daemon=True,
     )
