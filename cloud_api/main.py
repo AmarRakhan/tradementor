@@ -101,6 +101,7 @@ from aster_strategy2_focus_adapter import current_focus_markets
 from aster_strategy2_focus import FocusState, rank_focus_pairs, next_dca_trigger
 from aster_strategy2_focus_live import run_focus_live_step
 from aster_realtime import AsterRealtimeWorker, RealtimeMarketEvent, liquidation_distance_pct
+from serving_revision_gate import GATE as serving_gate, is_serving as serving_gate_is_serving
 from aster_attribution_archive import compact_for_write as compact_attributions_for_write, compact_document as compact_attribution_document
 from aster_spike_realtime import MAX_CONNECTIONS as SPIKE_MAX_CONNECTIONS, SpikeTrigger, make_spike_evaluator, shard_mapping, watch_from_control
 from aster_extreme_spike_filter import warm_spike_reference
@@ -4702,6 +4703,8 @@ def health() -> dict[str, Any]:
         "identityProject": auth_project_id or data_project_id or None,
         "sourceCommit": os.getenv("TRADEMENTOR_SOURCE_COMMIT") or None,
         "imageSourceCommit": os.getenv("TRADEMENTOR_IMAGE_SOURCE_COMMIT") or None,
+        # Build 626: naam van de revisie die dit antwoord geeft (serving-gate).
+        "revision": os.getenv("K_REVISION") or None,
         "ordersEnabled": False,
         "multiUser": True,
     }
@@ -10478,6 +10481,9 @@ def _aster_realtime_force_evaluate(uid:str,symbol:str)->bool:
     return uid in _aster_realtime_simple_uids
 
 def _run_aster_realtime_evaluation(uid:str,event:RealtimeMarketEvent)->dict[str,Any]:
+    # Build 626: alleen de serverende revisie handelt (oude/kandidaat-revisies staan stand-by).
+    if not serving_gate_is_serving():
+        return {"status":"standby","ordersSent":0,"symbol":event.symbol}
     started=time.monotonic()
     if (uid,event.symbol.upper()) in _aster_realtime_sniper_pairs:
         result=_run_aster_sniper_tick(uid,management_only=True,event_symbol=event.symbol)
@@ -10532,6 +10538,8 @@ def _spike_warm_reference(symbol:str,timeframe:str,now_ms:int)->bool:
 
 def _run_spike_account_tick(uid:str,symbol:str)->dict[str,Any]:
     """Volledige account-tick (alle bestaande gates) na een geraakte Spike-band."""
+    if not serving_gate_is_serving():
+        return {"status":"standby","ordersSent":0,"symbol":symbol}
     account_token=_acquire_aster_account_coordination(uid,"ASTER","REALTIME_SPIKE_ENTRY")
     if not account_token:return {"status":"account-busy","ordersSent":0,"symbol":symbol}
     ref=aster_strategy2_reference(uid);token=_acquire_strategy2_queue_lease(ref)
@@ -10546,9 +10554,19 @@ def _run_spike_account_tick(uid:str,symbol:str)->dict[str,Any]:
 
 def _spike_health_persister(index:int):
     def persist(payload:dict[str,Any])->None:
+        if not serving_gate_is_serving():
+            return
         db.collection("systemStatus").document(f"asterSpikeRealtime{index}").set(
             {**payload,"shard":index,"updatedAt":datetime.now(timezone.utc)},merge=True)
     return persist
+
+def _serving_only(persist):
+    """Build 626: statistiek alleen vanaf de serverende revisie (geen dubbele tellingen)."""
+    def wrapped(*args,**kwargs):
+        if serving_gate_is_serving():
+            return persist(*args,**kwargs)
+        return None
+    return wrapped
 
 def _start_spike_realtime_workers()->None:
     global _spike_trigger
@@ -10557,7 +10575,7 @@ def _start_spike_realtime_workers()->None:
     # Build 621: statistiek per niveau (20,2 … 20,7+) per uur in asterStrategy2/{uid}/spikeStats.
     from aster_spike_stats import SpikeStats, firestore_persister
     _spike_trigger=SpikeTrigger(warm_reference=_spike_warm_reference,
-        stats=SpikeStats(persist=firestore_persister(db,firestore.Increment,firestore.ArrayUnion)))
+        stats=SpikeStats(persist=_serving_only(firestore_persister(db,firestore.Increment,firestore.ArrayUnion))))
     evaluate=make_spike_evaluator(_spike_trigger,_run_spike_account_tick)
     execution=os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true"
     for index in range(SPIKE_MAX_CONNECTIONS):
@@ -10570,6 +10588,8 @@ def _start_spike_realtime_workers()->None:
         threading.Thread(target=lambda w=worker:asyncio.run(w.run()),name=f"aster-spike-{index}",daemon=True).start()
 
 def _persist_aster_realtime_health(payload:dict[str,Any])->None:
+    if not serving_gate_is_serving():
+        return
     db.collection("systemStatus").document("asterRealtime").set({**payload,"updatedAt":datetime.now(timezone.utc)},merge=True)
 
 def _start_aster_realtime_worker()->None:
@@ -10593,7 +10613,7 @@ def start_aster_realtime_worker()->None:
 def aster_realtime_health(authorization:str|None=Header(default=None))->dict[str,Any]:
     verify_internal_cloud_request(authorization);worker=_aster_realtime_worker
     return {"workerEnabled":os.getenv("ASTER_REALTIME_WORKER","false").lower()=="true","executionEnabled":os.getenv("ASTER_REALTIME_EXECUTION_ENABLED","false").lower()=="true",**(worker.health() if worker else {"connected":False,"subscriptions":0,"tenants":0}),
-        "spikeWorkers":[w.health() for w in _spike_workers]}
+        "spikeWorkers":[w.health() for w in _spike_workers],"servingGate":serving_gate.status()}
 
 @app.on_event("shutdown")
 def stop_aster_realtime_worker()->None:
@@ -11208,6 +11228,11 @@ def _aster_periodic_scheduler_worker_enabled() -> bool:
 
 def _aster_periodic_scheduler_worker_loop() -> None:
     while not _aster_periodic_scheduler_stop.is_set():
+        if not serving_gate_is_serving():
+            # Build 626: stand-by op een revisie zonder verkeer; de serverende revisie
+            # claimt de minuut en doet het werk.
+            _aster_periodic_scheduler_stop.wait(5.0)
+            continue
         try:
             _run_aster_periodic_tick("cloud-run-periodic-worker")
         except Exception as exc:

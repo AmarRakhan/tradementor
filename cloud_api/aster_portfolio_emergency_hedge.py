@@ -386,7 +386,11 @@ async def _tick_uid(uid: str) -> None:
 
 
 async def monitor_loop() -> None:
+    from serving_revision_gate import is_serving
     while True:
+        if not await asyncio.to_thread(is_serving):
+            await asyncio.sleep(POLL_SECONDS)  # Build 626: stand-by op een revisie zonder verkeer
+            continue
         try:
             docs = await asyncio.to_thread(lambda: list(_db.collection(COLLECTION).stream()))
             for snap in docs:
