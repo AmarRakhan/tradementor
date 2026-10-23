@@ -49,7 +49,7 @@ def fetch(out):
     print("fetched", len(syms), N)
 
 TFS = {"1m": 1, "5m": 5, "15m": 15}
-SIGNALS = [(tf, k, d, b) for tf in TFS for k in (2, 4, 6) for d in (0, 2) for b in (0.0, 0.3)]
+SIGNALS = [(tf, k, 0, b) for tf in TFS for k in (2, 6) for b in (0.0, 0.3)]
 def signals(H, L, C, t0, sig):
     """Lijst per minuut: {minuut: [(sym, prijs)]} voor LONG-instappen."""
     tf, k, d, b = sig; mult = TFS[tf]; S, N = C.shape
@@ -81,81 +81,84 @@ def signals(H, L, C, t0, sig):
             out.setdefault(e, []).append((int(s), price))
     return out
 
-def simulate(H, L, C, fee, t0, sig_events, tp_net, hpct, ladder, ptp, day_idx):
+def simulate(H, L, C, fee, t0, sig_events, tp_net, hpct, ladder, ptp, dca=0.0, max_hedged=MAX_OPEN):
+    """lq/le = LONG-hoeveelheid (1 = $P) en gemiddelde instap; DCA koopt dca x basis op elke afbouwstap."""
     N, S = C.shape
-    pos = np.zeros(S, bool); ent = np.zeros(S); hed = np.zeros(S, bool)
-    sq = np.zeros(S); sa = np.zeros(S); anc = np.zeros(S); kk = np.zeros(S, int)
+    pos = np.zeros(S, bool); hed = np.zeros(S, bool)
+    lq = np.zeros(S); le = np.ones(S); sq = np.zeros(S); sa = np.ones(S); anc = np.zeros(S)
+    kk = np.zeros(S, int); cyc = np.zeros(S); dk = np.zeros(S, int)
     tpp = np.zeros(S); hp = np.zeros(S)
     realized = 0.0; base_line = 0.0
     T, Sst = ladder if ladder else (0, 0)
     rate = fee.astype(np.float64)
     tp_g = tp_net / 100 + 2 * rate
-    eq_day = []; ptp_hits = 0; trades = 0; wins = 0; hedges = 0
+    eq_day = []; ptp_hits = 0; trades = 0; wins = 0; hedges = 0; dcas = 0
+    def unreal(c):
+        u = np.where(pos, P * lq * ((c - le) / le - rate), 0)
+        u += np.where(pos & hed, P * sq * ((sa - c) / sa - rate), 0)
+        return float(u.sum())
     for m in range(N):
         h = H[m].astype(np.float64); l = L[m].astype(np.float64); c = C[m].astype(np.float64)
-        # 1) unhedged: hedge eerst (conservatief), dan TP
         uh = pos & ~hed
         if uh.any():
             hit_h = uh & (l <= hp)
             if hit_h.any():
-                hed |= hit_h; sq[hit_h] = 1.0; sa[hit_h] = hp[hit_h]; anc[hit_h] = hp[hit_h]; kk[hit_h] = 0
-                realized -= float((P * rate[hit_h]).sum()); hedges += int(hit_h.sum())
+                hed |= hit_h; sq[hit_h] = lq[hit_h]; sa[hit_h] = hp[hit_h]; anc[hit_h] = hp[hit_h]
+                kk[hit_h] = 0; cyc[hit_h] = lq[hit_h]; dk[hit_h] = 0
+                realized -= float((P * lq * rate)[hit_h].sum()); hedges += int(hit_h.sum())
             hit_t = uh & ~hit_h & (h >= tpp)
             if hit_t.any():
-                realized += float((P * (tpp[hit_t] - ent[hit_t]) / ent[hit_t] - P * rate[hit_t]).sum())
+                realized += float((P * lq * ((tpp - le) / le - rate))[hit_t].sum())
                 pos[hit_t] = False; wins += int(hit_t.sum())
-        # 2) gehedged: afbouwen
         hd = pos & hed
         if hd.any() and Sst:
             lvl = anc * (1 - T / 100 * (kk + 1) / Sst)
             prof = (sa - lvl) / sa - 2 * rate > 0
             step = hd & (sq > 1e-9) & (l <= lvl) & prof
             if step.any():
-                q = np.minimum(sq, 1.0 / Sst)
+                q = np.minimum(sq, cyc / Sst)
                 realized += float((P * q * ((sa - lvl) / sa - rate))[step].sum())
                 sq[step] -= q[step]; kk[step] += 1
+                if dca:
+                    buy = step & (dk < Sst)
+                    if buy.any():
+                        le[buy] = (le[buy] * lq[buy] + lvl[buy] * dca) / (lq[buy] + dca); lq[buy] += dca; dk[buy] += 1
+                        realized -= float((P * dca * rate)[buy].sum()); dcas += int(buy.sum())
+                        tpp[buy] = le[buy] * (1 + tp_g[buy])
                 done = step & (kk >= Sst)
-                if done.any():   # weer 1:1 tegen huidige koers
-                    add = 1.0 - sq[done]
-                    sa[done] = np.where(sq[done] > 1e-9, (sa[done] * sq[done] + c[done] * add) / 1.0, c[done])
-                    sq[done] = 1.0; anc[done] = c[done]; kk[done] = 0
+                if done.any():
+                    add = lq[done] - sq[done]
+                    sa[done] = np.where(sq[done] > 1e-9, (sa[done] * sq[done] + c[done] * add) / lq[done], c[done])
+                    sq[done] = lq[done]; anc[done] = c[done]; kk[done] = 0; cyc[done] = lq[done]
                     realized -= float((P * add * rate[done]).sum())
-        # 3) samen sluiten op LONG-TP-koers als open benen netto groen
         if hd.any():
             at = hd & (h >= tpp)
             if at.any():
-                lp = P * (tpp - ent) / ent; spn = P * sq * (sa - tpp) / np.where(sa > 0, sa, 1)
-                net = lp + spn - P * rate * (1 + sq)
+                net = P * lq * (tpp - le) / le + P * sq * (sa - tpp) / sa - P * rate * (lq + sq)
                 cl = at & (net > 0)
                 if cl.any():
                     realized += float(net[cl].sum()); pos[cl] = False; hed[cl] = False; sq[cl] = 0; wins += int(cl.sum())
-        # 4) portfolio-TP
-        if ptp and pos.any():
-            unr = np.where(pos, P * (c - ent) / ent - P * rate, 0) + np.where(pos & hed, P * sq * (sa - c) / np.where(sa > 0, sa, 1) - P * sq * rate, 0)
-            eq = realized + float(unr.sum())
+        if ptp:
+            eq = realized + (unreal(c) if pos.any() else 0.0)
             if eq - base_line >= ptp / 100 * BASE_EQ:
                 realized = eq; base_line = eq; pos[:] = False; hed[:] = False; sq[:] = 0; ptp_hits += 1
-        elif ptp and realized - base_line >= ptp / 100 * BASE_EQ:
-            base_line = realized; ptp_hits += 1
-        # 5) nieuwe instappen
         ev = sig_events.get(m)
         if ev:
-            for s, price in ev:
-                if pos[s] or pos.sum() >= MAX_OPEN: continue
-                pos[s] = True; hed[s] = False; sq[s] = 0; ent[s] = price
-                tpp[s] = price * (1 + tp_g[s]); hp[s] = price * (1 - hpct / 100)
-                realized -= P * rate[s]; trades += 1
-        # dagwaarde om 23:00 Amsterdam (21:00 UTC)
+            for s_, price in ev:
+                if pos[s_] or pos.sum() >= MAX_OPEN or (pos & hed).sum() >= max_hedged: continue
+                pos[s_] = True; hed[s_] = False; sq[s_] = 0; lq[s_] = 1.0; le[s_] = price
+                tpp[s_] = price * (1 + tp_g[s_]); hp[s_] = price * (1 - hpct / 100)
+                realized -= P * rate[s_]; trades += 1
         if (t0 // 60000 + m) % 1440 == 1259:
-            unr = np.where(pos, P * (c - ent) / ent - P * rate, 0) + np.where(pos & hed, P * sq * (sa - c) / np.where(sa > 0, sa, 1) - P * sq * rate, 0)
-            eq_day.append(round(realized + float(unr.sum()), 3))
-    return {"eq": eq_day, "trades": trades, "wins": wins, "hedges": hedges, "ptp": ptp_hits, "openEnd": int(pos.sum()), "hedgedEnd": int((pos & hed).sum())}
+            eq_day.append(round(realized + unreal(c), 3))
+    return {"eq": eq_day, "trades": trades, "wins": wins, "hedges": hedges, "dcas": dcas, "ptp": ptp_hits,
+            "openEnd": int(pos.sum()), "hedgedEnd": int((pos & hed).sum())}
 
-TPS = [0.3, 0.5, 1.0]; HS = [1, 2, 3]; LADDERS = [None, (6, 3), (20, 4)]; PTPS = [1, 2, 5, 0]
+TPS = [0.5, 1.0]; HS = [1, 2]; LADDERS = [(6, 3), (20, 4)]; PTPS = [1, 2, 0]; DCAS = [0.0, 0.2, 0.5]; MAXH = [10, 40]
 G = {}
 def _run(params):
-    tp, hpct, lad, ptp = params
-    return params, simulate(G["H"], G["L"], G["C"], G["fee"], G["t0"], G["ev"], tp, hpct, lad, ptp, None)
+    tp, hpct, lad, ptp, dca, mh = params
+    return params, simulate(G["H"], G["L"], G["C"], G["fee"], G["t0"], G["ev"], tp, hpct, lad, ptp, dca, mh)
 def sim_shard(data, shard, nsh, out):
     from multiprocessing import get_context
     z = np.load(data)
@@ -166,9 +169,9 @@ def sim_shard(data, shard, nsh, out):
         if i % nsh != shard: continue
         G["ev"] = signals(H, L, C, t0, sig)
         with get_context("fork").Pool(4) as pool:
-            for params, r in pool.imap_unordered(_run, list(itertools.product(TPS, HS, LADDERS, PTPS))):
-                tp, hpct, lad, ptp = params
-                res[f"{sig[0]}|{sig[1]}|{sig[2]}|{sig[3]}|{tp}|{hpct}|{lad}|{ptp}"] = r
+            for params, r in pool.imap_unordered(_run, list(itertools.product(TPS, HS, LADDERS, PTPS, DCAS, MAXH))):
+                tp, hpct, lad, ptp, dca, mh = params
+                res[f"{sig[0]}|{sig[1]}|{sig[2]}|{sig[3]}|{tp}|{hpct}|{lad}|{ptp}|{dca}|{mh}"] = r
         print("done", sig, flush=True)
     json.dump(res, open(out, "w"))
 
@@ -187,7 +190,7 @@ def report(d, out):
             return {"tot": round(sum(ds), 2), "green": sum(1 for v in ds if v > 0), "days": len(ds),
                     "worst": round(min(ds), 2) if ds else 0, "maxDD": round(dd, 2)}
         rows[k] = {"train": seg(0, 16), "test": seg(16, len(daily)), "all": seg(0, len(daily)),
-                   "trades": r["trades"], "wins": r["wins"], "hedges": r["hedges"], "ptp": r["ptp"],
+                   "trades": r["trades"], "wins": r["wins"], "hedges": r["hedges"], "dcas": r.get("dcas", 0), "ptp": r["ptp"],
                    "openEnd": r["openEnd"], "hedgedEnd": r["hedgedEnd"], "daily": daily}
     json.dump(rows, open(out, "w"))
     print("rows", len(rows))
