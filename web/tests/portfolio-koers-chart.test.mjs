@@ -586,8 +586,9 @@ test("Build 567 keeps S/R lines persistent across chart pan and extends the ladd
   assert.ok(component.includes("support/resistance is a permanent chart primitive"));
   assert.ok(component.includes("series.createPriceLine({"));
   assert.ok(component.includes('axisLabelVisible:false'));
-  assert.ok(component.includes('rgba(255,86,106,.58)'));
-  assert.ok(component.includes('rgba(71,225,166,.50)'));
+  assert.ok(component.includes('rgba(255,86,106,.26)'));
+  assert.ok(component.includes('rgba(71,225,166,.24)'));
+  assert.equal(component.includes('rgba(255,86,106,.58)'),false);
   assert.ok(component.includes("for(const price of prices){"));
   assert.ok(component.includes("extendPortfolioZoneLadderToRange(chartZoneLadder"));
 });

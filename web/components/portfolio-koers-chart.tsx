@@ -903,7 +903,8 @@ export function PortfolioKoersChart({
         const resistance=Number.isFinite(current)&&price>current;
         series.createPriceLine({
           price,
-          color:resistance?"rgba(255,86,106,.58)":"rgba(71,225,166,.50)",
+          // Build 640: same lines, softer ("Zacht", keuze Amar 24-10).
+          color:resistance?"rgba(255,86,106,.26)":"rgba(71,225,166,.24)",
           lineWidth:1,
           lineStyle:2,
           axisLabelVisible:false,
