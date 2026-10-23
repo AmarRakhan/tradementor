@@ -46,6 +46,13 @@ def _d(value: Any, default: str = "0") -> Decimal:
     return result if result.is_finite() else Decimal(default)
 
 
+def _below_exchange_minimum(qty: Decimal, price: Decimal, step: Decimal, min_qty: Any, min_notional: Any) -> bool:
+    """True when ``qty`` can not be sent as one Aster order (below the step, the minimum quantity or notional)."""
+    floored = (qty / step).to_integral_value(rounding="ROUND_DOWN") * step if step > 0 else qty
+    mq, mn = _d(min_qty), _d(min_notional)
+    return floored <= 0 or (mq > 0 and floored < mq) or (mn > 0 and floored * price < mn)
+
+
 def _same(a: Decimal, b: Decimal, step: Decimal) -> bool:
     tolerance = step / 2 if step > 0 else Decimal("1e-12")
     return abs(a - b) <= tolerance
@@ -121,10 +128,16 @@ def decide(
     phase = (rec or {}).get("phase")
 
     if rec is None or phase == PHASE_REFILL:
-        if _same(short_q, long_q, step) and _d(short_entry) > 0:
+        # Build 631 (Amar 23-10): a hedge that misses less than one Aster minimum order (e.g. after the 90% reopen or
+        # an aborted close-all) can never reach exact 1:1. That counts as hedged: start the cycle on the hedge as it
+        # is, instead of waiting forever (afbouw never restarted and the engine retried an impossible order).
+        gap = long_q - short_q
+        gap_below_minimum = short_q > 0 and gap > 0 and _below_exchange_minimum(gap, price, step, min_qty, min_notional)
+        if (_same(short_q, long_q, step) or gap_below_minimum) and _d(short_entry) > 0:
             rehedge_all = bool(rec and rec.get("anchorAtMark"))
             at_mark = (start_at_mark and rec is None) or rehedge_all
-            reason = "REHEDGE_ALL_AT_MARK" if rehedge_all else ("ANCHOR_AT_SWITCH_ON" if at_mark else "HEDGED_1_TO_1")
+            reason = "REHEDGE_ALL_AT_MARK" if rehedge_all else ("ANCHOR_AT_SWITCH_ON" if at_mark else (
+                "HEDGED_GAP_BELOW_MINIMUM" if gap_below_minimum else "HEDGED_1_TO_1"))
             new = _start_cycle(rec, long_q=long_q, short_q=short_q, short_entry=price if at_mark else _d(short_entry),
                                cfg=cfg, reason=reason)
             new["direction"] = direction

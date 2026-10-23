@@ -272,6 +272,21 @@ class BothSides(Base):
         self.assertIsNone(self.pair("NEWUSDT").get("pairExit"))
         self.assertEqual(self.short("NEWUSDT"), 10.0)
 
+    def test_hedge_at_90_percent_with_gap_below_minimum_is_not_stuck(self):
+        # Live 23-10 (CC 127/114 etc.): gap below the $5 Aster minimum -> no impossible order every tick,
+        # the afbouw cycle starts on the hedge as it is.
+        self.settings(shortRecoveryPlan=dict(SIX_IN_THREE))
+        self.open_pair("SOLUSDT", "LONG", hedge_entry=100)
+        self.L.pos[("SOLUSDT", "SHORT")] = 9.97                             # gap 0.03 * $100 = $3 < $5
+        self.at("SOLUSDT", 100)
+        self.at("SOLUSDT", 100)
+        pair = self.pair("SOLUSDT")
+        self.assertNotEqual(pair["status"], "PRECISION_BLOCKED")
+        self.assertEqual(pair["shortRecovery"]["phase"], "LADDER")
+        self.assertEqual(self.orders(), [])
+        self.at("SOLUSDT", 98)                                              # first step sells from that hedge
+        self.assertEqual([o[:2] for o in self.orders()], [("SHORT", "CLOSE")])
+
     def test_one_position_per_coin_reader_follows_auto_hedge_switch(self):
         import aster_position_loss_auto_hedge_lock as lock
         self.ext._enabled_cache.clear()

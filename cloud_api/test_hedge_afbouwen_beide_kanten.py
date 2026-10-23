@@ -127,3 +127,23 @@ class RuntimeBothSides(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GapBelowMinimum(unittest.TestCase):
+    """Build 631: a hedge missing less than one Aster minimum order counts as hedged (live 23-10: CC 127/114)."""
+
+    def test_refill_starts_cycle_when_gap_is_below_min_notional(self):
+        r = go({"phase": "REFILL", "cycleId": 2, "lastTarget": "10"}, long_qty=10, short_qty="9.97",
+               short_entry=100, mark=100, min_notional=5)
+        self.assertEqual((r["event"], r["record"]["startReason"], r["override"]),
+                         ("CYCLE_STARTED", "HEDGED_GAP_BELOW_MINIMUM", D("9.97")))
+        self.assertEqual(r["record"]["base"], "9.97")
+
+    def test_new_pair_with_gap_below_min_qty_starts_too(self):
+        r = go(None, long_qty="0.09", short_qty="0.08", short_entry=100, mark=100, qty_step="0.01", min_qty="0.05")
+        self.assertEqual(r["event"], "CYCLE_STARTED")
+
+    def test_real_gap_still_waits_for_the_top_up(self):
+        r = go({"phase": "REFILL", "cycleId": 2, "lastTarget": "10"}, long_qty=10, short_qty=9,
+               short_entry=100, mark=100, min_notional=5)
+        self.assertEqual((r["event"], r["override"]), ("WAIT_FOR_1_TO_1", None))
