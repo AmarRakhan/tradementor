@@ -1,23 +1,64 @@
-name: Probe spike-tellingen (publiek, geen secrets, geen orders)
+name: Probe systeem-simulatie (publiek, geen secrets, geen orders)
 on:
   push:
     branches: [claude/probe-spike-counts]
 permissions:
   contents: write
 jobs:
-  probe:
+  fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -I tools/probe/spike_day_probe.py tools/probe/tradable.txt "$RUNNER_TEMP/counts.json" tools/probe/low_fee.txt
-      - name: Data naar branch probe-data-counts
+      - run: pip install --quiet numpy
+      - run: python3 -I tools/probe/system_sim.py fetch "$RUNNER_TEMP/data.npz"
+        working-directory: ${{ github.workspace }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data
+          path: ${{ runner.temp }}/data.npz
+          retention-days: 3
+  sim:
+    needs: fetch
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35]
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --quiet numpy
+      - uses: actions/download-artifact@v4
+        with:
+          name: data
+          path: ${{ runner.temp }}/in
+      - run: python3 tools/probe/system_sim.py sim "$RUNNER_TEMP/in/data.npz" ${{ matrix.shard }} 36 "$RUNNER_TEMP/shard-${{ matrix.shard }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard-${{ matrix.shard }}.json
+          retention-days: 3
+  report:
+    needs: sim
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --quiet numpy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/shards
+      - run: python3 -I tools/probe/system_sim.py report "$RUNNER_TEMP/shards" "$RUNNER_TEMP/system.json"
+      - name: Naar branch probe-data-counts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/out" && cd "$RUNNER_TEMP/out"
-          cp "$RUNNER_TEMP/counts.json" spike-counts.json
+          gzip -c "$RUNNER_TEMP/system.json" > system.json.gz
           git init -q && git config user.name probe-bot && git config user.email noreply@github.com
           git checkout -q --orphan probe-data-counts && git add . && git commit -qm "probe data [skip ci]"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:probe-data-counts
