@@ -16,7 +16,7 @@ on:
         required: true
         default: backend
         type: choice
-        options: [backend, web]
+        options: [backend, web, stop-old-revisions]
       source_commit:
         description: "Exacte 40-teken commit die live moet"
         required: true
@@ -27,6 +27,11 @@ on:
         type: string
       reason:
         description: "Korte omschrijving (verschijnt in de samenvatting)"
+        required: false
+        default: ""
+        type: string
+      stop_revisions:
+        description: "Alleen target=stop-old-revisions: komma-lijst van backend-revisies ZONDER verkeer die gestopt (verwijderd) moeten worden"
         required: false
         default: ""
         type: string
@@ -55,6 +60,7 @@ env:
 jobs:
   plan:
     name: Controle en tests (geen Google-toegang)
+    if: inputs.target == 'backend' || inputs.target == 'web'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -542,3 +548,68 @@ jobs:
         shell: bash
         run: |
           { echo "## Release web — GESTOPT vóór het omzetten"; echo; echo "- Fase: ${DEPLOY_PHASE:-onbekend} · productie ongewijzigd"; } >> "$GITHUB_STEP_SUMMARY"
+
+  # Noodstap (Amar 23-10): een oude backend-revisie zonder verkeer bleef achtergrondwerk doen (orders!) naast de
+  # live revisie. Deze job verwijdert precies de opgegeven revisies, nooit de revisie met verkeer. Image blijft in
+  # Artifact Registry; terugzetten = gewone release van die commit.
+  stop-old-revisions:
+    name: Oude backend-revisies stoppen
+    if: inputs.target == 'stop-old-revisions'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      STOP_REVISIONS: ${{ inputs.stop_revisions }}
+    steps:
+      - name: Invoer controleren
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "AmarRakhan/tradementor"
+          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$EXPECTED_LIVE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "STOP: expected_live_commit ongeldig" >&2; exit 1; }
+          [[ "$STOP_REVISIONS" =~ ^tradementor-api-[a-z0-9-]+(,tradementor-api-[a-z0-9-]+)*$ ]] || { echo "STOP: stop_revisions ongeldig" >&2; exit 1; }
+
+      - name: Google Cloud (WIF, geen sleutels)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Revisies stoppen (nooit de revisie met verkeer)
+        shell: bash
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/svc.json"
+          LIVE="$(python3 -c 'import json,sys; rows=[r for r in json.load(open(sys.argv[1]))["status"]["traffic"] if (r.get("percent") or 0)>0]; print(rows[0]["revisionName"] if len(rows)==1 else "")' "$R/svc.json")"
+          test -n "$LIVE" || { echo "STOP: verkeer is gesplitst" >&2; exit 1; }
+          gcloud run revisions describe "$LIVE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/live.json"
+          LIVE_COMMIT="$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1]))["spec"]["containers"][0]; print(next((e.get("value","") for e in c.get("env",[]) if e.get("name")=="TRADEMENTOR_SOURCE_COMMIT"),""))' "$R/live.json")"
+          test "$LIVE_COMMIT" = "$EXPECTED_LIVE_COMMIT" || { echo "STOP: live revisie $LIVE draait $LIVE_COMMIT, verwacht $EXPECTED_LIVE_COMMIT" >&2; exit 1; }
+          echo "## Oude revisies stoppen" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Live (blijft): \`$LIVE\` (\`$LIVE_COMMIT\`)" >> "$GITHUB_STEP_SUMMARY"
+          IFS=',' read -ra REVS <<< "$STOP_REVISIONS"
+          for REV in "${REVS[@]}"; do
+            test "$REV" != "$LIVE" || { echo "STOP: $REV is de revisie met verkeer" >&2; exit 1; }
+            TAGS="$(python3 -c 'import json,sys; print(",".join(r["tag"] for r in json.load(open(sys.argv[1]))["status"].get("traffic",[]) if r.get("revisionName")==sys.argv[2] and r.get("tag") and not (r.get("percent") or 0)))' "$R/svc.json" "$REV")"
+            if [ -n "$TAGS" ]; then
+              gcloud run services update-traffic "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --remove-tags "$TAGS"
+            fi
+            if gcloud run revisions describe "$REV" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(metadata.name)' >/dev/null 2>&1; then
+              gcloud run revisions delete "$REV" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet
+              echo "- Gestopt (verwijderd): \`$REV\` (tags: ${TAGS:-geen})" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- Bestond al niet meer: \`$REV\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$R/svc-after.json"
+          AFTER="$(python3 -c 'import json,sys; rows=[r for r in json.load(open(sys.argv[1]))["status"]["traffic"] if (r.get("percent") or 0)>0]; print(rows[0]["revisionName"] if len(rows)==1 else "")' "$R/svc-after.json")"
+          test "$AFTER" = "$LIVE" || { echo "FOUT: verkeer staat niet meer op $LIVE" >&2; exit 1; }
+          echo "- Verkeer ongewijzigd op \`$LIVE\`" >> "$GITHUB_STEP_SUMMARY"
