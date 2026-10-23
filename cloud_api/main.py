@@ -3007,7 +3007,10 @@ def _run_aster_strategy2_tick(uid:str,*,dry_run:bool=False,order_budget:int|None
     cooldowns=(raw.get("entryCandidateCooldowns") if
         int(safe_float(raw.get("entryCandidateCooldownVersion")))==cooldown_version and
         isinstance(raw.get("entryCandidateCooldowns"),dict) else {})
-    cooldowns={str(key):value for key,value in cooldowns.items() if isinstance(value,dict)}
+    # Build 619: verlopen cooldowns niet meer meedragen (zie _prune_expired_entry_cooldowns).
+    _cooldown_now_ms=int(time.time()*1000)
+    cooldowns={str(key):value for key,value in cooldowns.items()
+        if isinstance(value,dict) and safe_float(value.get("until"))>_cooldown_now_ms-ENTRY_COOLDOWN_KEEP_EXPIRED_MS}
     contract_exposure={}
     for position in positions:
         position_symbol=str(position.get("symbol","")).upper()
@@ -10253,6 +10256,32 @@ def _reconcile_strategy2_queue_intent(uid:str,reference,raw:dict[str,Any],intent
     return True,"INTENT_FILLED_RECONCILED"
 
 
+ENTRY_COOLDOWN_KEEP_EXPIRED_MS=6*60*60*1000
+
+def _prune_expired_entry_cooldowns(ref:Any,raw:dict[str,Any],now_ms:int)->dict[str,Any]:
+    """Build 619: verlopen instap-cooldowns verwijderen vóór de eerste schrijfactie van een scan.
+
+    De cooldowns werden altijd met set(merge=True) teruggeschreven, waardoor verlopen
+    sleutels nooit verdwenen (23-10: 1022 stuks, ~285 kB, allemaal verlopen). Het
+    accountdocument liep daardoor over de Firestore-limiet van 1 MiB en de bot ging
+    in DATA_HOLD. update() vervangt het hele veld, zodat verlopen sleutels echt weg zijn.
+    Fout bij opruimen = niets aan de hand; de scan gaat gewoon door.
+    """
+    cooldowns=raw.get("entryCandidateCooldowns")
+    if not isinstance(cooldowns,dict) or not cooldowns:return raw
+    # Respijt: een recent verlopen cooldown blijft bewaard, zodat de oplopende
+    # wachttijd (attempts) behouden blijft. Alleen ouder dan ENTRY_COOLDOWN_KEEP_EXPIRED_MS weg.
+    kept={str(key):value for key,value in cooldowns.items()
+        if isinstance(value,dict) and safe_float(value.get("until"))>now_ms-ENTRY_COOLDOWN_KEEP_EXPIRED_MS}
+    if len(kept)==len(cooldowns):return raw
+    try:
+        ref.update({"entryCandidateCooldowns":kept})
+    except Exception as exc:
+        print(f"ENTRY_COOLDOWN_PRUNE_FAILED {exc}",flush=True)
+        return raw
+    print(f"ENTRY_COOLDOWN_PRUNED removed={len(cooldowns)-len(kept)} kept={len(kept)}",flush=True)
+    return {**raw,"entryCandidateCooldowns":kept}
+
 def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pending_only:bool=False,
     maximum_orders:int=MAX_ORDERS_PER_ACCOUNT_SCAN,management_only:bool=False,event_symbol:str="",
     event_mark_price:float|None=None)->dict[str,Any]:
@@ -10263,7 +10292,9 @@ def _run_aster_strategy2_queue_scan(uid:str,*,reconcile_only:bool=False,drain_pe
     scan_deadline=time.monotonic()+120
     ref=aster_strategy2_reference(uid);now=datetime.now(timezone.utc)
     scan_id=f"{now.strftime('%Y%m%dT%H%M%S')}-{python_secrets.token_hex(4)}"
-    raw=ref.get().to_dict() or {};prior=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
+    raw=ref.get().to_dict() or {}
+    raw=_prune_expired_entry_cooldowns(ref,raw,int(now.timestamp()*1000))
+    prior=raw.get("orderQueueState") if isinstance(raw.get("orderQueueState"),dict) else {}
     current_intent=prior.get("currentIntent") if isinstance(prior.get("currentIntent"),dict) else {}
     cycle=raw.get("multiBbCycle") if isinstance(raw.get("multiBbCycle"),dict) else {}
     portfolio_exit_active=str(cycle.get("cycleStatus","")).upper() in {"PORTFOLIO_TP_EXECUTING","FLAT_CONFIRMING"}

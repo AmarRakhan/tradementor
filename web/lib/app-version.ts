@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 619 (alleen backend): bot ging in DATA_HOLD doordat het accountdocument over de Firestore-limiet van 1 MiB groeide; verlopen instap-cooldowns (1022, ~285 kB) worden nu opgeruimd vóór elke scan.
 // Build 618: Extreme Spike realtime werkt weer: Aster sloot de Spike-websocket met 3001 bij 200 munten in één aanmelding; nu in porties van 25. Status "Wacht op spike" in plaats van ORDERFOUT; Spike-verbindingen zichtbaar in systemStatus. Bouwt op live 616 (2f07a076), zonder Auto Hedge per gebruiker (617).
 // Build 616: Spike-check gebruikt in productie de echte klok (614 telde het voorwerk vóór de scan nog niet mee; live nog 18/69 SPIKE_INVALID_LIVE_CANDLE).
 // Build 615: terug van Extreme Spike naar Bollinger (of Geen filter) werkt weer: die keuze wordt direct opgeslagen en de Bollinger-kaart met schakelaar en tijdframes verschijnt meteen; alleen weergave/instellingen.
