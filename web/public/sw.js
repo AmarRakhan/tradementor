@@ -46,6 +46,16 @@ self.addEventListener("push", (event) => {
       renotify: false,
       data: { ...data, url: String(payload.url || data.url || "/"), notificationType: String(payload.type || "") },
     });
+    // Hoorn bij Portfolio TP: geef open app-vensters direct een seintje, zodat de hoorn
+    // tegelijk met deze melding klinkt. Alleen geluid in de app; nooit trading.
+    if (String(payload.type || "") === "portfolio_take_profit" && data.cycleId) {
+      try {
+        const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+        for (const client of windows) {
+          client.postMessage({ type: "amar:portfolio-tp-horn", cycleId: String(data.cycleId), receivedAtMs: Date.now() });
+        }
+      } catch {}
+    }
   })());
 });
 

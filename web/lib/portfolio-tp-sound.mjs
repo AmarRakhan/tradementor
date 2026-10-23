@@ -4,8 +4,11 @@
 export const PORTFOLIO_TP_SOUND_URL = "/sounds/portfolio-tp-horn.mp3";
 export const PORTFOLIO_TP_SOUND_ENABLED_KEY = "amar.portfolioTpSound.enabled.v1";
 export const PORTFOLIO_TP_SOUND_LAST_KEY = "amar.portfolioTpSound.lastCycleId.v1";
-// Een TP die langer geleden is dan dit (app was dicht) krijgt geen hoorn meer bij openen.
-export const PORTFOLIO_TP_SOUND_MAX_AGE_MS = 10 * 60 * 1000;
+// Een TP die langer geleden is dan dit (app was dicht) krijgt geen hoorn meer bij openen:
+// je hebt de pushmelding dan al gezien, een late hoorn is verwarrend.
+export const PORTFOLIO_TP_SOUND_MAX_AGE_MS = 60 * 1000;
+// Bericht van de service worker zodra de pushmelding "Portfolio Take Profit behaald" binnenkomt.
+export const PORTFOLIO_TP_PUSH_MESSAGE = "amar:portfolio-tp-horn";
 
 /**
  * Pure beslissing: moet de hoorn afgaan voor deze laatste Portfolio TP?
@@ -106,4 +109,27 @@ export function handleLatestPortfolioTp(latest, nowMs = Date.now()) {
   if (decision.store) writeStorage(PORTFOLIO_TP_SOUND_LAST_KEY, decision.store);
   if (decision.play) void playPortfolioTpSound();
   return decision;
+}
+
+// Pure check voor het seintje van de service worker: alleen een vers bericht met cycleId telt.
+// receivedAtMs is het moment waarop de pushmelding op dit toestel binnenkwam.
+export function portfolioTpFromPushMessage(data, nowMs) {
+  if (!data || typeof data !== "object" || data.type !== PORTFOLIO_TP_PUSH_MESSAGE) return null;
+  const cycleId = String(data.cycleId || "");
+  const receivedAtMs = Number(data.receivedAtMs || 0);
+  if (!cycleId || !(receivedAtMs > 0)) return null;
+  if (Number(nowMs) - receivedAtMs > PORTFOLIO_TP_SOUND_MAX_AGE_MS) return null;
+  return { cycleId, phase: "PUSH", occurredAtMs: receivedAtMs };
+}
+
+// Hoorn op hetzelfde moment als de pushmelding, als de app open is (ook in een ander tabblad).
+// Dezelfde opslag als de poll, dus nooit dubbel per Portfolio TP.
+export function listenForPortfolioTpPush() {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return () => {};
+  const onMessage = (event) => {
+    const latest = portfolioTpFromPushMessage(event && event.data, Date.now());
+    if (latest) handleLatestPortfolioTp(latest);
+  };
+  navigator.serviceWorker.addEventListener("message", onMessage);
+  return () => navigator.serviceWorker.removeEventListener("message", onMessage);
 }

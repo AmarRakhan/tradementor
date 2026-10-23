@@ -8,6 +8,7 @@ import {
   handleLatestPortfolioTp,
   installPortfolioTpSoundUnlock,
   isPortfolioTpSoundEnabled,
+  listenForPortfolioTpPush,
   playPortfolioTpSound,
   setPortfolioTpSoundEnabled,
   type LatestPortfolioTp,
@@ -538,6 +539,7 @@ export function ProfitCelebration() {
   }, []);
 
   useEffect(() => installPortfolioTpSoundUnlock(), []);
+  useEffect(() => listenForPortfolioTpPush(), []);
 
   const poll = useCallback(async () => {
     // Blijft ook pollen terwijl de winst-popup open staat, zodat de Portfolio TP-hoorn niet wacht.

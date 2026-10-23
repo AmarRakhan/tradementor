@@ -37,3 +37,34 @@ test("horn file ships with the app and the panel has a per-device switch and tes
   assert.match(panel, /handleLatestPortfolioTp\(payload\.latestPortfolioTp/);
   assert.match(panel, /installPortfolioTpSoundUnlock/);
 });
+
+import { portfolioTpFromPushMessage, PORTFOLIO_TP_PUSH_MESSAGE } from "../lib/portfolio-tp-sound.mjs";
+const sw = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
+
+test("late window is at most one minute: opening the app minutes later stays silent", () => {
+  assert.ok(PORTFOLIO_TP_SOUND_MAX_AGE_MS <= 60_000);
+  const latest = { cycleId: "late", occurredAtMs: now - 3 * 60_000 };
+  assert.deepEqual(decidePortfolioTpSound({ latest, lastCycleId: "c1", enabled: true, nowMs: now }), { play: false, store: "late" });
+});
+
+test("push message from the service worker plays the horn at the push moment, once per cycle", () => {
+  const latest = portfolioTpFromPushMessage({ type: PORTFOLIO_TP_PUSH_MESSAGE, cycleId: "c8", receivedAtMs: now - 200 }, now);
+  assert.equal(latest.cycleId, "c8");
+  assert.deepEqual(decidePortfolioTpSound({ latest, lastCycleId: "c7", enabled: true, nowMs: now }), { play: true, store: "c8" });
+  // De poll ziet daarna dezelfde TP: geen tweede hoorn.
+  assert.equal(decidePortfolioTpSound({ latest: { cycleId: "c8", occurredAtMs: now }, lastCycleId: "c8", enabled: true, nowMs: now }).play, false);
+});
+
+test("stale or foreign service-worker messages never play", () => {
+  assert.equal(portfolioTpFromPushMessage({ type: PORTFOLIO_TP_PUSH_MESSAGE, cycleId: "c9", receivedAtMs: now - 5 * 60_000 }, now), null);
+  assert.equal(portfolioTpFromPushMessage({ type: "SKIP_WAITING" }, now), null);
+  assert.equal(portfolioTpFromPushMessage({ type: PORTFOLIO_TP_PUSH_MESSAGE, receivedAtMs: now }, now), null);
+});
+
+test("service worker forwards only the Portfolio TP push to open windows", () => {
+  assert.match(sw, /payload\.type \|\| ""\) === "portfolio_take_profit"/);
+  assert.match(sw, /postMessage\(\{ type: "amar:portfolio-tp-horn", cycleId: String\(data\.cycleId\), receivedAtMs: Date\.now\(\) \}\)/);
+  assert.match(panel, /listenForPortfolioTpPush\(\)/);
+  // De SW pakt nog steeds nooit zelf de controle over een draaiende app.
+  assert.doesNotMatch(sw.split("self.addEventListener(\"message\"")[0], /skipWaiting\(\)/);
+});

@@ -17,3 +17,6 @@ export function setPortfolioTpSoundEnabled(enabled: boolean): void;
 export function installPortfolioTpSoundUnlock(): () => void;
 export function playPortfolioTpSound(): Promise<boolean>;
 export function handleLatestPortfolioTp(latest: LatestPortfolioTp, nowMs?: number): PortfolioTpSoundDecision;
+export const PORTFOLIO_TP_PUSH_MESSAGE: string;
+export function portfolioTpFromPushMessage(data: unknown, nowMs: number): LatestPortfolioTp;
+export function listenForPortfolioTpPush(): () => void;
