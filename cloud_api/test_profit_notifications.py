@@ -261,7 +261,9 @@ def test_multi_bb_persists_confirmed_entry_and_tp_order_attribution_for_notifica
     assert "def _record_order_attribution" in source
     assert 'action="OPEN_LEG"' in source
     assert 'action="TAKE_PROFIT_CLOSE"' in source
-    assert '"orderAttributions": rows[-2000:]' in source
+    # Build 620: compact schrijven (archief-subcollectie), nog steeds max. 2000 rijen.
+    assert '"orderAttributions": compact_for_write(ref, rows)' in source
+    assert "MAX_DOCUMENT_ROWS = 2000" in Path("aster_attribution_archive.py").read_text()
     assert "closed.get(\"result\") or {}" in source
     assert "ref, fill, settings=settings" in source
 
