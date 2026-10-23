@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import os
 import re
 import threading
+import time
 from typing import Any
 
 from fastapi import Depends, HTTPException, Response
@@ -32,8 +33,22 @@ import short_recovery_pair_exit
 
 WORKER_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_WORKER", "true").lower() == "true"
 EXECUTION_ENABLED = os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED", "false").lower() == "true"
-# SHORT Recovery 2.0: OFF = shadow only (decisions recorded, no target change, no orders).
-SHORT_RECOVERY_EXECUTION_ENABLED = os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "false").lower() == "true"
+# SHORT Recovery 2.0: real orders by default (besluit Amar 23-10 02:00: echt, voor iedereen gelijk).
+# Each user still switches SHORT afbouwen ON/OFF on their own account. Emergency stop: set the env to
+# "false" -> shadow only (decisions recorded, no target change, no orders) for everyone.
+SHORT_RECOVERY_EXECUTION_ENABLED = os.getenv("ASTER_SHORT_RECOVERY_EXECUTION_ENABLED", "true").lower() == "true"
+HEDGE_MODE_REQUIRED_MESSAGE = (
+    "Auto Hedge vereist Hedge Mode op je Aster-account. Je account staat nu op One-way mode. "
+    "Zet in Aster de positiemodus op Hedge Mode (dat kan alleen zonder open posities en open orders) "
+    "en probeer het daarna opnieuw. Er is niets gewijzigd."
+)
+HEDGE_MODE_UNKNOWN_MESSAGE = (
+    "De positiemodus van je Aster-account kon niet worden gecontroleerd. Er is niets gewijzigd; "
+    "probeer het over enkele seconden opnieuw."
+)
+HEDGE_MODE_CACHE_SECONDS = 300.0
+_hedge_mode_ok_at: dict[str, float] = {}
+_hedge_mode_lock = threading.Lock()
 WORKER_INTERVAL = max(1.0, float(os.getenv("ASTER_POSITION_LOSS_AUTO_HEDGE_INTERVAL_SECONDS", "3")))
 _worker_stop = threading.Event()
 _worker_thread: threading.Thread | None = None
@@ -195,6 +210,38 @@ def _audit_global_setting_change(
         "sourceRoute": source_route,
         "result": result,
     })
+
+
+def _hedge_mode_ok(uid: str, client: Any = None) -> bool:
+    """True only when Aster confirms Hedge Mode (dualSidePosition). Errors propagate (fail closed).
+
+    A confirmed Hedge Mode is cached briefly (Aster only allows switching without open positions/orders);
+    a One-way answer is never cached, so switching to Hedge Mode works on the next try.
+    """
+    now = time.monotonic()
+    with _hedge_mode_lock:
+        stamp = _hedge_mode_ok_at.get(uid)
+    if stamp is not None and now - stamp < HEDGE_MODE_CACHE_SECONDS:
+        return True
+    ok = bool((client or _client(uid, live=False)).position_mode())
+    with _hedge_mode_lock:
+        if ok:
+            _hedge_mode_ok_at[uid] = now
+        else:
+            _hedge_mode_ok_at.pop(uid, None)
+    return ok
+
+
+def _require_hedge_mode(uid: str) -> None:
+    """Clean user-facing refusal before switching on anything that can place hedge orders."""
+    try:
+        ok = _hedge_mode_ok(uid)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, HEDGE_MODE_UNKNOWN_MESSAGE) from exc
+    if not ok:
+        raise HTTPException(409, HEDGE_MODE_REQUIRED_MESSAGE)
 
 
 def _client(uid: str, *, live: bool):
@@ -885,6 +932,18 @@ def _run_uid(
                 }, merge=True)
                 return report
         client = _client(uid, live=execute)
+        if execute and not _hedge_mode_ok(uid, client):
+            # Never send positionSide orders to a One-way account; existing state stays untouched.
+            report = {
+                "mode": "LIVE", "ordersSent": 0, "status": "BLOCKED",
+                "reason": "HEDGE_MODE_REQUIRED", "actions": [],
+            }
+            _doc(uid).set({
+                "lastReport": report,
+                "lastCheckedAt": datetime.now(timezone.utc),
+                "lastError": HEDGE_MODE_REQUIRED_MESSAGE,
+            }, merge=True)
+            return report
         positions = list(client.position_risk() or [])
         open_orders = list(client.open_orders() or [])
         protected_sides, skip_symbols, states, created = _prepare_lifecycle(
@@ -1017,6 +1076,8 @@ def put_position_loss_auto_hedge(
         threshold = normalize_threshold(request.thresholdUsd)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if request.enabled and not previous_enabled:
+        _require_hedge_mode(uid)
     now = datetime.now(timezone.utc)
     _doc(uid).set({
         "enabled": bool(request.enabled),
@@ -1063,6 +1124,8 @@ def apply_position_loss_auto_hedge(
         threshold = normalize_threshold(request.thresholdUsd)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    if request.enabled and not previous_enabled:
+        _require_hedge_mode(uid)
     _doc(uid).set({
         "enabled": bool(request.enabled),
         "thresholdUsd": threshold,
@@ -1102,6 +1165,8 @@ def put_position_loss_auto_hedge_rehedge(
         raise HTTPException(409, "Zet Auto Hedge eerst AAN voordat je deze recovery opnieuw bewapent")
     if request.enabled and _dynamic_hedge_enabled(uid):
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
+    if request.enabled:
+        _require_hedge_mode(uid)
     now = datetime.now(timezone.utc)
     next_status = (
         "REHEDGE_ARMED" if request.enabled
@@ -1148,6 +1213,8 @@ def put_position_loss_auto_hedge_short_recovery(
     now = datetime.now(timezone.utc)
     previous = _public_short_recovery(_current(uid))
     switched_on = plan["enabled"] and not previous.get("enabled")
+    if switched_on:
+        _require_hedge_mode(uid)
     enabled_at = now if switched_on else ((_current(uid).get("shortRecoveryPlan") or {}).get("enabledAt") if plan["enabled"] else None)
     _doc(uid).set({"shortRecoveryPlan": {**plan, "updatedAt": now, "enabledAt": enabled_at}, "updatedAt": now}, merge=True)
     _audit(uid, {"eventType": "SHORT_RECOVERY_SETTINGS_CHANGED", "previous": previous, "next": plan,
@@ -1235,6 +1302,7 @@ def post_position_loss_auto_hedge_rehedge_all(
         raise HTTPException(409, "Zet Auto Hedge eerst AAN voordat je Recovery-posities opnieuw hedget")
     if _dynamic_hedge_enabled(uid):
         raise HTTPException(409, "Auto Hedge kan niet tegelijk met Dynamic Hedge actief zijn")
+    _require_hedge_mode(uid)
     candidates = sorted(
         symbol for symbol, row in _pair_states(uid).items()
         if str(row.get("status", "")).upper() in RECOVERY_STATUSES
