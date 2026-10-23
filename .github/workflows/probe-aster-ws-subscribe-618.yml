@@ -21,4 +21,7 @@ jobs:
           python-version: "3.12"
       - run: pip install --quiet "websockets>=15.0,<16"
       - name: Probe (alleen publieke markprijzen)
-        run: python3 -I tools/probe/aster_ws_subscribe_probe.py tools/probe/spike_watch_symbols.txt
+        run: |
+          python3 -I tools/probe/aster_ws_subscribe_probe.py tools/probe/spike_watch_symbols.txt > probe.out
+          # Uitkomst als annotatie (leesbaar via de checks-API); alleen publieke marktdata.
+          while IFS= read -r line; do echo "::notice title=probe::$line"; done < probe.out
