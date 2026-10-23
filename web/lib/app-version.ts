@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 618: Extreme Spike realtime werkt weer: Aster sloot de Spike-websocket met 3001 bij 200 munten in één aanmelding; nu in porties van 25. Status "Wacht op spike" in plaats van ORDERFOUT; Spike-verbindingen zichtbaar in systemStatus.
 // Build 617: samenvoeging — Spike-klokfix (616, SR-sessie) + Hedge Mode-check en SHORT Recovery echte orders als standaard (616, Auto Hedge-sessie). Geen nieuwe functies.
 // Build 616: Spike-check gebruikt in productie de echte klok (614 telde het voorwerk vóór de scan nog niet mee; live nog 18/69 SPIKE_INVALID_LIVE_CANDLE).
 // Build 615: terug van Extreme Spike naar Bollinger (of Geen filter) werkt weer: die keuze wordt direct opgeslagen en de Bollinger-kaart met schakelaar en tijdframes verschijnt meteen; alleen weergave/instellingen.
@@ -42,7 +43,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "617";
+export const WEBAPP_BUILD_NUMBER = "618";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

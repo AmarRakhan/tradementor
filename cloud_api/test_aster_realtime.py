@@ -110,6 +110,33 @@ def test_subscription_messages_use_lowercase_one_second_mark_stream():
     assert socket.messages[0]["params"] == ["btcusdt@markPrice@1s", "solusdt@markPrice@1s"]
     assert socket.messages[1]["method"] == "UNSUBSCRIBE"
     assert socket.messages[1]["params"] == ["dogeusdt@markPrice@1s"]
+    assert socket.messages[0]["id"] != socket.messages[1]["id"]
+
+
+def test_subscription_of_200_streams_is_sent_in_batches_of_25(monkeypatch):
+    """Build 618: Aster sluit met 3001 bij 200 streams in één SUBSCRIBE (probe 23-10)."""
+    import aster_realtime as rt
+    pauses = []
+    async def fake_sleep(seconds):
+        pauses.append(seconds)
+    monkeypatch.setattr(rt.asyncio, "sleep", fake_sleep)
+    worker = AsterRealtimeWorker(load_subscriptions=lambda: {}, evaluate=lambda *_: {})
+    socket = _FakeSocket()
+    symbols = [f"C{i:03d}USDT" for i in range(200)]
+    asyncio.run(worker._send_subscriptions(socket, subscribe=symbols))
+    assert len(socket.messages) == 8
+    assert all(m["method"] == "SUBSCRIBE" and len(m["params"]) <= rt.SUBSCRIBE_BATCH_SIZE for m in socket.messages)
+    sent = [p for m in socket.messages for p in m["params"]]
+    assert sent == sorted(f"{s.lower()}@markPrice@1s" for s in symbols)
+    assert len({m["id"] for m in socket.messages}) == 8
+    assert pauses == [rt.SUBSCRIBE_BATCH_PAUSE_SECONDS] * 7
+
+
+def test_empty_subscription_sends_nothing():
+    worker = AsterRealtimeWorker(load_subscriptions=lambda: {}, evaluate=lambda *_: {})
+    socket = _FakeSocket()
+    asyncio.run(worker._send_subscriptions(socket, subscribe=[], unsubscribe=[]))
+    assert socket.messages == []
 
 
 def test_registry_symbols_for_tenant_isolated():

@@ -26,6 +26,10 @@ MAX_STREAMS_PER_CONNECTION = 200
 STALE_AFTER_SECONDS = 20.0
 SUBSCRIPTION_REFRESH_SECONDS = 5.0
 HEALTH_PERSIST_SECONDS = 30.0
+# Aster weigert grote SUBSCRIBE-berichten (200 streams → close 3001). 25 per bericht
+# is bewezen veilig; 0,2 s pauze houdt het ruim onder de berichtlimiet per seconde.
+SUBSCRIBE_BATCH_SIZE = 25
+SUBSCRIBE_BATCH_PAUSE_SECONDS = 0.2
 ACCOUNT_MIN_EVALUATION_INTERVAL_SECONDS = 1.0
 ACCOUNT_PRICE_MOVE_TRIGGER_PCT = 0.02
 
@@ -205,6 +209,7 @@ class AsterRealtimeWorker:
         self.force_evaluate = force_evaluate
         self._stop = asyncio.Event()
         self._subscription_version = 0
+        self._request_id = 0
         self._health_lock = threading.Lock()
         self._last_health_persist = 0.0
         self._latest_lock = threading.RLock()
@@ -288,11 +293,19 @@ class AsterRealtimeWorker:
                 self.metrics.evaluation_latencies_ms.append((time.monotonic() - started) * 1000)
 
     async def _send_subscriptions(self, websocket: Any, *, subscribe: Iterable[str] = (), unsubscribe: Iterable[str] = ()) -> None:
+        # Build 618: Aster sluit de verbinding met 3001 "illegal request" bij één
+        # SUBSCRIBE met 200 streams (bewezen 23-10 met een publieke probe: 150 in één
+        # bericht werkt, 200 niet; 200 in porties van 25 levert alle 200 munten).
+        # Daarom in kleine porties, met een korte pauze tegen de berichtlimiet.
         for method, symbols in (("SUBSCRIBE", subscribe), ("UNSUBSCRIBE", unsubscribe)):
             params = [f"{symbol.lower()}@markPrice@1s" for symbol in sorted(set(symbols))]
-            if not params:
-                continue
-            await websocket.send(json.dumps({"method": method, "params": params, "id": int(time.time() * 1000) % 2_000_000_000}))
+            for start in range(0, len(params), SUBSCRIBE_BATCH_SIZE):
+                if start:
+                    await asyncio.sleep(SUBSCRIBE_BATCH_PAUSE_SECONDS)
+                self._request_id = (self._request_id % 2_000_000_000) + 1
+                await websocket.send(json.dumps({"method": method,
+                                                 "params": params[start:start + SUBSCRIBE_BATCH_SIZE],
+                                                 "id": self._request_id}))
 
     def _persist_health_if_due(self, *, force: bool = False) -> None:
         if self.persist_health is None:

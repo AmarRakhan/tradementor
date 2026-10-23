@@ -2518,6 +2518,14 @@ def run_multi_bb_step(*, client: Any, ref: Any, raw_state: dict[str, Any], setti
     elif any(str(a.get("reason", "")).startswith("leverage-data:") or a.get("reason") == "SYMBOL_LEVERAGE_DATA_UNAVAILABLE" for a in entry_wait): entry_status = "WAITING_EXCHANGE"; entry_reason = str(entry_wait[0].get("reason", "Aster leverage-data tijdelijk niet beschikbaar"))
     elif entry_wait and all(str(a.get("reason", "")).startswith(("PRICE_", "BB_")) for a in entry_wait):
         entry_status = "WAITING_BOLLINGER_ENTRY"; entry_reason = "Geen kandidaat voldoet nu aan de actieve Bollinger-instapfilter; vrije stoel blijft leeg en wordt opnieuw gescand"
+    elif (settings.entry_filter_mode == "EXTREME_SPIKE" and entry_wait
+          and all(str(a.get("reason", "")).startswith(("SPIKE_", "MAX_LEVERAGE_BELOW_MINIMUM")) for a in entry_wait)):
+        # Build 618: wachten op een spike is geen orderfout. Voorheen werd de laatste
+        # skipreden (bijv. SPIKE_INSUFFICIENT_LIVE_CANDLES) als ORDER_REJECTED getoond.
+        spike_hits = sum(1 for a in entry_wait if str(a.get("reason", "")).startswith("SPIKE_"))
+        entry_status = "WAITING_SPIKE_ENTRY"
+        entry_reason = (f"Wacht op spike: geen van de {spike_hits} gecontroleerde munten raakt nu de Spike-band "
+                        f"(BB 20,{settings.extreme_spike_level} en verder); vrije stoel blijft leeg en wordt realtime bewaakt")
     elif entry_wait: entry_status = "ORDER_REJECTED"; entry_reason = str(entry_wait[0].get("reason", "Aster ordercheck afgewezen"))
     else: entry_status = "READY_FOR_ENTRY"; entry_reason = "verse exchange snapshot; geselecteerde munt is opnieuw entry-kandidaat"
     report = {"engine": ENGINE, "configVersion": settings.version,

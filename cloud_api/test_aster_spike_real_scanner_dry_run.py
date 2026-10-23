@@ -103,6 +103,9 @@ class ScannerDryRunTests(unittest.TestCase):
         self.assertEqual(result["ordersSent"],0)
         self.assertFalse(any(a.get("kind")=="ENTRY" for a in result["actions"]),result["actions"])
         self.assertTrue(any(a.get("reason")=="SPIKE_OUTSIDE_SELECTED_RANGE" for a in result["actions"]),result["actions"])
+        # Build 618: wachten op een spike is geen orderfout.
+        self.assertEqual(result["entryStatus"],"WAITING_SPIKE_ENTRY")
+        self.assertTrue(result["entryReason"].startswith("Wacht op spike"),result["entryReason"])
 
 
 
