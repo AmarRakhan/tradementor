@@ -1,0 +1,50 @@
+[
+  {
+    "name": "aster-suriname-heritage",
+    "skin": "suriname-heritage",
+    "tab": "aster",
+    "applied": "suriname-heritage",
+    "bodyBackground": "rgb(2, 6, 3)",
+    "errors": []
+  },
+  {
+    "name": "wallet-suriname-heritage",
+    "skin": "suriname-heritage",
+    "tab": "wallet",
+    "applied": "suriname-heritage",
+    "bodyBackground": "rgb(2, 6, 3)",
+    "errors": []
+  },
+  {
+    "name": "aster-black-luxe",
+    "skin": "black-luxe",
+    "tab": "aster",
+    "applied": "black-luxe",
+    "bodyBackground": "rgb(3, 3, 4)",
+    "errors": []
+  },
+  {
+    "name": "wallet-black-luxe",
+    "skin": "black-luxe",
+    "tab": "wallet",
+    "applied": "black-luxe",
+    "bodyBackground": "rgb(3, 3, 4)",
+    "errors": []
+  },
+  {
+    "name": "aster-none",
+    "skin": "(none)",
+    "tab": "aster",
+    "applied": "black-luxe",
+    "bodyBackground": "rgb(3, 3, 4)",
+    "errors": []
+  },
+  {
+    "name": "wallet-none",
+    "skin": "(none)",
+    "tab": "wallet",
+    "applied": "black-luxe",
+    "bodyBackground": "rgb(3, 3, 4)",
+    "errors": []
+  }
+]
