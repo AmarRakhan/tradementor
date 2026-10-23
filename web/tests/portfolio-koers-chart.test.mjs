@@ -580,17 +580,12 @@ test("Build 584 keeps Bollinger on full canonical history while cold-starting on
 });
 
 
-test("Build 567 keeps S/R lines persistent across chart pan and extends the ladder",async()=>{
+test("Build 567 keeps S/R lines persistent across chart pan and extends the ladder (superseded by Build 641: zone lines drawn once, above the candles)",async()=>{
   const component=await readFile(new URL("../components/portfolio-koers-chart.tsx",import.meta.url),"utf8");
   assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,18)"));
-  assert.ok(component.includes("support/resistance is a permanent chart primitive"));
-  assert.ok(component.includes("series.createPriceLine({"));
-  assert.ok(component.includes('axisLabelVisible:false'));
-  assert.ok(component.includes('rgba(255,86,106,.26)'));
-  assert.ok(component.includes('rgba(71,225,166,.24)'));
-  assert.equal(component.includes('rgba(255,86,106,.58)'),false);
-  assert.ok(component.includes("for(const price of prices){"));
-  assert.ok(component.includes("extendPortfolioZoneLadderToRange(chartZoneLadder"));
+  assert.ok(component.includes("portfolioZoneContextFromLadder(zoneLadder,structurePrice)"));
+  assert.ok(component.includes("Build 641: no background zone price lines"));
+  assert.equal(component.includes("prices.slice(-48)"),false);
 });
 
 

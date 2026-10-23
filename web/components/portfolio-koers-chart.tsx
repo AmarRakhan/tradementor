@@ -9,7 +9,7 @@ import { AsterSlotOverview } from "@/components/aster-slot-overview";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { PORTFOLIO_KOERS_DEFAULT_TIMEFRAME, PORTFOLIO_KOERS_TIMEFRAMES, bollinger20x2, cashflowAdjustedPortfolioSeries, markerVisual, mergePortfolioKoersMarkers, normalizePortfolioKoersPayload, portfolioCashflowShift, portfolioKoersTimelineHealth, portfolioZoneDistancePercent, portfolioZoneForPrice, portfolioZoneProgress, tpTradesForBucketFromActivity } from "@/lib/portfolio-koers-chart.mjs";
 import { eventPriority, layoutPortfolioKoersMarkers, layoutPortfolioKoersZoneRegions, markerCoordinateInViewport, selectPortfolioKoersReferenceCandidates } from "@/lib/portfolio-koers-marker-layout.mjs";
-import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, extendPortfolioZoneLadderToRange, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
+import { derivePortfolioZoneLadder, extendPortfolioZoneLadderToPrice, portfolioZoneContextFromLadder } from "@/lib/portfolio-zone-advisor.mjs";
 import { buildStrategyStatusCommandCenter, soldierOpenEventsFromManagedPositions } from "@/lib/strategy-status-command-center.mjs";
 
 type Candle={time:number;atMs:number;open:number;high:number;low:number;close:number;samples:number;sourceAtMs:number};
@@ -790,20 +790,6 @@ export function PortfolioKoersChart({
   if(freshChartZoneLadder?.zones?.length)lastConfirmedZoneLadderRef.current=freshChartZoneLadder;
   const chartZoneLadder=freshChartZoneLadder??lastConfirmedZoneLadderRef.current;
   const zoneContext=useMemo(()=>portfolioZoneContextFromLadder(chartZoneLadder,currentZonePrice),[chartZoneLadder,currentZonePrice]);
-  // Build 635: zone lines over the whole loaded account history (display only).
-  const candlePriceRange=useMemo(()=>{
-    let low=Number.POSITIVE_INFINITY,high=0;
-    for(const row of baseCandles){
-      if(Number.isFinite(Number(row.low))&&Number(row.low)>0)low=Math.min(low,Number(row.low));
-      if(Number.isFinite(Number(row.high))&&Number(row.high)>0)high=Math.max(high,Number(row.high));
-    }
-    return Number.isFinite(low)&&high>0?{low,high}:null;
-  },[baseCandles]);
-  const displayZoneLadder=useMemo(()=>{
-    if(!chartZoneLadder?.zones?.length||!candlePriceRange)return chartZoneLadder;
-    const span=Math.max(0,candlePriceRange.high-candlePriceRange.low);
-    return extendPortfolioZoneLadderToRange(chartZoneLadder,candlePriceRange.low-span*.15,candlePriceRange.high+span*.15,{focusPrice:currentZonePrice});
-  },[chartZoneLadder,candlePriceRange,currentZonePrice]);
   const zoneSoldierReport=advisorSeats.zoneSoldiers;
   const runtimeTruth=advisorSeats.runtimeTruth;
   const runtimeTruthCanonical=runtimeTruth.source==="SERVER_RUNTIME";
@@ -817,13 +803,13 @@ export function PortfolioKoersChart({
   // Trading runtime state stays available for the command center only. It must
   // never suppress or relocate the chart's informational price levels.
   const operationalActiveZone=runtimeZoneActive?signedIntegerOrNull(runtimeTruth.activeZone):activeZone;
-  advisorZoneLadderRef.current=displayZoneLadder;
+  advisorZoneLadderRef.current=chartZoneLadder;
   activeZoneRef.current=activeZone;
 
   // The chart and sibling snapshot expose the visual current price zone.
   useEffect(()=>{onActiveZoneChange?.(activeZone)},[activeZone,onActiveZoneChange]);
   useEffect(()=>()=>{onActiveZoneChange?.(null)},[onActiveZoneChange]);
-  useEffect(()=>{syncOverlaysRef.current()},[displayZoneLadder,activeZone]);
+  useEffect(()=>{syncOverlaysRef.current()},[chartZoneLadder,activeZone]);
   useEffect(()=>{setSelectedTpCluster(null);setTpDetailLoading(false);setTpDetailError("")},[timeframe,viewMode]);
 
   useEffect(()=>{
@@ -880,38 +866,9 @@ export function PortfolioKoersChart({
       if(Number.isFinite(currentPrice)&&currentPrice>0)series.createPriceLine({price:currentPrice,color:"#e4b84a",lineWidth:1,lineStyle:2,axisLabelVisible:true,title:""});
     }
 
-    // Build 567: support/resistance is a permanent chart primitive, not a
-    // viewport-clipped DOM decoration. Draw the complete extended zone ladder
-    // as chart-native price lines so panning/zooming never makes the ladder
-    // disappear. Labels stay hidden; only the horizontal structure is shown.
-    const lineLadder=advisorZoneLadderRef.current;
-    if(viewMode==="account"&&lineLadder?.zones?.length){
-      const current=Number(candles.at(-1)?.close);
-      const seen=new Set<string>();
-      const prices:number[]=[];
-      for(const zone of lineLadder.zones as any[]){
-        for(const raw of [zone?.lower,zone?.upper]){
-          const price=Number(raw);
-          if(!Number.isFinite(price)||price<=0)continue;
-          const key=price.toFixed(8);
-          if(seen.has(key))continue;
-          seen.add(key);prices.push(price);
-        }
-      }
-      prices.sort((a,b)=>a-b);
-      for(const price of prices){
-        const resistance=Number.isFinite(current)&&price>current;
-        series.createPriceLine({
-          price,
-          // Build 640: same lines, softer ("Zacht", keuze Amar 24-10).
-          color:resistance?"rgba(255,86,106,.26)":"rgba(71,225,166,.24)",
-          lineWidth:1,
-          lineStyle:2,
-          axisLabelVisible:false,
-          title:"",
-        });
-      }
-    }
+    // Build 641: no background zone price lines. The structure levels (R1–R4 /
+    // S1–S4) and zone boundaries drawn above the candles are the zone lines;
+    // a second canvas copy at the same prices looked doubled (keuze Amar 24-10).
 
     // Build 562: Bollinger is a display indicator over the confirmed candle
     // observations. A timeline gap must not make the bands disappear entirely.

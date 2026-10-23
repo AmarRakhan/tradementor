@@ -26,8 +26,9 @@ export const CURRENT_RELEASE: ReleaseHistoryEntry = {
   version: WEBAPP_VERSION,
   build: WEBAPP_BUILD_NUMBER,
   releasedAt: "2026-10-23",
-  title: "Rustigere zonelijnen · build 640",
+  title: "Zonelijnen één keer · build 641",
   newItems: [
+    "Build 641: in de Portfolio Koers-grafiek stonden de zonelijnen dubbel: de lijnen rond de actieve zone en daarachter nog een tweede laag stippellijnen over de hele hoogte. Die achtergrondlaag is weg. De rode en groene lijnen rond de koers (boven en onder de actieve zone) blijven precies zoals ze waren. Alleen weergave.",
     "Build 640: de gestippelde prijszonelijnen in de Portfolio Koers-grafiek zijn minder fel. Opbouw, plek en kleuren blijven hetzelfde (rood boven de koers, groen eronder), alleen ongeveer de helft zo sterk, zodat candles en labels weer voorop staan. Alleen weergave.",
     "Build 639: nieuw thema Black Luxe. Je vindt het onder Wallet → Kies jouw uitstraling, naast Original, Suriname Heritage en Ultra Rivalry. Achtergronden en kaarten zijn diep zwart in plaats van groen of bruin getint, de gouden randen en labels blijven, en groen en rood voor winst, verlies, LONG en SHORT lichten feller op. De Totaal-balk in het Slot-overzicht is felgoud gevuld. Alleen de kleuren veranderen: alle blokken, de grafiek en het stier/beer-filmpje blijven precies zoals ze waren. Black Luxe is de standaard voor wie nog nooit een thema koos; heb je al een thema gekozen, dan blijft dat staan tot je zelf Black Luxe aantikt.",
     "Build 637: in de Portfolio Koers-grafiek kun je nu ook direct omhoog en omlaag schuiven met je vinger. Eerst moest je de prijsas rechts aanraken voordat de koers verticaal meebewoog. Oorzaak: zolang de prijsas automatisch schaalt, negeert de grafiek verticaal slepen. Nu zet de grafiek bij het aanraken het huidige prijsbereik vast (er springt niets), zodat omhoog, omlaag en schuin slepen meteen werkt. Veeg je puur naar links of rechts, of tik je alleen, dan blijft de automatische schaal aan zoals voorheen. De gouden knop 'Nu' zet alles terug. Alleen weergave; trading blijft ongewijzigd.",

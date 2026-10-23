@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 641 (alleen web): Portfolio Koers — zonelijnen nog maar één keer: de achtergrondlijnen (canvas, over de hele hoogte) zijn weg, de R/S-lijnen rond de actieve zone blijven; alleen weergave.
 // Build 640 (alleen web): Portfolio Koers — zonelijnen dezelfde opbouw maar minder fel (rood 58→26%, groen 50→24%); alleen weergave.
 // Build 639 (alleen web): nieuw thema Black Luxe onder Wallet → Kies jouw uitstraling — diep zwart, goud en felle accenten; standaard voor wie nog geen thema koos. Alleen kleuren: blokken, grafiek en stier/beer-filmpje ongewijzigd.
 // Build 637 (alleen web): Portfolio Koers — omhoog en omlaag slepen werkt direct in de grafiek (prijsas niet eerst aanraken); links/rechts vegen houdt automatische schaal; alleen weergave.
@@ -59,7 +60,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "640";
+export const WEBAPP_BUILD_NUMBER = "641";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
