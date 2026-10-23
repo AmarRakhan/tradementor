@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - run: python3 -I tools/probe/spike_improve_probe.py tools/probe/tradable.txt "$RUNNER_TEMP/counts.json"
+      - run: python3 -I tools/probe/symbol_types_probe.py tools/probe/tradable.txt "$RUNNER_TEMP/counts.json"
       - name: Data naar branch probe-data-counts
         env:
           GH_TOKEN: ${{ github.token }}
