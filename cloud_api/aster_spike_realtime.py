@@ -173,7 +173,8 @@ class SpikeTrigger:
                     self._stats.observe(uid=uid, symbol=symbol, timeframe=timeframe, closes=closes,
                                         live_close_ms=live_close_ms, price=float(price),
                                         tradable_long=watch.tradable_for(symbol, "LONG"),
-                                        tradable_short=watch.tradable_for(symbol, "SHORT"))
+                                        tradable_short=watch.tradable_for(symbol, "SHORT"),
+                                        now_ms=now_ms)
                 except Exception:
                     pass  # statistiek mag de trigger nooit hinderen
             band = spike_band_price(list(closes), side=side, level=watch.level)

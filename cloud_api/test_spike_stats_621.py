@@ -161,3 +161,61 @@ class TriggerIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExcursionTests(unittest.TestCase):
+    """Build 622: doorschiet-meting na een spike."""
+
+    def feed(self, stats, prices, start_ms=NOW, step_ms=1000, tradable=True):
+        for i, price in enumerate(prices):
+            stats.observe(uid="u", symbol="AUSDT", timeframe="1m", closes=CLOSES, live_close_ms=LIVE_CLOSE,
+                          price=price, tradable_long=tradable, tradable_short=tradable, now_ms=start_ms + i * step_ms)
+
+    def test_drawdown_before_tp_is_measured_from_trigger_price(self):
+        stats = st.SpikeStats()
+        # 4 sigma onder (96), zakt door naar 95,52 (-0,5 %), stijgt naar 97,92 (+2 %)
+        self.feed(stats, [96.0, 95.52, 96.48, 96.96, 97.92])
+        (_, _, payload), = flushed(stats, LIVE_CLOSE)
+        level4 = payload["1m"]["excursions"]["LONG"]["4"]
+        self.assertEqual(level4["count"], 1)
+        self.assertEqual(level4["tp"]["0.5"]["reached"], 1)
+        self.assertEqual(level4["tp"]["0.5"]["drawdownBefore"], {"0.5": 1})
+        self.assertEqual(level4["tp"]["2"]["drawdownBefore"], {"0.5": 1})
+        ex = [e for e in payload["1m"]["excursionExamples"] if e["level"] == 4][0]
+        self.assertAlmostEqual(ex["maxDrawdownPct"], 0.5, places=3)
+        self.assertAlmostEqual(ex["drawdownBeforeTpPct"]["1"], 0.5, places=3)
+
+    def test_level_trackers_have_their_own_entry(self):
+        stats = st.SpikeStats()
+        # 2 sigma bij 98, verder naar 96 (4 sigma), terug naar 98,98 (+1 % vanaf 2σ-instap)
+        self.feed(stats, [98.0, 96.0, 98.98])
+        stats.maybe_flush(LIVE_CLOSE)  # niets: nog niet afgerond (geen +2 %)
+        (_, _, payload), = flushed(stats, NOW + EXCURSION_DONE)
+        long = payload["1m"]["excursions"]["LONG"]
+        # 2σ-instap 98: daalde 2,04 % vóór +1 %
+        self.assertEqual(long["2"]["tp"]["1"]["drawdownBefore"], {"3": 1})
+        # 4σ-instap 96: +3,1 % zonder daling → alle TP's gehaald met 0 daling
+        self.assertEqual(long["4"]["tp"]["2"]["drawdownBefore"], {"0.1": 1})
+
+    def test_unreached_tp_finishes_on_horizon_with_max_drawdown(self):
+        stats = st.SpikeStats()
+        self.feed(stats, [96.0, 94.08])  # -2 % en nooit herstel
+        self.assertEqual(flushed(stats, NOW + 10_000), [])  # nog lopend: niets weggeschreven
+        (_, _, payload), = flushed(stats, NOW + st.EXCURSION_HORIZON_MS + 1)
+        row = payload["1m"]["excursions"]["LONG"]["4"]
+        self.assertEqual(row["count"], 1)
+        self.assertEqual(row["tp"]["0.5"]["reached"], 0)
+        self.assertEqual(row["maxDrawdown"], {"2": 1})
+
+    def test_bucket_labels(self):
+        self.assertEqual(st.drawdown_bucket(0.0), "0.1")
+        self.assertEqual(st.drawdown_bucket(0.27), "0.3")
+        self.assertEqual(st.drawdown_bucket(0.25), "0.3")
+        self.assertEqual(st.drawdown_bucket(9.0), "gt5")
+
+    def test_persister_drops_zero_counters(self):
+        out = st._increments({"a": {"b": 0, "c": 2}, "d": {"e": 0}}, lambda n: ("inc", n))
+        self.assertEqual(out, {"a": {"c": ("inc", 2)}})
+
+
+EXCURSION_DONE = st.EXCURSION_HORIZON_MS + 1

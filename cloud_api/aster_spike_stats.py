@@ -27,6 +27,13 @@ import time
 from typing import Any, Callable, Iterable
 
 LEVELS = (2, 3, 4, 5, 6, 7)
+# Build 622: doorschiet-meting na een spike (vraag Amar 23-10 10:54: hoe ver schiet hij
+# nog door na het instappunt, en hoeveel daling zit er vóór de TP → Auto Hedge-drempel).
+TP_LEVELS_PCT = (0.5, 1.0, 2.0)
+DRAWDOWN_EDGES_PCT = (0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0)
+EXCURSION_HORIZON_MS = 4 * 60 * 60 * 1000
+EXCURSION_EXAMPLE_MIN_LEVEL = 4
+MAX_ACTIVE_EXCURSIONS = 20_000
 EXAMPLE_MIN_SIGMA = 4.0
 MAX_EXAMPLES_PER_FLUSH = 60
 FLUSH_INTERVAL_SECONDS = 60.0
@@ -58,6 +65,55 @@ class _Peak:
     short_sigma: float = float("-inf")
 
 
+def drawdown_bucket(value_pct: float) -> str:
+    """Kleinste grens waar de daling onder valt, bijv. 0,27 % → "0.3"; boven 5 % → "gt5"."""
+    for edge in DRAWDOWN_EDGES_PCT:
+        if value_pct <= edge + 1e-12:
+            return f"{edge:g}"
+    return "gt5"
+
+
+def _tp_key(tp: float) -> str:
+    return f"{tp:g}"
+
+
+@dataclass
+class _Excursion:
+    side: str
+    level: int
+    timeframe: str
+    entry: float
+    start_ms: int
+    tradable: bool
+    max_adverse_pct: float = 0.0
+    max_favorable_pct: float = 0.0
+    drawdown_before_tp: dict[str, float | None] = field(
+        default_factory=lambda: {_tp_key(tp): None for tp in TP_LEVELS_PCT})
+
+    def update(self, price: float) -> None:
+        move = (price - self.entry) / self.entry * 100.0
+        favorable = move if self.side == "LONG" else -move
+        self.max_adverse_pct = max(self.max_adverse_pct, -favorable)
+        self.max_favorable_pct = max(self.max_favorable_pct, favorable)
+        for tp in TP_LEVELS_PCT:
+            key = _tp_key(tp)
+            if self.drawdown_before_tp[key] is None and favorable >= tp:
+                self.drawdown_before_tp[key] = self.max_adverse_pct
+
+    def finished(self, now_ms: int) -> bool:
+        return (all(v is not None for v in self.drawdown_before_tp.values())
+                or now_ms - self.start_ms >= EXCURSION_HORIZON_MS)
+
+
+def _empty_excursion_side() -> dict[str, Any]:
+    return {str(k): {"count": 0, "tradable": 0,
+                     "tp": {_tp_key(tp): {"reached": 0, "reachedTradable": 0,
+                                         "drawdownBefore": {}, "drawdownBeforeTradable": {}}
+                            for tp in TP_LEVELS_PCT},
+                     "maxDrawdown": {}, "maxDrawdownTradable": {}}
+            for k in LEVELS}
+
+
 @dataclass
 class _Bucket:
     candles: int = 0
@@ -65,6 +121,9 @@ class _Bucket:
         side: {scope: {str(k): 0 for k in LEVELS} for scope in ("all", "tradable")}
         for side in ("LONG", "SHORT")})
     examples: list[dict[str, Any]] = field(default_factory=list)
+    excursions: dict[str, dict[str, Any]] = field(default_factory=lambda: {
+        "LONG": _empty_excursion_side(), "SHORT": _empty_excursion_side()})
+    excursion_examples: list[dict[str, Any]] = field(default_factory=list)
 
 
 class SpikeStats:
@@ -75,12 +134,18 @@ class SpikeStats:
         self._lock = threading.Lock()
         # (uid, symbol, timeframe, live_close_ms) -> _Peak
         self._open: dict[tuple[str, str, str, int], _Peak] = {}
+        # (uid, symbol) -> {(side, level, timeframe): _Excursion}
+        self._active: dict[tuple[str, str], dict[tuple[str, int, str], _Excursion]] = {}
+        self._active_count = 0
+        self._done: list[tuple[str, str, _Excursion]] = []
         self._last_flush = clock()
 
     def observe(self, *, uid: str, symbol: str, timeframe: str, closes: Iterable[float],
-                live_close_ms: int, price: float, tradable_long: bool, tradable_short: bool) -> None:
+                live_close_ms: int, price: float, tradable_long: bool, tradable_short: bool,
+                now_ms: int | None = None) -> None:
         if not (isinstance(price, (int, float)) and math.isfinite(price) and price > 0):
             return
+        now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
         key = (uid, symbol, timeframe, int(live_close_ms))
         with self._lock:
             peak = self._open.get(key)
@@ -92,15 +157,68 @@ class SpikeStats:
                     return
                 peak = _Peak(stats[0], stats[1], bool(tradable_long), bool(tradable_short))
                 self._open[key] = peak
-            peak.long_sigma = max(peak.long_sigma, (peak.mean - price) / peak.deviation)
-            peak.short_sigma = max(peak.short_sigma, (price - peak.mean) / peak.deviation)
+            long_sigma = (peak.mean - price) / peak.deviation
+            short_sigma = (price - peak.mean) / peak.deviation
+            peak.long_sigma = max(peak.long_sigma, long_sigma)
+            peak.short_sigma = max(peak.short_sigma, short_sigma)
+            # Build 622: lopende doorschiet-metingen bijwerken, daarna nieuwe starten.
+            active = self._active.setdefault((uid, symbol), {})
+            for track_key, track in list(active.items()):
+                track.update(price)
+                if track.finished(now_ms):
+                    del active[track_key]
+                    self._active_count -= 1
+                    self._done.append((uid, symbol, track))
+            for side, sigma, tradable in (("LONG", long_sigma, tradable_long), ("SHORT", short_sigma, tradable_short)):
+                for level in LEVELS:
+                    track_key = (side, level, timeframe)
+                    if sigma >= level and track_key not in active and self._active_count < MAX_ACTIVE_EXCURSIONS:
+                        active[track_key] = _Excursion(side, level, timeframe, float(price), now_ms, bool(tradable))
+                        self._active_count += 1
 
     def _collect(self, now_ms: int) -> dict[tuple[str, str], dict[str, _Bucket]]:
         """Haal afgelopen candles uit het geheugen; gegroepeerd per (uid, uur) en tijdframe."""
         with self._lock:
             done = [key for key in self._open if key[3] <= now_ms]
             finished = [(key, self._open.pop(key)) for key in done]
+            # Metingen van munten die geen prijs meer krijgen, sluiten op de horizon.
+            for pair, active in list(self._active.items()):
+                for track_key, track in list(active.items()):
+                    if track.finished(now_ms):
+                        del active[track_key]
+                        self._active_count -= 1
+                        self._done.append((pair[0], pair[1], track))
+                if not active:
+                    del self._active[pair]
+            excursions, self._done = self._done, []
         grouped: dict[tuple[str, str], dict[str, _Bucket]] = {}
+        for uid, symbol, track in excursions:
+            bucket = grouped.setdefault((uid, hour_key(track.start_ms)), {}).setdefault(track.timeframe, _Bucket())
+            row = bucket.excursions[track.side][str(track.level)]
+            row["count"] += 1
+            row["tradable"] += int(track.tradable)
+            for tp_key, drawdown in track.drawdown_before_tp.items():
+                if drawdown is None:
+                    continue
+                cell = row["tp"][tp_key]
+                label = drawdown_bucket(drawdown)
+                cell["reached"] += 1
+                cell["drawdownBefore"][label] = cell["drawdownBefore"].get(label, 0) + 1
+                if track.tradable:
+                    cell["reachedTradable"] += 1
+                    cell["drawdownBeforeTradable"][label] = cell["drawdownBeforeTradable"].get(label, 0) + 1
+            label = drawdown_bucket(track.max_adverse_pct)
+            row["maxDrawdown"][label] = row["maxDrawdown"].get(label, 0) + 1
+            if track.tradable:
+                row["maxDrawdownTradable"][label] = row["maxDrawdownTradable"].get(label, 0) + 1
+            if track.level >= EXCURSION_EXAMPLE_MIN_LEVEL and len(bucket.excursion_examples) < MAX_EXAMPLES_PER_FLUSH:
+                bucket.excursion_examples.append({
+                    "symbol": symbol, "side": track.side, "level": track.level, "timeframe": track.timeframe,
+                    "entry": track.entry, "startMs": track.start_ms, "tradable": track.tradable,
+                    "maxDrawdownPct": round(track.max_adverse_pct, 3),
+                    "maxGainPct": round(track.max_favorable_pct, 3),
+                    "drawdownBeforeTpPct": {k: (None if v is None else round(v, 3))
+                                            for k, v in track.drawdown_before_tp.items()}})
         for (uid, symbol, timeframe, close_ms), peak in finished:
             bucket = grouped.setdefault((uid, hour_key(close_ms)), {}).setdefault(timeframe, _Bucket())
             bucket.candles += 1
@@ -126,7 +244,8 @@ class SpikeStats:
         self._last_flush = self._clock()
         written = 0
         for (uid, hour), timeframes in self._collect(now_ms).items():
-            payload = {timeframe: {"candles": bucket.candles, "counts": bucket.counts, "examples": bucket.examples}
+            payload = {timeframe: {"candles": bucket.candles, "counts": bucket.counts, "examples": bucket.examples,
+                                   "excursions": bucket.excursions, "excursionExamples": bucket.excursion_examples}
                        for timeframe, bucket in timeframes.items()}
             try:
                 self._persist(uid, hour, payload)
@@ -134,6 +253,18 @@ class SpikeStats:
             except Exception as exc:  # statistiek is best effort; de handel gaat altijd voor
                 print(f"SPIKE_STATS_PERSIST_FAILED {exc}", flush=True)
         return written
+
+
+def _increments(tree: Any, increment: Callable[[int], Any]) -> Any:
+    """Geneste tellers → Increment; nullen en lege takken vallen weg (minder schrijfdata)."""
+    if isinstance(tree, dict):
+        out = {k: _increments(v, increment) for k, v in tree.items()}
+        return {k: v for k, v in out.items() if v not in ({}, None)}
+    if isinstance(tree, bool):
+        return None
+    if isinstance(tree, int):
+        return increment(tree) if tree else None
+    return None
 
 
 def firestore_persister(db: Any, increment: Callable[[int], Any], array_union: Callable[[list], Any],
@@ -149,6 +280,11 @@ def firestore_persister(db: Any, increment: Callable[[int], Any], array_union: C
             entry: dict[str, Any] = {"candles": increment(data["candles"]), "counts": counts}
             if data["examples"]:
                 entry["examples"] = array_union(data["examples"])
+            excursions = _increments(data.get("excursions") or {}, increment)
+            if excursions:
+                entry["excursions"] = excursions
+            if data.get("excursionExamples"):
+                entry["excursionExamples"] = array_union(data["excursionExamples"])
             doc["timeframes"][timeframe] = entry
         (db.collection("asterStrategy2").document(uid).collection("spikeStats")
            .document(f"{hour}_{INSTANCE_ID}").set(doc, merge=True))
