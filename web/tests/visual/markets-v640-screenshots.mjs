@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { chromium } from "playwright";
 
 const out = "artifacts/markets-v640";
@@ -47,8 +47,13 @@ for (const width of [320, 390, 430]) {
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForTimeout(90);
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
-    await page.waitForTimeout(260);
-    await page.screenshot({ path: `${out}/flip-mid-390.png` });
+    const frames = [];
+    for (let frame = 0; frame < 6; frame += 1) {
+      await page.waitForTimeout(70);
+      frames.push(await page.evaluate(() => { const card = document.querySelector('[role=dialog] [class*=card]'); return card ? { cls: card.className, transform: getComputedStyle(card).transform, anims: card.getAnimations().length } : null; }));
+      await page.screenshot({ path: `${out}/flip-frame-${frame}.png` });
+    }
+    await writeFile(`${out}/flip-frames.json`, JSON.stringify(frames, null, 1));
     await page.getByRole("dialog", { name: /BTC Koers/ }).waitFor();
     await page.waitForTimeout(1600);
     await page.screenshot({ path: `${out}/flip-open-390.png` });
