@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 623 (alleen backend): Spike-statistiek "verhandelbaar" werkt ook als de stoelen vol zijn — hefboomgrenzen eens per 6 uur in één bulk-aanvraag.
 // Build 622 (alleen backend): Spike-doorschiet-meting — per spike en niveau de daling vóór TP 0,5/1/2 % en de maximale daling binnen 4 uur (basis voor de Auto Hedge-drempel).
 // Build 621 (alleen backend): Spike-statistiek — per uur hoeveel munten 20,2 t/m 20,7+ raakten (LONG/SHORT, alle vs. verhandelbaar), in asterStrategy2/{uid}/spikeStats.
 // Build 620 (alleen backend): ordergeschiedenis compact in het accountdocument (laatste 7 dagen, lopende cycli en nieuwste rij per munt); oudere rijen naar de subcollectie orderAttributionArchive. Document blijft ruim onder de Firestore-limiet.
