@@ -1194,3 +1194,37 @@
   .portfolio-koers-ui41 .portfolio-koers-event-chip.tp{min-width:70px}
   .portfolio-koers-ui41 .portfolio-koers-event-chip b{font-size:7.8px}
 }
+
+/* Build 635: "Nu" — back to the latest candle with auto price scale. Only
+   visible once the view has been moved away from now. */
+.portfolio-koers-now{
+  position:absolute;
+  z-index:10;
+  right:58px;
+  bottom:36px;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  min-height:30px;
+  padding:0 12px 0 10px;
+  border:1px solid rgba(240,200,92,.62);
+  border-radius:999px;
+  background:linear-gradient(180deg,rgba(54,42,12,.94),rgba(18,14,5,.96));
+  box-shadow:0 6px 18px rgba(0,0,0,.45),0 0 14px rgba(240,200,92,.14),inset 0 1px 0 rgba(255,236,170,.14);
+  color:#f3cf63;
+  font:800 11px/1 system-ui,-apple-system,sans-serif;
+  letter-spacing:.04em;
+  -webkit-backdrop-filter:blur(8px);
+  backdrop-filter:blur(8px);
+  opacity:0;
+  transform:translateY(6px) scale(.96);
+  pointer-events:none;
+  transition:opacity .22s ease,transform .26s cubic-bezier(.2,.8,.2,1);
+  touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;
+}
+.portfolio-koers-now span{font-size:13px;line-height:1}
+.portfolio-koers-now.is-visible{opacity:1;transform:none;pointer-events:auto;cursor:pointer}
+.portfolio-koers-now:active{transform:scale(.95)}
+.portfolio-koers-now:focus-visible{outline:2px solid rgba(240,200,92,.85);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.portfolio-koers-now{transition:none}}

@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 635 (alleen web): Portfolio Koers — slepen werkt direct na een tik, zones over de hele koershistorie, elk tijdframe start zoals 15m, verversen wacht op je vinger en houdt je zoom, knop "Nu" terug naar de actuele koers; alleen weergave.
 // Build 634: hedge afbouwen wordt een grid — omlaag per stap een deel van de hedge verkopen (alleen met winst na fees), omhoog na N stappen terugkopen, vangnet na extra daling, kleine munten in minder grotere stappen (geen 100% dicht / 90% terug meer).
 // Build 633 (alleen web): onderste navigatiebalk blijft op iPhone onderaan — verdwijnt tijdens typen en wordt na het sluiten van het toetsenbord opnieuw vastgezet; alleen weergave.
 // Build 632: Hoorn bij Portfolio TP — zodra je portfolio take profit is behaald speelt de app één keer een hoorn af (alleen terwijl de app open is); schakelaar per apparaat en testknop in Pushmeldingen beheren. Bevat 631 (backend). Geen trading-wijzigingen.
@@ -54,7 +55,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "634";
+export const WEBAPP_BUILD_NUMBER = "635";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

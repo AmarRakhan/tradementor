@@ -173,6 +173,54 @@ export function zoneToneForSignedIndex(index) {
   return "green";
 }
 
+// Build 635: display-only ladder over the full visible price history. The
+// strategy/advisor ladder is untouched; this only lets Portfolio Koers draw
+// zone lines wherever the account value has been, so panning/zooming back in
+// time never runs out of zones. Same anchor/step, confirmed centers kept.
+export const PORTFOLIO_ZONE_DISPLAY_MAX_ZONES=360;
+export function extendPortfolioZoneLadderToRange(ladder, low, high, options={}) {
+  const step=finitePositive(ladder?.step);
+  const anchor=finitePositive(ladder?.anchor);
+  const existing=Array.isArray(ladder?.zones)?ladder.zones:[];
+  const min=finitePositive(low),max=finitePositive(high);
+  if(step===null||anchor===null||!existing.length||min===null||max===null||max<min)return ladder;
+  const maxZones=Math.max(8,Math.min(PORTFOLIO_ZONE_DISPLAY_MAX_ZONES,Math.round(Number(options.maxZones)||PORTFOLIO_ZONE_DISPLAY_MAX_ZONES)));
+  const existingIndexes=existing.map((row)=>Number(row?.index)).filter(Number.isInteger);
+  if(!existingIndexes.length)return ladder;
+  let minIndex=Math.min(Math.min(...existingIndexes),Math.floor((min-anchor)/step)-1);
+  let maxIndex=Math.max(Math.max(...existingIndexes),Math.ceil((max-anchor)/step)+1);
+  if(maxIndex-minIndex+1>maxZones){
+    const focus=finitePositive(options.focusPrice)??(min+max)/2;
+    const focusIndex=Math.round((focus-anchor)/step);
+    const half=Math.floor(maxZones/2);
+    minIndex=Math.max(minIndex,focusIndex-half);
+    maxIndex=Math.min(maxIndex,minIndex+maxZones-1);
+  }
+  const byIndex=new Map(existing.map((row)=>[Number(row.index),row]));
+  const centers=[];
+  for(let index=minIndex;index<=maxIndex;index+=1){
+    const current=byIndex.get(index);
+    const center=finitePositive(current?.center)??(anchor+index*step);
+    if(center===null||!Number.isFinite(center)||center<=0)continue;
+    const previous=centers.at(-1);
+    if(previous&&center<=previous.center)continue;
+    centers.push({index,center,source:current?.source||"display-extrapolated",tone:current?.tone||zoneToneForSignedIndex(index)});
+  }
+  if(!centers.length)return ladder;
+  const zones=centers.map((row,index)=>{
+    const previous=centers[index-1],next=centers[index+1];
+    return {
+      index:row.index,
+      label:row.index===0?"Zone 0":`Zone ${row.index>0?"+":""}${row.index}`,
+      center:row.center,
+      lower:previous?(previous.center+row.center)/2:Number.NEGATIVE_INFINITY,
+      upper:next?(row.center+next.center)/2:Number.POSITIVE_INFINITY,
+      tone:row.tone,
+      source:row.source,
+    };
+  });
+  return {...ladder,zones,displayExpanded:true,displayRange:{low:min,high:max}};
+}
 
 export function extendPortfolioZoneLadderToPrice(ladder, price, padding=2) {
   const value=finitePositive(price);

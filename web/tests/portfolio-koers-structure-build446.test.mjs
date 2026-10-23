@@ -74,7 +74,8 @@ test("Build 567 supersedes the old 4+4 display cap with persistent chart-native 
   assert.ok(component.includes("extendPortfolioZoneLadderToPrice(base,currentZonePrice,18)"));
   assert.ok(component.includes("portfolioZoneContextFromLadder(zoneLadder,structurePrice)"));
   assert.ok(component.includes("series.createPriceLine({"));
-  assert.ok(component.includes("prices.slice(-48)"));
+  assert.ok(component.includes("for(const price of prices){"));
+  assert.ok(component.includes("extendPortfolioZoneLadderToRange(chartZoneLadder"));
   assert.ok(component.includes("axisLabelVisible:false"));
 });
 
