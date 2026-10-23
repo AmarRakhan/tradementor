@@ -1017,10 +1017,19 @@ def _state_snapshot(prepared: PreparedSweep) -> tuple[Any, dict[str, Any]]:
     return ref, (ref.get().to_dict() or {})
 
 
-def _book_contribution(prepared: PreparedSweep, contribution: Decimal) -> dict[str, Any]:
-    """Idempotently credit one realized-profit contribution to the persistent buffer."""
+def _book_contribution(prepared: PreparedSweep, contribution: Decimal, exchange_order_id: str = "") -> dict[str, Any]:
+    """Idempotently credit one realized-profit contribution to the persistent buffer.
+
+    With an exchange order id the close is also claimed in the shared per-order
+    collection used by the close scan, inside the same transaction, so the hook
+    and the scan can never both credit the same Aster order.
+    """
     state_ref = prepared.user_ref.collection("asterProfitSweepState").document("current")
     ledger_ref = prepared.ledger_ref
+    order_ref = (
+        prepared.user_ref.collection("asterProfitSweepOrders").document(f"{prepared.symbol}_{exchange_order_id}")
+        if exchange_order_id else None
+    )
     client = getattr(state_ref, "_client", None)
 
     def apply(transaction: Any | None = None) -> dict[str, Any]:
@@ -1030,11 +1039,14 @@ def _book_contribution(prepared: PreparedSweep, contribution: Decimal) -> dict[s
         else:
             ledger = ledger_ref.get(transaction=transaction).to_dict() or {}
             state = state_ref.get(transaction=transaction).to_dict() or {}
+        order_row: dict[str, Any] = {}
+        if order_ref is not None:
+            order_row = (order_ref.get().to_dict() or {}) if transaction is None else (order_ref.get(transaction=transaction).to_dict() or {})
         pending = _d(state.get("pendingSavings"))
         today_key = _local_day_key()
         stored_day = str(state.get("todayKey", ""))
         today_total = _d(state.get("todayTransferred")) if stored_day == today_key else Decimal("0")
-        if ledger.get("bufferBooked") is True:
+        if ledger.get("bufferBooked") is True or order_row.get("status") in {"BOOKED", "BOOKED_BY_LEGACY_HOOK"}:
             return {
                 "pendingSavings": pending,
                 "todayTransferred": today_total,
@@ -1055,12 +1067,20 @@ def _book_contribution(prepared: PreparedSweep, contribution: Decimal) -> dict[s
             "bufferBookedAt": _now(),
             "status": "BUFFERED",
         }
+        order_update = {
+            "status": "BOOKED_BY_LEGACY_HOOK", "symbol": prepared.symbol, "exchangeOrderId": exchange_order_id,
+            "contribution": _plain(contribution), "source": "CLOSE_HOOK", "bookedAt": _now(),
+        }
         if transaction is None:
             state_ref.set(state_update, merge=True)
             ledger_ref.set(ledger_update, merge=True)
+            if order_ref is not None:
+                order_ref.set(order_update, merge=True)
         else:
             transaction.set(state_ref, state_update, merge=True)
             transaction.set(ledger_ref, ledger_update, merge=True)
+            if order_ref is not None:
+                transaction.set(order_ref, order_update, merge=True)
         return {
             "pendingSavings": next_pending,
             "todayTransferred": today_total,
@@ -1430,7 +1450,25 @@ def reconcile_profit_savings_buffer(
         evidence_funding=Decimal("0"),
         evidence_other_costs=Decimal("0"),
     )
-    return drain_profit_savings_buffer(prepared, client=client, max_blocks=max_blocks)
+    # Profit sparen 3.0: first book every settled green close Aster confirmed
+    # since the last scan (exchange truth, once per order), then drain whole
+    # threshold blocks. A scan failure never blocks draining what is booked.
+    scan: dict[str, Any] = {"status": "SKIPPED"}
+    try:
+        from profit_sweep_close_scan import scan_and_book_closes
+        scan = scan_and_book_closes(
+            user_ref=user_ref, client=client, percent=percent, asset=asset, minimum=threshold,
+        )
+    except Exception as exc:
+        scan = {"status": "SCAN_FAILED", "reason": str(exc)[:300]}
+        try:
+            user_ref.collection("asterProfitSweepState").document("current").set(
+                {"closeScanError": scan["reason"], "closeScanErrorAt": _now()}, merge=True,
+            )
+        except Exception:
+            pass
+    drained = drain_profit_savings_buffer(prepared, client=client, max_blocks=max_blocks)
+    return {**drained, "closeScan": scan}
 
 
 def finalize_close_sweep(
@@ -1492,7 +1530,7 @@ def finalize_close_sweep(
             ref.set({"status": "SKIPPED_NONPOSITIVE", "completedAt": _now()}, merge=True)
             return {"status": "SKIPPED_NONPOSITIVE", "contribution": "0"}
 
-        booked = _book_contribution(prepared, contribution)
+        booked = _book_contribution(prepared, contribution, exchange_order_id=order_id)
         drained = drain_profit_savings_buffer(prepared, client=client)
         ref.set({
             "status": "BUFFERED",
@@ -1678,7 +1716,7 @@ def recover_blocked_close_to_buffer(
         }, merge=True)
         return {"status": "SKIPPED_NONPOSITIVE", "contribution": "0"}
 
-    booked = _book_contribution(prepared, contribution)
+    booked = _book_contribution(prepared, contribution, exchange_order_id=str(order_id))
     state = user_ref.collection("asterProfitSweepState").document("current").get().to_dict() or {}
     pending = _d(state.get("pendingSavings"))
     ledger_ref.set({
