@@ -1,0 +1,28 @@
+export type MarketCategory = "crypto" | "stock" | "commodity";
+export type MarketOwnerFilter = "all" | "free" | "position" | "bot" | "manual";
+export type MarketBbStatus = "above" | "between" | "below";
+export type MarketBbTimeframe = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+export type MarketSortKey = "symbol" | "volume" | "bb" | "change";
+export type MarketRow = {
+  symbol: string; baseAsset: string; quoteAsset: string; name: string; category: MarketCategory; pricePrecision: number;
+  lastPrice: number; change24hPct: number; high24h: number; low24h: number; quoteVolume24h: number;
+  maxLeverage: number | null; bbStatus: MarketBbStatus | null; bbUpper: number | null; bbMiddle: number | null; bbLower: number | null;
+};
+export type MarketOwnership = { bot: boolean; manual: boolean };
+export type MarketTradeMarker = { time: number; position: "aboveBar" | "belowBar"; shape: "arrowUp" | "arrowDown" | "circle"; color: string; text: string; kind: "long" | "short" | "tp" | "exit" };
+export declare const MARKET_CATEGORIES: readonly MarketCategory[];
+export declare const MARKET_OWNER_FILTERS: readonly MarketOwnerFilter[];
+export declare const MARKET_BB_TIMEFRAMES: readonly MarketBbTimeframe[];
+export declare const MARKET_BB_LABEL: Readonly<Record<MarketBbTimeframe, string>>;
+export declare function marketCategory(info: unknown): MarketCategory;
+export declare function isTradablePerpetual(info: unknown): boolean;
+export declare function buildMarketRows(exchangeInfo: unknown, tickers: unknown): MarketRow[];
+export declare function ownershipBySymbol(positions: unknown): Map<string, MarketOwnership>;
+export declare function bbStatusFor(livePrice: number, upper: number | null, lower: number | null, fallback?: MarketBbStatus | null): MarketBbStatus | null;
+export declare function filterMarkets(rows: MarketRow[], options?: { query?: string; owner?: MarketOwnerFilter; category?: MarketCategory | "all"; bb?: MarketBbStatus | "all"; ownership?: Map<string, MarketOwnership>; favorites?: Set<string>; favoritesOnly?: boolean }): MarketRow[];
+export declare function sortMarkets(rows: MarketRow[], key?: MarketSortKey, direction?: "asc" | "desc"): MarketRow[];
+export declare function compactVolume(value: number): string;
+export declare function signedPercent(value: number): string;
+export declare function formatMarketPrice(value: number, precision?: number): string;
+export declare function iconAsset(baseAsset: string): string;
+export declare function tradeMarkersFromEvents(events: unknown, candleTimes: number[]): MarketTradeMarker[];

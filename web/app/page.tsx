@@ -12,6 +12,7 @@ import { PortfolioGrowthCard } from "@/components/portfolio-growth-card";
 import { PositionCloseControl } from "@/components/position-close-control";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { useExchangeData, type ExchangeSnapshot, type ExchangeSnapshots } from "@/lib/use-exchange-data";
+import { publishAsterPositions } from "@/lib/aster-positions-feed";
 import { realizedCalendar } from "@/lib/realized-calendar";
 import { RiskTimeline } from "@/components/risk-timeline";
 import { TradeReportControl } from "@/components/trade-report-control";
@@ -121,6 +122,11 @@ function TradeMentorHome() {
   const [adminDeviceAllowed, setAdminDeviceAllowed] = useState(false);
   const [adminDeviceEnrolled, setAdminDeviceEnrolled] = useState(false);
   const { snapshots, refresh, refreshAll, confirmAsterStrategy2 } = useExchangeData(cloudReady, user?.uid || "");
+  // Build 640: Markets shows BOT / MANUAL labels from this same snapshot.
+  useEffect(() => {
+    const positions = snapshots.aster.data?.positions;
+    if (Array.isArray(positions)) publishAsterPositions(positions);
+  }, [snapshots.aster.data]);
 
   // Build 571 SSOT: no financial/account history is persisted in the browser.
 
