@@ -53,6 +53,9 @@ def _below_exchange_minimum(qty: Decimal, price: Decimal, step: Decimal, min_qty
     return floored <= 0 or (mq > 0 and floored < mq) or (mn > 0 and floored * price < mn)
 
 
+GRID_FIX_VERSION = 650
+
+
 def _floor_step(qty: Decimal, step: Decimal) -> Decimal:
     return (qty / step).to_integral_value(rounding="ROUND_DOWN") * step if step > 0 else qty
 
@@ -207,7 +210,12 @@ def _grid(*, rec: dict[str, Any], cfg: Mapping[str, Any], long_q: Decimal, short
         anchor = entry if entry > 0 else price
     dist = str(cfg.get("distribution") or "EQUAL")
     grid_key = f"{cfg['steps']}|{cfg['totalPct']}|{cfg['rebuySteps']}|{dist}"
-    regrid = rec.get("gridKey") != grid_key or rec.get("sold") is None or rec.get("gridParts") is None
+    legacy_key = f"{cfg['steps']}|{cfg['totalPct']}|{cfg['rebuySteps']}"
+    # Build 650 (hotfix): a pre-647 grid (key without distribution) with Gelijk is the same grid: never recount it.
+    same_grid = rec.get("gridKey") == grid_key or (dist == "EQUAL" and rec.get("gridKey") == legacy_key)
+    # Records recounted by 649 (rounded down, hedge target above the hedge) are recounted once more the right way.
+    regrid = (not same_grid or rec.get("sold") is None or rec.get("gridParts") is None
+              or rec.get("gridFix") != GRID_FIX_VERSION)
     # The number of parts is fixed per cycle (decided at the anchor price), so it never jitters with the price.
     # Build 650: parts must be sendable at the far end of the grid too (a part worth $5 at the start is $4.50 after a
     # 10% drop), so the number of parts is decided at the less favourable of anchor and last level.
@@ -219,13 +227,17 @@ def _grid(*, rec: dict[str, Any], cfg: Mapping[str, Any], long_q: Decimal, short
         return {"override": None, "record": rec, "event": "SKIPPED_BELOW_MINIMUM"}
     if regrid:
         # New grid (or an older record): keep the hedge as it is, count its sold parts on this grid.
-        rec["kept"] = "0"
         released = max(Decimal(0), cap - short_q)
+        if rec.get("gridParts") is None and rec.get("sold") == 0 and not rec.get("stepsReached"):
+            released = Decimal(0)   # fresh cycle: nothing sold yet; a gap is DCA growth that still has to be hedged
         tol = step / 2 if step > 0 else Decimal("1e-12")
         k = 0
         while k < n and parts_released(base, range(1, k + 2), n, step, dist) <= released + tol:
             k += 1
         parts = list(range(1, k + 1))
+        # Build 650 (hotfix): the part of the released quantity that does not fill a whole part counts as sold for
+        # good, so a recount keeps the hedge exactly where it is (no top-up order, no sale).
+        rec["kept"] = _txt(max(Decimal(0), released - parts_released(base, parts, n, step, dist)))
     else:
         stored = rec.get("soldParts")
         if isinstance(stored, list):
@@ -247,7 +259,7 @@ def _grid(*, rec: dict[str, Any], cfg: Mapping[str, Any], long_q: Decimal, short
     event = decision["event"]
     if event == "GRID_DONE_NO_REHEDGE":
         rec.update(afbouwDone=True)
-    rec.update(anchor=_txt(anchor), gridKey=grid_key, gridParts=n, steps=n, totalPct=cfg["totalPct"],
+    rec.update(gridFix=GRID_FIX_VERSION, anchor=_txt(anchor), gridKey=grid_key, gridParts=n, steps=n, totalPct=cfg["totalPct"],
                stepPct=cfg["stepPct"], rebuySteps=cfg["rebuySteps"], safetyNetPct=cfg["safetyNetPct"],
                distribution=dist)
     if event == "SAFETY_NET_REHEDGE":
