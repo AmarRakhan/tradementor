@@ -1,0 +1,32 @@
+[
+ {
+  "cls": "_card_10wsi_5 _cardFlipping_10wsi_6",
+  "transform": "matrix3d(0.671983, 0, -0.718127, 0, 0, 0.30708, 0, 0, 0.693435, 0, 0.695912, 0, 0, 0.3725, 0, 1)",
+  "anims": 1
+ },
+ {
+  "cls": "_card_10wsi_5 _cardFlipping_10wsi_6",
+  "transform": "matrix3d(-0.975084, 0, -0.20815, 0, 0, 0.937921, 0, 0, 0.207509, 0, -0.978097, 0, 0, 0.0333721, 0, 1)",
+  "anims": 1
+ },
+ {
+  "cls": "_card_10wsi_5 _cardFlipping_10wsi_6",
+  "transform": "matrix3d(-0.999788, 0, -0.0106105, 0, 0, 0.996859, 0, 0, 0.0106088, 0, -0.999944, 0, 0, 0.00168874, 0, 1)",
+  "anims": 1
+ },
+ {
+  "cls": "_card_10wsi_5 _cardOpen_10wsi_12",
+  "transform": "none",
+  "anims": 0
+ },
+ {
+  "cls": "_card_10wsi_5 _cardOpen_10wsi_12",
+  "transform": "none",
+  "anims": 0
+ },
+ {
+  "cls": "_card_10wsi_5 _cardOpen_10wsi_12",
+  "transform": "none",
+  "anims": 0
+ }
+]
