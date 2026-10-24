@@ -1,0 +1,125 @@
+name: Diag Profit Sparen gebruiker 2026-10-24 (read-only)
+
+# Read-only diagnose: waarom gaat het opgespaarde Profit Pot-bedrag van één
+# gebruiker niet naar Spot? Geen orders, geen transfers, geen schrijfacties.
+# Uitvoer alleen in deze run-log, zonder e-mail of uid (alleen een hash).
+
+on:
+  push:
+    branches: [claude/diag-profit-sparen-20261024]
+    paths: [.github/workflows/diag-profit-sparen-user-20261024.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCP_PROJECT_ID: tradementor-production
+  GCP_REGION: europe-west4
+  WIF_PROVIDER: projects/604335232956/locations/global/workloadIdentityPools/github/providers/tradementor-production
+  DEPLOY_SERVICE_ACCOUNT: github-tradementor-deploy@tradementor-production.iam.gserviceaccount.com
+  OBSERVER_SERVICE_ACCOUNT: github-tradementor-observer@tradementor-production.iam.gserviceaccount.com
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run read-only diagnose job on the live image
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$(gcloud run services describe tradementor-api --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
+          PROD_REVISION="$(python -c 'import json,sys; d=json.load(sys.stdin); rows=d["status"].get("traffic",[]); print(next((r["revisionName"] for r in rows if int(r.get("percent",0) or 0)==100), d["status"]["latestReadyRevisionName"]))' <<<"$SERVICE_JSON")"
+          PROD_IMAGE="$(gcloud run revisions describe "$PROD_REVISION" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(spec.containers[0].image)')"
+          RUNTIME_SA="$(python -c 'import json,sys; d=json.load(sys.stdin); print(d["spec"]["template"]["spec"]["serviceAccountName"])' <<<"$SERVICE_JSON")"
+          GATE="$(python -c 'import json,sys; d=json.load(sys.stdin); env={x.get("name"):x.get("value","") for x in d["spec"]["template"]["spec"]["containers"][0].get("env",[])}; print(env.get("ASTER_PROFIT_SWEEP_LIVE_ENABLED","false"))' <<<"$SERVICE_JSON")"
+          echo "PROD_REVISION=$PROD_REVISION"
+          JOB="tm-profit-sparen-diag-${GITHUB_RUN_ID: -7}"
+          cleanup(){ gcloud run jobs delete "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          SCRIPT_B64="$(base64 -w0 <<'PY'
+          import hashlib,json,os
+          from datetime import datetime
+          from decimal import Decimal
+          import main
+          from firebase_admin import auth
+          from profit_sweep_live import transfer_safety
+          def s(v):
+              if isinstance(v,datetime): return v.isoformat()
+              if isinstance(v,dict): return {k:s(x) for k,x in v.items() if k not in {"clientTranId","uid","claimId"}}
+              if isinstance(v,list): return [s(x) for x in v]
+              return v if isinstance(v,(int,float,bool,type(None))) else str(v)[:300]
+          out={"gate":os.getenv("ASTER_PROFIT_SWEEP_LIVE_ENABLED","false")}
+          want=os.environ["TARGET_EMAIL_SHA256"];uid=""
+          for u in auth.list_users().iterate_all():
+              if hashlib.sha256(str(u.email or "").strip().lower().encode()).hexdigest()==want:
+                  uid=u.uid;break
+          if not uid:
+              out["status"]="USER_NOT_FOUND"
+              print("PROFIT_SPAREN_DIAG "+json.dumps(out),flush=True);raise SystemExit(0)
+          out["account"]=hashlib.sha256(uid.encode()).hexdigest()[:10]
+          db=main.db;uref=db.collection("users").document(uid)
+          control=uref.collection("executionControls").document("aster").get().to_dict() or {}
+          out["settings"]=s(control.get("profitSweep"))
+          out["state"]=s(uref.collection("asterProfitSweepState").document("current").get().to_dict() or {})
+          tr=[]
+          for d in uref.collection("asterProfitSweepTransfers").order_by("createdAt",direction="DESCENDING").limit(8).stream():
+              r=d.to_dict() or {}
+              tr.append(s({k:r.get(k) for k in ("sequence","amount","asset","status","reason","reconciliationStatus","providerTransactionId","createdAt","updatedAt","completedAt","marginSafety")}))
+          out["transfers"]=tr
+          st=db.collection("asterStrategy2").document(uid).get().to_dict() or {}
+          sset=st.get("settings") if isinstance(st.get("settings"),dict) else {}
+          out["strategy2"]={"exists":bool(st),"enabled":st.get("enabled"),"monitor":st.get("monitor"),"mode":sset.get("mode"),
+              "engine":sset.get("engine",sset.get("strategyKind")),"canaryValidated":st.get("canaryValidated"),
+              "phase":st.get("phase"),"lastReason":str(st.get("lastReason",""))[:200],"lastTickAt":s(st.get("lastTickAt"))}
+          try:
+              secret=main.load_aster_secret({"uid":uid})
+              client=main.AsterV3Client(signer_address=secret.signer_address,sign_message=main.local_eip712_signer(secret),live_authorized=False,
+                  before_order_submit=lambda *_a,**_k:(_ for _ in ()).throw(RuntimeError("READ_ONLY")))
+              acc=client.account_information()
+              out["futures"]={k:acc.get(k) for k in ("availableBalance","totalMarginBalance","totalMaintMargin","totalWalletBalance","multiAssetsMargin")}
+              out["futuresAssets"]=[{k:a.get(k) for k in ("asset","walletBalance","availableBalance","maxWithdrawAmount","marginAvailable")}
+                  for a in acc.get("assets",[]) if isinstance(a,dict) and abs(float(a.get("walletBalance",0) or 0))>0]
+              ok,reason,detail=transfer_safety(acc,Decimal("1"))
+              out["safety1"]={"ok":ok,"reason":reason,"detail":detail}
+              try:
+                  sp=client.signed_spot_request("GET","/api/v3/account",{})
+                  out["spotBalances"]=[b for b in (sp.get("balances",[]) if isinstance(sp,dict) else []) if float(b.get("free",0) or 0)+float(b.get("locked",0) or 0)>0]
+              except Exception as exc:
+                  out["spotError"]=str(exc)[:200]
+          except Exception as exc:
+              out["clientError"]=str(exc)[:300]
+          out["status"]="OK"
+          print("PROFIT_SPAREN_DIAG "+json.dumps(out,default=str,separators=(",",":")),flush=True)
+          PY
+          )"
+
+          ENV_VARS="GOOGLE_CLOUD_PROJECT=$GCP_PROJECT_ID,TRADEMENTOR_ENVIRONMENT=profit-sparen-readonly,ASTER_LIVE_EXECUTION_ENABLED=false,ASTER_STRATEGY2_LIVE_ENABLED=false,ASTER_DYNAMIC_HEDGE_EXECUTION_ENABLED=false,ASTER_POSITION_LOSS_AUTO_HEDGE_EXECUTION_ENABLED=false,ASTER_REALTIME_EXECUTION_ENABLED=false,ASTER_PROFIT_SWEEP_LIVE_ENABLED=false,TARGET_EMAIL_SHA256=1736185e83bf4d709f2d772a03c45f61682e848841e54109f3f054011ba05f16"
+          echo "LIVE_GATE=$GATE"
+          gcloud run jobs deploy "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --image "$PROD_IMAGE" --service-account "$RUNTIME_SA" --command python --args=-c,"import base64;exec(base64.b64decode('$SCRIPT_B64'))" --set-env-vars "$ENV_VARS" --tasks 1 --parallelism 1 --max-retries 0 --task-timeout 300s --quiet
+          gcloud run jobs execute "$JOB" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --wait >/dev/null
+          echo "JOB_NAME=$JOB" >> "$GITHUB_ENV"
+
+      - name: Re-authenticate as observer
+        if: always()
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.OBSERVER_SERVICE_ACCOUNT }}
+
+      - name: Print result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 20
+          gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND textPayload:\"PROFIT_SPAREN_DIAG \"" --project "$GCP_PROJECT_ID" --freshness=30m --limit=5 --order=desc --format='value(textPayload)' | grep 'PROFIT_SPAREN_DIAG ' | head -n1
