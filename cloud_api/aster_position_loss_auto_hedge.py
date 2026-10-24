@@ -198,15 +198,17 @@ def _build_action(
         target_override is not None
         and math.isfinite(_f(target_override, -1.0))
     )
+    cap_ok = max_cap is not None and math.isfinite(_f(max_cap, -1.0)) and _f(max_cap) >= 0
+    # Build 650: only a cap above the position (user allowed "hedge mag groter dan positie") lifts the 1:1 ceiling.
+    ceiling = max(protected_qty, _f(max_cap)) if cap_ok else protected_qty
     target = (
-        min(protected_qty, max(0.0, _f(target_override))) if recovery_target else protected_qty
+        min(ceiling, max(0.0, _f(target_override))) if recovery_target else protected_qty
     )
     # Build 647 (Amar 24-10): "Max hedge" — without an afbouw target the hedge aims at this cap (already floored to the
-    # Aster step) instead of 1:1. A hedge that is already bigger (up to 1:1) is kept: Auto Hedge never sells to reach it.
-    capped = (not recovery_target and max_cap is not None and math.isfinite(_f(max_cap, -1.0))
-              and _f(max_cap) + EPSILON < protected_qty)
+    # Aster step) instead of 1:1. A hedge that is already bigger is kept: Auto Hedge never sells to reach the cap.
+    capped = not recovery_target and cap_ok and abs(_f(max_cap) - protected_qty) > EPSILON
     if capped:
-        target = min(protected_qty, max(max(0.0, _f(max_cap)), effective))
+        target = max(_f(max_cap), effective) if _f(max_cap) > protected_qty else min(protected_qty, max(_f(max_cap), effective))
     delta = target - effective
     has_pending = pending_open > EPSILON or pending_close > EPSILON
     if abs(delta) <= EPSILON:

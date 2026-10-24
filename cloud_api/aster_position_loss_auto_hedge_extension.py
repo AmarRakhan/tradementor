@@ -70,8 +70,10 @@ class AutoHedgeSettingsRequest(BaseModel):
     thresholdUsd: float = Field(default=DEFAULT_THRESHOLD_USD, ge=0.01, le=100_000)
     thresholdShortUsd: float | None = Field(default=None, ge=0.01, le=100_000)
     # Build 647 (Amar 24-10): max hedge in % of the position (1-100, default 100 = 1:1). None = keep the stored value.
-    maxHedgePct: float | None = Field(default=None, ge=1, le=100)          # LONG position (SHORT hedge)
-    maxHedgeShortPct: float | None = Field(default=None, ge=1, le=100)     # SHORT position (LONG hedge)
+    maxHedgePct: float | None = Field(default=None, ge=1, le=200)          # LONG position (SHORT hedge)
+    maxHedgeShortPct: float | None = Field(default=None, ge=1, le=200)     # SHORT position (LONG hedge)
+    # Build 650: above 100% only with this switch ON ("Hedge mag groter dan positie"). None = keep the stored value.
+    allowHedgeAbovePosition: bool | None = None
     confirmDisable: bool = False
     clientBuild: str = Field(default="", max_length=32)
     clientSource: str = Field(default="", max_length=64)
@@ -116,24 +118,42 @@ def _current(uid: str) -> dict[str, Any]:
         "enabled": row.get("enabled") is True,
         "thresholdUsd": threshold,
         "thresholdShortUsd": threshold_short,
-        "maxHedgePct": _max_pct(row.get("maxHedgePct")),
-        "maxHedgeShortPct": _max_pct(row.get("maxHedgeShortPct")),
+        "allowHedgeAbovePosition": row.get("allowHedgeAbovePosition") is True,
+        "maxHedgePct": _max_pct(row.get("maxHedgePct"), row.get("allowHedgeAbovePosition") is True),
+        "maxHedgeShortPct": _max_pct(row.get("maxHedgeShortPct"), row.get("allowHedgeAbovePosition") is True),
     }
 
 
-def _max_pct(value: Any) -> float:
-    """Build 647: max hedge in % of the position, 1..100; anything unreadable = 100 (1:1)."""
+def _max_pct(value: Any, allow_above: bool = False) -> float:
+    """Build 647: max hedge in % of the position, 1..100 (build 650: up to 200 when the user allows a hedge above
+    the position); anything unreadable = 100 (1:1). Without the switch a stored value above 100 counts as 100."""
     try:
         pct = float(value)
     except (TypeError, ValueError):
         return 100.0
-    return pct if math.isfinite(pct) and 1 <= pct <= 100 else 100.0
+    if not math.isfinite(pct) or pct < 1:
+        return 100.0
+    return min(pct, 200.0 if allow_above else 100.0)
+
+
+def _max_hedge_update(current: dict[str, Any], request: Any) -> dict[str, Any]:
+    """Build 650: stored max hedge fields; above 100% needs "Hedge mag groter dan positie" (422 otherwise)."""
+    allow = (current.get("allowHedgeAbovePosition") is True if request.allowHedgeAbovePosition is None
+             else bool(request.allowHedgeAbovePosition))
+    long_pct = current.get("maxHedgePct") if request.maxHedgePct is None else request.maxHedgePct
+    short_pct = current.get("maxHedgeShortPct") if request.maxHedgeShortPct is None else request.maxHedgeShortPct
+    for value in (request.maxHedgePct, request.maxHedgeShortPct):
+        if value is not None and float(value) > 100 and not allow:
+            raise HTTPException(422, "Max hedge boven 100% kan alleen met 'Hedge mag groter dan positie' aan")
+    return {"allowHedgeAbovePosition": allow,
+            "maxHedgePct": _max_pct(long_pct, allow), "maxHedgeShortPct": _max_pct(short_pct, allow)}
 
 
 def _max_hedge_by_side(settings: dict[str, Any]) -> dict[str, float]:
     """Fraction of the protected position that Auto Hedge hedges, keyed by the PROTECTED side."""
-    return {"LONG": _max_pct(settings.get("maxHedgePct")) / 100.0,
-            "SHORT": _max_pct(settings.get("maxHedgeShortPct")) / 100.0}
+    allow = settings.get("allowHedgeAbovePosition") is True
+    return {"LONG": _max_pct(settings.get("maxHedgePct"), allow) / 100.0,
+            "SHORT": _max_pct(settings.get("maxHedgeShortPct"), allow) / 100.0}
 
 
 def _max_hedge_caps(client: Any, settings: dict[str, Any], positions: list[dict[str, Any]]) -> dict[tuple[str, str], float]:
@@ -141,7 +161,7 @@ def _max_hedge_caps(client: Any, settings: dict[str, Any], positions: list[dict[
 
     Empty when both sides are 100% (then nothing changes and no exchange info is read)."""
     fractions = _max_hedge_by_side(settings)
-    if all(f >= 1 for f in fractions.values()):
+    if all(f == 1 for f in fractions.values()):
         return {}
     try:
         info = client.public_exchange_info() or {}
@@ -152,7 +172,7 @@ def _max_hedge_caps(client: Any, settings: dict[str, Any], positions: list[dict[
     caps: dict[tuple[str, str], float] = {}
     for (symbol, side), row in _position_map(positions).items():
         frac = fractions.get(side, 1.0)
-        if frac >= 1:
+        if frac == 1:
             continue
         rule = rules.get(symbol)
         if rule is None:
@@ -229,8 +249,9 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         "thresholdUsd": float(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD)),
         "thresholdLongUsd": float(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD)),
         "thresholdShortUsd": float(row.get("thresholdShortUsd", DEFAULT_THRESHOLD_USD)),
-        "maxHedgePct": _max_pct(row.get("maxHedgePct")),
-        "maxHedgeShortPct": _max_pct(row.get("maxHedgeShortPct")),
+        "allowHedgeAbovePosition": row.get("allowHedgeAbovePosition") is True,
+        "maxHedgePct": _max_pct(row.get("maxHedgePct"), row.get("allowHedgeAbovePosition") is True),
+        "maxHedgeShortPct": _max_pct(row.get("maxHedgeShortPct"), row.get("allowHedgeAbovePosition") is True),
         "workerEnabled": WORKER_ENABLED,
         "executionEnabled": EXECUTION_ENABLED,
         "operational": operational,
@@ -1496,9 +1517,7 @@ def put_position_loss_auto_hedge(
         "enabled": bool(request.enabled),
         "thresholdUsd": threshold,
         "thresholdShortUsd": threshold_short,
-        "maxHedgePct": _max_pct(current.get("maxHedgePct") if request.maxHedgePct is None else request.maxHedgePct),
-        "maxHedgeShortPct": _max_pct(current.get("maxHedgeShortPct") if request.maxHedgeShortPct is None
-                                     else request.maxHedgeShortPct),
+        **_max_hedge_update(current, request),
         "updatedAt": now,
     }, merge=True)
     if previous_enabled != bool(request.enabled):
@@ -1550,9 +1569,7 @@ def apply_position_loss_auto_hedge(
         "enabled": bool(request.enabled),
         "thresholdUsd": threshold,
         "thresholdShortUsd": threshold_short,
-        "maxHedgePct": _max_pct(current.get("maxHedgePct") if request.maxHedgePct is None else request.maxHedgePct),
-        "maxHedgeShortPct": _max_pct(current.get("maxHedgeShortPct") if request.maxHedgeShortPct is None
-                                     else request.maxHedgeShortPct),
+        **_max_hedge_update(current, request),
         "updatedAt": datetime.now(timezone.utc),
     }, merge=True)
     if previous_enabled != bool(request.enabled):
