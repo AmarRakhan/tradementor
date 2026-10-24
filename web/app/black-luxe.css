@@ -1585,6 +1585,10 @@ html:where([data-app-skin="black-luxe"])[data-aster-compact-snapshot="true"] .me
 :where(html[data-app-skin="black-luxe"]) .aps-closed-back header h2{color:#ffd245}
 :where(html[data-app-skin="black-luxe"]) .aps-closed-back header p{color:#91b8a3}
 :where(html[data-app-skin="black-luxe"]) .aps-closed-back header button{border:1px solid rgba(255,205,54,0.5);border-radius:50%;color:#ffd245;background:#121213}
+:where(html[data-app-skin="black-luxe"]) .aps-closed-download-status{color:#ffd44c}
+:where(html[data-app-skin="black-luxe"]) .aps-closed-download-status.is-error{color:#ff8ca6}
+:where(html[data-app-skin="black-luxe"]) .aps-closed-building{color:#a4bbaa}
+:where(html[data-app-skin="black-luxe"]) .aps-closed-reason{color:#a4bbaa}
 :where(html[data-app-skin="black-luxe"]) .aps-closed-summary{color:#a4bbaa}
 :where(html[data-app-skin="black-luxe"]) .aps-closed-summary strong{color:#15ffa3}
 :where(html[data-app-skin="black-luxe"]) .aps-closed-row{border:1px solid rgba(37,196,107,0.28);border-radius:12px;background:linear-gradient(145deg,rgba(19,19,20,0.8),rgba(12,12,12,0.95))}
