@@ -25,6 +25,8 @@ html[data-position-loss-auto-hedge="true"] .aps-portfolio-cycle-card{grid-column
 
 /* Dedicated screen: opaque fixed layer, so HOME bull/bear/chart/Tradecentrum never leaks through. */
 #aster-position-loss-auto-hedge-back-host{position:fixed;inset:0;z-index:950;visibility:hidden;pointer-events:none;opacity:0;perspective:1400px;transition:opacity .22s ease,visibility 0s linear .24s}
+/* Build 646: start below the fixed top bar (Versiegeschiedenis · bel · build), so "Terug" is never covered. */
+#aster-position-loss-auto-hedge-back-host{top:calc(28px + env(safe-area-inset-top))}
 #aster-position-loss-auto-hedge-back-host.plah-screen-open{visibility:visible;pointer-events:auto;opacity:1;transition:opacity .2s ease}
 .plah-screen{width:100%;height:100%;box-sizing:border-box;overflow:hidden;color:#f5f7f4;background:
  radial-gradient(circle at 50% -20%,rgba(24,111,67,.18),transparent 42%),
