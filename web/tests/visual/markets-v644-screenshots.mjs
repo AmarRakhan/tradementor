@@ -16,6 +16,9 @@ for (const width of [320, 390, 430]) {
   await page.getByRole("heading", { name: "Markets" }).waitFor();
   await page.waitForFunction(() => document.querySelectorAll('[data-market-symbol]').length > 10);
   await page.waitForTimeout(1800);
+  for (const leftover of ["QA-SNAPSHOT", "QA-TRADECENTRUM", "QA-BOTINSTELLINGEN"]) {
+    assert.equal(await page.getByText(leftover).isVisible(), false, `${width}: ${leftover} hoort niet op Markets`);
+  }
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   assert.ok(overflow <= 0, `${width}px horizontal overflow ${overflow}`);
   const text = await page.locator("section[aria-labelledby=markets-title]").innerText();

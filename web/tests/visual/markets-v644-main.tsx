@@ -3,6 +3,8 @@ import { MarketsPage } from "../../components/markets-page";
 import { publishAsterPositions } from "../../lib/aster-positions-feed";
 import "../../app/portfolio-koers-chart.css";
 import "../../app/black-luxe.css";
+import "../../app/aster-subtabs.css";
+import "../../app/markets-bridge.css";
 
 // Fake candles for /api/market-data: a smooth random walk around the live price.
 const realFetch = window.fetch.bind(window);
@@ -34,4 +36,13 @@ publishAsterPositions([
   { symbol: "BNBUSDT", side: "LONG", strategyId: "aster-strategy-2", quantity: 1 },
 ]);
 
-createRoot(document.getElementById("root")!).render(<div className="content"><div className="markets-portal"><MarketsPage /></div></div>);
+// The real app keeps the Aster page mounted under Markets; its subtab CSS forced
+// Tradecentrum/Botinstellingen visible (Build 646 regression).
+document.documentElement.setAttribute("data-aster-compact-snapshot", "true");
+document.documentElement.setAttribute("data-aster-subtab", "portfolio");
+createRoot(document.getElementById("root")!).render(<div className="content" data-markets-active="true">
+  <div id="aster-portfolio-snapshot-host">QA-SNAPSHOT</div>
+  <section aria-label="Aster Tradecentrum">QA-TRADECENTRUM</section>
+  <div className="dashboard-grid"><div className="side-stack">QA-BOTINSTELLINGEN</div></div>
+  <div className="markets-portal"><MarketsPage /></div>
+</div>);
