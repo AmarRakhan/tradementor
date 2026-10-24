@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 645 (backend + web): hedge afbouwen — nieuwe schakelaar "Opnieuw hedgen na afbouw" per afbouwkaart (standaard AAN); UIT = na volledige afbouw geen terugkoop, geen vangnet en geen nieuwe Auto Hedge op die munt.
+// Build 646 (backend + web): hedge afbouwen — nieuwe schakelaar "Opnieuw hedgen na afbouw" per afbouwkaart (standaard AAN); UIT = na volledige afbouw geen terugkoop, geen vangnet en geen nieuwe Auto Hedge op die munt.
 // Build 643 (alleen web): Portfolio Koers — R/S-zonelijnen lopen door over het hele zichtbare scherm (niet erbuiten), uitgedund tot minimaal 10 px; alleen weergave.
 // Build 641 (alleen web): Portfolio Koers — zonelijnen nog maar één keer: de achtergrondlijnen (canvas, over de hele hoogte) zijn weg, de R/S-lijnen rond de actieve zone blijven; alleen weergave.
 // Build 640 (alleen web): Portfolio Koers — zonelijnen dezelfde opbouw maar minder fel (rood 58→26%, groen 50→24%); alleen weergave.
@@ -62,7 +62,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "645";
+export const WEBAPP_BUILD_NUMBER = "646";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

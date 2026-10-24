@@ -1,4 +1,4 @@
-"""Build 645 (Amar 24-10) — "Opnieuw hedgen na afbouw" (algemene instelling per afbouwkaart, standaard AAN).
+"""Build 646 (Amar 24-10) — "Opnieuw hedgen na afbouw" (algemene instelling per afbouwkaart, standaard AAN).
 
 UIT: is de hedge helemaal afgebouwd, dan gebeurt er niets meer voor dat pair (geen terugkoop, geen vangnet, geen
 nieuwe Auto Hedge); tijdens de afbouw werkt terugkopen gewoon. Weer AAN: de grid gaat verder waar hij staat, het

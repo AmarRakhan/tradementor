@@ -115,3 +115,11 @@ test("Build 644: Markets page matches the design and flips on double tap", () =>
   const main = read("../app/page.tsx");
   assert.match(main, /publishAsterPositions\(positions\)/);
 });
+
+test("Build 645: on Home, Markets, Nieuws and Vrienden the Aster Tradecentrum and Botinstellingen stay hidden", () => {
+  const css = read("../app/markets-bridge.css");
+  for (const tab of ["markets", "news", "friends", "home"]) assert.ok(css.includes(`[data-${tab}-active="true"]`), tab);
+  for (const portal of [".markets-portal", '[data-news-portal="true"]', ".friends-portal", ".tm-home-portal"]) assert.ok(css.includes(portal), portal);
+  assert.match(css, /section\[aria-label="Aster Tradecentrum"\]/);
+  assert.match(css, /\.dashboard-grid/);
+});

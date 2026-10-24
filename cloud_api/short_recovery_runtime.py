@@ -188,7 +188,7 @@ def _grid(*, rec: dict[str, Any], cfg: Mapping[str, Any], long_q: Decimal, short
         sold = max(0, min(n, int(rec.get("sold") or 0)))
     rehedge = bool(cfg.get("rehedgeAfterAfbouw", True))
     if rec.get("afbouwDone") and rehedge:
-        # Build 645: re-hedging switched back on after a stop. Resume the normal grid where it is; the vangnet
+        # Build 646: re-hedging switched back on after a stop. Resume the normal grid where it is; the vangnet
         # counts from the current price (if beyond the last level), so nothing is re-hedged at the moment of switching.
         rec.update(afbouwDone=False, safetyFrom=_txt(price))
     decision = grid_step(anchor=anchor, price=price, sold=sold, n=n, total_pct=cfg["totalPct"],

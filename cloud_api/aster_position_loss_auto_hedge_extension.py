@@ -1562,7 +1562,7 @@ class ShortRecoverySettingsRequest(BaseModel):
     # Build 634 (grid): buy a sold part back after this many levels up; re-hedge 100% this % beyond the last level.
     rebuySteps: int = Field(default=1, ge=1, le=100)
     safetyNetPct: str | None = Field(default=None, max_length=16)
-    # Build 645: "Opnieuw hedgen na afbouw" (default ON). OFF = after a full reduction the pair is left alone.
+    # Build 646: "Opnieuw hedgen na afbouw" (default ON). OFF = after a full reduction the pair is left alone.
     rehedgeAfterAfbouw: bool = True
 
 

@@ -1,1 +1,10 @@
 .content[data-markets-active="true"] > :not(.markets-portal){display:none!important}.content[data-markets-active="true"]>.markets-portal{display:block;width:100%;min-width:0}.nav-button[data-destination="markets"] span{letter-spacing:.02em}.nav-button[data-destination="markets"].active span{font-weight:900}@media(max-width:760px){.bottom-nav .nav-button[data-destination="markets"] small{max-width:100%;overflow:hidden;text-overflow:ellipsis}.content[data-markets-active="true"]{padding-left:0;padding-right:0}}
+
+/* Build 645: every tab that lays its own page over .content (Home, Markets, Nieuws, Vrienden)
+   shows only that page. The Aster subtab rules (aster-subtabs.css,
+   html[data-aster-subtab=...] ... display:revert/block !important) are more specific than each
+   tab's own hide rule and kept Tradecentrum and Botinstellingen visible on those tabs. These
+   selectors outrank them; nothing inside the tab portals matches them. On the Aster tab none of
+   these attributes is set, so Aster keeps its four buttons with Tradecentrum and Botinstellingen. */
+html body .content:is([data-markets-active="true"],[data-news-active="true"],[data-friends-active="true"],[data-home-active="true"]) > :not(.markets-portal, [data-news-portal="true"], .friends-portal, .tm-home-portal),
+html .content:is([data-markets-active="true"],[data-news-active="true"],[data-friends-active="true"],[data-home-active="true"]) :is(#aster-portfolio-snapshot-host, .aster-subtabs, section[aria-label="Aster Tradecentrum"], .dashboard-grid, section[aria-label^="Portfolio impact."]){display:none!important}
