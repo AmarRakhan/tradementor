@@ -78,3 +78,12 @@ test("build 649: max hedge per kant, verdeling en Omlaag/Omhoog/Noodrem op de ka
   assert.match(card, /OMLAAG/); assert.match(card, /OMHOOG/); assert.match(card, /NOODREM/);
   assert.doesNotMatch(card, /Vangnet na extra/);
 });
+
+test("build 652: verliesgrens wordt niet meer teruggezet naar $10 bij openen", () => {
+  const bridge = readFileSync(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
+  assert.match(bridge, /const prevLong = serverLong\.current/);
+  assert.match(bridge, /first \|\| current === prevLong \? nextLong : current/);
+  assert.match(bridge, /saving \|\| !synced\.current \|\| !touched\.current\) return;/);
+  assert.doesNotMatch(bridge, /current === serverLong\.current \? nextLong : current/);
+  assert.equal((bridge.match(/touched\.current = true/g) || []).length, 7);
+});

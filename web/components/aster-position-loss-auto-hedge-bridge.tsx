@@ -441,6 +441,8 @@ export function AsterPositionLossAutoHedgeBridge() {
   const [maxShort, setMaxShort] = useState("100");
   const serverMaxLong = useRef("100");
   const serverMaxShort = useRef("100");
+  const synced = useRef(false);     // build 652: no auto-save before the first load filled the fields
+  const touched = useRef(false);    // build 652: auto-save only after the user changed a field or switch
   const [allowAboveDraft, setAllowAboveDraft] = useState<boolean | null>(null);
   const allowAboveOn = allowAboveDraft ?? state.allowHedgeAbovePosition === true;
   allowAbove = allowAboveOn;
@@ -462,16 +464,23 @@ export function AsterPositionLossAutoHedgeBridge() {
       setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
       const nextLong = String(threshold);
       const nextShort = String(Number(next.thresholdShortUsd ?? 10));
-      setDraft((current) => (current === serverLong.current ? nextLong : current));
-      setDraftShort((current) => (current === serverShort.current ? nextShort : current));
-      serverLong.current = nextLong;
-      serverShort.current = nextShort;
       const nextMaxLong = String(Number(next.maxHedgePct ?? 100));
       const nextMaxShort = String(Number(next.maxHedgeShortPct ?? 100));
-      setMaxLong((current) => (current === serverMaxLong.current ? nextMaxLong : current));
-      setMaxShort((current) => (current === serverMaxShort.current ? nextMaxShort : current));
+      // Build 652 (fix): read the previous server values NOW. React may run these updaters later, after the refs
+      // below already hold the new values; then a field still on its start value ($10) was never filled with the
+      // stored value and the auto-save wrote $10 back. The first load always fills every field from the server.
+      const first = !synced.current;
+      const prevLong = serverLong.current, prevShort = serverShort.current;
+      const prevMaxLong = serverMaxLong.current, prevMaxShort = serverMaxShort.current;
+      setDraft((current) => (first || current === prevLong ? nextLong : current));
+      setDraftShort((current) => (first || current === prevShort ? nextShort : current));
+      setMaxLong((current) => (first || current === prevMaxLong ? nextMaxLong : current));
+      setMaxShort((current) => (first || current === prevMaxShort ? nextMaxShort : current));
+      serverLong.current = nextLong;
+      serverShort.current = nextShort;
       serverMaxLong.current = nextMaxLong;
       serverMaxShort.current = nextMaxShort;
+      synced.current = true;
       setError("");
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Auto Hedge kon niet worden geladen.";
@@ -638,7 +647,7 @@ export function AsterPositionLossAutoHedgeBridge() {
   // Build 646: a changed loss threshold (slider or Exact bedrag) is saved by itself 1,2 s after the last change,
   // so the next poll can never put the old value back. Invalid or half-typed amounts are not sent.
   useEffect(() => {
-    if (!open || available !== true || saving) return;
+    if (!open || available !== true || saving || !synced.current || !touched.current) return;
     const long = Number(draft.replace(",", "."));
     const short = Number(draftShort.replace(",", "."));
     const valid = (v: number) => Number.isFinite(v) && v >= 0.01 && v <= 100000;
@@ -999,17 +1008,17 @@ export function AsterPositionLossAutoHedgeBridge() {
         <section className="plah-threshold-card">
           <div className="plah-threshold-head">
             <label htmlFor="plah-threshold-number">LONG-positie · hedge vanaf verlies</label>
-            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => setDraft(event.target.value)} /></label></div>
+            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { touched.current = true; setDraft(event.target.value); }} /></label></div>
           </div>
           <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)}</div>
-          <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderValue} onChange={(event) => setDraft(event.target.value)} aria-label="Auto Hedge verliesgrens LONG" />
+          <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderValue} onChange={(event) => { touched.current = true; setDraft(event.target.value); }} aria-label="Auto Hedge verliesgrens LONG" />
           <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
           <div className="plah-above">
             <div><b>Hedge mag groter dan positie</b><small>{allowAboveOn ? "AAN · max hedge tot 200%" : "UIT · de hedge is nooit groter dan je positie"}</small></div>
-            <Toggle checked={allowAboveOn} disabled={saving} onChange={() => setAllowAboveDraft(!allowAboveOn)} label="Hedge mag groter dan positie" labelText />
+            <Toggle checked={allowAboveOn} disabled={saving} onChange={() => { touched.current = true; setAllowAboveDraft(!allowAboveOn); }} label="Hedge mag groter dan positie" labelText />
           </div>
           {allowAboveOn && <p className="plah-info plah-unwind-error" role="note"><span>!</span> Met een max hedge boven 100% sta je na een trigger netto de andere kant op (bijvoorbeeld 120%: per 10 LONG 12 SHORT). Stijgt de koers dan, dan verlies je op dat extra stuk.</p>}
-          <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een LONG-positie" type="text" inputMode="decimal" value={maxLong} onChange={(event) => setMaxLong(event.target.value)} /></label></div>
+          <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een LONG-positie" type="text" inputMode="decimal" value={maxLong} onChange={(event) => { touched.current = true; setMaxLong(event.target.value); }} /></label></div>
           <p className="plah-info"><span>i</span> Staat een LONG-positie -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager, dan zet de bot een SHORT van {maxOk(maxLongN) && maxLongN < 100 ? `${maxLongN}% van de LONG` : "exact 1:1 coin quantity"}.{maxOk(maxLongN) && maxLongN < 100 ? " De rest van je LONG blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
         </section>
 
@@ -1024,12 +1033,12 @@ export function AsterPositionLossAutoHedgeBridge() {
         <section className="plah-threshold-card">
           <div className="plah-threshold-head">
             <label htmlFor="plah-threshold-short-number">SHORT-positie · hedge vanaf verlies</label>
-            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-short-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draftShort} onChange={(event) => setDraftShort(event.target.value)} /></label></div>
+            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-short-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draftShort} onChange={(event) => { touched.current = true; setDraftShort(event.target.value); }} /></label></div>
           </div>
           <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)}</div>
-          <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderShort} onChange={(event) => setDraftShort(event.target.value)} aria-label="Auto Hedge verliesgrens SHORT" />
+          <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderShort} onChange={(event) => { touched.current = true; setDraftShort(event.target.value); }} aria-label="Auto Hedge verliesgrens SHORT" />
           <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
-          <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een SHORT-positie" type="text" inputMode="decimal" value={maxShort} onChange={(event) => setMaxShort(event.target.value)} /></label></div>
+          <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een SHORT-positie" type="text" inputMode="decimal" value={maxShort} onChange={(event) => { touched.current = true; setMaxShort(event.target.value); }} /></label></div>
           <p className="plah-info"><span>i</span> Staat een SHORT-positie -{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)} of lager, dan zet de bot een LONG van {maxOk(maxShortN) && maxShortN < 100 ? `${maxShortN}% van de SHORT` : "exact 1:1 coin quantity"}.{maxOk(maxShortN) && maxShortN < 100 ? " De rest van je SHORT blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
         </section>
 
