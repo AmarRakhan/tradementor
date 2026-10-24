@@ -184,6 +184,7 @@ def _build_action(
     pending: Mapping[tuple[str, str], Mapping[str, float]],
     target_override: float | None = None,
     max_cap: float | None = None,
+    min_open_qty: float | None = None,
 ) -> AutoHedgeAction:
     hedge_side = "SHORT" if protected_side == "LONG" else "LONG"
     protected_qty = position_quantity(protected_row)
@@ -211,10 +212,20 @@ def _build_action(
         target = max(_f(max_cap), effective) if _f(max_cap) > protected_qty else min(protected_qty, max(_f(max_cap), effective))
     delta = target - effective
     has_pending = pending_open > EPSILON or pending_close > EPSILON
-    if abs(delta) <= EPSILON:
+    # Build 656 (Amar 24-10, VIRTUAL "FOUT"): a hedge that already exists but is a tiny rest short of its target
+    # (smaller than the smallest order Aster accepts: min quantity / min order value) can never be topped up.
+    # Before, that unsendable rest was PRECISION_BLOCKED on every tick and the pair stayed red forever. Such a rest
+    # counts as reached; as soon as the gap grows to a sendable size Auto Hedge adds it again as usual.
+    rest_below_minimum = (
+        delta > EPSILON and effective > EPSILON and min_open_qty is not None
+        and math.isfinite(_f(min_open_qty, -1.0)) and delta + EPSILON < _f(min_open_qty)
+    )
+    if abs(delta) <= EPSILON or rest_below_minimum:
         operation = "HOLD"
         status = "PENDING" if has_pending else "HEDGED"
-        if recovery_target and target + EPSILON < protected_qty:
+        if rest_below_minimum and not has_pending:
+            reason = "REST_BELOW_ASTER_MINIMUM"
+        elif recovery_target and target + EPSILON < protected_qty:
             reason = "PENDING_ORDER_RECONCILES_RECOVERY_TARGET" if has_pending else "SHORT_RECOVERY_TARGET"
         elif capped:
             reason = "PENDING_ORDER_RECONCILES_MAX_HEDGE" if has_pending else "MAX_HEDGE_TARGET"
@@ -269,6 +280,7 @@ def evaluate_auto_hedge(
     thresholds_by_side: Mapping[str, Any] | None = None,
     max_caps: Mapping[tuple[str, str], float] | None = None,
     allowed_sides: set[str] | frozenset[str] | None = None,
+    min_open_qtys: Mapping[str, float] | None = None,
 ) -> list[AutoHedgeAction]:
     """Return deterministic exact-quantity decisions.
 
@@ -329,6 +341,7 @@ def evaluate_auto_hedge(
             pending=pending,
             target_override=overrides.get(symbol),
             max_cap=(max_caps or {}).get((symbol, chosen_side)),
+            min_open_qty=(min_open_qtys or {}).get(symbol),
         ))
     return actions
 
@@ -343,6 +356,41 @@ def _exchange_rule(client: Any, symbol: str) -> ContractRules:
     if row is None:
         raise AsterValidationError(f"{symbol}: contractregels ontbreken")
     return ContractRules.from_exchange_info(row)
+
+
+def _min_open_quantities(client: Any, positions: list[dict[str, Any]]) -> dict[str, float]:
+    """Build 656: per symbol the smallest OPEN quantity Aster accepts at the current mark (min qty, min order
+    value, step). Empty on any read problem, so the engine then behaves exactly as before."""
+    marks: dict[str, float] = {}
+    for (symbol, _side), row in _active_positions(positions).items():
+        mark = _f(row.get("markPrice"), _f(row.get("entryPrice")))
+        if mark > 0:
+            marks[symbol] = mark
+    if not marks:
+        return {}
+    try:
+        info = client.public_exchange_info() or {}
+        rows = info.get("symbols", []) if isinstance(info, dict) else []
+        result: dict[str, float] = {}
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            symbol = str(item.get("symbol", "")).upper()
+            if symbol not in marks:
+                continue
+            rule = ContractRules.from_exchange_info(item)
+            step = rule.market_quantity_step if rule.market_quantity_step > 0 else Decimal("0")
+            minimum = max(rule.market_min_quantity or Decimal("0"), step)
+            if rule.min_notional and rule.min_notional > 0:
+                by_value = rule.min_notional / Decimal(str(marks[symbol]))
+                if step > 0:
+                    by_value = (by_value / step).to_integral_value(rounding="ROUND_CEILING") * step
+                minimum = max(minimum, by_value)
+            if minimum > 0:
+                result[symbol] = float(minimum)
+        return result
+    except Exception:
+        return {}
 
 
 def _exact_market_quantity(rule: ContractRules, requested: float, mark: float, symbol: str) -> Decimal:
@@ -450,11 +498,12 @@ def reconcile_auto_hedge(
     threshold = normalize_threshold(threshold_usd)
     positions = list(client.position_risk() or []) if positions is None else list(positions)
     open_orders = list(client.open_orders() or []) if open_orders is None else list(open_orders)
+    min_open_qtys = _min_open_quantities(client, positions)
     actions = evaluate_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
         target_overrides=target_overrides, thresholds_by_side=thresholds_by_side, max_caps=max_caps,
-        allowed_sides=allowed_sides,
+        allowed_sides=allowed_sides, min_open_qtys=min_open_qtys,
     )
     public_actions: list[dict[str, Any]] = []
     orders_sent = 0
@@ -597,7 +646,7 @@ def reconcile_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
         target_overrides=target_overrides, thresholds_by_side=thresholds_by_side, max_caps=max_caps,
-        allowed_sides=allowed_sides,
+        allowed_sides=allowed_sides, min_open_qtys=min_open_qtys,
     )
     return {
         "thresholdUsd": threshold,

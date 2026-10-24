@@ -962,7 +962,9 @@ def _sync_pair_views(
             "exchangeOrderIds": order_ids[-100:],
             "clientOrderIds": client_ids[-100:],
             "lastAction": action or final,
-            "lastReason": str(final.get("reason") or action.get("reason") or ""),
+            # Build 656: on FOUT keep the real cause (the order error), not the final re-evaluation's generic reason.
+            "lastReason": str((action.get("reason") if status in {"BLOCKED", "PRECISION_BLOCKED"} else None)
+                              or final.get("reason") or action.get("reason") or ""),
             "lastReconciledAt": now,
             "updatedAt": now,
         }

@@ -1,4 +1,5 @@
 export const WEBAPP_VERSION = "46";
+// Build 656 (backend): Auto Hedge — een bestaande hedge met een restje kleiner dan de kleinste Aster-order (bijv. VIRTUAL) stond eeuwig op FOUT; dat restje telt nu als gehedged.
 // Build 655 (backend + web): max drawdown-tegels rekenen alleen met afgeronde trades (laatste 90 dagen), per trade één keer vastgelegd; regel eronder = laatste 7 dagen. Geen tussenstanden meer.
 // Build 654 (backend + web): Auto Hedge — schakelaars "LONG-posities beschermen" en "SHORT-posities beschermen" (nieuwe hedges per kant aan/uit).
 // Build 653 (alleen web): fix — Auto Hedge-verliesgrens werd bij het openen van het scherm soms teruggezet naar $10 (auto-opslaan vóór de opgeslagen waarde was ingevuld); auto-opslaan nu alleen na een eigen wijziging.
@@ -70,7 +71,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "655";
+export const WEBAPP_BUILD_NUMBER = "656";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {
