@@ -58,13 +58,14 @@ export function DrawdownTile({ side, data }: { side: "LONG" | "SHORT"; data: Ent
   </article>;
 }
 
-export function DrawdownReference({ data }: { data: EntryDrawdown | null }) {
-  const cell = (side: "LONG" | "SHORT") => {
-    const row = data ? (side === "LONG" ? data.long : data.short) : null;
-    return <div className={`plah-dd-cell plah-dd-${side.toLowerCase()}`}>
-      <small>{side === "LONG" ? "Long" : "Short"} gem. max drawdown</small>
-      <b>{formatDrawdown(row?.avgMaxDrawdownPct ?? null)}</b>
-    </div>;
-  };
-  return <div className="plah-dd" aria-label="Gemiddelde max drawdown vanaf instap">{cell("LONG")}{cell("SHORT")}</div>;
+// Build 652: elke afbouwkaart toont het getal van de kant die hij beschermt.
+// SHORT-hedge afbouwen beschermt LONG-posities -> LONG-getal; LONG-hedge afbouwen beschermt SHORT -> SHORT-getal.
+export function DrawdownReference({ data, side, lastStepPct }: { data: EntryDrawdown | null; side: "LONG" | "SHORT"; lastStepPct?: number | null }) {
+  const row = data ? (side === "LONG" ? data.long : data.short) : null;
+  const value = row?.avgMaxDrawdownPct ?? null;
+  const deeper = typeof value === "number" && typeof lastStepPct === "number" && Number.isFinite(lastStepPct) && lastStepPct > value;
+  return <div className={`plah-dd plah-dd-${side.toLowerCase()}`} aria-label={`${side} gem. max drawdown vanaf instap`}>
+    <div><small>{side === "LONG" ? "Long" : "Short"} gem. max drawdown</small><b>{formatDrawdown(value)}</b></div>
+    {deeper && <p>Je laatste stap ({formatDrawdown(lastStepPct ?? null)}) ligt dieper: die wordt bij de meeste trades niet gehaald.</p>}
+  </div>;
 }

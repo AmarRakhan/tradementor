@@ -2519,8 +2519,9 @@ html:where([data-app-skin="black-luxe"])[data-aster-compact-snapshot="true"] .me
 :where(html[data-app-skin="black-luxe"]) .hp-res dd{color:#fff}
 :where(html[data-app-skin="black-luxe"]) .hp-ok{color:#6bffb5}
 :where(html[data-app-skin="black-luxe"]) .hp-apply{border:0;border-radius:12px;background:#0ef972;color:#002413}
-:where(html[data-app-skin="black-luxe"]) .plah-dd-cell{border-radius:11px;border:1px solid rgba(249,196,46,0.32);background:rgba(4,4,5,0.85)}
-:where(html[data-app-skin="black-luxe"]) .plah-dd-cell small{color:#b9ae90}
+:where(html[data-app-skin="black-luxe"]) .plah-dd{border-radius:11px;border:1px solid rgba(249,196,46,0.32);background:rgba(4,4,5,0.85)}
+:where(html[data-app-skin="black-luxe"]) .plah-dd small{color:#b9ae90}
+:where(html[data-app-skin="black-luxe"]) .plah-dd p{color:#ffb9c9}
 :where(html[data-app-skin="black-luxe"]) .plah-dd-long{border-color:rgba(14,249,114,0.45);background:rgba(11,11,12,0.7)}
 :where(html[data-app-skin="black-luxe"]) .plah-dd-long b{color:#25ff98}
 :where(html[data-app-skin="black-luxe"]) .plah-dd-short{border-color:rgba(255,87,128,0.45);background:rgba(6,6,7,0.7)}
