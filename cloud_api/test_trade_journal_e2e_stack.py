@@ -87,7 +87,7 @@ class TradeJournalE2E(unittest.TestCase):
         S.main.aster_strategy2_reference(self.uid).set({
             "configVersion": 3,
             "settings": {"engine": "multi-bb-v1", "longTakeProfitValue": 20, "leverage": 10,
-                         "priceZoneSeats": {"enabled": True, "longSeatsPerZone": 1, "zones": [[1, 2], [3, 4]]}},
+                         "priceZoneSeats": {"enabled": True, "longSeatsPerZone": 1, "zones": [{"low": 1, "high": 2}, {"low": 3, "high": 4}]}},
             "multiBbPositions": {"ETHUSDT|SHORT": {"cycleId": "c-eth", "leverage": 5, "soldierRole": "AUTO_HEDGE",
                                                    "cycleStartedAtMs": now - 6 * H, "zoneMission": {"band": [1, 2]},
                                                    "lastBotFillPrice": 10}},
