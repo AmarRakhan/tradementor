@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { authenticatedRequest } from "@/lib/cloud-client";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { validateRecoverySettings } from "@/lib/short-recovery.mjs";
+import { HedgePreview, type PreviewSettings } from "@/components/hedge-preview";
 
 // Hedge afbouwen settings in the Auto Hedge screen, between the loss thresholds and "Gehedgede posities".
 // Build 623: one card per side with its own settings. hedgeSide "SHORT" = SHORT-hedge of a LONG position,
@@ -30,11 +31,12 @@ type ToggleRender = (props: { checked: boolean; disabled?: boolean; onChange: ()
 
 const fmt = (n: number, d = 2) => n.toLocaleString("nl-NL", { maximumFractionDigits: d });
 
-export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "SHORT" }: {
+export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "SHORT", maxHedgePct = 100 }: {
   state: AutoHedgeLike;
   onSaved: (next: AutoHedgeLike) => void;
   renderToggle: ToggleRender;
   hedgeSide?: HedgeSide;
+  maxHedgePct?: number;
 }) {
   const up = hedgeSide === "LONG";
   const protectedSide = up ? "SHORT" : "LONG";
@@ -168,7 +170,13 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
                 ? "Uit (terughedgen 0%): na volledige afbouw wordt er niet opnieuw gehedged."
                 : `Alles afgebouwd en de koers ${up ? "stijgt" : "zakt"} nog ${gridOk ? fmt(safetyN, 4) : "…"}%: in één keer weer ${fmt(back, 2)}% hedgen, nieuwe ronde vanaf daar.`}</span></p>
             </div>
-            <p className="plah-info"><span>i</span>Kleine munt: minder, grotere stappen (elke order minstens het Aster-minimum). Een wijziging geldt direct voor alle lopende posities.</p>
+            <p className="plah-info"><span>i</span>Kleine munt: minder, grotere stappen (elke order minstens het Aster-minimum, ook op de laagste stap). Een wijziging geldt direct voor alle lopende posities.</p>
+            <HedgePreview hedgeSide={hedgeSide} maxHedgePct={maxHedgePct}
+              settings={gridOk ? { steps: n, totalPct: check.totalPct, distribution: dist, rebuySteps: rebuyN, rehedgePct: rehedgeN, safetyNetPct: safetyN } : null}
+              onApply={(next: PreviewSettings) => {
+                setSteps(String(next.steps)); setTotalPct(String(next.totalPct)); setDist(next.distribution);
+                setRebuy(String(next.rebuySteps)); setRehedge(String(next.rehedgePct)); setSafety(String(next.safetyNetPct));
+              }} />
           </>;
         })()}
       </> : <p className="plah-info plah-unwind-error" role="alert"><span>!</span> {check.message}</p>}

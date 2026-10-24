@@ -107,6 +107,7 @@ type AutoHedgeState = {
   thresholdShortUsd?: number;
   maxHedgePct?: number;
   maxHedgeShortPct?: number;
+  allowHedgeAbovePosition?: boolean;
   workerEnabled?: boolean;
   executionEnabled?: boolean;
   operational?: boolean;
@@ -201,8 +202,10 @@ function money(value: number | undefined, signed = true) {
   return `${sign}$${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(number)}`;
 }
 
+// Build 651: up to 200% only with "Hedge mag groter dan positie" ON (module flag, set by the bridge each render).
+let allowAbove = false;
 function maxOk(value: number) {
-  return Number.isFinite(value) && value >= 1 && value <= 100;
+  return Number.isFinite(value) && value >= 1 && value <= (allowAbove ? 200 : 100);
 }
 
 function thresholdMoney(value: number) {
@@ -438,6 +441,9 @@ export function AsterPositionLossAutoHedgeBridge() {
   const [maxShort, setMaxShort] = useState("100");
   const serverMaxLong = useRef("100");
   const serverMaxShort = useRef("100");
+  const [allowAboveDraft, setAllowAboveDraft] = useState<boolean | null>(null);
+  const allowAboveOn = allowAboveDraft ?? state.allowHedgeAbovePosition === true;
+  allowAbove = allowAboveOn;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -600,6 +606,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         method: applyNow ? "POST" : "PUT",
         body: JSON.stringify({ enabled, thresholdUsd: threshold, thresholdShortUsd: thresholdShort,
           ...(maxOk(maxLongN) ? { maxHedgePct: maxLongN } : {}), ...(maxOk(maxShortN) ? { maxHedgeShortPct: maxShortN } : {}),
+          allowHedgeAbovePosition: allowAboveOn,
           confirmDisable: state.enabled === true && enabled === false, clientBuild: WEBAPP_BUILD_NUMBER, clientSource: source }),
       }) as AutoHedgeState;
       setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
@@ -637,14 +644,15 @@ export function AsterPositionLossAutoHedgeBridge() {
     const valid = (v: number) => Number.isFinite(v) && v >= 0.01 && v <= 100000;
     if (!valid(long) || !valid(short) || !maxOk(maxLongN) || !maxOk(maxShortN)) return;
     if (long === Number(serverLong.current) && short === Number(serverShort.current)
-      && maxLongN === Number(serverMaxLong.current) && maxShortN === Number(serverMaxShort.current)) return;
+      && maxLongN === Number(serverMaxLong.current) && maxShortN === Number(serverMaxShort.current)
+      && allowAboveOn === (state.allowHedgeAbovePosition === true)) return;
     const timer = window.setTimeout(async () => {
       const ok = await persist(state.enabled, long, false, "AUTO_HEDGE_THRESHOLD");
       if (ok) setMessage(`Opgeslagen · LONG ${thresholdMoney(long)} · max ${maxLongN}% · SHORT ${thresholdMoney(short)} · max ${maxShortN}%`);
     }, 1200);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, draftShort, maxLong, maxShort, open, available, saving, state.enabled]);
+  }, [draft, draftShort, maxLong, maxShort, allowAboveDraft, open, available, saving, state.enabled]);
 
   const requestEnabledChange = async (nextEnabled: boolean, source: string) => {
     if (state.enabled === true && nextEnabled === false) {
@@ -996,7 +1004,12 @@ export function AsterPositionLossAutoHedgeBridge() {
           <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)}</div>
           <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderValue} onChange={(event) => setDraft(event.target.value)} aria-label="Auto Hedge verliesgrens LONG" />
           <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
-          <div className="plah-exact-box plah-max-hedge"><small>Max hedge</small><label><b>%</b><input aria-label="Max hedge in procent bij een LONG-positie" type="text" inputMode="decimal" value={maxLong} onChange={(event) => setMaxLong(event.target.value)} /></label></div>
+          <div className="plah-above">
+            <div><b>Hedge mag groter dan positie</b><small>{allowAboveOn ? "AAN · max hedge tot 200%" : "UIT · de hedge is nooit groter dan je positie"}</small></div>
+            <Toggle checked={allowAboveOn} disabled={saving} onChange={() => setAllowAboveDraft(!allowAboveOn)} label="Hedge mag groter dan positie" labelText />
+          </div>
+          {allowAboveOn && <p className="plah-info plah-unwind-error" role="note"><span>!</span> Met een max hedge boven 100% sta je na een trigger netto de andere kant op (bijvoorbeeld 120%: per 10 LONG 12 SHORT). Stijgt de koers dan, dan verlies je op dat extra stuk.</p>}
+          <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een LONG-positie" type="text" inputMode="decimal" value={maxLong} onChange={(event) => setMaxLong(event.target.value)} /></label></div>
           <p className="plah-info"><span>i</span> Staat een LONG-positie -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager, dan zet de bot een SHORT van {maxOk(maxLongN) && maxLongN < 100 ? `${maxLongN}% van de LONG` : "exact 1:1 coin quantity"}.{maxOk(maxLongN) && maxLongN < 100 ? " De rest van je LONG blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
         </section>
 
@@ -1005,6 +1018,7 @@ export function AsterPositionLossAutoHedgeBridge() {
           onSaved={(next) => setState(next as unknown as AutoHedgeState)}
           renderToggle={(props) => <Toggle {...props} labelText />}
           hedgeSide="SHORT"
+          maxHedgePct={maxOk(maxLongN) ? maxLongN : 100}
         />
 
         <section className="plah-threshold-card">
@@ -1015,7 +1029,7 @@ export function AsterPositionLossAutoHedgeBridge() {
           <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)}</div>
           <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderShort} onChange={(event) => setDraftShort(event.target.value)} aria-label="Auto Hedge verliesgrens SHORT" />
           <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
-          <div className="plah-exact-box plah-max-hedge"><small>Max hedge</small><label><b>%</b><input aria-label="Max hedge in procent bij een SHORT-positie" type="text" inputMode="decimal" value={maxShort} onChange={(event) => setMaxShort(event.target.value)} /></label></div>
+          <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een SHORT-positie" type="text" inputMode="decimal" value={maxShort} onChange={(event) => setMaxShort(event.target.value)} /></label></div>
           <p className="plah-info"><span>i</span> Staat een SHORT-positie -{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)} of lager, dan zet de bot een LONG van {maxOk(maxShortN) && maxShortN < 100 ? `${maxShortN}% van de SHORT` : "exact 1:1 coin quantity"}.{maxOk(maxShortN) && maxShortN < 100 ? " De rest van je SHORT blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
         </section>
 
@@ -1024,6 +1038,7 @@ export function AsterPositionLossAutoHedgeBridge() {
           onSaved={(next) => setState(next as unknown as AutoHedgeState)}
           renderToggle={(props) => <Toggle {...props} labelText />}
           hedgeSide="LONG"
+          maxHedgePct={maxOk(maxShortN) ? maxShortN : 100}
         />
 
         <div className="plah-scope-grid">

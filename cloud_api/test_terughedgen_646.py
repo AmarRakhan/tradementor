@@ -90,10 +90,11 @@ class Runtime(unittest.TestCase):
         r = go(r["record"], settings=SIX, short_qty=0, mark=75)                   # 80 * 0.94 = 75.2
         self.assertEqual(r["event"], "SAFETY_NET_REHEDGE")
 
-    def test_half_too_small_for_aster_is_done(self):
+    def test_half_too_small_for_aster_rehedges_the_minimum(self):
         out, rec = walk([98, 96, 94, 88], settings=HALF, long_qty="0.09", short_qty="0.09", qty_step="0.01",
                         min_notional=5)
-        self.assertEqual((out[-1][2], out[-1][1], rec["afbouwDone"]), ("GRID_DONE_REHEDGE_BELOW_MINIMUM", 0.0, True))
+        # Build 651: 50% (0.04) is below the Aster minimum ($5) -> the noodrem re-hedges the minimum (0.06), not nothing.
+        self.assertEqual((out[-1][2], out[-1][1], rec["phase"]), ("SAFETY_NET_REHEDGE", 0.06, "REFILL"))
 
     def test_hundred_pct_is_unchanged(self):
         out, rec = walk([98, 96, 94, 96, 98, 100])
