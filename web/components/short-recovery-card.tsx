@@ -131,7 +131,7 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
         <div className="plah-exact-box"><small>Terugkopen na stappen {up ? "daling" : "stijging"} (0 = uit)</small>
           <label><b>#</b><input aria-label={`Terugkopen na aantal stappen (${hedgeSide}-hedge)`} type="number" min="0" max="100" step="1" inputMode="numeric" value={rebuy} onChange={(e) => setRebuy(e.target.value)} disabled={saving} /></label>
         </div>
-        <div className="plah-exact-box"><small>Terughedgen (terugkopen + vangnet)</small>
+        <div className="plah-exact-box"><small>Terughedgen (terugkopen + noodrem)</small>
           <label><b>%</b><input aria-label={`Terughedgen in procent (${hedgeSide}-hedge)`} type="text" inputMode="decimal" value={rehedge} onChange={(e) => setRehedge(e.target.value)} disabled={saving} /></label>
         </div>
         <div className="plah-exact-box"><small>Noodrem: na volledige afbouw nog … {up ? "hoger" : "lager"}</small>
@@ -140,8 +140,8 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
       </div>
       {gridOk && rehedgeN < 100 && <p className="plah-info plah-unwind-error" role="note"><span>!</span>
         {rehedgeN === 0
-          ? <>Terughedgen 0%: na volledige afbouw heeft je {protectedSide} geen bescherming meer. Geen vangnet en geen nieuwe Auto Hedge op die munt; de {protectedSide} moet het zelf redden via TP of Portfolio TP.</>
-          : <>Terughedgen {fmt(rehedgeN, 2)}%: bij terugkopen zet de bot maar {fmt(rehedgeN, 2)}% van het verkochte deel terug en het vangnet hedget {fmt(rehedgeN, 2)}% van je {protectedSide}. Je netto {protectedSide} groeit zo met elke schommeling; bij een harde daling ben je minder beschermd.</>}
+          ? <>Terughedgen 0%: na volledige afbouw heeft je {protectedSide} geen bescherming meer. Geen noodrem en geen nieuwe Auto Hedge op die munt; de {protectedSide} moet het zelf redden via TP of Portfolio TP.</>
+          : <>Terughedgen {fmt(rehedgeN, 2)}%: bij terugkopen zet de bot maar {fmt(rehedgeN, 2)}% van het verkochte deel terug en de noodrem hedget {fmt(rehedgeN, 2)}% van je {protectedSide}. Je netto {protectedSide} groeit zo met elke schommeling; bij een harde daling ben je minder beschermd.</>}
         {" "}Zet je dit later weer hoger, dan gaat de grid verder waar hij staat en wordt er niet meteen opnieuw gehedged.
       </p>}
       {check.ok ? <>

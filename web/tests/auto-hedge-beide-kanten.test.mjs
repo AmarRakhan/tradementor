@@ -41,13 +41,13 @@ test("build 634: grid fields in the afbouw card", () => {
   const card = readFileSync(new URL("../components/short-recovery-card.tsx", import.meta.url), "utf8");
   assert.match(card, /rebuySteps: rebuyN, safetyNetPct: String\(safetyN\)/);
   assert.match(card, /Terugkopen na stappen/);
-  assert.match(card, /Vangnet na extra/);
+  assert.match(card, /Noodrem: na volledige afbouw/);
   assert.doesNotMatch(card, /100% sluiten en 90%/);
 });
 
 test("build 646: afbouwkaart heeft Terughedgen % (standaard 100) en terugkopen 0 = uit", () => {
   const card = readFileSync(new URL("../components/short-recovery-card.tsx", import.meta.url), "utf8");
-  assert.match(card, /Terughedgen \(terugkopen \+ vangnet\)/);
+  assert.match(card, /Terughedgen \(terugkopen \+ noodrem\)/);
   assert.match(card, /plan\.rehedgePct \?\? "100"/);
   assert.match(card, /rehedgePct: String\(rehedgeN\)/);
   assert.match(card, /\(0 = uit\)/);
@@ -65,4 +65,16 @@ test("build 646: verliesgrens springt niet terug, schuifbalk $1–$100, scherm o
   assert.match(bridge, /"AUTO_HEDGE_THRESHOLD"/);
   const css = readFileSync(new URL("../app/position-loss-auto-hedge.css", import.meta.url), "utf8");
   assert.match(css, /#aster-position-loss-auto-hedge-back-host\{top:calc\(28px \+ env\(safe-area-inset-top\)\)\}/);
+});
+
+test("build 649: max hedge per kant, verdeling en Omlaag/Omhoog/Noodrem op de kaart", () => {
+  const bridge = readFileSync(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
+  assert.match(bridge, /maxHedgePct: maxLongN/);
+  assert.match(bridge, /maxHedgeShortPct: maxShortN/);
+  assert.equal((bridge.match(/plah-max-hedge/g) || []).length, 2);
+  const card = readFileSync(new URL("../components/short-recovery-card.tsx", import.meta.url), "utf8");
+  assert.match(card, /distribution: dist/);
+  assert.match(card, /"Sterk oplopend"/);
+  assert.match(card, /OMLAAG/); assert.match(card, /OMHOOG/); assert.match(card, /NOODREM/);
+  assert.doesNotMatch(card, /Vangnet na extra/);
 });
