@@ -1,5 +1,5 @@
 export const WEBAPP_VERSION = "46";
-// Build 646 (backend + web): hedge afbouwen — nieuwe schakelaar "Opnieuw hedgen na afbouw" per afbouwkaart (standaard AAN); UIT = na volledige afbouw geen terugkoop, geen vangnet en geen nieuwe Auto Hedge op die munt.
+// Build 646 (backend + web): hedge afbouwen — nieuw veld "Terughedgen %" (standaard 100) voor terugkopen en vangnet; terugkopen na 0 stappen = uit; 0% terughedgen = na volledige afbouw niets meer voor die munt.
 // Build 643 (alleen web): Portfolio Koers — R/S-zonelijnen lopen door over het hele zichtbare scherm (niet erbuiten), uitgedund tot minimaal 10 px; alleen weergave.
 // Build 641 (alleen web): Portfolio Koers — zonelijnen nog maar één keer: de achtergrondlijnen (canvas, over de hele hoogte) zijn weg, de R/S-lijnen rond de actieve zone blijven; alleen weergave.
 // Build 640 (alleen web): Portfolio Koers — zonelijnen dezelfde opbouw maar minder fel (rood 58→26%, groen 50→24%); alleen weergave.

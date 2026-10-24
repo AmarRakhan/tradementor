@@ -54,6 +54,8 @@ const EVENT_LABELS = {
   OVER_COVERED_HOLD: "Andere kant al groter · niets verkocht",
   REHEDGE_ALL: "Re-Hedge All · weer 100%",
   GRID_DONE_NO_REHEDGE: "Afgebouwd · niet opnieuw hedgen",
+  GRID_DONE_REHEDGE_BELOW_MINIMUM: "Afgebouwd · terughedgen te klein voor Aster",
+  WAIT_FOR_REHEDGE_PCT: "Vangnet · terughedgen loopt",
 };
 
 export function recoveryEventLabel(event) {

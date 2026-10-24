@@ -263,7 +263,7 @@ class SettingsRoute(Recovery):
     def test_free_settings_saved_and_public(self):
         out = self.save()
         self.assertEqual(out["shortRecoveryPlan"], {"enabled": True, "steps": 10, "totalPct": "20", "stepPct": "2",
-                                                    "rebuySteps": 1, "safetyNetPct": "20", "rehedgeAfterAfbouw": True})
+                                                    "rebuySteps": 1, "safetyNetPct": "20", "rehedgePct": "100"})
         self.assertEqual(self.get("asterPositionLossAutoHedge", self.uid)["shortRecoveryPlan"]["steps"], 10)
         self.assertEqual(self.L.hedge_orders, [])                    # saving never places an order
 

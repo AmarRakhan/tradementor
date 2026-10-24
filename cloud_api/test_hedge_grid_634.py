@@ -43,7 +43,7 @@ class Settings(unittest.TestCase):
         self.assertEqual((cfg["rebuySteps"], cfg["safetyNetPct"]), (1, "6"))
         cfg = normalize_settings({"enabled": True, "steps": 10, "totalPct": "20", "rebuySteps": 2, "safetyNetPct": "8"})
         self.assertEqual((cfg["rebuySteps"], cfg["safetyNetPct"]), (2, "8"))
-        for bad in ({"rebuySteps": 0}, {"safetyNetPct": "0"}, {"safetyNetPct": "100"}, {"rebuySteps": True}):
+        for bad in ({"rebuySteps": -1}, {"safetyNetPct": "0"}, {"safetyNetPct": "100"}, {"rebuySteps": True}):
             with self.assertRaises(ValueError):
                 normalize_settings({"enabled": True, "steps": 3, "totalPct": "6", **bad})
 

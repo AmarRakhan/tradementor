@@ -942,7 +942,7 @@ def _active_joint_exit(
             update: dict[str, Any] = {"pairExit": None, "pairExitRequestedAt": None}
             record = state.get(field) if isinstance(state.get(field), dict) else None
             if record:
-                update[field] = {**record, "phase": "REFILL", "lastEvent": "JOINT_EXIT_EXPIRED_REHEDGE",
+                update[field] = {**record, "phase": "REFILL", "refillPct": None, "lastEvent": "JOINT_EXIT_EXPIRED_REHEDGE",
                                  "evaluatedAt": now, "lastTarget": str(protected_qty)}
             _pair_doc(uid, symbol).set(update, merge=True)
             _audit(uid, {"eventType": "JOINT_EXIT_EXPIRED_REHEDGE", "symbol": symbol})
@@ -1560,10 +1560,10 @@ class ShortRecoverySettingsRequest(BaseModel):
     # LONG = LONG-hedge of a protected SHORT (price rises). Old clients send nothing -> SHORT.
     hedgeSide: str = Field(default="SHORT", pattern="^(LONG|SHORT)$")
     # Build 634 (grid): buy a sold part back after this many levels up; re-hedge 100% this % beyond the last level.
-    rebuySteps: int = Field(default=1, ge=1, le=100)
+    rebuySteps: int = Field(default=1, ge=0, le=100)          # build 646: 0 = never buy back
     safetyNetPct: str | None = Field(default=None, max_length=16)
-    # Build 646: "Opnieuw hedgen na afbouw" (default ON). OFF = after a full reduction the pair is left alone.
-    rehedgeAfterAfbouw: bool = True
+    # Build 646: "Terughedgen" X% (default 100) for buy-backs and the vangnet; 0 = after a full reduction nothing more.
+    rehedgePct: str | None = Field(default=None, max_length=16)
 
 
 @main.app.put("/v1/me/aster/position-loss-auto-hedge/short-recovery")
@@ -1578,7 +1578,7 @@ def put_position_loss_auto_hedge_short_recovery(
         plan = normalize_short_recovery_settings(
             {"enabled": request.enabled, "steps": request.steps, "totalPct": request.totalPct,
              "rebuySteps": request.rebuySteps, "safetyNetPct": request.safetyNetPct,
-             "rehedgeAfterAfbouw": request.rehedgeAfterAfbouw})
+             "rehedgePct": request.rehedgePct})
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     hedge_side = request.hedgeSide.upper()

@@ -45,11 +45,14 @@ test("build 634: grid fields in the afbouw card", () => {
   assert.doesNotMatch(card, /100% sluiten en 90%/);
 });
 
-test("build 646: afbouwkaart heeft 'Opnieuw hedgen na afbouw' (standaard AAN) met waarschuwing bij UIT", () => {
+test("build 646: afbouwkaart heeft Terughedgen % (standaard 100) en terugkopen 0 = uit", () => {
   const card = readFileSync(new URL("../components/short-recovery-card.tsx", import.meta.url), "utf8");
-  assert.match(card, /Opnieuw hedgen na afbouw/);
-  assert.match(card, /plan\.rehedgeAfterAfbouw !== false/);
-  assert.match(card, /rehedgeAfterAfbouw: rehedge/);
+  assert.match(card, /Terughedgen \(terugkopen \+ vangnet\)/);
+  assert.match(card, /plan\.rehedgePct \?\? "100"/);
+  assert.match(card, /rehedgePct: String\(rehedgeN\)/);
+  assert.match(card, /\(0 = uit\)/);
   assert.match(card, /geen bescherming meer/);
+  assert.doesNotMatch(card, /rehedgeAfterAfbouw/);
   assert.equal(recoveryEventLabel("GRID_DONE_NO_REHEDGE"), "Afgebouwd · niet opnieuw hedgen");
+  assert.equal(recoveryEventLabel("WAIT_FOR_REHEDGE_PCT"), "Vangnet · terughedgen loopt");
 });

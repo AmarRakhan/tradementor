@@ -116,19 +116,21 @@ def normalize_settings(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     # where it was sold (default 1), and re-hedge 100% when the price moves ``safetyNetPct`` beyond the last level
     # (default = the total move).
     rebuy = raw.get("rebuySteps", DEFAULT_REBUY_STEPS)
-    if isinstance(rebuy, bool) or not isinstance(rebuy, int) or not 1 <= rebuy <= MAX_STEPS:
-        raise ValueError(f"terugkopen na aantal stappen moet een geheel getal van 1 t/m {MAX_STEPS} zijn")
+    # Build 646: rebuySteps 0 = never buy back on the way back.
+    if isinstance(rebuy, bool) or not isinstance(rebuy, int) or not 0 <= rebuy <= MAX_STEPS:
+        raise ValueError(f"terugkopen na aantal stappen moet een geheel getal van 0 (uit) t/m {MAX_STEPS} zijn")
     safety = total if raw.get("safetyNetPct") in (None, "") else _dec(raw.get("safetyNetPct"), "vangnet")
     if safety <= 0 or safety >= 100:
         raise ValueError("vangnet moet tussen 0% en 100% liggen")
-    # Build 646 (Amar 24-10): "Opnieuw hedgen na afbouw". ON (default) = grid as before. OFF = once the hedge is
-    # fully reduced, nothing more for that pair: no buy-back, no vangnet; the protected position survives on its own.
-    rehedge = raw.get("rehedgeAfterAfbouw", True)
-    if not isinstance(rehedge, bool):
-        raise ValueError("opnieuw hedgen na afbouw moet aan of uit zijn")
+    # Build 646 (Amar 24-10): "Terughedgen" X% (default 100) for everything that makes the hedge bigger again:
+    # a buy-back restores X% of the sold part, the vangnet re-hedges X% of the protected position. 0% = once the
+    # hedge is fully reduced nothing more happens for that pair (no vangnet); the position survives on its own.
+    rehedge = Decimal(100) if raw.get("rehedgePct") in (None, "") else _dec(raw.get("rehedgePct"), "terughedgen")
+    if rehedge < 0 or rehedge > 100:
+        raise ValueError("terughedgen moet tussen 0% en 100% liggen")
     return {"enabled": enabled, "steps": steps, "totalPct": _text(total),
             "stepPct": _text((total / Decimal(steps)).quantize(Decimal("1e-8"))),
-            "rebuySteps": rebuy, "safetyNetPct": _text(safety), "rehedgeAfterAfbouw": rehedge}
+            "rebuySteps": rebuy, "safetyNetPct": _text(safety), "rehedgePct": _text(rehedge)}
 
 
 def step_price(anchor: Any, k: int, n: int, total_pct: Any, direction: Any = "DOWN") -> Decimal:
@@ -322,8 +324,8 @@ def grid_step(*, anchor: Any, price: Any, sold: int, n: int, total_pct: Any, reb
               fee_rate: Any = DEFAULT_FEE_RATE, rehedge: bool = True, safety_from: Any = None) -> dict[str, Any]:
     """One grid decision: new number of sold parts and the event. Pure; the caller turns parts into a target.
 
-    ``rehedge=False`` (build 646): once every part is sold the grid stops (GRID_DONE_NO_REHEDGE): no buy-back and
-    no vangnet. ``safety_from``: price where the grid resumed; the vangnet counts from there when it lies beyond
+    ``rehedge=False`` (build 646, terughedgen 0%): once every part is sold the grid stops (GRID_DONE_NO_REHEDGE):
+    no buy-back and no vangnet. ``rebuy_steps=0``: never buy back. ``safety_from``: price where the grid resumed; the vangnet counts from there when it lies beyond
     the last level, so switching re-hedging back on never re-hedges at once.
     """
     up = _direction(direction) == "UP"
@@ -340,8 +342,8 @@ def grid_step(*, anchor: Any, price: Any, sold: int, n: int, total_pct: Any, reb
         return {"sold": new, "event": "GRID_SELL"}
     if old >= n and not rehedge:
         return {"sold": old, "event": "GRID_DONE_NO_REHEDGE"}
-    g = max(1, int(rebuy_steps))
-    while new > 0:
+    g = int(rebuy_steps)
+    while g > 0 and new > 0:
         back = grid_level(anchor, new - g, n, total_pct, direction)
         if not (p <= back if up else p >= back):
             break
