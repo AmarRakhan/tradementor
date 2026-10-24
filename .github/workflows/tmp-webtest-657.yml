@@ -1,0 +1,22 @@
+name: tmp webtest 657
+on:
+  push:
+    branches: [claude/tradecentrum-zoek-657-ci]
+permissions:
+  contents: read
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: web/package-lock.json }
+      - working-directory: web
+        shell: bash
+        run: |
+          set +e
+          npm ci > /tmp/ci.txt 2>&1 || { tail -20 /tmp/ci.txt | while read -r l; do echo "::error::$l"; done; exit 1; }
+          npm test > /tmp/t.txt 2>&1; code=$?
+          grep -nE "^not ok|^# (tests|pass|fail)" /tmp/t.txt | head -40 | while read -r l; do echo "::error::$l"; done
+          grep -nE "error|Error|AssertionError|expected|actual|operator" /tmp/t.txt | grep -v "^.*node_modules" | head -40 | while read -r l; do echo "::warning::${l:0:900}"; done
+          exit $code
