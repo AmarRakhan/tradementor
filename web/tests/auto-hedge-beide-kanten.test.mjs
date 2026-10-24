@@ -44,3 +44,12 @@ test("build 634: grid fields in the afbouw card", () => {
   assert.match(card, /Vangnet na extra/);
   assert.doesNotMatch(card, /100% sluiten en 90%/);
 });
+
+test("build 645: afbouwkaart heeft 'Opnieuw hedgen na afbouw' (standaard AAN) met waarschuwing bij UIT", () => {
+  const card = readFileSync(new URL("../components/short-recovery-card.tsx", import.meta.url), "utf8");
+  assert.match(card, /Opnieuw hedgen na afbouw/);
+  assert.match(card, /plan\.rehedgeAfterAfbouw !== false/);
+  assert.match(card, /rehedgeAfterAfbouw: rehedge/);
+  assert.match(card, /geen bescherming meer/);
+  assert.equal(recoveryEventLabel("GRID_DONE_NO_REHEDGE"), "Afgebouwd · niet opnieuw hedgen");
+});

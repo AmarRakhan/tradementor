@@ -53,6 +53,7 @@ const EVENT_LABELS = {
   STEP_WAIT_PROFIT_AFTER_FEES: "Wacht: stap nog geen winst na fees",
   OVER_COVERED_HOLD: "Andere kant al groter · niets verkocht",
   REHEDGE_ALL: "Re-Hedge All · weer 100%",
+  GRID_DONE_NO_REHEDGE: "Afgebouwd · niet opnieuw hedgen",
 };
 
 export function recoveryEventLabel(event) {

@@ -186,16 +186,26 @@ def _grid(*, rec: dict[str, Any], cfg: Mapping[str, Any], long_q: Decimal, short
         sold = max(0, min(n, sold))
     else:
         sold = max(0, min(n, int(rec.get("sold") or 0)))
+    rehedge = bool(cfg.get("rehedgeAfterAfbouw", True))
+    if rec.get("afbouwDone") and rehedge:
+        # Build 645: re-hedging switched back on after a stop. Resume the normal grid where it is; the vangnet
+        # counts from the current price (if beyond the last level), so nothing is re-hedged at the moment of switching.
+        rec.update(afbouwDone=False, safetyFrom=_txt(price))
     decision = grid_step(anchor=anchor, price=price, sold=sold, n=n, total_pct=cfg["totalPct"],
                          rebuy_steps=min(int(cfg["rebuySteps"]), n), safety_pct=cfg["safetyNetPct"],
-                         direction=direction, hedge_entry=entry if entry > 0 else None)
+                         direction=direction, hedge_entry=entry if entry > 0 else None,
+                         rehedge=rehedge, safety_from=rec.get("safetyFrom"))
     event = decision["event"]
+    if event == "GRID_DONE_NO_REHEDGE":
+        rec.update(afbouwDone=True)
     rec.update(anchor=_txt(anchor), gridKey=grid_key, gridParts=n, steps=n, totalPct=cfg["totalPct"],
                stepPct=cfg["stepPct"], rebuySteps=cfg["rebuySteps"], safetyNetPct=cfg["safetyNetPct"])
     if event == "SAFETY_NET_REHEDGE":
         rec.update(phase=PHASE_REFILL, anchorAtMark=True, sold=None, lastTarget=str(long_q))
         return {"override": None, "record": rec, "event": event}
     sold = decision["sold"]
+    if sold < n:
+        rec.pop("safetyFrom", None)           # a part is back: the next full sale uses the normal vangnet again
     target = max(Decimal(0), min(long_q, cap - grid_released(base, sold, n, step)))
     rec.update(sold=sold, stepsReached=sold, lastTarget=_txt(target))
     return {"override": target, "record": rec, "event": event}

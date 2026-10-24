@@ -19,7 +19,7 @@ def run(**kw):
 class Settings(unittest.TestCase):
     def test_defaults_off(self):
         self.assertEqual(normalize_settings(None), {"enabled": False, "steps": 4, "totalPct": "8", "stepPct": "2",
-                                                    "rebuySteps": 1, "safetyNetPct": "8"})
+                                                    "rebuySteps": 1, "safetyNetPct": "8", "rehedgeAfterAfbouw": True})
 
     def test_total_drop_and_steps_amar_example(self):
         # Amar 18:02: "20% daling in 10 stappen" -> every 2% sells 10%.
