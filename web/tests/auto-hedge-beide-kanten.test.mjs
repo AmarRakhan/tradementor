@@ -61,7 +61,7 @@ test("build 646: verliesgrens springt niet terug, schuifbalk $1–$100, scherm o
   const bridge = readFileSync(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
   assert.equal((bridge.match(/type="range" min="1" max="100"/g) || []).length, 2);
   assert.equal((bridge.match(/<span>\$1<\/span><span>\$10<\/span>/g) || []).length, 2);
-  assert.match(bridge, /current === serverLong\.current \? nextLong : current/);
+  assert.match(bridge, /first \|\| current === prevLong \? nextLong : current/);
   assert.match(bridge, /"AUTO_HEDGE_THRESHOLD"/);
   const css = readFileSync(new URL("../app/position-loss-auto-hedge.css", import.meta.url), "utf8");
   assert.match(css, /#aster-position-loss-auto-hedge-back-host\{top:calc\(28px \+ env\(safe-area-inset-top\)\)\}/);
