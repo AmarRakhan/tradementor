@@ -486,3 +486,10 @@ article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto
 .hp-res dt{margin:0}.hp-res dd{margin:0;font-weight:800;color:#fff}
 .hp-ok{margin:6px 0 0;font-size:12px;color:#7dffb5;font-weight:700}
 .hp-apply{margin-top:10px;width:100%;border:0;border-radius:12px;padding:12px;background:#2ee07a;color:#032013;font:900 14px inherit;cursor:pointer}
+/* Build 652: gem. max drawdown vanaf instap, boven de afbouwstappen (zelfde getallen als in de Portfolio Snapshot). */
+.plah-dd{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0 4px}
+.plah-dd-cell{display:grid;gap:3px;padding:9px 11px;border-radius:11px;border:1px solid rgba(225,185,72,.32);background:rgba(10,8,4,.85)}
+.plah-dd-cell small{color:#b9ae90;font-size:11.5px;line-height:1.2}
+.plah-dd-cell b{font-size:18px;font-weight:900;line-height:1.1}
+.plah-dd-long{border-color:rgba(46,224,122,.45);background:rgba(4,26,14,.7)}.plah-dd-long b{color:#42e999}
+.plah-dd-short{border-color:rgba(255,91,122,.45);background:rgba(30,6,13,.7)}.plah-dd-short b{color:#ff6680}

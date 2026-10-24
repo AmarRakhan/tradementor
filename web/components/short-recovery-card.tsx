@@ -5,6 +5,7 @@ import { authenticatedRequest } from "@/lib/cloud-client";
 import { WEBAPP_BUILD_NUMBER } from "@/lib/app-version";
 import { validateRecoverySettings } from "@/lib/short-recovery.mjs";
 import { HedgePreview, type PreviewSettings } from "@/components/hedge-preview";
+import { DrawdownReference, useEntryDrawdown } from "@/components/entry-drawdown";
 
 // Hedge afbouwen settings in the Auto Hedge screen, between the loss thresholds and "Gehedgede posities".
 // Build 623: one card per side with its own settings. hedgeSide "SHORT" = SHORT-hedge of a LONG position,
@@ -54,6 +55,8 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
   const [rehedge, setRehedge] = useState(String(plan.rehedgePct ?? "100"));
   // Build 647: Verdeling — small parts near the start, big parts far away; buying back small first (keuze B).
   const [dist, setDist] = useState<Distribution>(plan.distribution ?? "EQUAL");
+  // Build 652: dezelfde gem. max drawdown als in de Portfolio Snapshot, direct boven de afbouwstappen.
+  const drawdown = useEntryDrawdown();
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -115,6 +118,8 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
     </div>
 
     {!state.enabled && !enabled && <p className="plah-info"><span>i</span> Zet eerst Auto Hedge aan; afbouwen werkt alleen op Auto Hedge-hedges.</p>}
+
+    <DrawdownReference data={drawdown} />
 
     {enabled && <>
       <div className="plah-unwind-fields">

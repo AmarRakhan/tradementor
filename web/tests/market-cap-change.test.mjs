@@ -48,7 +48,10 @@ test("de rij Markt staat tussen Rendement vandaag en Close Long, met 3 knoppen i
   const closeLong = component.indexOf('<ProfitAction scope="LONG" label="Close Long"');
   assert.ok(growth > 0 && market > growth && closeLong > market, "volgorde Rendement vandaag → Markt → Close Long");
   assert.match(component, /MARKET CAP 24U/);
-  assert.equal((component.match(/className="aps-market-card aps-market-placeholder"/g) || []).length, 2);
+  // Build 652: de twee gereserveerde plekken zijn nu LONG en SHORT max drawdown (zelfde kaartstijl).
+  assert.equal((component.match(/className="aps-market-card aps-market-placeholder"/g) || []).length, 0);
+  assert.ok(component.indexOf('<DrawdownTile side="LONG"') > component.indexOf("MARKET CAP 24U"));
+  assert.ok(component.indexOf('<DrawdownTile side="SHORT"') > component.indexOf('<DrawdownTile side="LONG"'));
   assert.match(component, /fetch\("\/api\/market-overview", \{ cache: "no-store" \}\)/);
   assert.match(css, /\.aps-market-row\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.match(css, /\.aps-market-cap\.aps-positive strong\{color:#42e999\}/);
