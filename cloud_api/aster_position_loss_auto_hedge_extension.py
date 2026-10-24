@@ -8,6 +8,8 @@ RECOVERY and explicit per-pair re-arming.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
+import math
 import os
 import re
 import threading
@@ -67,6 +69,9 @@ class AutoHedgeSettingsRequest(BaseModel):
     # thresholdShortUsd = loss threshold for a SHORT position (build 623). None = keep the stored value.
     thresholdUsd: float = Field(default=DEFAULT_THRESHOLD_USD, ge=0.01, le=100_000)
     thresholdShortUsd: float | None = Field(default=None, ge=0.01, le=100_000)
+    # Build 647 (Amar 24-10): max hedge in % of the position (1-100, default 100 = 1:1). None = keep the stored value.
+    maxHedgePct: float | None = Field(default=None, ge=1, le=100)          # LONG position (SHORT hedge)
+    maxHedgeShortPct: float | None = Field(default=None, ge=1, le=100)     # SHORT position (LONG hedge)
     confirmDisable: bool = False
     clientBuild: str = Field(default="", max_length=32)
     clientSource: str = Field(default="", max_length=64)
@@ -111,7 +116,53 @@ def _current(uid: str) -> dict[str, Any]:
         "enabled": row.get("enabled") is True,
         "thresholdUsd": threshold,
         "thresholdShortUsd": threshold_short,
+        "maxHedgePct": _max_pct(row.get("maxHedgePct")),
+        "maxHedgeShortPct": _max_pct(row.get("maxHedgeShortPct")),
     }
+
+
+def _max_pct(value: Any) -> float:
+    """Build 647: max hedge in % of the position, 1..100; anything unreadable = 100 (1:1)."""
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        return 100.0
+    return pct if math.isfinite(pct) and 1 <= pct <= 100 else 100.0
+
+
+def _max_hedge_by_side(settings: dict[str, Any]) -> dict[str, float]:
+    """Fraction of the protected position that Auto Hedge hedges, keyed by the PROTECTED side."""
+    return {"LONG": _max_pct(settings.get("maxHedgePct")) / 100.0,
+            "SHORT": _max_pct(settings.get("maxHedgeShortPct")) / 100.0}
+
+
+def _max_hedge_caps(client: Any, settings: dict[str, Any], positions: list[dict[str, Any]]) -> dict[tuple[str, str], float]:
+    """Build 647: per (symbol, protected side) the hedge quantity at max hedge %, floored to the Aster step.
+
+    Empty when both sides are 100% (then nothing changes and no exchange info is read)."""
+    fractions = _max_hedge_by_side(settings)
+    if all(f >= 1 for f in fractions.values()):
+        return {}
+    try:
+        info = client.public_exchange_info() or {}
+        rules = {str(row.get("symbol", "")).upper(): ContractRules.from_exchange_info(row)
+                 for row in info.get("symbols", []) if isinstance(row, dict)}
+    except Exception:
+        rules = {}
+    caps: dict[tuple[str, str], float] = {}
+    for (symbol, side), row in _position_map(positions).items():
+        frac = fractions.get(side, 1.0)
+        if frac >= 1:
+            continue
+        rule = rules.get(symbol)
+        if rule is None:
+            continue                       # no rules: keep 1:1 rather than send an unsendable quantity
+        step = Decimal(str(rule.market_quantity_step or 0))
+        qty = Decimal(str(position_quantity(row))) * Decimal(str(frac))
+        if step > 0:
+            qty = (qty / step).to_integral_value(rounding="ROUND_DOWN") * step
+        caps[(symbol, side)] = float(qty)
+    return caps
 
 
 def _thresholds_by_side(settings: dict[str, Any]) -> dict[str, float]:
@@ -178,6 +229,8 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         "thresholdUsd": float(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD)),
         "thresholdLongUsd": float(row.get("thresholdUsd", DEFAULT_THRESHOLD_USD)),
         "thresholdShortUsd": float(row.get("thresholdShortUsd", DEFAULT_THRESHOLD_USD)),
+        "maxHedgePct": _max_pct(row.get("maxHedgePct")),
+        "maxHedgeShortPct": _max_pct(row.get("maxHedgeShortPct")),
         "workerEnabled": WORKER_ENABLED,
         "executionEnabled": EXECUTION_ENABLED,
         "operational": operational,
@@ -1192,6 +1245,7 @@ def _short_recovery_targets(
             min_notional=rule.min_notional, available_balance=available,
             leverage=protected_row.get("leverage") or 1,
             direction=direction,
+            max_hedge=_max_hedge_by_side(settings).get(protected_side, 1.0),
         )
         record = result["record"]
         if record is not None:
@@ -1335,6 +1389,7 @@ def _run_uid(
             positions=positions,
             open_orders=open_orders,
             thresholds_by_side=_thresholds_by_side(settings),
+            max_caps=_max_hedge_caps(client, settings, positions) or None,
         )
         if execute:
             # Joint TP exit of Recovery pairs that still hold both legs: close the non-TP leg to 0.
@@ -1441,6 +1496,9 @@ def put_position_loss_auto_hedge(
         "enabled": bool(request.enabled),
         "thresholdUsd": threshold,
         "thresholdShortUsd": threshold_short,
+        "maxHedgePct": _max_pct(current.get("maxHedgePct") if request.maxHedgePct is None else request.maxHedgePct),
+        "maxHedgeShortPct": _max_pct(current.get("maxHedgeShortPct") if request.maxHedgeShortPct is None
+                                     else request.maxHedgeShortPct),
         "updatedAt": now,
     }, merge=True)
     if previous_enabled != bool(request.enabled):
@@ -1492,6 +1550,9 @@ def apply_position_loss_auto_hedge(
         "enabled": bool(request.enabled),
         "thresholdUsd": threshold,
         "thresholdShortUsd": threshold_short,
+        "maxHedgePct": _max_pct(current.get("maxHedgePct") if request.maxHedgePct is None else request.maxHedgePct),
+        "maxHedgeShortPct": _max_pct(current.get("maxHedgeShortPct") if request.maxHedgeShortPct is None
+                                     else request.maxHedgeShortPct),
         "updatedAt": datetime.now(timezone.utc),
     }, merge=True)
     if previous_enabled != bool(request.enabled):

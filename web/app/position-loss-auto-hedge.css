@@ -427,3 +427,17 @@ article[data-reference="nexora_tradecentrum_actieve_posities.png"] .plah-tc-auto
 .plah-unwind-error span{border-color:#ff536b;color:#ff8799}
 .plah-unwind-save{margin-top:12px;width:100%;padding:12px;border:1px solid rgba(44,225,140,.55);border-radius:12px;background:rgba(9,93,56,.35);color:#35ee9c;font-weight:900}
 .plah-unwind-save:disabled{opacity:.5}
+/* Build 647: max hedge field, Verdeling buttons, afbouw bars and Omlaag/Omhoog/Noodrem lines. */
+.plah-max-hedge{margin-top:12px;max-width:50%}
+.plah-unwind-dist{grid-column:1/-1}
+.plah-seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.plah-seg button{min-height:40px;border:1px solid rgba(255,255,255,.16);border-radius:11px;background:rgba(1,16,11,.8);color:#c9cecb;font:700 13px/1.1 inherit;cursor:pointer}
+.plah-seg button.on{border-color:#37ee9c;background:rgba(15,63,36,.95);color:#eafff2}
+.plah-unwind-bars{display:flex;gap:6px;align-items:flex-end;height:74px;margin:26px 0 22px}
+.plah-unwind-bars div{flex:1;position:relative;border-radius:6px 6px 3px 3px;background:#2ee07a}
+.plah-unwind-bars em{position:absolute;top:-17px;left:0;right:0;text-align:center;font:800 11px/1 inherit;font-style:normal;color:#dfe}
+.plah-unwind-bars span{position:absolute;bottom:-17px;left:0;right:0;text-align:center;font:700 10px/1 inherit;color:#9aa19e}
+.plah-unwind-lines{display:grid;gap:9px;border-top:1px solid rgba(255,255,255,.08);padding-top:12px}
+.plah-unwind-lines p{display:grid;grid-template-columns:86px 1fr;gap:9px;margin:0;font-size:13px;line-height:1.35;color:#dfe5e2}
+.plah-unwind-lines b{border-radius:8px;padding:5px 6px;font-size:11px;font-weight:900;text-align:center;align-self:start}
+.plah-unwind-lines b.down{background:#0f3f24;color:#7dffb5}.plah-unwind-lines b.up{background:#2b2350;color:#c8bdff}.plah-unwind-lines b.stop{background:#4a3407;color:#ffd27a}

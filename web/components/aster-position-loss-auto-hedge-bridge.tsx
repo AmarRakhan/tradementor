@@ -105,6 +105,8 @@ type AutoHedgeState = {
   thresholdUsd: number;
   thresholdLongUsd?: number;
   thresholdShortUsd?: number;
+  maxHedgePct?: number;
+  maxHedgeShortPct?: number;
   workerEnabled?: boolean;
   executionEnabled?: boolean;
   operational?: boolean;
@@ -197,6 +199,10 @@ function money(value: number | undefined, signed = true) {
   const number = Number(value);
   const sign = signed && number > 0 ? "+" : "";
   return `${sign}$${new Intl.NumberFormat("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(number)}`;
+}
+
+function maxOk(value: number) {
+  return Number.isFinite(value) && value >= 1 && value <= 100;
 }
 
 function thresholdMoney(value: number) {
@@ -427,6 +433,11 @@ export function AsterPositionLossAutoHedgeBridge() {
   // A draft follows the server only while it still equals the last value the server sent.
   const serverLong = useRef("10");
   const serverShort = useRef("10");
+  // Build 647: max hedge % per side (LONG position / SHORT position), same no-snap-back rule as the thresholds.
+  const [maxLong, setMaxLong] = useState("100");
+  const [maxShort, setMaxShort] = useState("100");
+  const serverMaxLong = useRef("100");
+  const serverMaxShort = useRef("100");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -449,6 +460,12 @@ export function AsterPositionLossAutoHedgeBridge() {
       setDraftShort((current) => (current === serverShort.current ? nextShort : current));
       serverLong.current = nextLong;
       serverShort.current = nextShort;
+      const nextMaxLong = String(Number(next.maxHedgePct ?? 100));
+      const nextMaxShort = String(Number(next.maxHedgeShortPct ?? 100));
+      setMaxLong((current) => (current === serverMaxLong.current ? nextMaxLong : current));
+      setMaxShort((current) => (current === serverMaxShort.current ? nextMaxShort : current));
+      serverMaxLong.current = nextMaxLong;
+      serverMaxShort.current = nextMaxShort;
       setError("");
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Auto Hedge kon niet worden geladen.";
@@ -581,7 +598,9 @@ export function AsterPositionLossAutoHedgeBridge() {
         : "/api/exchanges/aster/position-loss-auto-hedge";
       const next = await authenticatedRequest(endpoint, {
         method: applyNow ? "POST" : "PUT",
-        body: JSON.stringify({ enabled, thresholdUsd: threshold, thresholdShortUsd: thresholdShort, confirmDisable: state.enabled === true && enabled === false, clientBuild: WEBAPP_BUILD_NUMBER, clientSource: source }),
+        body: JSON.stringify({ enabled, thresholdUsd: threshold, thresholdShortUsd: thresholdShort,
+          ...(maxOk(maxLongN) ? { maxHedgePct: maxLongN } : {}), ...(maxOk(maxShortN) ? { maxHedgeShortPct: maxShortN } : {}),
+          confirmDisable: state.enabled === true && enabled === false, clientBuild: WEBAPP_BUILD_NUMBER, clientSource: source }),
       }) as AutoHedgeState;
       setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
       serverLong.current = String(Number(next.thresholdUsd));
@@ -589,6 +608,10 @@ export function AsterPositionLossAutoHedgeBridge() {
       // Keep whatever the user typed meanwhile; only normalise a draft that equals the saved value.
       setDraft((cur) => (Number(cur.replace(",", ".")) === Number(serverLong.current) ? serverLong.current : cur));
       setDraftShort((cur) => (Number(cur.replace(",", ".")) === Number(serverShort.current) ? serverShort.current : cur));
+      serverMaxLong.current = String(Number(next.maxHedgePct ?? 100));
+      serverMaxShort.current = String(Number(next.maxHedgeShortPct ?? 100));
+      setMaxLong((cur) => (Number(cur.replace(",", ".")) === Number(serverMaxLong.current) ? serverMaxLong.current : cur));
+      setMaxShort((cur) => (Number(cur.replace(",", ".")) === Number(serverMaxShort.current) ? serverMaxShort.current : cur));
       if (!next.executionEnabled) {
         const actions = Array.isArray(next.lastReport?.actions) ? next.lastReport?.actions ?? [] : [];
         const due = actions.filter((item) => Number(item.requiredDelta) > 0).length;
@@ -612,15 +635,16 @@ export function AsterPositionLossAutoHedgeBridge() {
     const long = Number(draft.replace(",", "."));
     const short = Number(draftShort.replace(",", "."));
     const valid = (v: number) => Number.isFinite(v) && v >= 0.01 && v <= 100000;
-    if (!valid(long) || !valid(short)) return;
-    if (long === Number(serverLong.current) && short === Number(serverShort.current)) return;
+    if (!valid(long) || !valid(short) || !maxOk(maxLongN) || !maxOk(maxShortN)) return;
+    if (long === Number(serverLong.current) && short === Number(serverShort.current)
+      && maxLongN === Number(serverMaxLong.current) && maxShortN === Number(serverMaxShort.current)) return;
     const timer = window.setTimeout(async () => {
       const ok = await persist(state.enabled, long, false, "AUTO_HEDGE_THRESHOLD");
-      if (ok) setMessage(`Verliesgrens opgeslagen · LONG ${thresholdMoney(long)} · SHORT ${thresholdMoney(short)}`);
+      if (ok) setMessage(`Opgeslagen · LONG ${thresholdMoney(long)} · max ${maxLongN}% · SHORT ${thresholdMoney(short)} · max ${maxShortN}%`);
     }, 1200);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, draftShort, open, available, saving, state.enabled]);
+  }, [draft, draftShort, maxLong, maxShort, open, available, saving, state.enabled]);
 
   const requestEnabledChange = async (nextEnabled: boolean, source: string) => {
     if (state.enabled === true && nextEnabled === false) {
@@ -773,6 +797,8 @@ export function AsterPositionLossAutoHedgeBridge() {
 
   const threshold = Number(draft.replace(",", "."));
   const thresholdShort = Number(draftShort.replace(",", "."));
+  const maxLongN = Number(maxLong.replace(",", "."));
+  const maxShortN = Number(maxShort.replace(",", "."));
   // Build 646: slider $1–$100; any other amount (e.g. $0,05 or $250) goes in the Exact bedrag box.
   const sliderValue = Math.max(1, Math.min(100, Number.isFinite(threshold) ? threshold : 10));
   const sliderShort = Math.max(1, Math.min(100, Number.isFinite(thresholdShort) ? thresholdShort : 10));
@@ -970,7 +996,8 @@ export function AsterPositionLossAutoHedgeBridge() {
           <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)}</div>
           <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderValue} onChange={(event) => setDraft(event.target.value)} aria-label="Auto Hedge verliesgrens LONG" />
           <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
-          <p className="plah-info"><span>i</span> Staat een LONG-positie -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager, dan wordt de SHORT aangevuld tot exact 1:1 coin quantity.</p>
+          <div className="plah-exact-box plah-max-hedge"><small>Max hedge</small><label><b>%</b><input aria-label="Max hedge in procent bij een LONG-positie" type="text" inputMode="decimal" value={maxLong} onChange={(event) => setMaxLong(event.target.value)} /></label></div>
+          <p className="plah-info"><span>i</span> Staat een LONG-positie -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager, dan zet de bot een SHORT van {maxOk(maxLongN) && maxLongN < 100 ? `${maxLongN}% van de LONG` : "exact 1:1 coin quantity"}.{maxOk(maxLongN) && maxLongN < 100 ? " De rest van je LONG blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
         </section>
 
         <ShortRecoveryCard
@@ -988,7 +1015,8 @@ export function AsterPositionLossAutoHedgeBridge() {
           <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)}</div>
           <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderShort} onChange={(event) => setDraftShort(event.target.value)} aria-label="Auto Hedge verliesgrens SHORT" />
           <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
-          <p className="plah-info"><span>i</span> Staat een SHORT-positie -{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)} of lager, dan wordt de LONG aangevuld tot exact 1:1 coin quantity.</p>
+          <div className="plah-exact-box plah-max-hedge"><small>Max hedge</small><label><b>%</b><input aria-label="Max hedge in procent bij een SHORT-positie" type="text" inputMode="decimal" value={maxShort} onChange={(event) => setMaxShort(event.target.value)} /></label></div>
+          <p className="plah-info"><span>i</span> Staat een SHORT-positie -{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)} of lager, dan zet de bot een LONG van {maxOk(maxShortN) && maxShortN < 100 ? `${maxShortN}% van de SHORT` : "exact 1:1 coin quantity"}.{maxOk(maxShortN) && maxShortN < 100 ? " De rest van je SHORT blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
         </section>
 
         <ShortRecoveryCard

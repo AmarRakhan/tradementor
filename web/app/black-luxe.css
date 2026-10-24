@@ -2441,6 +2441,17 @@ html:where([data-app-skin="black-luxe"])[data-aster-compact-snapshot="true"] .me
 :where(html[data-app-skin="black-luxe"]) .plah-unwind-test span{border-color:#12cdf2;color:#5eefff}
 :where(html[data-app-skin="black-luxe"]) .plah-unwind-error span{border-color:#ff4e6e;color:#ff88a0}
 :where(html[data-app-skin="black-luxe"]) .plah-unwind-save{border:1px solid rgba(10,250,138,0.55);border-radius:12px;background:rgba(0,104,55,0.35);color:#13ff9c}
+:where(html[data-app-skin="black-luxe"]) .plah-seg button{border:1px solid rgba(255,255,255,.16);border-radius:11px;background:rgba(7,7,7,0.8);color:#c9cecb}
+:where(html[data-app-skin="black-luxe"]) .plah-seg button.on{border-color:#16ff9c;background:rgba(28,28,29,0.95);color:#eafff2}
+:where(html[data-app-skin="black-luxe"]) .plah-unwind-bars div{border-radius:6px 6px 3px 3px;background:#0ef972}
+:where(html[data-app-skin="black-luxe"]) .plah-unwind-bars em{color:#dfe}
+:where(html[data-app-skin="black-luxe"]) .plah-unwind-bars span{color:#9aa19e}
+:where(html[data-app-skin="black-luxe"]) .plah-unwind-lines{border-top:1px solid rgba(255,255,255,.08)}
+:where(html[data-app-skin="black-luxe"]) .plah-unwind-lines p{color:#dfe5e2}
+:where(html[data-app-skin="black-luxe"]) .plah-unwind-lines b{border-radius:8px}
+:where(html[data-app-skin="black-luxe"]) .plah-unwind-lines b.down{background:#1c1c1d;color:#6bffb5}
+:where(html[data-app-skin="black-luxe"]) .plah-unwind-lines b.up{background:#161617;color:#d5c6ff}
+:where(html[data-app-skin="black-luxe"]) .plah-unwind-lines b.stop{background:#543700;color:#ffde69}
 /* from portfolio-hedge.css */
 :where(html[data-app-skin="black-luxe"]) .aps-hedge-card{border:1px solid rgba(240,184,40,0.42);border-radius:11px;color:#f7f7f1;background:linear-gradient(145deg,rgba(15,15,16,0.88),rgba(9,9,10,0.95));box-shadow:inset 0 1px 0 rgba(88,245,158,0.045)}
 :where(html[data-app-skin="black-luxe"]) .aps-hedge-shield{color:#efba2b}

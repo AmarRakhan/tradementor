@@ -36,6 +36,8 @@ DEFAULT_TOTAL_PCT = Decimal("8")
 MAX_STEPS = 100
 REOPEN_FRACTION = Decimal("0.9")
 DEFAULT_REBUY_STEPS = 1
+DISTRIBUTIONS = ("EQUAL", "ASCENDING", "STEEP")
+DEFAULT_DISTRIBUTION = "EQUAL"
 DIRECTIONS = {"DOWN", "UP"}
 # Conservative taker fee per order (open and close), fraction of notional.
 DEFAULT_FEE_RATE = Decimal("0.0005")
@@ -128,9 +130,16 @@ def normalize_settings(raw: Mapping[str, Any] | None) -> dict[str, Any]:
     rehedge = Decimal(100) if raw.get("rehedgePct") in (None, "") else _dec(raw.get("rehedgePct"), "terughedgen")
     if rehedge < 0 or rehedge > 100:
         raise ValueError("terughedgen moet tussen 0% en 100% liggen")
+    # Build 647 (Amar 24-10): "Verdeling" of the hedge over the steps. EQUAL = every step the same part (as before);
+    # ASCENDING = 1-2-3-4-5 (small near the start, big far away); STEEP = 1-2-4-8-16. Buying back follows the same
+    # parts in the other direction: small first near the bottom, the big parts back at the higher prices.
+    dist = str(raw.get("distribution") or DEFAULT_DISTRIBUTION).upper()
+    if dist not in DISTRIBUTIONS:
+        raise ValueError("verdeling moet gelijk, oplopend of sterk oplopend zijn")
     return {"enabled": enabled, "steps": steps, "totalPct": _text(total),
             "stepPct": _text((total / Decimal(steps)).quantize(Decimal("1e-8"))),
-            "rebuySteps": rebuy, "safetyNetPct": _text(safety), "rehedgePct": _text(rehedge)}
+            "rebuySteps": rebuy, "safetyNetPct": _text(safety), "rehedgePct": _text(rehedge),
+            "distribution": dist}
 
 
 def step_price(anchor: Any, k: int, n: int, total_pct: Any, direction: Any = "DOWN") -> Decimal:
@@ -298,13 +307,38 @@ def _away(price: Decimal, level: Decimal, up: bool) -> bool:
     return price >= level if up else price <= level
 
 
-def effective_parts(base: Any, wanted: int, price: Any, qty_step: Any, min_qty: Any, min_notional: Any) -> int:
-    """Largest number of parts (<= wanted) whose part size is still one sendable Aster order; 0 = none."""
+def part_weights(n: int, distribution: Any = DEFAULT_DISTRIBUTION) -> list[Decimal]:
+    """Weights of parts 1..n (part 1 = nearest the start of the cycle)."""
+    n = max(1, int(n))
+    dist = str(distribution or DEFAULT_DISTRIBUTION).upper()
+    if dist == "ASCENDING":
+        return [Decimal(i) for i in range(1, n + 1)]
+    if dist == "STEEP":
+        return [Decimal(2) ** (i - 1) for i in range(1, n + 1)]
+    return [Decimal(1)] * n
+
+
+def parts_released(base: Any, parts: Any, n: int, qty_step: Any, distribution: Any = DEFAULT_DISTRIBUTION) -> Decimal:
+    """Quantity released when the parts with these indices (1..n) are sold; all n parts = the whole base."""
+    b = max(Decimal(0), _dec(base, "basis"))
+    chosen = {int(i) for i in (parts or []) if 1 <= int(i) <= max(1, int(n))}
+    if not chosen or n <= 0:
+        return Decimal(0)
+    if len(chosen) >= n:
+        return b
+    w = part_weights(n, distribution)
+    return _floor(b * sum(w[i - 1] for i in chosen) / sum(w), _dec(qty_step, "stapgrootte"))
+
+
+def effective_parts(base: Any, wanted: int, price: Any, qty_step: Any, min_qty: Any, min_notional: Any,
+                    distribution: Any = DEFAULT_DISTRIBUTION) -> int:
+    """Largest number of parts (<= wanted) whose smallest part is still one sendable Aster order; 0 = none."""
     b = max(Decimal(0), _dec(base, "basis"))
     p = _dec(price, "koers")
     step = _dec(qty_step, "stapgrootte")
     for k in range(max(0, int(wanted)), 0, -1):
-        part = _floor(b / Decimal(k), step)
+        w = part_weights(k, distribution)
+        part = _floor(b * w[0] / sum(w), step)
         if part > 0 and not _below_minimum(part, p, min_qty, min_notional):
             return k
     return 0

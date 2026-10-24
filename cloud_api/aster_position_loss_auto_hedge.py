@@ -183,6 +183,7 @@ def _build_action(
     threshold: float,
     pending: Mapping[tuple[str, str], Mapping[str, float]],
     target_override: float | None = None,
+    max_cap: float | None = None,
 ) -> AutoHedgeAction:
     hedge_side = "SHORT" if protected_side == "LONG" else "LONG"
     protected_qty = position_quantity(protected_row)
@@ -200,6 +201,12 @@ def _build_action(
     target = (
         min(protected_qty, max(0.0, _f(target_override))) if recovery_target else protected_qty
     )
+    # Build 647 (Amar 24-10): "Max hedge" — without an afbouw target the hedge aims at this cap (already floored to the
+    # Aster step) instead of 1:1. A hedge that is already bigger (up to 1:1) is kept: Auto Hedge never sells to reach it.
+    capped = (not recovery_target and max_cap is not None and math.isfinite(_f(max_cap, -1.0))
+              and _f(max_cap) + EPSILON < protected_qty)
+    if capped:
+        target = min(protected_qty, max(max(0.0, _f(max_cap)), effective))
     delta = target - effective
     has_pending = pending_open > EPSILON or pending_close > EPSILON
     if abs(delta) <= EPSILON:
@@ -207,13 +214,16 @@ def _build_action(
         status = "PENDING" if has_pending else "HEDGED"
         if recovery_target and target + EPSILON < protected_qty:
             reason = "PENDING_ORDER_RECONCILES_RECOVERY_TARGET" if has_pending else "SHORT_RECOVERY_TARGET"
+        elif capped:
+            reason = "PENDING_ORDER_RECONCILES_MAX_HEDGE" if has_pending else "MAX_HEDGE_TARGET"
         else:
             reason = "PENDING_ORDER_RECONCILES_EXACT_1_TO_1" if has_pending else "EXACT_1_TO_1"
         delta = 0.0
     elif delta > 0:
         operation = "OPEN"
         status = "NEEDS_HEDGE"
-        reason = "SHORT_RECOVERY_REOPEN" if recovery_target and target + EPSILON < protected_qty else "LOSS_THRESHOLD_REACHED_OR_PROTECTION_DRIFT"
+        reason = ("SHORT_RECOVERY_REOPEN" if recovery_target and target + EPSILON < protected_qty
+                  else "MAX_HEDGE_OPEN" if capped else "LOSS_THRESHOLD_REACHED_OR_PROTECTION_DRIFT")
     elif recovery_target:
         operation = "REDUCE"
         status = "NEEDS_REDUCE"
@@ -255,6 +265,7 @@ def evaluate_auto_hedge(
     skip_symbols: set[str] | None = None,
     target_overrides: Mapping[str, float] | None = None,
     thresholds_by_side: Mapping[str, Any] | None = None,
+    max_caps: Mapping[tuple[str, str], float] | None = None,
 ) -> list[AutoHedgeAction]:
     """Return deterministic exact-quantity decisions.
 
@@ -310,6 +321,7 @@ def evaluate_auto_hedge(
             threshold=side_thresholds.get(chosen_side, threshold),
             pending=pending,
             target_override=overrides.get(symbol),
+            max_cap=(max_caps or {}).get((symbol, chosen_side)),
         ))
     return actions
 
@@ -424,6 +436,7 @@ def reconcile_auto_hedge(
     positions: list[dict[str, Any]] | None = None,
     open_orders: list[dict[str, Any]] | None = None,
     thresholds_by_side: Mapping[str, Any] | None = None,
+    max_caps: Mapping[tuple[str, str], float] | None = None,
 ) -> dict[str, Any]:
     """Reconcile exchange legs and optionally submit exact OPEN/REDUCE deltas."""
     threshold = normalize_threshold(threshold_usd)
@@ -432,7 +445,7 @@ def reconcile_auto_hedge(
     actions = evaluate_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
-        target_overrides=target_overrides, thresholds_by_side=thresholds_by_side,
+        target_overrides=target_overrides, thresholds_by_side=thresholds_by_side, max_caps=max_caps,
     )
     public_actions: list[dict[str, Any]] = []
     orders_sent = 0
@@ -574,7 +587,7 @@ def reconcile_auto_hedge(
     final_actions = evaluate_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
-        target_overrides=target_overrides, thresholds_by_side=thresholds_by_side,
+        target_overrides=target_overrides, thresholds_by_side=thresholds_by_side, max_caps=max_caps,
     )
     return {
         "thresholdUsd": threshold,

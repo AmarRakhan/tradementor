@@ -30,7 +30,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
-from short_recovery_ladder import effective_parts, grid_released, grid_step, normalize_settings, plan, profitable_after_fees
+from short_recovery_ladder import effective_parts, grid_step, normalize_settings, parts_released, plan, profitable_after_fees
 
 PHASE_LADDER = "LADDER"
 PHASE_REOPEN_CLOSE = "REOPEN_CLOSE"
@@ -102,6 +102,7 @@ def decide(
     leverage: Any = 1,
     start_at_mark: bool = False,
     direction: str = "DOWN",
+    max_hedge: Any = 1,
 ) -> dict[str, Any]:
     """Return {override, record, event}.
 
@@ -117,6 +118,8 @@ def decide(
     step = max(Decimal(0), _d(qty_step))
     price = _d(mark)
     rec = dict(record or {}) or None
+    # Build 647: "Max hedge" (fraction of the protected position, 1 = 1:1). Every (re)fill aims at this share.
+    max_frac = min(Decimal(1), max(Decimal("0.01"), _d(max_hedge, "1")))
 
     if not cfg["enabled"]:
         return {"override": None, "record": None, "event": "DISABLED_LEGACY_1_TO_1" if rec else "DISABLED"}
@@ -138,10 +141,11 @@ def decide(
         # is, instead of waiting forever (afbouw never restarted and the engine retried an impossible order).
         # Build 646: after a vangnet with terughedgen X% < 100 the refill target is X% of the position, not 1:1.
         refill_pct = _d((rec or {}).get("refillPct"), "100") / Decimal(100) if rec and rec.get("refillPct") else Decimal(1)
-        want = long_q if refill_pct >= 1 else min(long_q, _floor_step(long_q * refill_pct, step))
+        share = refill_pct * max_frac                     # build 647: refill aims at max hedge x terughedgen
+        want = long_q if share >= 1 else min(long_q, _floor_step(long_q * share, step))
         gap = want - short_q
         gap_below_minimum = short_q > 0 and gap > 0 and _below_exchange_minimum(gap, price, step, min_qty, min_notional)
-        if (_same(short_q, want, step) or gap_below_minimum or (refill_pct < 1 and short_q > want)) and _d(short_entry) > 0:
+        if (_same(short_q, want, step) or gap_below_minimum or (share < 1 and short_q > want)) and _d(short_entry) > 0:
             rehedge_all = bool(rec and rec.get("anchorAtMark"))
             at_mark = (start_at_mark and rec is None) or rehedge_all
             reason = "REHEDGE_ALL_AT_MARK" if rehedge_all else ("ANCHOR_AT_SWITCH_ON" if at_mark else (
@@ -150,7 +154,7 @@ def decide(
                                cfg=cfg, reason=reason)
             new["direction"] = direction
             return {"override": short_q, "record": new, "event": "CYCLE_STARTED"}
-        if refill_pct < 1:
+        if share < 1:
             return {"override": want, "record": rec, "event": "WAIT_FOR_REHEDGE_PCT"}
         return {"override": None, "record": rec, "event": "WAIT_FOR_1_TO_1"}
 
@@ -161,49 +165,64 @@ def decide(
         return {"override": None, "record": rec, "event": "REOPEN_PHASE_REPLACED_BY_GRID"}
 
     return _grid(rec=rec, cfg=cfg, long_q=long_q, short_q=short_q, entry=_d(short_entry), price=price, step=step,
-                 min_qty=min_qty, min_notional=min_notional, direction=str(rec.get("direction") or direction))
+                 min_qty=min_qty, min_notional=min_notional, direction=str(rec.get("direction") or direction),
+                 max_frac=max_frac)
 
 
 def _grid(*, rec: dict[str, Any], cfg: Mapping[str, Any], long_q: Decimal, short_q: Decimal, entry: Decimal,
-          price: Decimal, step: Decimal, min_qty: Any, min_notional: Any, direction: str) -> dict[str, Any]:
+          price: Decimal, step: Decimal, min_qty: Any, min_notional: Any, direction: str,
+          max_frac: Decimal = Decimal(1)) -> dict[str, Any]:
     """Build 634 (Amar 23-10): grid on the hedge inside one cycle (phase LADDER).
 
     Fixed levels from the cycle anchor. Away from the anchor: sell one more part per level (profit after fees
-    only). Back towards the anchor ``rebuySteps`` levels above the last sold part: buy that part back. Everything
-    sold and the price ``safetyNetPct`` beyond the last level: re-hedge 100% (vangnet), new cycle at that price.
+    only). Back towards the anchor ``rebuySteps`` levels above the last sold part: buy a part back. Everything
+    sold and the price ``safetyNetPct`` beyond the last level: noodrem (vangnet), re-hedge, new cycle at that price.
     Settings apply at once; a changed grid keeps the hedge as it is and re-counts the sold parts on the new grid.
+
+    Build 647: parts may differ in size (``distribution``). Going away from the anchor the smallest unsold part is
+    sold first (small near the start, big far away); coming back the smallest sold part is bought back first
+    (Amar 24-10, keuze B: small first, the big parts back at the higher prices). ``soldParts`` holds the indices.
     """
     base = _d(rec.get("base"))
     growth = max(Decimal(0), long_q - _d(rec.get("longAtStart")))
-    cap = base + growth                       # DCA after the cycle start stays fully hedged
+    cap = base + _floor_step(growth * max_frac, step)    # DCA after the cycle start is hedged at the max share
     if short_q > cap + (step / 2 if step > 0 else Decimal(0)):
         return {"override": None, "record": rec, "event": "OVER_COVERED_HOLD"}
     anchor = _d(rec.get("anchor"))
     if anchor <= 0:
         anchor = entry if entry > 0 else price
-    grid_key = f"{cfg['steps']}|{cfg['totalPct']}|{cfg['rebuySteps']}"
+    dist = str(cfg.get("distribution") or "EQUAL")
+    grid_key = f"{cfg['steps']}|{cfg['totalPct']}|{cfg['rebuySteps']}|{dist}"
     regrid = rec.get("gridKey") != grid_key or rec.get("sold") is None or rec.get("gridParts") is None
     # The number of parts is fixed per cycle (decided at the anchor price), so it never jitters with the price.
-    n = effective_parts(base, cfg["steps"], anchor, step, min_qty, min_notional) if regrid else int(rec["gridParts"])
+    n = (effective_parts(base, cfg["steps"], anchor, step, min_qty, min_notional, dist) if regrid
+         else int(rec["gridParts"]))
     if n <= 0:
-        rec.update(lastTarget=str(min(long_q, short_q)), steps=0, gridParts=0, gridKey=grid_key, sold=0)
+        rec.update(lastTarget=str(min(long_q, short_q)), steps=0, gridParts=0, gridKey=grid_key, sold=0, soldParts=[])
         return {"override": None, "record": rec, "event": "SKIPPED_BELOW_MINIMUM"}
     if regrid:
-        # New grid (or a pre-634 ladder record): keep the hedge as it is, count its sold parts on this grid.
+        # New grid (or an older record): keep the hedge as it is, count its sold parts on this grid.
         rec["kept"] = "0"
         released = max(Decimal(0), cap - short_q)
-        sold = int((released / base * n).to_integral_value()) if base > 0 else 0
-        sold = max(0, min(n, sold))
+        tol = step / 2 if step > 0 else Decimal("1e-12")
+        k = 0
+        while k < n and parts_released(base, range(1, k + 2), n, step, dist) <= released + tol:
+            k += 1
+        parts = list(range(1, k + 1))
     else:
-        sold = max(0, min(n, int(rec.get("sold") or 0)))
+        stored = rec.get("soldParts")
+        if isinstance(stored, list):
+            parts = sorted({int(i) for i in stored if 1 <= int(i) <= n})
+        else:                                             # pre-647 record: equal parts, the first ``sold`` ones
+            parts = list(range(1, max(0, min(n, int(rec.get("sold") or 0))) + 1))
+    sold = len(parts)
     pct = _d(cfg.get("rehedgePct"), "100") / Decimal(100)          # build 646: terughedgen X%
     rehedge = pct > 0
     kept = max(Decimal(0), _d(rec.get("kept")))                     # sold for good (not bought back, X% < 100)
     if rec.get("afbouwDone") and rehedge:
-        # Build 646: terughedgen raised above 0% after a stop. Resume the normal grid where it is; the vangnet
+        # Build 646: terughedgen raised above 0% after a stop. Resume the normal grid where it is; the noodrem
         # counts from the current price (if beyond the last level), so nothing is re-hedged at the moment of switching.
         rec.update(afbouwDone=False, safetyFrom=_txt(price))
-    sold_before = sold
     decision = grid_step(anchor=anchor, price=price, sold=sold, n=n, total_pct=cfg["totalPct"],
                          rebuy_steps=min(int(cfg["rebuySteps"]), n), safety_pct=cfg["safetyNetPct"],
                          direction=direction, hedge_entry=entry if entry > 0 else None,
@@ -212,26 +231,32 @@ def _grid(*, rec: dict[str, Any], cfg: Mapping[str, Any], long_q: Decimal, short
     if event == "GRID_DONE_NO_REHEDGE":
         rec.update(afbouwDone=True)
     rec.update(anchor=_txt(anchor), gridKey=grid_key, gridParts=n, steps=n, totalPct=cfg["totalPct"],
-               stepPct=cfg["stepPct"], rebuySteps=cfg["rebuySteps"], safetyNetPct=cfg["safetyNetPct"])
+               stepPct=cfg["stepPct"], rebuySteps=cfg["rebuySteps"], safetyNetPct=cfg["safetyNetPct"],
+               distribution=dist)
     if event == "SAFETY_NET_REHEDGE":
-        refill = _floor_step(long_q * pct, step)
-        if pct < 1 and (refill <= 0 or _below_exchange_minimum(refill, price, step, min_qty, min_notional)):
-            # X% of the position is too small for one Aster order: nothing to re-hedge, the pair is done.
+        share = pct * max_frac
+        refill = _floor_step(long_q * share, step)
+        if share < 1 and (refill <= 0 or _below_exchange_minimum(refill, price, step, min_qty, min_notional)):
+            # The share of the position is too small for one Aster order: nothing to re-hedge, the pair is done.
             rec.update(afbouwDone=True, lastTarget="0")
             return {"override": Decimal(0), "record": rec, "event": "GRID_DONE_REHEDGE_BELOW_MINIMUM"}
-        rec.update(phase=PHASE_REFILL, anchorAtMark=True, sold=None,
+        rec.update(phase=PHASE_REFILL, anchorAtMark=True, sold=None, soldParts=None,
                    refillPct=None if pct >= 1 else cfg["rehedgePct"],
-                   lastTarget=_txt(long_q if pct >= 1 else refill))
-        return {"override": None if pct >= 1 else refill, "record": rec, "event": event}
-    sold = decision["sold"]
-    if sold < n:
-        rec.pop("safetyFrom", None)           # a part is back: the next full sale uses the normal vangnet again
-    if event == "GRID_REBUY" and pct < 1:
-        # Build 646: a buy-back restores only X% of the parts that came back; the rest stays sold for good.
-        back = grid_released(base, sold_before, n, step) - grid_released(base, sold, n, step)
-        kept += _floor_step(back * (1 - pct), step)
-    target = max(Decimal(0), min(long_q, cap - kept - grid_released(base, sold, n, step)))
-    rec.update(sold=sold, stepsReached=sold, lastTarget=_txt(target), kept=_txt(kept))
+                   lastTarget=_txt(long_q if share >= 1 else refill))
+        return {"override": None if share >= 1 else refill, "record": rec, "event": event}
+    new = decision["sold"]
+    before = parts_released(base, parts, n, step, dist)
+    if new > sold:
+        unsold = [i for i in range(1, n + 1) if i not in parts]
+        parts = sorted(parts + unsold[: new - sold])          # smallest unsold part first (small near the start)
+    elif new < sold:
+        parts = parts[sold - new:]                            # keuze B: smallest sold part comes back first
+        rec.pop("safetyFrom", None)       # a part is back: the next full sale uses the normal noodrem again
+        if pct < 1:
+            # Build 646: a buy-back restores only X% of the parts that came back; the rest stays sold for good.
+            kept += _floor_step((before - parts_released(base, parts, n, step, dist)) * (1 - pct), step)
+    target = max(Decimal(0), min(long_q, cap - kept - parts_released(base, parts, n, step, dist)))
+    rec.update(sold=len(parts), soldParts=parts, stepsReached=len(parts), lastTarget=_txt(target), kept=_txt(kept))
     return {"override": target, "record": rec, "event": event}
 
 
