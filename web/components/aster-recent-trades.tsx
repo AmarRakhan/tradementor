@@ -203,6 +203,13 @@ function finite(value: unknown) {
 function normalizedSymbol(symbol = "") {
   return symbol.toUpperCase().replace(/[\/_-]/g, "");
 }
+function searchKey(value = "") {
+  return value.toUpperCase().replace(/[\s\/_-]/g, "");
+}
+function rowMatchesSearch(row: { symbol: string }, term: string) {
+  if (!term) return true;
+  return baseAsset(row.symbol).includes(term) || normalizedSymbol(row.symbol).includes(term);
+}
 function baseAsset(symbol = "") {
   const value = normalizedSymbol(symbol);
   return suffixes.reduce((v, suffix) => (v.endsWith(suffix) ? v.slice(0, -suffix.length) : v), value) || "?";
@@ -656,8 +663,10 @@ function TradeCenterTable({
   rows,
   onOpenDetail,
   onOpenClose,
+  emptyText = "Geen bevestigde gegevens voor dit filter.",
 }: {
   rows: TradeCenterRow[];
+  emptyText?: string;
   onOpenDetail: (row: TradeCenterRow) => void;
   onOpenClose: (position: OpenPosition) => void;
 }) {
@@ -680,11 +689,12 @@ function TradeCenterTable({
               <button className={styles.pair} role="cell" type="button" data-auto-hedge-symbol={normalizedSymbol(row.symbol)} onClick={() => onOpenDetail(row)} aria-label={baseAsset(row.symbol) + " openen in grafiek"}>
                 <CoinIcon symbol={row.symbol} />
                 <span className={styles.pairCopy}>
-                  <b>{baseAsset(row.symbol)}</b>
-                  <small className={styles.coinMeta}>
-                    <span>{marketPrice(row.markPrice)}</span>
-                    {row.leverage !== null ? <em>{Math.round(row.leverage)}x</em> : null}
-                  </small>
+                  <b className={styles.coinTitle}>
+                    {baseAsset(row.symbol)}
+                    {row.leverage !== null ? <em className={styles.levChip}>{Math.round(row.leverage)}x</em> : null}
+                  </b>
+                  {/* Build 657: geen prijs meer in de lijst; deze regel is alleen nog voor de statuslabels (HEDGED e.d.). */}
+                  <small className={styles.coinMeta} />
                 </span>
                 {row.position?.asymmetricPairStatus === "covered" ? <span className={styles.pairLinkStatus + " " + styles.covered}><i />Covered</span> : row.position?.asymmetricPairStatus === "covering" ? <span className={styles.pairLinkStatus + " " + styles.covering}><i />Covering</span> : null}
               </button>
@@ -709,7 +719,7 @@ function TradeCenterTable({
             </div>
           );
         })
-      ) : <div className={styles.empty}>Geen bevestigde gegevens voor dit filter.</div>}
+      ) : <div className={styles.empty}>{emptyText}</div>}
     </div>
   );
 }
@@ -1031,6 +1041,7 @@ function FocusV2CockpitPanel({ value }: { value: FocusV2Cockpit }) {
 
 export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSnapshot; onRetry: () => void }) {
   const [active, setActive] = useState<FilterKey>("live");
+  const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [pages, setPages] = useState(1);
   const [detail, setDetail] = useState<AsterPairDetail | null>(null);
@@ -1111,7 +1122,7 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     }),
     [livePositions, mostDcaPositions, entries, exits, allPositions, positionsWithMultiDcaCounts, scanActions, tpActions, dcaActions, profitPositions, lossPositions, reversedActions],
   );
-  const counts: Record<FilterKey, number> = {
+  const baseCounts: Record<FilterKey, number> = {
     live: livePositions.length,
     mostDca: mostDcaPositions.length,
     entered: entries.length,
@@ -1122,7 +1133,12 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
     loss: lossPositions.length,
     actions: scanActions.length,
   };
-  const selectedRows = datasets[active];
+  // Build 657: zoeken op muntnaam. Alleen de weergave wordt gefilterd; Close Profits/Close Long/Short blijven over alle posities werken.
+  const searchTerm = searchKey(query);
+  const counts: Record<FilterKey, number> = searchTerm
+    ? (Object.fromEntries((Object.keys(baseCounts) as FilterKey[]).map((key) => [key, datasets[key].filter((row) => rowMatchesSearch(row, searchTerm)).length])) as Record<FilterKey, number>)
+    : baseCounts;
+  const selectedRows = searchTerm ? datasets[active].filter((row) => rowMatchesSearch(row, searchTerm)) : datasets[active];
   const visibleLimit = expanded ? pages * 100 : 6;
   const visibleRows = selectedRows.slice(0, visibleLimit);
   const hasMore = visibleRows.length < selectedRows.length;
@@ -1676,12 +1692,28 @@ export function AsterRecentTrades({ snapshot, onRetry }: { snapshot: ExchangeSna
               <article><span>Totale waarde</span><strong>{accountDisplay.equity}</strong><small>Portfolio</small></article>
             </section>
             <div className={styles.filterBar}>
-              <label htmlFor="tradecentrum-filter">Posities</label>
+              <div className={styles.searchBox} role="search">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  id="tradecentrum-search"
+                  type="search"
+                  inputMode="search"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  placeholder="Zoek munt"
+                  aria-label="Zoek munt in Tradecentrum"
+                  value={query}
+                  onChange={(event) => { setQuery(event.target.value); setPages(1); }}
+                />
+                {query ? <button type="button" aria-label="Zoekopdracht wissen" onClick={() => { setQuery(""); setPages(1); }}>×</button> : null}
+              </div>
               <select id="tradecentrum-filter" value={active} onChange={(event) => selectFilter(event.target.value as FilterKey)} aria-label="Tradecentrum filter">
                 {FILTERS.map((filter) => <option key={filter.key} value={filter.key}>{filter.key === "live" ? "Alle posities" : filter.label} · {counts[filter.key]}</option>)}
               </select>
             </div>
-            <TradeCenterTable rows={visibleRows} onOpenDetail={openDetail} onOpenClose={openClosePosition} />
+            <TradeCenterTable rows={visibleRows} emptyText={searchTerm ? `Geen munt gevonden voor "${query.trim()}".` : undefined} onOpenDetail={openDetail} onOpenClose={openClosePosition} />
             <div className={styles.scopeActions} aria-label="Winstposities sluiten per richting">
               <button type="button" className={styles.scopeLong} disabled={!profitSnapshotReliable || scopedProfitCandidates.LONG.length === 0} onClick={() => forwardSnapshotProfit("LONG")}>Close Long</button>
               <button type="button" className={styles.scopeShort} disabled={!profitSnapshotReliable || scopedProfitCandidates.SHORT.length === 0} onClick={() => forwardSnapshotProfit("SHORT")}>Close Short</button>

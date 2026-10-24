@@ -569,9 +569,11 @@ export function AsterPositionLossAutoHedgeBridge() {
         if (!small) continue;
         const unwind = unwindBadge(pair);
         const cls = unwind ? unwind.cls : statusClass(pair.status);
-        const label = unwind ? unwind.label : statusLabel(pair.status);
+        // Build 657: labels staan onder de muntnaam met de volle breedte; lange labels worden kleiner en mogen
+        // op een spatie afbreken in plaats van rechts weg te vallen.
+        const label = (unwind ? unwind.label : statusLabel(pair.status)).replaceAll("_", " ");
         const badge = existing || document.createElement("em");
-        const nextClass = `plah-tc-auto-hedge ${cls}`;
+        const nextClass = `plah-tc-auto-hedge ${cls}${label.length > 11 ? " long" : ""}`;
         if (badge.className !== nextClass) badge.className = nextClass;
         if (badge.textContent !== label) badge.textContent = label;
         badge.title = unwind ? unwind.detail : "Auto Hedge-status";

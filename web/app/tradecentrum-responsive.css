@@ -241,3 +241,53 @@ article[data-reference="nexora_tradecentrum_actieve_posities.png"] [role="table"
     margin-right:3px;
   }
 }
+
+/* Build 657: muntnaam + leverage op regel 1 (leverage kleiner), prijs weg, statuslabels op regel 2 met de volle breedte. */
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] [role="table"] button[role="cell"]>span:nth-child(2){
+  flex:1 1 auto!important;
+}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] [role="table"] button[role="cell"]>span:nth-child(2)>b{
+  display:flex!important;
+  align-items:center!important;
+  gap:clamp(3px,.9vw,5px)!important;
+  min-width:0!important;
+  white-space:nowrap!important;
+}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] [role="table"] button[role="cell"]>span:nth-child(2)>b>em{
+  flex:0 0 auto!important;
+  padding:1px clamp(2px,.65vw,5px)!important;
+  font-size:clamp(4.8px,1.35vw,6px)!important;
+  line-height:1.15!important;
+}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] [role="table"] button[role="cell"] small{
+  flex-wrap:wrap!important;
+  row-gap:2px!important;
+}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] [role="table"] button[role="cell"] small:empty{
+  display:none!important;
+}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] [role="table"] button[role="cell"] small>em.plah-tc-auto-hedge{
+  flex:0 1 auto!important;
+  max-width:100%!important;
+  margin-left:0!important;
+  white-space:nowrap!important;
+}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] [role="table"] button[role="cell"] small>em.plah-tc-auto-hedge.long{
+  white-space:normal!important;
+  font-size:clamp(4.3px,1.2vw,5.4px)!important;
+  line-height:1.2!important;
+  border-radius:6px!important;
+}
+article[data-reference="nexora_tradecentrum_actieve_posities.png"] div:has(>#tradecentrum-filter){
+  gap:8px!important;
+}
+@media(max-width:700px){
+  article[data-reference="nexora_tradecentrum_actieve_posities.png"] #tradecentrum-search{
+    min-height:29px!important;
+    font-size:clamp(7px,2vw,9px)!important;
+  }
+  article[data-reference="nexora_tradecentrum_actieve_posities.png"] #tradecentrum-filter{
+    min-width:0!important;
+    max-width:52vw!important;
+  }
+}

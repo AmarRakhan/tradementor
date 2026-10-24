@@ -49,7 +49,7 @@ test("overview columns replace only Liq with a per-position Close action", () =>
   assert.match(table, /focusAirbagHedge !== true/);
   assert.doesNotMatch(component, /<span>LEV<\/span>/);
   assert.match(component, /className=\{styles\.coinMeta\}/);
-  assert.match(component, /row\.leverage !== null \? <em>\{Math\.round\(row\.leverage\)\}x<\/em> : null/);
+  assert.match(component, /row\.leverage !== null \? <em className=\{styles\.levChip\}>\{Math\.round\(row\.leverage\)\}x<\/em> : null/);
   assert.match(component, /Math\.max\(0, row\.entries - 1\)/);
 });
 
@@ -205,4 +205,19 @@ test("Build 468 full Auto Hedge leg close leaves the survivor in Recovery until 
   assert.match(panel, /re-hedge blijft UIT/);
   assert.match(panel, /percentage === 100/);
   assert.match(panel, /autoHedgeStatus/);
+});
+
+test("build 657: search by coin, leverage behind the coin name, no price in the overview row", () => {
+  const tableStart = component.indexOf("function TradeCenterTable");
+  const tableEnd = component.indexOf("function focusActionLabel", tableStart);
+  const table = component.slice(tableStart, tableEnd);
+  assert.match(table, /<b className=\{styles\.coinTitle\}>[\s\S]*baseAsset\(row\.symbol\)[\s\S]*styles\.levChip[\s\S]*<\/b>/);
+  assert.doesNotMatch(table, /marketPrice\(row\.markPrice\)/);
+  assert.match(table, /<small className=\{styles\.coinMeta\} \/>/);
+  assert.match(component, /id="tradecentrum-search"/);
+  assert.match(component, /const selectedRows = searchTerm \? datasets\[active\]\.filter\(\(row\) => rowMatchesSearch\(row, searchTerm\)\) : datasets\[active\];/);
+  // Zoeken filtert alleen de weergave: de bulk-sluitknoppen rekenen nooit met de gefilterde rijen.
+  assert.doesNotMatch(component, /profitCandidates[^\n]*selectedRows|selectedRows[^\n]*forwardSnapshotProfit/);
+  assert.match(styles, /\.levChip\{[^}]*font-size:6px/);
+  assert.match(styles, /\.searchBox input\{/);
 });

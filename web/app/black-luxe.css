@@ -2809,6 +2809,7 @@ html:where([data-app-skin="black-luxe"])[data-aster-compact-snapshot="true"] .me
 :where(html[data-app-skin="black-luxe"]) article[data-reference="nexora_tradecentrum_actieve_posities.png"]>div[aria-label="Winstposities sluiten per richting"] button{border-radius:10px!important}
 :where(html[data-app-skin="black-luxe"]) article[data-reference="nexora_tradecentrum_actieve_posities.png"]>footer>button:not(:disabled){border-color:rgba(4,255,193,0.78)!important;background:linear-gradient(135deg,#00f0af,#10ffc1)!important;color:#001610!important;box-shadow:0 8px 26px rgba(0,240,175,0.16)!important}
 :where(html[data-app-skin="black-luxe"]) article[data-reference="nexora_tradecentrum_actieve_posities.png"]>footer>button:disabled{background:#0b0b0b!important;color:#486889!important;border-color:rgba(66,66,68,0.22)!important;box-shadow:none!important}
+:where(html[data-app-skin="black-luxe"]) article[data-reference="nexora_tradecentrum_actieve_posities.png"] [role="table"] button[role="cell"] small>em.plah-tc-auto-hedge.long{border-radius:6px!important}
 /* from release-history.css */
 :where(html[data-app-skin="black-luxe"]) .release-history-trigger{border:0;background:transparent;color:#fff}
 :where(html[data-app-skin="black-luxe"]) .release-history-trigger:hover{color:#ffd661}
