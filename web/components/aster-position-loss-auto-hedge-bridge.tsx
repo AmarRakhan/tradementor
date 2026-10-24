@@ -147,6 +147,12 @@ function shieldIcon() {
   </svg>;
 }
 
+function swapIcon() {
+  return <svg viewBox="0 0 32 32" aria-hidden="true">
+    <path d="M6 11h19m-5-5 5 5-5 5M26 21H7m5-5-5 5 5 5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>;
+}
+
 function layersIcon() {
   return <svg viewBox="0 0 32 32" aria-hidden="true">
     <path d="m16 4 11 6-11 6L5 10l11-6Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
@@ -1015,25 +1021,54 @@ export function AsterPositionLossAutoHedgeBridge() {
           <Toggle checked={state.enabled} disabled={saving} onChange={() => void requestEnabledChange(!state.enabled, "AUTO_HEDGE_SCREEN")} label="Auto Hedge hoofdschakelaar" labelText />
         </header>
 
-        <section className="plah-threshold-card">
-          <div className="plah-protect">
-            <div><b>LONG-posities beschermen</b><small>{protectLongOn ? "AAN · een LONG in verlies krijgt een SHORT-hedge" : "UIT · nieuwe LONG-posities worden niet gehedged"}</small></div>
-            <Toggle checked={protectLongOn} disabled={saving} onChange={() => { touched.current = true; setProtectLongDraft(!protectLongOn); }} label="LONG-posities beschermen" labelText />
-          </div>
-          <div className="plah-threshold-head">
-            <label htmlFor="plah-threshold-number">LONG-positie · hedge vanaf verlies</label>
-            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { touched.current = true; setDraft(event.target.value); }} /></label></div>
-          </div>
-          <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)}</div>
-          <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderValue} onChange={(event) => { touched.current = true; setDraft(event.target.value); }} aria-label="Auto Hedge verliesgrens LONG" />
-          <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
+        {/* Build 657: opmaak volgens Amars voorbeeld — LONG en SHORT naast elkaar, daaronder de afbouwkaarten.
+            Alleen indeling en stijl: elke knop, schakelaar en veld heeft dezelfde actie als in 656. */}
+        <div className="plah-sides">
+          <section className="plah-threshold-card plah-side plah-side-long" aria-label="LONG-posities">
+            <div className="plah-protect">
+              <span className="plah-protect-icon" aria-hidden="true">{swapIcon()}</span>
+              <div><b>LONG-posities beschermen</b><small>{protectLongOn ? "AAN · een LONG in verlies krijgt een SHORT-hedge" : "UIT · nieuwe LONG-posities worden niet gehedged"}</small></div>
+              <Toggle checked={protectLongOn} disabled={saving} onChange={() => { touched.current = true; setProtectLongDraft(!protectLongOn); }} label="LONG-posities beschermen" labelText />
+            </div>
+            <div className="plah-threshold-head">
+              <div className="plah-threshold-main">
+                <label htmlFor="plah-threshold-number"><span className="plah-sr">LONG-positie · </span>Hedge vanaf verlies</label>
+                <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)}</div>
+              </div>
+              <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { touched.current = true; setDraft(event.target.value); }} /></label></div>
+            </div>
+            <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderValue} onChange={(event) => { touched.current = true; setDraft(event.target.value); }} aria-label="Auto Hedge verliesgrens LONG" />
+            <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
+            <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een LONG-positie" type="text" inputMode="decimal" value={maxLong} onChange={(event) => { touched.current = true; setMaxLong(event.target.value); }} /></label></div>
+            <p className="plah-info"><span>i</span> Staat een LONG-positie -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager, dan zet de bot een SHORT van {maxOk(maxLongN) && maxLongN < 100 ? `${maxLongN}% van de LONG` : "exact 1:1 coin quantity"}.{maxOk(maxLongN) && maxLongN < 100 ? " De rest van je LONG blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
+          </section>
+
+          <section className="plah-threshold-card plah-side plah-side-short" aria-label="SHORT-posities">
+            <div className="plah-protect">
+              <span className="plah-protect-icon" aria-hidden="true">{swapIcon()}</span>
+              <div><b>SHORT-posities beschermen</b><small>{protectShortOn ? "AAN · een SHORT in verlies krijgt een LONG-hedge" : "UIT · Auto Hedge zet nooit automatisch een LONG tegen een SHORT"}</small></div>
+              <Toggle checked={protectShortOn} disabled={saving} onChange={() => { touched.current = true; setProtectShortDraft(!protectShortOn); }} label="SHORT-posities beschermen" labelText />
+            </div>
+            <div className="plah-threshold-head">
+              <div className="plah-threshold-main">
+                <label htmlFor="plah-threshold-short-number"><span className="plah-sr">SHORT-positie · </span>Hedge vanaf verlies</label>
+                <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)}</div>
+              </div>
+              <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-short-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draftShort} onChange={(event) => { touched.current = true; setDraftShort(event.target.value); }} /></label></div>
+            </div>
+            <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderShort} onChange={(event) => { touched.current = true; setDraftShort(event.target.value); }} aria-label="Auto Hedge verliesgrens SHORT" />
+            <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
+            <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een SHORT-positie" type="text" inputMode="decimal" value={maxShort} onChange={(event) => { touched.current = true; setMaxShort(event.target.value); }} /></label></div>
+            <p className="plah-info"><span>i</span> Staat een SHORT-positie -{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)} of lager, dan zet de bot een LONG van {maxOk(maxShortN) && maxShortN < 100 ? `${maxShortN}% van de SHORT` : "exact 1:1 coin quantity"}.{maxOk(maxShortN) && maxShortN < 100 ? " De rest van je SHORT blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
+          </section>
+        </div>
+
+        <section className="plah-above-card">
           <div className="plah-above">
-            <div><b>Hedge mag groter dan positie</b><small>{allowAboveOn ? "AAN · max hedge tot 200%" : "UIT · de hedge is nooit groter dan je positie"}</small></div>
+            <div><b>Hedge mag groter dan positie</b><small>{allowAboveOn ? "AAN · max hedge tot 200% (LONG en SHORT)" : "UIT · de hedge is nooit groter dan je positie"}</small></div>
             <Toggle checked={allowAboveOn} disabled={saving} onChange={() => { touched.current = true; setAllowAboveDraft(!allowAboveOn); }} label="Hedge mag groter dan positie" labelText />
           </div>
           {allowAboveOn && <p className="plah-info plah-unwind-error" role="note"><span>!</span> Met een max hedge boven 100% sta je na een trigger netto de andere kant op (bijvoorbeeld 120%: per 10 LONG 12 SHORT). Stijgt de koers dan, dan verlies je op dat extra stuk.</p>}
-          <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een LONG-positie" type="text" inputMode="decimal" value={maxLong} onChange={(event) => { touched.current = true; setMaxLong(event.target.value); }} /></label></div>
-          <p className="plah-info"><span>i</span> Staat een LONG-positie -{thresholdMoney(Number.isFinite(threshold) ? threshold : 10)} of lager, dan zet de bot een SHORT van {maxOk(maxLongN) && maxLongN < 100 ? `${maxLongN}% van de LONG` : "exact 1:1 coin quantity"}.{maxOk(maxLongN) && maxLongN < 100 ? " De rest van je LONG blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
         </section>
 
         <ShortRecoveryCard
@@ -1043,22 +1078,6 @@ export function AsterPositionLossAutoHedgeBridge() {
           hedgeSide="SHORT"
           maxHedgePct={maxOk(maxLongN) ? maxLongN : 100}
         />
-
-        <section className="plah-threshold-card">
-          <div className="plah-protect">
-            <div><b>SHORT-posities beschermen</b><small>{protectShortOn ? "AAN · een SHORT in verlies krijgt een LONG-hedge" : "UIT · Auto Hedge zet nooit automatisch een LONG tegen een SHORT"}</small></div>
-            <Toggle checked={protectShortOn} disabled={saving} onChange={() => { touched.current = true; setProtectShortDraft(!protectShortOn); }} label="SHORT-posities beschermen" labelText />
-          </div>
-          <div className="plah-threshold-head">
-            <label htmlFor="plah-threshold-short-number">SHORT-positie · hedge vanaf verlies</label>
-            <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-short-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draftShort} onChange={(event) => { touched.current = true; setDraftShort(event.target.value); }} /></label></div>
-          </div>
-          <div className="plah-threshold-value">{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)}</div>
-          <input className="plah-range" type="range" min="1" max="100" step="1" value={sliderShort} onChange={(event) => { touched.current = true; setDraftShort(event.target.value); }} aria-label="Auto Hedge verliesgrens SHORT" />
-          <div className="plah-range-labels" aria-hidden="true"><span>$1</span><span>$10</span><span>$25</span><span>$50</span><span>$100</span></div>
-          <div className="plah-exact-box plah-max-hedge"><small>Max hedge{allowAboveOn ? " (tot 200%)" : ""}</small><label><b>%</b><input aria-label="Max hedge in procent bij een SHORT-positie" type="text" inputMode="decimal" value={maxShort} onChange={(event) => { touched.current = true; setMaxShort(event.target.value); }} /></label></div>
-          <p className="plah-info"><span>i</span> Staat een SHORT-positie -{thresholdMoney(Number.isFinite(thresholdShort) ? thresholdShort : 10)} of lager, dan zet de bot een LONG van {maxOk(maxShortN) && maxShortN < 100 ? `${maxShortN}% van de SHORT` : "exact 1:1 coin quantity"}.{maxOk(maxShortN) && maxShortN < 100 ? " De rest van je SHORT blijft onbeschermd; een grotere bestaande hedge wordt nooit verkocht." : ""}</p>
-        </section>
 
         <ShortRecoveryCard
           state={state as unknown as Parameters<typeof ShortRecoveryCard>[0]["state"]}

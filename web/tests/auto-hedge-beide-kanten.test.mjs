@@ -26,8 +26,8 @@ test("joint TP exit shows HEDGED · TP via the pairExit field", () => {
 
 test("Auto Hedge screen has a loss threshold and an afbouw card per side", () => {
   const bridge = readFileSync(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
-  assert.match(bridge, /LONG-positie · hedge vanaf verlies/);
-  assert.match(bridge, /SHORT-positie · hedge vanaf verlies/);
+  assert.match(bridge, /LONG-positie · <\/span>Hedge vanaf verlies/);
+  assert.match(bridge, /SHORT-positie · <\/span>Hedge vanaf verlies/);
   assert.match(bridge, /thresholdShortUsd: thresholdShort/);
   assert.match(bridge, /hedgeSide="SHORT"/);
   assert.match(bridge, /hedgeSide="LONG"/);

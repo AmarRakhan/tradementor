@@ -108,8 +108,11 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
     if (!next && plan.enabled) void save(false);   // OFF saves at once; ON first shows the two fields
   }
 
-  return <section className="plah-threshold-card plah-unwind-card" aria-label={`${hedgeSide}-hedge afbouwen`}>
+  // Build 657: opmaak volgens Amars voorbeeld (drawdown + velden naast elkaar, drie tegels, voorbeeld en advies
+  // naast elkaar). Zelfde velden, knoppen en acties als 656; alleen de indeling is anders.
+  return <section className={`plah-threshold-card plah-unwind-card plah-unwind-${hedgeSide.toLowerCase()}`} aria-label={`${hedgeSide}-hedge afbouwen`}>
     <div className="plah-threshold-head">
+      <span className="plah-unwind-icon" aria-hidden="true">{up ? "↗" : "↘"}</span>
       <div className="plah-unwind-title">
         <label>{hedgeSide}-hedge afbouwen</label>
         <small>Bij een {protectedSide}-positie · bouwt de Auto Hedge-{hedgeSide} in stappen af als de koers verder {up ? "stijgt" : "daalt"}</small>
@@ -119,11 +122,11 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
 
     {!state.enabled && !enabled && <p className="plah-info"><span>i</span> Zet eerst Auto Hedge aan; afbouwen werkt alleen op Auto Hedge-hedges.</p>}
 
-    <DrawdownReference data={drawdown} side={protectedSide}
-      lastStepPct={check.ok ? check.stepPct * check.steps : null} />
+    <div className={`plah-unwind-top${enabled ? " on" : ""}`}>
+      <DrawdownReference data={drawdown} side={protectedSide}
+        lastStepPct={check.ok ? check.stepPct * check.steps : null} />
 
-    {enabled && <>
-      <div className="plah-unwind-fields">
+      {enabled && <div className="plah-unwind-fields plah-unwind-main">
         <div className="plah-exact-box"><small>Afbouwen over totale {move}</small>
           <label><b>%</b><input aria-label={`Totale ${move} voor afbouw (${hedgeSide}-hedge)`} type="text" inputMode="decimal" value={totalPct} onChange={(e) => setTotalPct(e.target.value)} disabled={saving} /></label>
         </div>
@@ -136,6 +139,11 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
               className={dist === d.key ? "on" : ""} onClick={() => setDist(d.key)} disabled={saving}>{d.label}</button>)}
           </div>
         </div>
+      </div>}
+    </div>
+
+    {enabled && <>
+      <div className="plah-unwind-fields plah-unwind-row3">
         <div className="plah-exact-box"><small>Terugkopen na stappen {up ? "daling" : "stijging"} (0 = uit)</small>
           <label><b>#</b><input aria-label={`Terugkopen na aantal stappen (${hedgeSide}-hedge)`} type="number" min="0" max="100" step="1" inputMode="numeric" value={rebuy} onChange={(e) => setRebuy(e.target.value)} disabled={saving} /></label>
         </div>
@@ -161,20 +169,29 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
           const maxP = Math.max(...pcts);
           const back = gridOk ? rehedgeN : 100;
           return <>
+            <div className="plah-unwind-lines">
+              <div className="plah-tile3 down">
+                <b className="down"><i aria-hidden="true">{up ? "↗" : "↘"}</i>OMLAAG</b>
+                <span>Elke {fmt(check.stepPct, 4)}% {move} verkoopt de bot een deel van de {hedgeSide}{dist === "EQUAL"
+                  ? ` (${fmt(pcts[0], 1)}% per stap)` : `: klein eerst (${fmt(pcts[0], 1)}%), groot op het laatst (${fmt(pcts[n - 1], 1)}%)`}. Alleen met winst na fees.</span>
+              </div>
+              <div className="plah-tile3 up">
+                <b className="up"><i aria-hidden="true">↺</i>OMHOOG</b>
+                <span>{gridOk && rebuyN === 0
+                  ? "Terugkopen staat uit: wat verkocht is blijft verkocht."
+                  : `Komt de koers ${gridOk ? rebuyN : 1} stap${gridOk && rebuyN === 1 ? "" : "pen"} (${fmt(check.stepPct * (gridOk ? rebuyN : 1), 2)}%) ${up ? "onder" : "boven"} een verkooppunt, dan zet de bot ${fmt(back, 2)}% van een deel terug. Klein eerst, de grote delen pas ${up ? "lager" : "hoger"}.`}</span>
+              </div>
+              <div className="plah-tile3 stop">
+                <b className="stop"><i aria-hidden="true">➜</i>NOODREM</b>
+                <span>{gridOk && rehedgeN === 0
+                  ? "Uit (terughedgen 0%): na volledige afbouw wordt er niet opnieuw gehedged."
+                  : `Alles afgebouwd en de koers ${up ? "stijgt" : "zakt"} nog ${gridOk ? fmt(safetyN, 4) : "…"}%: in één keer weer ${fmt(back, 2)}% hedgen, nieuwe ronde vanaf daar.`}</span>
+              </div>
+            </div>
             <div className="plah-unwind-bars" aria-hidden="true">
               {pcts.map((p, i) => <div key={i} style={{ height: `${Math.max(8, (p / maxP) * 100)}%` }}>
                 <em>{fmt(p, 0)}%</em><span>{sign}{fmt(check.stepPct * (i + 1), 2)}%</span>
               </div>)}
-            </div>
-            <div className="plah-unwind-lines">
-              <p><b className="down">OMLAAG</b><span>Elke {fmt(check.stepPct, 4)}% {move} verkoopt de bot een deel van de {hedgeSide}{dist === "EQUAL"
-                ? ` (${fmt(pcts[0], 1)}% per stap)` : `: klein eerst (${fmt(pcts[0], 1)}%), groot op het laatst (${fmt(pcts[n - 1], 1)}%)`}. Alleen met winst na fees.</span></p>
-              <p><b className="up">OMHOOG</b><span>{gridOk && rebuyN === 0
-                ? "Terugkopen staat uit: wat verkocht is blijft verkocht."
-                : `Komt de koers ${gridOk ? rebuyN : 1} stap${gridOk && rebuyN === 1 ? "" : "pen"} (${fmt(check.stepPct * (gridOk ? rebuyN : 1), 2)}%) ${up ? "onder" : "boven"} een verkooppunt, dan zet de bot ${fmt(back, 2)}% van een deel terug. Klein eerst, de grote delen pas ${up ? "lager" : "hoger"}.`}</span></p>
-              <p><b className="stop">NOODREM</b><span>{gridOk && rehedgeN === 0
-                ? "Uit (terughedgen 0%): na volledige afbouw wordt er niet opnieuw gehedged."
-                : `Alles afgebouwd en de koers ${up ? "stijgt" : "zakt"} nog ${gridOk ? fmt(safetyN, 4) : "…"}%: in één keer weer ${fmt(back, 2)}% hedgen, nieuwe ronde vanaf daar.`}</span></p>
             </div>
             <p className="plah-info"><span>i</span>Kleine munt: minder, grotere stappen (elke order minstens het Aster-minimum, ook op de laagste stap). Een wijziging geldt direct voor alle lopende posities.</p>
             <HedgePreview hedgeSide={hedgeSide} maxHedgePct={maxHedgePct}

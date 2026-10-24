@@ -68,7 +68,9 @@ export function HedgePreview({ settings, maxHedgePct = 100, hedgeSide = "SHORT",
   const zx0 = zone.length ? x(zone[0].i) - 8 : 0, zx1 = zone.length ? x(zone[zone.length - 1].i) + 8 : 0;
   const base = 10 * (maxHedgePct / 100);
 
+  // Build 657: voorbeeld links, advies rechts (zelfde knoppen en velden; alleen de indeling is anders).
   return <div className="hp">
+    <div className="hp-main">
     <div className="hp-head"><b>Voorbeeld met jouw instellingen</b><span className="hp-live">LIVE</span></div>
     <div className="hp-tabs" role="tablist">
       {SCENARIOS.map((s) => <button key={s.key} type="button" role="tab" aria-selected={scenario === s.key}
@@ -97,6 +99,7 @@ export function HedgePreview({ settings, maxHedgePct = 100, hedgeSide = "SHORT",
       <div><small>Noodrem</small><b className="r">{num(sim.noodremAt, 1)}</b><small>weer {num(settings.rehedgePct * maxHedgePct / 100, 0)}% hedge</small></div>
     </div>
     <p className="hp-cap">Voorbeeld met {protectedSide} 10 en hedge op 100. Rekenvoorbeeld zonder fees en funding, geen garantie.</p>
+    </div>
 
     <div className="hp-adv">
       <div className="hp-adv-tabs" role="tablist">
