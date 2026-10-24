@@ -10,6 +10,7 @@ import { AsterHedgeManager } from "./aster-hedge-manager";
 import { PortfolioKoersChart } from "./portfolio-koers-chart";
 import { ClosedTradesFlip } from "./closed-trades-flip";
 import { useTradeJournalBackgroundSync } from "./trade-journal-background-sync";
+import { DrawdownTile, useEntryDrawdown } from "./entry-drawdown";
 import { TradeIntelligenceAdvisorCenter } from "./trade-intelligence-advisor-center";
 import { PriceZoneCycleOverview } from "./price-zone-cycle-overview";
 import { ActiveZoneSeatBlock, resolveActiveZoneSeatState, type ActiveZoneSeatSummary } from "./active-zone-seat-block";
@@ -1038,6 +1039,7 @@ function MarketOverviewRow({ market }: { market: MarketOverview | null }) {
   const value = market?.changePercent ?? null;
   const tone = marketCapChangeTone(value);
   const cap = formatMarketCapUsd(market?.marketCapUsd ?? null);
+  const drawdown = useEntryDrawdown();
   const detail = market?.error && value === null ? "Niet bereikbaar" : market?.stale ? "Verouderd · CoinMarketCap" : cap ? `${cap} · CoinMarketCap` : "CoinMarketCap";
   return <div className="aps-market-row" aria-label="Markt">
     <article className={`aps-market-card aps-market-cap aps-${tone}`} aria-label={`Market cap 24 uur: ${formatMarketCapChange(value)}`} data-market-cap-change={value === null ? "" : String(value)}>
@@ -1048,8 +1050,9 @@ function MarketOverviewRow({ market }: { market: MarketOverview | null }) {
         <em>{detail}</em>
       </span>
     </article>
-    <article className="aps-market-card aps-market-placeholder" aria-label="Gereserveerd"><span className="aps-market-copy"><small>BINNENKORT</small><strong>—</strong><em>Gereserveerd</em></span></article>
-    <article className="aps-market-card aps-market-placeholder" aria-label="Gereserveerd"><span className="aps-market-copy"><small>BINNENKORT</small><strong>—</strong><em>Gereserveerd</em></span></article>
+    {/* Build 652: de twee gereserveerde plekken tonen nu de gem. max drawdown vanaf instap (links LONG, rechts SHORT). */}
+    <DrawdownTile side="LONG" data={drawdown} />
+    <DrawdownTile side="SHORT" data={drawdown} />
   </div>;
 }
 

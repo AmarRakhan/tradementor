@@ -292,3 +292,12 @@ html[data-aster-compact-snapshot="true"] #aster-portfolio-snapshot-host+div{marg
 .aps-closed-back footer{border-top:1px solid rgba(227,185,68,.18);padding:11px 0 0;color:#82a58d;text-align:center;font-size:10px}
 @media(max-width:420px){.aps-closed-overlay{padding:8px}.aps-closed-perspective{height:88dvh}.aps-closed-back{padding:11px}.aps-closed-back header h2{font-size:18px}.aps-closed-row{padding:10px}.aps-closed-row-grid strong{font-size:11px}}
 @media(prefers-reduced-motion:reduce){.aps-closed-flip{transition:none}}
+/* Build 652: gem. max drawdown vanaf instap (de twee voormalige 'Binnenkort'-plekken). Label mag over twee regels. */
+.aps-drawdown{grid-template-columns:minmax(0,1fr);border-color:rgba(225,185,72,.42);background:linear-gradient(145deg,rgba(20,16,9,.92),rgba(8,7,5,.96))}
+.aps-drawdown .aps-market-copy small{white-space:normal;display:flex;align-items:center;gap:3px;line-height:1.2}
+.aps-drawdown .aps-market-copy small i{font-style:normal;font-size:11px;line-height:1}
+.aps-drawdown-long .aps-market-copy small i,.aps-drawdown-long .aps-market-copy strong{color:#42e999}
+.aps-drawdown-short .aps-market-copy small i,.aps-drawdown-short .aps-market-copy strong{color:#ff6680}
+.aps-drawdown-long{border-color:rgba(38,239,145,.5)}
+.aps-drawdown-short{border-color:rgba(255,91,122,.5)}
+@media(max-width:640px){.aps-drawdown .aps-market-copy small i{font-size:9px}}
