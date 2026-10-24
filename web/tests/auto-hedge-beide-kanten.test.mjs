@@ -85,5 +85,12 @@ test("build 652: verliesgrens wordt niet meer teruggezet naar $10 bij openen", (
   assert.match(bridge, /first \|\| current === prevLong \? nextLong : current/);
   assert.match(bridge, /saving \|\| !synced\.current \|\| !touched\.current\) return;/);
   assert.doesNotMatch(bridge, /current === serverLong\.current \? nextLong : current/);
-  assert.equal((bridge.match(/touched\.current = true/g) || []).length, 7);
+  assert.equal((bridge.match(/touched\.current = true/g) || []).length, 9);
+});
+
+test("build 654: schakelaars LONG-/SHORT-posities beschermen", () => {
+  const bridge = readFileSync(new URL("../components/aster-position-loss-auto-hedge-bridge.tsx", import.meta.url), "utf8");
+  assert.match(bridge, /LONG-posities beschermen/);
+  assert.match(bridge, /SHORT-posities beschermen/);
+  assert.match(bridge, /protectLongPositions: protectLongOn, protectShortPositions: protectShortOn/);
 });

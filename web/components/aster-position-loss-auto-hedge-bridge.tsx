@@ -108,6 +108,8 @@ type AutoHedgeState = {
   maxHedgePct?: number;
   maxHedgeShortPct?: number;
   allowHedgeAbovePosition?: boolean;
+  protectLongPositions?: boolean;
+  protectShortPositions?: boolean;
   workerEnabled?: boolean;
   executionEnabled?: boolean;
   operational?: boolean;
@@ -445,6 +447,11 @@ export function AsterPositionLossAutoHedgeBridge() {
   const touched = useRef(false);    // build 652: auto-save only after the user changed a field or switch
   const [allowAboveDraft, setAllowAboveDraft] = useState<boolean | null>(null);
   const allowAboveOn = allowAboveDraft ?? state.allowHedgeAbovePosition === true;
+  // Build 654: "LONG-/SHORT-posities beschermen" (new hedges only; running pairs stay managed).
+  const [protectLongDraft, setProtectLongDraft] = useState<boolean | null>(null);
+  const [protectShortDraft, setProtectShortDraft] = useState<boolean | null>(null);
+  const protectLongOn = protectLongDraft ?? state.protectLongPositions !== false;
+  const protectShortOn = protectShortDraft ?? state.protectShortPositions !== false;
   allowAbove = allowAboveOn;
 
   const load = useCallback(async () => {
@@ -616,6 +623,7 @@ export function AsterPositionLossAutoHedgeBridge() {
         body: JSON.stringify({ enabled, thresholdUsd: threshold, thresholdShortUsd: thresholdShort,
           ...(maxOk(maxLongN) ? { maxHedgePct: maxLongN } : {}), ...(maxOk(maxShortN) ? { maxHedgeShortPct: maxShortN } : {}),
           allowHedgeAbovePosition: allowAboveOn,
+          protectLongPositions: protectLongOn, protectShortPositions: protectShortOn,
           confirmDisable: state.enabled === true && enabled === false, clientBuild: WEBAPP_BUILD_NUMBER, clientSource: source }),
       }) as AutoHedgeState;
       setState({ ...next, pairs: Array.isArray(next.pairs) ? next.pairs : [] });
@@ -654,14 +662,16 @@ export function AsterPositionLossAutoHedgeBridge() {
     if (!valid(long) || !valid(short) || !maxOk(maxLongN) || !maxOk(maxShortN)) return;
     if (long === Number(serverLong.current) && short === Number(serverShort.current)
       && maxLongN === Number(serverMaxLong.current) && maxShortN === Number(serverMaxShort.current)
-      && allowAboveOn === (state.allowHedgeAbovePosition === true)) return;
+      && allowAboveOn === (state.allowHedgeAbovePosition === true)
+      && protectLongOn === (state.protectLongPositions !== false)
+      && protectShortOn === (state.protectShortPositions !== false)) return;
     const timer = window.setTimeout(async () => {
       const ok = await persist(state.enabled, long, false, "AUTO_HEDGE_THRESHOLD");
       if (ok) setMessage(`Opgeslagen · LONG ${thresholdMoney(long)} · max ${maxLongN}% · SHORT ${thresholdMoney(short)} · max ${maxShortN}%`);
     }, 1200);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, draftShort, maxLong, maxShort, allowAboveDraft, open, available, saving, state.enabled]);
+  }, [draft, draftShort, maxLong, maxShort, allowAboveDraft, protectLongDraft, protectShortDraft, open, available, saving, state.enabled]);
 
   const requestEnabledChange = async (nextEnabled: boolean, source: string) => {
     if (state.enabled === true && nextEnabled === false) {
@@ -1006,6 +1016,10 @@ export function AsterPositionLossAutoHedgeBridge() {
         </header>
 
         <section className="plah-threshold-card">
+          <div className="plah-protect">
+            <div><b>LONG-posities beschermen</b><small>{protectLongOn ? "AAN · een LONG in verlies krijgt een SHORT-hedge" : "UIT · nieuwe LONG-posities worden niet gehedged"}</small></div>
+            <Toggle checked={protectLongOn} disabled={saving} onChange={() => { touched.current = true; setProtectLongDraft(!protectLongOn); }} label="LONG-posities beschermen" labelText />
+          </div>
           <div className="plah-threshold-head">
             <label htmlFor="plah-threshold-number">LONG-positie · hedge vanaf verlies</label>
             <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draft} onChange={(event) => { touched.current = true; setDraft(event.target.value); }} /></label></div>
@@ -1031,6 +1045,10 @@ export function AsterPositionLossAutoHedgeBridge() {
         />
 
         <section className="plah-threshold-card">
+          <div className="plah-protect">
+            <div><b>SHORT-posities beschermen</b><small>{protectShortOn ? "AAN · een SHORT in verlies krijgt een LONG-hedge" : "UIT · Auto Hedge zet nooit automatisch een LONG tegen een SHORT"}</small></div>
+            <Toggle checked={protectShortOn} disabled={saving} onChange={() => { touched.current = true; setProtectShortDraft(!protectShortOn); }} label="SHORT-posities beschermen" labelText />
+          </div>
           <div className="plah-threshold-head">
             <label htmlFor="plah-threshold-short-number">SHORT-positie · hedge vanaf verlies</label>
             <div className="plah-exact-box"><small>Exact bedrag</small><label><b>$</b><input id="plah-threshold-short-number" type="number" min="0.01" max="100000" step="0.01" inputMode="decimal" value={draftShort} onChange={(event) => { touched.current = true; setDraftShort(event.target.value); }} /></label></div>

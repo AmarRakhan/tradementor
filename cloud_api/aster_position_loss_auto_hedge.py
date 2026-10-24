@@ -268,6 +268,7 @@ def evaluate_auto_hedge(
     target_overrides: Mapping[str, float] | None = None,
     thresholds_by_side: Mapping[str, Any] | None = None,
     max_caps: Mapping[tuple[str, str], float] | None = None,
+    allowed_sides: set[str] | frozenset[str] | None = None,
 ) -> list[AutoHedgeAction]:
     """Return deterministic exact-quantity decisions.
 
@@ -303,6 +304,10 @@ def evaluate_auto_hedge(
         else:
             candidates: list[tuple[float, str, dict[str, Any]]] = []
             for side in ("LONG", "SHORT"):
+                # Build 654 (Amar 24-10): a NEW trigger only for a side the user protects ("LONG-/SHORT-posities
+                # beschermen"); a pair that is already active (protected_sides) always keeps its own side.
+                if allowed_sides is not None and side not in allowed_sides:
+                    continue
                 row = pmap.get((symbol, side))
                 if not row:
                     continue
@@ -439,6 +444,7 @@ def reconcile_auto_hedge(
     open_orders: list[dict[str, Any]] | None = None,
     thresholds_by_side: Mapping[str, Any] | None = None,
     max_caps: Mapping[tuple[str, str], float] | None = None,
+    allowed_sides: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Reconcile exchange legs and optionally submit exact OPEN/REDUCE deltas."""
     threshold = normalize_threshold(threshold_usd)
@@ -448,6 +454,7 @@ def reconcile_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
         target_overrides=target_overrides, thresholds_by_side=thresholds_by_side, max_caps=max_caps,
+        allowed_sides=allowed_sides,
     )
     public_actions: list[dict[str, Any]] = []
     orders_sent = 0
@@ -590,6 +597,7 @@ def reconcile_auto_hedge(
         positions, threshold, open_orders=open_orders,
         protected_sides=protected_sides, skip_symbols=skip_symbols,
         target_overrides=target_overrides, thresholds_by_side=thresholds_by_side, max_caps=max_caps,
+        allowed_sides=allowed_sides,
     )
     return {
         "thresholdUsd": threshold,

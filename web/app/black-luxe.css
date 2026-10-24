@@ -2526,6 +2526,8 @@ html:where([data-app-skin="black-luxe"])[data-aster-compact-snapshot="true"] .me
 :where(html[data-app-skin="black-luxe"]) .plah-dd-long b{color:#25ff98}
 :where(html[data-app-skin="black-luxe"]) .plah-dd-short{border-color:rgba(255,87,128,0.45);background:rgba(6,6,7,0.7)}
 :where(html[data-app-skin="black-luxe"]) .plah-dd-short b{color:#ff6385}
+:where(html[data-app-skin="black-luxe"]) .plah-protect{border-bottom:1px solid rgba(255,255,255,.08)}
+:where(html[data-app-skin="black-luxe"]) .plah-protect small{color:#aab8b0}
 /* from portfolio-hedge.css */
 :where(html[data-app-skin="black-luxe"]) .aps-hedge-card{border:1px solid rgba(240,184,40,0.42);border-radius:11px;color:#f7f7f1;background:linear-gradient(145deg,rgba(15,15,16,0.88),rgba(9,9,10,0.95));box-shadow:inset 0 1px 0 rgba(88,245,158,0.045)}
 :where(html[data-app-skin="black-luxe"]) .aps-hedge-shield{color:#efba2b}

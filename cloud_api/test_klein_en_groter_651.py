@@ -81,13 +81,14 @@ class Switch(Base):
         self.assertEqual(ext._max_pct(150), 100.0)
         self.assertEqual(ext._max_pct(150, True), 150.0)
         self.assertEqual(ext._max_pct(300, True), 200.0)
-        req = SimpleNamespace(allowHedgeAbovePosition=None, maxHedgePct=150, maxHedgeShortPct=None)
+        req = SimpleNamespace(allowHedgeAbovePosition=None, maxHedgePct=150, maxHedgeShortPct=None, protectLongPositions=None, protectShortPositions=None)
         with self.assertRaises(Exception) as ctx:
             ext._max_hedge_update({}, req)
         self.assertEqual(getattr(ctx.exception, "status_code", None), 422)
-        req = SimpleNamespace(allowHedgeAbovePosition=True, maxHedgePct=150, maxHedgeShortPct=None)
+        req = SimpleNamespace(allowHedgeAbovePosition=True, maxHedgePct=150, maxHedgeShortPct=None, protectLongPositions=None, protectShortPositions=False)
         self.assertEqual(ext._max_hedge_update({}, req),
-                         {"allowHedgeAbovePosition": True, "maxHedgePct": 150.0, "maxHedgeShortPct": 100.0})
+                         {"allowHedgeAbovePosition": True, "maxHedgePct": 150.0, "maxHedgeShortPct": 100.0,
+                          "protectLongPositions": True, "protectShortPositions": False})
         off = ext._max_hedge_by_side({"maxHedgePct": 150, "allowHedgeAbovePosition": False})
         self.assertEqual(off["LONG"], 1.0)                      # switch off later: back to max 100%
 

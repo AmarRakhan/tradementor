@@ -60,6 +60,9 @@ _worker_thread: threading.Thread | None = None
 ACTIVE_STATUSES = {"HEDGING", "HEDGED", "ADJUSTING", "BLOCKED", "ERROR", "PRECISION_BLOCKED"}
 RECOVERY_STATUSES = {"RECOVERY", "REHEDGE_ARMED", "DISABLED", "MANUAL_RELEASE_PENDING", "MANUAL_RELEASE_UNCERTAIN"}
 REHEDGEABLE_STATUSES = {"RECOVERY", "REHEDGE_ARMED", "DISABLED"}
+# Build 654: defaults when the user never set "LONG-/SHORT-posities beschermen".
+DEFAULT_PROTECT_LONG = True
+DEFAULT_PROTECT_SHORT = True
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,36}USDT$")
 
 
@@ -74,6 +77,9 @@ class AutoHedgeSettingsRequest(BaseModel):
     maxHedgeShortPct: float | None = Field(default=None, ge=1, le=200)     # SHORT position (LONG hedge)
     # Build 650: above 100% only with this switch ON ("Hedge mag groter dan positie"). None = keep the stored value.
     allowHedgeAbovePosition: bool | None = None
+    # Build 654: which positions Auto Hedge protects with a NEW hedge. None = keep the stored value.
+    protectLongPositions: bool | None = None
+    protectShortPositions: bool | None = None
     confirmDisable: bool = False
     clientBuild: str = Field(default="", max_length=32)
     clientSource: str = Field(default="", max_length=64)
@@ -121,7 +127,23 @@ def _current(uid: str) -> dict[str, Any]:
         "allowHedgeAbovePosition": row.get("allowHedgeAbovePosition") is True,
         "maxHedgePct": _max_pct(row.get("maxHedgePct"), row.get("allowHedgeAbovePosition") is True),
         "maxHedgeShortPct": _max_pct(row.get("maxHedgeShortPct"), row.get("allowHedgeAbovePosition") is True),
+        **_protect_flags(row),
     }
+
+
+def _protect_flags(row: dict[str, Any]) -> dict[str, bool]:
+    """Build 654 (Amar 24-10): "LONG-posities beschermen" / "SHORT-posities beschermen" (not stored = default)."""
+    long_flag = row.get("protectLongPositions")
+    short_flag = row.get("protectShortPositions")
+    return {"protectLongPositions": DEFAULT_PROTECT_LONG if long_flag is None else long_flag is True,
+            "protectShortPositions": DEFAULT_PROTECT_SHORT if short_flag is None else short_flag is True}
+
+
+def _allowed_sides(settings: dict[str, Any]) -> frozenset[str]:
+    """Sides that may get a NEW Auto Hedge (trigger or automatic re-hedge after Recovery)."""
+    flags = _protect_flags(settings)
+    return frozenset(side for side, on in (("LONG", flags["protectLongPositions"]),
+                                           ("SHORT", flags["protectShortPositions"])) if on)
 
 
 def _max_pct(value: Any, allow_above: bool = False) -> float:
@@ -145,8 +167,13 @@ def _max_hedge_update(current: dict[str, Any], request: Any) -> dict[str, Any]:
     for value in (request.maxHedgePct, request.maxHedgeShortPct):
         if value is not None and float(value) > 100 and not allow:
             raise HTTPException(422, "Max hedge boven 100% kan alleen met 'Hedge mag groter dan positie' aan")
+    flags = _protect_flags(current)
     return {"allowHedgeAbovePosition": allow,
-            "maxHedgePct": _max_pct(long_pct, allow), "maxHedgeShortPct": _max_pct(short_pct, allow)}
+            "maxHedgePct": _max_pct(long_pct, allow), "maxHedgeShortPct": _max_pct(short_pct, allow),
+            "protectLongPositions": flags["protectLongPositions"] if request.protectLongPositions is None
+            else bool(request.protectLongPositions),
+            "protectShortPositions": flags["protectShortPositions"] if request.protectShortPositions is None
+            else bool(request.protectShortPositions)}
 
 
 def _max_hedge_by_side(settings: dict[str, Any]) -> dict[str, float]:
@@ -252,6 +279,7 @@ def _public(uid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
         "allowHedgeAbovePosition": row.get("allowHedgeAbovePosition") is True,
         "maxHedgePct": _max_pct(row.get("maxHedgePct"), row.get("allowHedgeAbovePosition") is True),
         "maxHedgeShortPct": _max_pct(row.get("maxHedgeShortPct"), row.get("allowHedgeAbovePosition") is True),
+        **_protect_flags(row),
         "workerEnabled": WORKER_ENABLED,
         "executionEnabled": EXECUTION_ENABLED,
         "operational": operational,
@@ -791,7 +819,8 @@ def _prepare_lifecycle(
                     created.append(new_state)
                     continue
             if state.get("rehedgeEnabled") is True and allow_new_triggers:
-                if position_open_pnl(remaining) <= -thresholds.get(remaining_side, threshold):
+                if (remaining_side in _allowed_sides(settings)
+                        and position_open_pnl(remaining) <= -thresholds.get(remaining_side, threshold)):
                     synthetic = evaluate_auto_hedge(
                         positions, threshold, open_orders=open_orders,
                         protected_sides={symbol: remaining_side},
@@ -823,6 +852,7 @@ def _prepare_lifecycle(
         candidates = evaluate_auto_hedge(
             positions, threshold, open_orders=open_orders,
             protected_sides=None, skip_symbols=skip | set(active), thresholds_by_side=thresholds,
+            allowed_sides=_allowed_sides(settings),
         )
         for action in candidates:
             if action.symbol in active:
@@ -1411,6 +1441,7 @@ def _run_uid(
             open_orders=open_orders,
             thresholds_by_side=_thresholds_by_side(settings),
             max_caps=_max_hedge_caps(client, settings, positions) or None,
+            allowed_sides=_allowed_sides(settings),
         )
         if execute:
             # Joint TP exit of Recovery pairs that still hold both legs: close the non-TP leg to 0.
