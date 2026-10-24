@@ -260,7 +260,7 @@ class SizingTests(Base):
         result = self.press()
         self.assertEqual(self.L.hedge_orders, [])
         self.assertEqual(self.item(result, "ICPUSDT")["outcome"], "TOO_SMALL")
-        self.assertEqual(self.pair("ICPUSDT")["status"], "PRECISION_BLOCKED")   # cycle runs, no order
+        self.assertEqual(self.pair("ICPUSDT")["status"], "HEDGED")              # build 656: rest < minimum, no FOUT
         self.L.pos[("ICPUSDT", "LONG")] = 11.0                                  # DCA buys 1 more
         self.worker_tick()
         self.assertEqual([o["qty"] for o in self.L.hedge_orders], [1.01])

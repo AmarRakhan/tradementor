@@ -1748,7 +1748,9 @@ def _rehedge_all_item(symbol: str, forced: dict[str, Any] | None, report: dict[s
         final_status = str(final.get("status") or "").upper()
         if str(report.get("mode", "")).upper() != "LIVE":
             item["outcome"], item["reason"] = "TEST_ONLY", "SHADOW_MODE_NO_ORDERS"
-        elif status == "PRECISION_BLOCKED":
+        elif status == "PRECISION_BLOCKED" or str(action.get("reason") or "") == "REST_BELOW_ASTER_MINIMUM":
+            # Build 656: a rest below the Aster minimum is still reported as too small (nothing could be added),
+            # even though the pair itself now counts as HEDGED instead of FOUT.
             item["outcome"], item["reason"] = "TOO_SMALL", "BELOW_ASTER_MINIMUM_OR_STEP"
         elif status == "INSUFFICIENT_MARGIN":
             item["outcome"], item["reason"] = "NO_MARGIN", str(action.get("reason") or "INSUFFICIENT_MARGIN")
