@@ -1,4 +1,4 @@
-"""Build 652: gem. max drawdown vanaf instap (pure logica)."""
+"""Build 652/655: gem. max drawdown vanaf instap, alleen afgeronde trades (pure logica)."""
 import unittest
 
 import entry_drawdown as ed
@@ -61,22 +61,7 @@ class EntryDrawdownTest(unittest.TestCase):
         self.assertEqual(cycles["a"]["entry"], 98.0)
         self.assertEqual(cycles["a"]["endMs"], now - H)
 
-    def test_open_cycles_use_journal_then_bot_start_else_unknown(self):
-        positions = [
-            {"symbol": "BTCUSDT", "positionSide": "LONG", "positionAmt": "0.5", "entryPrice": "100"},
-            {"symbol": "ETHUSDT", "positionSide": "SHORT", "positionAmt": "-2", "entryPrice": "50"},
-            {"symbol": "XRPUSDT", "positionSide": "SHORT", "positionAmt": "-10", "entryPrice": "1"},
-            {"symbol": "DOGEUSDT", "positionSide": "LONG", "positionAmt": "0", "entryPrice": "0"},
-        ]
-        journal = {"BTCUSDT": {"LONG": {"cycleKey": "BTCUSDT|LONG|7", "openedAtMs": 1000, "exposure": 0.5}}}
-        bot = {"ETHUSDT|SHORT": {"cycleStartedAtMs": 2000}}
-        cycles, unknown = ed.open_cycles(positions, journal, bot)
-        self.assertEqual(set(cycles), {"BTCUSDT|LONG|7", "ETHUSDT|SHORT|bot2000"})
-        self.assertEqual(cycles["BTCUSDT|LONG|7"]["entry"], 100.0)   # instapprijs van Aster
-        self.assertIsNone(cycles["ETHUSDT|SHORT|bot2000"]["endMs"])
-        self.assertEqual(unknown, {"XRPUSDT"})
-
-    def test_trackers_measure_from_entry_moment_only(self):
+    def test_trackers_measure_from_entry_moment_only_and_closed_trades_only(self):
         now = 50 * 86_400_000
         opened = now - 10 * H
         closed = now - 2 * H
@@ -90,21 +75,67 @@ class EntryDrawdownTest(unittest.TestCase):
 
         fetch = FakeCandles(price)
         cycles = {"a": {"key": "a", "symbol": "BTCUSDT", "side": "LONG", "openedAtMs": opened, "entry": 100.0, "endMs": closed},
-                  "b": {"key": "b", "symbol": "BTCUSDT", "side": "SHORT", "openedAtMs": opened, "entry": 100.0, "endMs": None}}
+                  "b": {"key": "b", "symbol": "BTCUSDT", "side": "SHORT", "openedAtMs": opened, "entry": 100.0, "endMs": closed},
+                  "c": {"key": "c", "symbol": "ETHUSDT", "side": "LONG", "openedAtMs": now - H, "entry": 100.0, "endMs": None}}
         trackers = {}
-        report = ed.update_trackers(trackers, cycles, fetch, now_ms=now, max_calls=10)
-        self.assertEqual(report["calls"], 1)                # zelfde munt: één lezing voor beide posities
-        summary = ed.summarize(trackers, set(cycles))
+        ed.update_trackers(trackers, cycles, fetch, now_ms=now, max_calls=10)
+        summary = ed.summarize(trackers, set(cycles), now_ms=now)
         self.assertEqual(summary["long"]["avgMaxDrawdownPct"], 5.0)
+        self.assertEqual(summary["long"]["count"], 1)          # de open ETH-positie telt niet mee
         self.assertEqual(summary["short"]["avgMaxDrawdownPct"], 3.0)
-        self.assertEqual(summary["long"]["closedCount"], 1)
-        self.assertEqual(summary["short"]["openCount"], 1)
+        self.assertTrue(summary["complete"])
 
-        # gesloten positie wordt niet opnieuw gelezen; open positie leest alleen het nieuwe stuk
+        # een afgeronde trade wordt nooit opnieuw gelezen: het getal staat vast
         fetch.calls.clear()
-        ed.update_trackers(trackers, cycles, fetch, now_ms=now + 10 * 60_000, max_calls=10)
-        self.assertEqual(len(fetch.calls), 1)
-        self.assertGreaterEqual(fetch.calls[0][2], now - M15)
+        cycles.pop("c")
+        ed.update_trackers(trackers, cycles, fetch, now_ms=now + 3_600_000, max_calls=10)
+        self.assertEqual(fetch.calls, [])
+
+    def test_new_open_positions_do_not_move_the_number(self):
+        now = 50 * 86_400_000
+        closed = {f"k{i}": {"key": f"k{i}", "symbol": f"S{i}USDT", "side": "LONG", "openedAtMs": now - 5 * H,
+                            "entry": 100.0, "endMs": now - H} for i in range(3)}
+        trackers = {}
+        ed.update_trackers(trackers, closed, FakeCandles(lambda s, t: (101.0, 94.0)), now_ms=now, max_calls=10)
+        before = ed.summarize(trackers, set(closed), now_ms=now)["long"]["avgMaxDrawdownPct"]
+        fresh = {f"n{i}": {"key": f"n{i}", "symbol": f"N{i}USDT", "side": "LONG", "openedAtMs": now - 60_000,
+                           "entry": 100.0, "endMs": None} for i in range(10)}
+        both = {**closed, **fresh}
+        ed.update_trackers(trackers, both, FakeCandles(lambda s, t: (100.1, 99.9)), now_ms=now, max_calls=20)
+        self.assertEqual(ed.summarize(trackers, set(both), now_ms=now)["long"]["avgMaxDrawdownPct"], before)
+
+    def test_recent_window_shows_new_strategy(self):
+        now = 100 * 86_400_000
+        trackers, keys = {}, set()
+        for i, (days_ago, worst) in enumerate([(40, 90.0), (30, 92.0), (20, 91.0), (2, 97.0), (1, 98.0)]):
+            key = f"t{i}"
+            end = now - days_ago * 86_400_000
+            trackers[key] = {"side": "LONG", "entry": 100.0, "worst": worst, "endMs": end, "coveredUntilMs": end}
+            keys.add(key)
+        summary = ed.summarize(trackers, keys, now_ms=now)
+        self.assertEqual(summary["long"]["avgMaxDrawdownPct"], 8.0)
+        self.assertEqual(summary["long"]["recentAvgMaxDrawdownPct"], 2.5)
+        self.assertEqual(summary["long"]["recentCount"], 2)
+        self.assertEqual((summary["windowDays"], summary["recentDays"]), (90, 7))
+
+    def test_incomplete_until_every_trade_is_read(self):
+        now = 50 * 86_400_000
+        cycles = {f"k{i}": {"key": f"k{i}", "symbol": f"S{i}USDT", "side": "LONG", "openedAtMs": now - H,
+                            "entry": 10.0, "endMs": now - 60_000} for i in range(5)}
+        trackers = {}
+        ed.update_trackers(trackers, cycles, FakeCandles(lambda s, t: (10.5, 9.5)), now_ms=now, max_calls=2)
+        self.assertFalse(ed.summarize(trackers, set(cycles), now_ms=now)["complete"])
+        ed.update_trackers(trackers, cycles, FakeCandles(lambda s, t: (10.5, 9.5)), now_ms=now, max_calls=10)
+        self.assertTrue(ed.summarize(trackers, set(cycles), now_ms=now)["complete"])
+
+    def test_symbol_without_candles_is_skipped_not_blocking(self):
+        now = 50 * 86_400_000
+        cycles = {"x": {"key": "x", "symbol": "GONEUSDT", "side": "LONG", "openedAtMs": now - H, "entry": 10.0, "endMs": now - 1}}
+        trackers = {}
+        ed.update_trackers(trackers, cycles, lambda *a: [], now_ms=now, max_calls=5)
+        summary = ed.summarize(trackers, set(cycles), now_ms=now)
+        self.assertTrue(summary["complete"])
+        self.assertEqual(summary["long"]["count"], 0)
 
     def test_budget_leaves_rest_pending(self):
         now = 50 * 86_400_000
@@ -112,24 +143,31 @@ class EntryDrawdownTest(unittest.TestCase):
                             "entry": 10.0, "endMs": now - 60_000} for i in range(5)}
         trackers = {}
         ed.update_trackers(trackers, cycles, FakeCandles(lambda s, t: (10.5, 9.5)), now_ms=now, max_calls=2)
-        summary = ed.summarize(trackers, set(cycles))
+        summary = ed.summarize(trackers, set(cycles), now_ms=now)
         self.assertEqual(summary["long"]["count"], 2)
         self.assertEqual(summary["long"]["pending"], 3)
 
     def test_fetch_error_does_not_stop_others(self):
         now = 50 * 86_400_000
 
+        good = FakeCandles(lambda s, t: (10.2, 9.0))
+
         def fetch(symbol, interval, start, end):
             if symbol == "BADUSDT":
                 raise RuntimeError("boom")
-            return [(start, 10.2, 9.0)]
+            return good(symbol, interval, start, end)
 
         cycles = {"x": {"key": "x", "symbol": "BADUSDT", "side": "LONG", "openedAtMs": now - H, "entry": 10.0, "endMs": now - 1},
                   "y": {"key": "y", "symbol": "OKUSDT", "side": "LONG", "openedAtMs": now - H, "entry": 10.0, "endMs": now - 1}}
         trackers = {}
         report = ed.update_trackers(trackers, cycles, fetch, now_ms=now, max_calls=10)
         self.assertEqual(report["errors"], 1)
-        self.assertAlmostEqual(ed.summarize(trackers, set(cycles))["long"]["avgMaxDrawdownPct"], 10.0)
+        summary = ed.summarize(trackers, set(cycles), now_ms=now)
+        self.assertAlmostEqual(summary["long"]["avgMaxDrawdownPct"], 10.0)
+        self.assertFalse(summary["complete"])                 # BAD wordt opnieuw geprobeerd
+        for _ in range(ed.MAX_FETCH_ERRORS):
+            ed.update_trackers(trackers, cycles, fetch, now_ms=now, max_calls=10)
+        self.assertTrue(ed.summarize(trackers, set(cycles), now_ms=now)["complete"])   # na 3 keer overgeslagen
 
     def test_prune_keeps_window_and_recent_open(self):
         now = 50 * 86_400_000
@@ -150,7 +188,8 @@ class ExtensionContractTest(unittest.TestCase):
         root = Path(__file__).resolve().parent
         source = (root / "entry_drawdown_extension.py").read_text(encoding="utf-8")
         core = (root / "entry_drawdown.py").read_text(encoding="utf-8")
-        for forbidden in ("submit_order", "cancel_order", "change_leverage", '"POST", "/fapi', "live_authorized=True", "signed_request("):
+        for forbidden in ("submit_order", "cancel_order", "change_leverage", '"POST", "/fapi', "live_authorized=True",
+                          "signed_request(", "position_risk"):
             self.assertNotIn(forbidden, source)
             self.assertNotIn(forbidden, core)
         self.assertIn('@main.app.get("/v1/me/aster/entry-drawdown")', source)

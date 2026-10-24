@@ -2521,6 +2521,8 @@ html:where([data-app-skin="black-luxe"])[data-aster-compact-snapshot="true"] .me
 :where(html[data-app-skin="black-luxe"]) .hp-apply{border:0;border-radius:12px;background:#0ef972;color:#002413}
 :where(html[data-app-skin="black-luxe"]) .plah-dd{border-radius:11px;border:1px solid rgba(249,196,46,0.32);background:rgba(4,4,5,0.85)}
 :where(html[data-app-skin="black-luxe"]) .plah-dd small{color:#b9ae90}
+:where(html[data-app-skin="black-luxe"]) .plah-dd-sub small{color:#9d947b}
+:where(html[data-app-skin="black-luxe"]) .plah-dd-sub span{color:#e7e1cc}
 :where(html[data-app-skin="black-luxe"]) .plah-dd p{color:#ffb9c9}
 :where(html[data-app-skin="black-luxe"]) .plah-dd-long{border-color:rgba(14,249,114,0.45);background:rgba(11,11,12,0.7)}
 :where(html[data-app-skin="black-luxe"]) .plah-dd-long b{color:#25ff98}

@@ -13,16 +13,19 @@ test("getal: één decimaal, Nederlandse komma, echt minteken; onbekend is een s
   assert.equal(formatDrawdown(Number.NaN), "—");
 });
 
-test("ondertekst zegt wat het getal is, of dat het nog berekend wordt", () => {
-  assert.equal(drawdownCaption({ avgMaxDrawdownPct: 4.8, count: 70 }, false), "Gemiddeld vanaf instap");
+test("ondertekst: de 7-dagenregel, of dat het nog berekend wordt (build 655)", () => {
+  assert.equal(drawdownCaption({ avgMaxDrawdownPct: 4.8, count: 70, recentAvgMaxDrawdownPct: 2.6, recentCount: 9 }, false), "7 dagen: \u22122,6%");
+  assert.equal(drawdownCaption({ avgMaxDrawdownPct: 4.8, count: 70, recentAvgMaxDrawdownPct: null, recentCount: 0 }, false), "7 dagen: geen trades");
   assert.equal(drawdownCaption({ avgMaxDrawdownPct: null, count: 0 }, true), "Wordt berekend…");
-  assert.equal(drawdownCaption(null, false), "Nog geen posities");
+  assert.equal(drawdownCaption(null, false), "Nog geen gesloten trades");
 });
 
 test("serverantwoord wordt veilig ingelezen", () => {
-  const data = normalizeDrawdown({ long: { avgMaxDrawdownPct: 4.8, count: 70 }, short: { avgMaxDrawdownPct: "x" }, refreshing: true });
-  assert.deepEqual(data.long, { avgMaxDrawdownPct: 4.8, count: 70 });
-  assert.deepEqual(data.short, { avgMaxDrawdownPct: null, count: 0 });
+  const data = normalizeDrawdown({ long: { avgMaxDrawdownPct: 4.8, count: 70, recentAvgMaxDrawdownPct: 3.1, recentCount: 8 }, short: { avgMaxDrawdownPct: "x" }, refreshing: true });
+  assert.deepEqual(data.long, { avgMaxDrawdownPct: 4.8, count: 70, recentAvgMaxDrawdownPct: 3.1, recentCount: 8 });
+  assert.deepEqual(data.short, { avgMaxDrawdownPct: null, count: 0, recentAvgMaxDrawdownPct: null, recentCount: 0 });
+  assert.equal(data.windowDays, 90);
+  assert.equal(data.recentDays, 7);
   assert.equal(data.refreshing, true);
   assert.equal(normalizeDrawdown(null).long.avgMaxDrawdownPct, null);
 });

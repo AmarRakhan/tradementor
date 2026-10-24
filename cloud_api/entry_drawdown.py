@@ -1,28 +1,28 @@
-"""Build 652: gemiddelde max drawdown vanaf instap, per kant (LONG en SHORT). Alleen lezen.
+"""Build 652/655: gemiddelde max drawdown vanaf instap, per kant (LONG en SHORT). Alleen lezen.
 
-Per positie (een cyclus van instap tot volledig gesloten, of nog open) is de max drawdown hoe ver de koers ná de
+Per afgeronde trade (een cyclus van instap tot volledig gesloten) is de max drawdown hoe ver de koers ná de
 instap maximaal tegen de positie in is gelopen, in prijs-% vanaf de gemiddelde instapprijs (zonder hefboom):
 - LONG:  (instap - laagste low)  / instap * 100
 - SHORT: (hoogste high - instap) / instap * 100
-Het getal per kant is de mediaan over alle posities (gesloten in de laatste WINDOW_DAYS dagen + alle open posities).
-De app noemt dat "gemiddeld": een enkele uitschieter trekt een echt gemiddelde scheef en zou te ruime stappen geven.
-
-Pure logica zonder Firestore of netwerk: de extension levert records, posities en een candle-lezer.
-Per positie bewaart een tracker de slechtste koers tot nu toe en tot waar de candles gelezen zijn, zodat een open
-positie bij elke verversing alleen de nieuwe candles leest en een gesloten positie maar één keer.
+Build 655 (Amar 24-10): alleen gesloten trades. Elke trade krijgt één keer, na het sluiten, zijn definitieve max
+drawdown; die verandert daarna nooit meer. Open posities tellen niet mee (een net geopende positie heeft ~0% en
+trok het getal mee met de markt). Per kant de mediaan (in de app: gemiddeld) over WINDOW_DAYS, plus dezelfde maat
+over de laatste RECENT_DAYS om te zien of een nieuwe strategie minder diep gaat.
 """
 from __future__ import annotations
 
 from typing import Any, Callable, Iterable
 
-WINDOW_DAYS = 30
+WINDOW_DAYS = 90
+RECENT_DAYS = 7
 KLINE_LIMIT = 1000
 INTERVALS: tuple[tuple[str, int], ...] = (
     ("1m", 60_000), ("5m", 300_000), ("15m", 900_000), ("1h", 3_600_000), ("4h", 14_400_000), ("1d", 86_400_000),
 )
 GROUP_MAX_SPAN_MS = (KLINE_LIMIT - 2) * 900_000      # posities op één munt delen een lezing tot ~10 dagen (15m)
 STALE_OPEN_TRACKER_MS = 2 * 86_400_000               # een open tracker die 2 dagen niet meer gezien is vervalt
-MAX_TRACKERS = 3000
+MAX_TRACKERS = 4000
+MAX_FETCH_ERRORS = 3
 
 Candle = tuple[int, float, float]                     # (open time ms, high, low)
 FetchFn = Callable[[str, str, int, int], list[Candle]]
@@ -97,52 +97,6 @@ def closed_cycles(records: Iterable[dict[str, Any]], cutoff_ms: int) -> dict[str
     return result
 
 
-def _position_side(row: dict[str, Any]) -> str | None:
-    side = str(row.get("positionSide") or "").upper()
-    amount = _f(row.get("positionAmt"))
-    if side in {"LONG", "SHORT"}:
-        return side if abs(amount) > 0 else None
-    if amount > 0:
-        return "LONG"
-    if amount < 0:
-        return "SHORT"
-    return None
-
-
-def open_cycles(positions: Iterable[dict[str, Any]], journal_cycles: dict[str, dict[str, Any]],
-                strategy_positions: dict[str, Any] | None) -> tuple[dict[str, dict[str, Any]], set[str]]:
-    """Open posities van Aster (instapprijs van Aster) met het instapmoment uit het journaal of de bot.
-
-    journal_cycles: "SYMBOL" -> {"LONG": cycle, "SHORT": cycle} zoals het journaal ze per munt bewaart.
-    Geeft (cycli, munten zonder bekend instapmoment) terug.
-    """
-    result: dict[str, dict[str, Any]] = {}
-    unknown: set[str] = set()
-    strategy_positions = strategy_positions if isinstance(strategy_positions, dict) else {}
-    for row in positions:
-        if not isinstance(row, dict):
-            continue
-        side = _position_side(row)
-        symbol = str(row.get("symbol") or "").upper()
-        entry = _f(row.get("entryPrice"))
-        if not side or not symbol or entry <= 0:
-            continue
-        cycle = ((journal_cycles.get(symbol) or {}).get(side)) if isinstance(journal_cycles.get(symbol), dict) else None
-        key, opened = "", 0
-        if isinstance(cycle, dict) and _f(cycle.get("exposure")) > 0 and _i(cycle.get("openedAtMs")) > 0:
-            key, opened = str(cycle.get("cycleKey") or ""), _i(cycle.get("openedAtMs"))
-        if not key or opened <= 0:
-            bot = strategy_positions.get(f"{symbol}|{side}")
-            started = _i(bot.get("cycleStartedAtMs")) if isinstance(bot, dict) else 0
-            if started > 0:
-                key, opened = f"{symbol}|{side}|bot{started}", started
-        if not key or opened <= 0:
-            unknown.add(symbol)
-            continue
-        result[key] = {"key": key, "symbol": symbol, "side": side, "openedAtMs": opened, "entry": entry, "endMs": None}
-    return result, unknown
-
-
 # ---- candles lezen en bijhouden ----------------------------------------------------------------------------------
 
 def _plan_groups(due: list[dict[str, Any]], now_ms: int) -> list[dict[str, Any]]:
@@ -201,11 +155,20 @@ def update_trackers(trackers: dict[str, dict[str, Any]], cycles: dict[str, dict[
             candles = fetch(group["symbol"], interval, start, group["to"])
         except Exception:  # noqa: BLE001 - één onleesbare munt stopt de rest niet
             errors += 1
+            for item in group["items"]:     # na MAX_FETCH_ERRORS keer: overslaan, zodat het getal ooit af is
+                tracker = trackers[item["key"]]
+                tracker["fetchErrors"] = _i(tracker.get("fetchErrors")) + 1
+                if not item["open"] and tracker["fetchErrors"] >= MAX_FETCH_ERRORS:
+                    tracker["coveredUntilMs"] = item["to"]
+                    tracker["noData"] = True
             continue
         for item in group["items"]:
             tracker = trackers[item["key"]]
             relevant = [c for c in candles if c[0] + size > item["from"] and c[0] <= item["to"]]
             if not relevant:
+                if not item["open"] and tracker.get("worst") is None:
+                    tracker["coveredUntilMs"] = item["to"]      # Aster heeft geen candles (bv. delisted): overslaan
+                    tracker["noData"] = True
                 continue
             if tracker["side"] == "LONG":
                 worst = min(c[2] for c in relevant if c[2] > 0)
@@ -238,32 +201,37 @@ def prune_trackers(trackers: dict[str, dict[str, Any]], active_keys: set[str], *
             trackers.pop(key, None)
 
 
-def summarize(trackers: dict[str, dict[str, Any]], active_keys: set[str], *, unknown_open: int = 0) -> dict[str, Any]:
-    """Mediaan max drawdown per kant over de actieve posities."""
+def summarize(trackers: dict[str, dict[str, Any]], active_keys: set[str], *, now_ms: int,
+              recent_days: int = RECENT_DAYS) -> dict[str, Any]:
+    """Mediaan max drawdown per kant over de afgeronde trades; ook over alleen de laatste recent_days."""
+    recent_from = now_ms - recent_days * 86_400_000
     out: dict[str, Any] = {}
     for side in ("LONG", "SHORT"):
         values: list[float] = []
+        recent: list[float] = []
         pending = 0
-        open_count = closed_count = 0
         for key in active_keys:
             tracker = trackers.get(key) or {}
-            if tracker.get("side") != side:
+            if tracker.get("side") != side or not tracker.get("endMs"):
+                continue
+            if _i(tracker.get("coveredUntilMs")) < _i(tracker.get("endMs")):
+                pending += 1
                 continue
             dd = drawdown_pct(side, _f(tracker.get("entry")), _f(tracker.get("worst")) or None)
             if dd is None:
-                pending += 1
                 continue
             values.append(dd)
-            if tracker.get("endMs"):
-                closed_count += 1
-            else:
-                open_count += 1
-        value = median(values)
+            if _i(tracker.get("endMs")) >= recent_from:
+                recent.append(dd)
+        value, recent_value = median(values), median(recent)
         out[side.lower()] = {
-            "avgMaxDrawdownPct": round(value, 2) if value is not None else None,
-            "count": len(values), "openCount": open_count, "closedCount": closed_count, "pending": pending,
+            "avgMaxDrawdownPct": round(value, 2) if value is not None else None, "count": len(values),
+            "recentAvgMaxDrawdownPct": round(recent_value, 2) if recent_value is not None else None,
+            "recentCount": len(recent), "pending": pending,
         }
-    out["unknownOpen"] = unknown_open
+    out["windowDays"] = WINDOW_DAYS
+    out["recentDays"] = recent_days
+    out["complete"] = out["long"]["pending"] == 0 and out["short"]["pending"] == 0
     return out
 
 
