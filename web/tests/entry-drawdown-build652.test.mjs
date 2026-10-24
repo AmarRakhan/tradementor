@@ -35,7 +35,8 @@ test("tegels en Auto Hedge-scherm gebruiken dezelfde lezing en dezelfde woorden"
   ]);
   assert.match(tiles, /\{side\} MAX DRAWDOWN/);
   assert.match(tiles, /gem\. max drawdown/);
-  assert.match(card, /<DrawdownReference data=\{drawdown\} \/>/);
+  assert.match(card, /<DrawdownReference data=\{drawdown\} side=\{protectedSide\}/);
+  assert.match(card, /const protectedSide = up \? "SHORT" : "LONG";/);
   assert.ok(card.indexOf("<DrawdownReference") < card.indexOf('className="plah-unwind-fields"'), "boven de afbouwstappen");
   assert.match(route, /\/v1\/me\/aster\/entry-drawdown/);
   assert.doesNotMatch(tiles + card, /mediaan|P75|percentiel/i);

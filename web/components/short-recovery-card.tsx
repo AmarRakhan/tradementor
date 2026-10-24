@@ -119,7 +119,8 @@ export function ShortRecoveryCard({ state, onSaved, renderToggle, hedgeSide = "S
 
     {!state.enabled && !enabled && <p className="plah-info"><span>i</span> Zet eerst Auto Hedge aan; afbouwen werkt alleen op Auto Hedge-hedges.</p>}
 
-    <DrawdownReference data={drawdown} />
+    <DrawdownReference data={drawdown} side={protectedSide}
+      lastStepPct={check.ok ? check.stepPct * check.steps : null} />
 
     {enabled && <>
       <div className="plah-unwind-fields">
