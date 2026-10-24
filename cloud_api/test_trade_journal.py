@@ -275,6 +275,16 @@ class SyncTest(unittest.TestCase):
         self.assertNotIn("uid", record["autoHedgePair"])
 
 
+    def test_context_attached_on_first_read_of_a_symbol(self):
+        store = FakeStore(strategy={"settings": {}, "multiBbPositions": {
+            "ETHUSDT|SHORT": {"cycleId": "c", "leverage": 4, "soldierRole": "AUTO_HEDGE", "cycleStartedAtMs": T0}}})
+        store.seed = {"ETHUSDT"}
+        tj.sync_step(store, FakeClient(self.fills, self.orders, self.income, []), now_ms=self.now, max_calls=20)
+        record = next(iter(store.records.values()))
+        self.assertEqual(record["context"]["soldierRole"], "AUTO_HEDGE")
+        self.assertAlmostEqual(record["marginUsd"], 10 / 4)
+
+
 class SettingsAndExportTest(unittest.TestCase):
     def test_capture_only_on_change(self):
         store = FakeStore()

@@ -209,7 +209,7 @@ def process_fills(
             known_cycle = cycle is not None and _num(cycle.get("exposure")) > EPSILON
             cid = order_cids.get(fill["orderId"], "")
             record = _open_record(symbol, side, fill, cid, cycle if known_cycle else None,
-                                  contexts.get(side) if known_cycle else None)
+                                  _side_context(contexts.get(side), cycle) if known_cycle else None)
             records[key] = record
             if known_cycle:
                 cycle["closeCount"] = int(cycle.get("closeCount", 0)) + 1
@@ -226,6 +226,13 @@ def process_fills(
                 state.pop(side, None)
     finished = [_finish_record(record) for record in records.values()]
     return sorted(finished, key=lambda row: (row["closedAtMs"], row["side"])), state
+
+
+def _side_context(value: Any, cycle: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A stored context entry ({context, lastSeenMs}) is checked against the cycle it is used for; a plain dict is used as is."""
+    if isinstance(value, dict) and "context" in value and "lastSeenMs" in value:
+        return context_for_cycle(value, cycle)
+    return value if isinstance(value, dict) else None
 
 
 def _open_record(symbol: str, side: str, fill: dict[str, Any], cid: str, cycle: dict[str, Any] | None,
@@ -676,8 +683,7 @@ def sync_step(store: JournalStore, client: Any, *, now_ms: int, max_calls: int =
         fills = [f for f in (normalize_fill(r) for r in raw or []) if f and f["symbol"] == symbol]
         fills, complete = trim_partial_tail(fills, FILL_PAGE_LIMIT) if len(raw or []) >= FILL_PAGE_LIMIT else (sorted(fills, key=lambda r: r["id"]), True)
         cycles = dict(state.get("cycles") or {})
-        side_contexts = {side: context_for_cycle(contexts.get(f"{symbol}|{side}"), cycles.get(side))
-                         for side in ("LONG", "SHORT")}
+        side_contexts = {side: contexts.get(f"{symbol}|{side}") for side in ("LONG", "SHORT")}
         records, cycles = process_fills(symbol, fills, cycles, known_cids, contexts=side_contexts)
         if records and any(now_ms - r["closedAtMs"] <= PAIR_SNAPSHOT_WINDOW_MS for r in records) and pair_reads < 6:
             snapshot = pair_snapshot(store.pair_doc(symbol))
