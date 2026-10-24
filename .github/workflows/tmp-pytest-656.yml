@@ -1,0 +1,24 @@
+name: tmp pytest 656
+on:
+  push:
+    branches: [claude/auto-hedge-rest-656-ci]
+permissions:
+  contents: read
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q -r cloud_api/requirements.txt pytest
+      - working-directory: cloud_api
+        shell: bash
+        run: |
+          set +e
+          pytest -q -p no:cacheprovider -rfE 2>&1 > /tmp/p.txt; code=$?
+          tail -1 /tmp/p.txt
+          grep -E "^(FAILED|ERROR) " /tmp/p.txt | head -40 | while read -r l; do echo "::error::$l"; done
+          grep -nE "^E  " /tmp/p.txt | head -30 | while read -r l; do echo "::warning::${l:0:900}"; done
+          echo "::notice::$(tail -1 /tmp/p.txt)"
+          exit $code
