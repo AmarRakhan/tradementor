@@ -1,4 +1,6 @@
 export const WEBAPP_VERSION = "46";
+// Build 648 (backend + web): Trade Historie opent direct met de onthouden lijst en ververst op de achtergrond uit het nieuwe tradejournaal; downloadknop onder × geeft alle gesloten trades met tijden, prijzen, fees, reden van sluiten, botcontext en instellingen als JSON-bestand.
+// Build 647 (backend + web): Profit Sparen kiest zelf het asset (USDT of USDC) met vrij Futures-saldo; een weigering van Aster wegens saldo zit niet meer vast; het scherm toont Spot USDT + USDC en de reden.
 // Build 646 (backend + web): hedge afbouwen — nieuw veld "Terughedgen %" (standaard 100) voor terugkopen en vangnet; terugkopen na 0 stappen = uit; 0% terughedgen = na volledige afbouw niets meer voor die munt.
 // Build 643 (alleen web): Portfolio Koers — R/S-zonelijnen lopen door over het hele zichtbare scherm (niet erbuiten), uitgedund tot minimaal 10 px; alleen weergave.
 // Build 641 (alleen web): Portfolio Koers — zonelijnen nog maar één keer: de achtergrondlijnen (canvas, over de hele hoogte) zijn weg, de R/S-lijnen rond de actieve zone blijven; alleen weergave.
@@ -62,7 +64,7 @@ export const WEBAPP_VERSION = "46";
 // Build 576: final release-gate repair for compact Prijszone overview.
 // Build 575: release-gate sync for the compact Prijszone overview.
  // Build 574: Prijszone Details compact five-column zone overview without horizontal scrolling.
-export const WEBAPP_BUILD_NUMBER = "646";
+export const WEBAPP_BUILD_NUMBER = "648";
 // Legacy regression token: WEBAPP_BUILD_NUMBER = "490"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "492"\n// Legacy regression token: WEBAPP_BUILD_NUMBER = "493"
 
 export function webappVersionLabel(buildNumber: string = WEBAPP_BUILD_NUMBER) {

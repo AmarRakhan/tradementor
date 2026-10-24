@@ -203,6 +203,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         window.localStorage.removeItem(`tradementor.portfolioEquity.v2.${encodeURIComponent(uid)}`);
         window.localStorage.removeItem(`tradementor.portfolioZones.v1.${encodeURIComponent(uid)}`);
         window.localStorage.removeItem(`tradementor.zoneSoldierActivity.v1.${encodeURIComponent(uid)}`);
+        window.localStorage.removeItem(`tradementor.tradeHistory.v1.${uid}`); // build 648: remembered Trade Historie list
       }
       window.localStorage.removeItem("tradementor.admin.credential.v2");
       window.localStorage.setItem("tradementor.activeDestination", "wallet");

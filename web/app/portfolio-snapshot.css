@@ -277,6 +277,11 @@ html[data-aster-compact-snapshot="true"] #aster-portfolio-snapshot-host+div{marg
 .aps-closed-back header h2{color:#edc65c;font-size:20px;line-height:1.2;margin:6px 0 3px;font-weight:850}
 .aps-closed-back header p{margin:0;color:#91b8a3;font-size:12px}
 .aps-closed-back header button{flex:0 0 auto;width:32px;height:32px;border:1px solid rgba(237,194,80,.5);border-radius:50%;color:#edc65c;background:#10271b;font-size:23px;cursor:pointer}
+.aps-closed-actions{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:8px}
+.aps-closed-back header .aps-closed-download{display:grid;place-items:center;font-size:0;padding:0}.aps-closed-back header .aps-closed-download:disabled{opacity:.55;cursor:progress}
+.aps-closed-download-status{margin:8px 3px 0;font-size:11px;color:#e8c861;text-align:right}.aps-closed-download-status.is-error{color:#ff8b9e;text-align:left}
+.aps-closed-building{margin:0 0 9px;font-size:11px;color:#a4bbaa;text-align:center}
+.aps-closed-reason{margin:-4px 0 9px;font-size:10px;color:#a4bbaa}
 .aps-closed-summary{display:flex;justify-content:space-between;gap:8px;padding:12px 6px;color:#a4bbaa;font-size:11px}
 .aps-closed-summary span{display:grid;gap:4px}.aps-closed-summary strong{font-size:17px;color:#36eaa1}
 .aps-closed-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:11px 4px 16px;scrollbar-color:#337657 #091c11}

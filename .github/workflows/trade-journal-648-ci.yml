@@ -1,0 +1,90 @@
+name: Trade Journal 648 CI (isolated, no secrets, no orders)
+# Test-only. Runs ONLY on the Trade Historie export branch (and manually). No secrets, no id-token, no deploy,
+# no Aster access, no production Firebase project: Firestore is the local emulator.
+on:
+  push:
+    branches: [claude/trade-historie-export-648]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: trade-journal-648-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GCLOUD_PROJECT: trade-journal-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r cloud_api/requirements.txt pytest
+      - name: Trade journal unit + contract tests
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "trade journal unit" 40 python -m unittest -v test_trade_journal
+      - name: Chart warm-up + closed-trades regression
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "closed trades regression" 60 python -m unittest -v test_closed_trades_warmup test_chart_read_cache
+      - name: Full backend regression
+        if: always()
+        working-directory: cloud_api
+        run: ../tools/ci_report.sh "backend full pytest" 60 pytest -q -rfE -p no:cacheprovider
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Web build + tests
+        working-directory: web
+        run: npm ci && ../tools/ci_report.sh "web build + tests" 40 npm test
+      - name: TypeScript errors in changed files (must be none; enhancer has a pre-existing error at the impact line)
+        if: always()
+        working-directory: web
+        run: ../tools/ci_report.sh "typescript changed files" 60 bash -c "npx tsc --noEmit -p tsconfig.json | grep -E 'closed-trades-flip|trade-journal|auth-provider' ; test \${PIPESTATUS[1]} -ne 0"
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GCLOUD_PROJECT: close-profits-test-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: cloud_api/requirements.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install emulator and backend dependencies
+        run: |
+          npm install --no-save firebase-tools@14.21.0
+          pip install -r cloud_api/requirements.txt
+      - name: Trade journal on the REAL stack (production entrypoint + Firestore emulator + fake Aster)
+        run: |
+          printf '%s\n' '{"emulators":{"firestore":{"host":"127.0.0.1","port":8080}}}' > /tmp/tj-firebase.json
+          tools/ci_report.sh "firestore emulator trade journal" 60 npx firebase emulators:exec --config /tmp/tj-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -m unittest -v test_trade_journal_e2e_stack'
+      - name: Close Profits real stack regression (same entrypoint, middleware added)
+        if: always()
+        run: |
+          tools/ci_report.sh "firestore emulator close profits" 60 npx firebase emulators:exec --config /tmp/tj-firebase.json --only firestore --project close-profits-test-only \
+            'cd cloud_api && python -m unittest test_close_profits_2_0_e2e_stack test_close_profits_2_1_e2e_stack'

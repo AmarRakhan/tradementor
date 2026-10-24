@@ -1,0 +1,23 @@
+export type TradeHistoryRow = Record<string, unknown>;
+export type TradeHistoryCache = { rows: TradeHistoryRow[]; savedAt: number; source: "journal" | "legacy" };
+export type TradeHistoryStorage = Pick<Storage, "getItem" | "setItem">;
+export type TradeJournalSyncResult = {
+  complete?: boolean;
+  backfillComplete?: boolean;
+  recordsWritten?: number;
+  rateLimited?: boolean;
+  progress?: { symbolsRead?: number; symbolsTotal?: number; percent?: number };
+};
+export declare const TRADE_HISTORY_CACHE_PREFIX: string;
+export declare const TRADE_HISTORY_CACHE_MAX_ROWS: number;
+export declare const SYNC_STEP_PAUSE_MS: number;
+export declare const SYNC_RETRY_PAUSE_MS: number;
+export declare const SYNC_MAX_STEPS: number;
+export declare const BACKGROUND_SYNC_INTERVAL_MS: number;
+export declare function tradeHistoryCacheKey(uid: string): string;
+export declare function readTradeHistoryCache(storage: TradeHistoryStorage | null | undefined, uid: string | null | undefined): TradeHistoryCache | null;
+export declare function writeTradeHistoryCache(storage: TradeHistoryStorage | null | undefined, uid: string | null | undefined, rows: TradeHistoryRow[], source: "journal" | "legacy", now?: number): boolean;
+export declare function tradeHistoryFileName(date?: Date): string;
+export declare function tradeHistoryFileContent(exportPayload: unknown, webappBuild: string): string;
+export declare function syncProgressLabel(result: TradeJournalSyncResult | null | undefined): string;
+export declare function tradeRowKey(row: TradeHistoryRow | null | undefined, index?: number): string;

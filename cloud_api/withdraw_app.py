@@ -6,6 +6,7 @@ import profit_sweep_settings_extension  # noqa: F401 - per-user Profit Pot setti
 import profit_sweep_live_extension  # noqa: F401 - fail-closed confirmed-close Futures -> Spot sweep
 import aster_position_loss_auto_hedge_extension  # noqa: F401 - isolated per-position 1:1 Auto Hedge
 import aster_legacy_hedge_scale_extension  # noqa: F401 - owner-only manual Legacy Hedge Recovery
+import trade_journal_extension  # noqa: F401 - build 648: Trade Historie journal, sync and export (read-only)
 from snapshot_profit_close_extension import router as snapshot_profit_close_router
 from profit_close_rounds_extension import router as profit_close_rounds_router  # Close Profits 2.1 rounds
 

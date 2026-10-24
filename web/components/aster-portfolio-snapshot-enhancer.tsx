@@ -9,6 +9,7 @@ import { normalizeAsterAccountTruth, type AsterAccountTruth } from "@/lib/aster-
 import { AsterHedgeManager } from "./aster-hedge-manager";
 import { PortfolioKoersChart } from "./portfolio-koers-chart";
 import { ClosedTradesFlip } from "./closed-trades-flip";
+import { useTradeJournalBackgroundSync } from "./trade-journal-background-sync";
 import { TradeIntelligenceAdvisorCenter } from "./trade-intelligence-advisor-center";
 import { PriceZoneCycleOverview } from "./price-zone-cycle-overview";
 import { ActiveZoneSeatBlock, resolveActiveZoneSeatState, type ActiveZoneSeatSummary } from "./active-zone-seat-block";
@@ -1160,6 +1161,7 @@ export function AsterPortfolioSnapshotEnhancer() {
   const [performanceInitialTab, setPerformanceInitialTab] = useState<PerformanceInitialTab>("per-day");
   const [hedgeOpen, setHedgeOpen] = useState(false);
   const [closedMode, setClosedMode] = useState<"all" | "today" | null>(null);
+  useTradeJournalBackgroundSync();
   const [confirmScope, setConfirmScope] = useState<ProfitScope | null>(null);
   const [asterSubtab, setAsterSubtab] = useState<AsterSubtab>("portfolio");
   const [advisorDayRangePosition, setAdvisorDayRangePosition] = useState<"low"|"middle"|"high">("middle");
