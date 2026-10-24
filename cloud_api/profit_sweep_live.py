@@ -512,6 +512,74 @@ def _unknown_execution_reason(value: Any) -> bool:
     )
 
 
+# Aster wraps definite business rejections in -1006 too. These texts prove that
+# no money moved (the transfer was refused for balance), so they are never
+# "unknown", never replayed with the same id, and may move to another asset.
+_DEFINITE_REJECTION_MARKERS = (
+    "032206",
+    "exceeds the limit for futures account available balance",
+    "insufficient balance",
+    "balance is insufficient",
+    "balance not enough",
+)
+
+
+def _definite_transfer_rejection(value: Any) -> bool:
+    text = str(value or "").lower()
+    return any(marker in text for marker in _DEFINITE_REJECTION_MARKERS)
+
+
+def asset_free_balances(account: dict[str, Any]) -> dict[str, Decimal]:
+    """Free Futures balance per supported transfer asset (conservative min of
+    maxWithdrawAmount and availableBalance). Empty when Aster sent no asset rows."""
+    rows = account.get("assets") if isinstance(account, dict) else None
+    out: dict[str, Decimal] = {}
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        asset = str(row.get("asset", "")).upper().strip()
+        if asset not in SUPPORTED_TRANSFER_ASSETS:
+            continue
+        values = [
+            _d(row.get(key)) for key in ("maxWithdrawAmount", "availableBalance")
+            if row.get(key) not in (None, "")
+        ]
+        values = [v for v in values if v.is_finite()]
+        if not values:
+            continue
+        out[asset] = max(Decimal("0"), min(values))
+    return out
+
+
+def choose_transfer_asset(
+    account: dict[str, Any],
+    amount: Decimal,
+    preferred: str,
+    *,
+    allow_switch: bool = True,
+) -> tuple[str | None, dict[str, Decimal]]:
+    """Pick the asset that really has ``amount`` free in Futures.
+
+    The user's stored asset goes first; otherwise the other supported asset.
+    Without per-asset data from Aster the stored asset is kept (old behaviour).
+    """
+    preferred = str(preferred or DEFAULT_TRANSFER_ASSET).upper().strip()
+    if preferred not in SUPPORTED_TRANSFER_ASSETS:
+        preferred = DEFAULT_TRANSFER_ASSET
+    balances = asset_free_balances(account)
+    if not balances:
+        return preferred, balances
+    order = [preferred]
+    if allow_switch:
+        order += [asset for asset in sorted(SUPPORTED_TRANSFER_ASSETS) if asset != preferred]
+    for asset in order:
+        if balances.get(asset, Decimal("0")) + _AMOUNT_QUANTUM >= amount:
+            return asset, balances
+    return None, balances
+
+
 def recover_failed_sweep(
     *,
     uid: str,
@@ -1225,6 +1293,7 @@ def _complete_claim(prepared: PreparedSweep, claim: dict[str, Any], *, tran_id: 
             "inFlight": None,
             "lastTransferAt": _now(),
             "lastTransferAmount": _plain(amount),
+            "lastTransferAsset": str(current.get("asset") or claim.get("asset") or prepared.transfer_asset),
             "updatedAt": _now(),
         }
         transfer_update = {
@@ -1252,13 +1321,19 @@ def _complete_claim(prepared: PreparedSweep, claim: dict[str, Any], *, tran_id: 
 
 def _execute_buffer_claim(prepared: PreparedSweep, claim: dict[str, Any], *, client: Any) -> dict[str, Any]:
     amount = _d(claim.get("amount"))
+    asset = str(claim.get("asset") or prepared.transfer_asset).upper().strip()
+    if asset not in SUPPORTED_TRANSFER_ASSETS:
+        asset = prepared.transfer_asset
     submitted_at = claim.get("submittedAt")
+    # A claim may only change asset when no submission of it can still land:
+    # never submitted, or Aster explicitly refused it for balance.
+    may_switch_asset = submitted_at is None or _definite_transfer_rejection(claim.get("reason"))
     if submitted_at is not None:
         state, record = reconcile_transfer_history(
             client=client,
             amount=amount,
             submitted_at=submitted_at,
-            asset=prepared.transfer_asset,
+            asset=asset,
             poll_attempts=2,
             poll_delay_seconds=0.25,
         )
@@ -1272,6 +1347,15 @@ def _execute_buffer_claim(prepared: PreparedSweep, claim: dict[str, Any], *, cli
             return {"status": "UNCERTAIN", "reconciliationStatus": state}
 
     account = client.account_information()
+    chosen, balances = choose_transfer_asset(account, amount, asset, allow_switch=may_switch_asset)
+    if chosen is None:
+        _mark_claim(
+            prepared, claim, status="BLOCKED_ASSET_BALANCE",
+            reason="Geen vrij USDT- of USDC-saldo in Futures voor deze transfer",
+            assetBalances={key: _plain(value) for key, value in balances.items()},
+        )
+        return {"status": "BLOCKED_ASSET_BALANCE", "assetBalances": {key: _plain(value) for key, value in balances.items()}}
+    asset = chosen
     safe, reason, projection = transfer_safety(account, amount)
     if not safe:
         _mark_claim(prepared, claim, status="BLOCKED_MARGIN", reason=reason, marginSafety=projection)
@@ -1282,10 +1366,10 @@ def _execute_buffer_claim(prepared: PreparedSweep, claim: dict[str, Any], *, cli
         return {"status": "BLOCKED_GLOBAL_GATE"}
 
     submitted_at = _now()
-    claim = _mark_claim(prepared, claim, status="SUBMITTING", submittedAt=submitted_at)
+    claim = _mark_claim(prepared, claim, status="SUBMITTING", submittedAt=submitted_at, asset=asset)
     try:
         payload = client.signed_spot_request("POST", TRANSFER_PATH, {
-            "asset": prepared.transfer_asset,
+            "asset": asset,
             "amount": _plain(amount),
             "clientTranId": str(claim.get("clientTranId")),
             "kindType": TRANSFER_KIND,
@@ -1296,7 +1380,7 @@ def _execute_buffer_claim(prepared: PreparedSweep, claim: dict[str, Any], *, cli
             client=client,
             amount=amount,
             submitted_at=submitted_at,
-            asset=prepared.transfer_asset,
+            asset=asset,
             poll_attempts=3,
             poll_delay_seconds=0.35,
         )
@@ -1305,6 +1389,15 @@ def _execute_buffer_claim(prepared: PreparedSweep, claim: dict[str, Any], *, cli
                 prepared, claim, tran_id=str(record.get("tranId", "")), reconciled=True,
             )
             return {"status": "SUCCEEDED", "state": next_state, "reconciled": True}
+
+        if not isinstance(exc, AsterSubmissionUncertain) and _definite_transfer_rejection(message):
+            # Aster refused for balance: nothing moved. No replay; the next
+            # attempt re-reads the balances and may use the other asset.
+            _mark_claim(
+                prepared, claim, status="REJECTED_BALANCE", reason=message[:500],
+                reconciliationStatus=state,
+            )
+            return {"status": "REJECTED_BALANCE", "reconciliationStatus": state}
 
         unknown = isinstance(exc, AsterSubmissionUncertain) or _unknown_execution_reason(message)
         if unknown and state == "NOT_FOUND":
@@ -1318,7 +1411,7 @@ def _execute_buffer_claim(prepared: PreparedSweep, claim: dict[str, Any], *, cli
             )
             try:
                 replay = client.signed_spot_request("POST", TRANSFER_PATH, {
-                    "asset": prepared.transfer_asset,
+                    "asset": asset,
                     "amount": _plain(amount),
                     "clientTranId": str(claim.get("clientTranId")),
                     "kindType": TRANSFER_KIND,
@@ -1328,7 +1421,7 @@ def _execute_buffer_claim(prepared: PreparedSweep, claim: dict[str, Any], *, cli
                     client=client,
                     amount=amount,
                     submitted_at=submitted_at,
-                    asset=prepared.transfer_asset,
+                    asset=asset,
                     poll_attempts=3,
                     poll_delay_seconds=0.35,
                 )

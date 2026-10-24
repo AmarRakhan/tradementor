@@ -35,12 +35,15 @@ test("Portfolio Snapshot Profit Pot shows today's transferred amount plus curren
   assert.match(layout, /AsterProfitSweepSettingsBridge/);
 });
 
-test("settings card exposes buffer, today's transfers and live USDC Spot balance separately", () => {
+test("settings card exposes buffer, today's transfers and live USDT + USDC Spot balance separately", () => {
   assert.match(settingsBridge, /pendingSavings/);
   assert.match(settingsBridge, /todayTransferred/);
+  assert.match(settingsBridge, /Spot saldo \(USDT\)/);
   assert.match(settingsBridge, /Spot saldo \(USDC\)/);
-  assert.match(settingsBridge, /spotUsdcBalance/);
-  assert.match(settingsBridge, /\/api\/exchanges\/aster\/spot-balance\?asset=USDC/);
+  assert.match(settingsBridge, /spotBalances\.USDT/);
+  assert.match(settingsBridge, /spotBalances\.USDC/);
+  assert.match(settingsBridge, /\/api\/exchanges\/aster\/spot-balance\?asset=\$\{asset\}/);
+  assert.match(settingsBridge, /read\("USDT"\), read\("USDC"\)/);
   assert.match(settingsBridge, /transferInFlight/);
   assert.match(settingsBridge, /aster-profit-sweep-settings-updated/);
   assert.match(settingsBridge, /één drempelbedrag automatisch naar Spot overgezet/);
@@ -52,4 +55,11 @@ test("Profit Sweep settings proxy exposes only GET and PUT configuration calls",
   assert.match(route, /\/v1\/me\/aster\/profit-sweep-settings/);
   assert.doesNotMatch(route, /export async function POST/);
   assert.doesNotMatch(route, /export async function DELETE/);
+});
+
+test("build 647: transfer asset is automatic and a stuck transfer shows its real reason", () => {
+  assert.match(settingsBridge, /Spot wallet · automatisch/);
+  assert.match(settingsBridge, /lastTransferAsset/);
+  assert.match(settingsBridge, /transferIssue \|\| "Een drempeltransfer wordt veilig verwerkt\."/);
+  assert.doesNotMatch(settingsBridge, /Spot wallet · \{transferAsset\}/);
 });

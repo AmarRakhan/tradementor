@@ -55,7 +55,27 @@ def _state_public(user: dict[str, Any]) -> dict[str, Any]:
         "todayKey": today_key,
         "lastTransferAmount": _plain(max(Decimal("0"), _decimal(state.get("lastTransferAmount")))),
         "transferInFlight": isinstance(state.get("inFlight"), dict) and bool(state.get("inFlight", {}).get("claimId")),
+        "lastTransferAsset": str(state.get("lastTransferAsset", "") or ""),
+        **_transfer_issue(state.get("inFlight")),
     }
+
+
+# Korte, eerlijke uitleg voor het Profit Pot-scherm als een drempeltransfer nog niet lukt.
+_ISSUE_TEXT = {
+    "BLOCKED_ASSET_BALANCE": "Wacht op vrij USDT- of USDC-saldo in Futures; daarna gaat het automatisch naar Spot.",
+    "REJECTED_BALANCE": "Aster weigerde wegens te weinig vrij saldo; de bot probeert het automatisch opnieuw, ook met USDC/USDT.",
+    "BLOCKED_MARGIN": "Uitgesteld: de marge is nu te krap. Gaat automatisch door zodra er ruimte is.",
+    "UNCERTAIN": "Transfer wordt bij Aster gecontroleerd; er wordt niets dubbel overgeboekt.",
+    "RETRYABLE": "Aster was niet bereikbaar; de bot probeert het automatisch opnieuw.",
+    "BLOCKED_GLOBAL_GATE": "Automatisch overboeken staat centraal uit.",
+}
+
+
+def _transfer_issue(in_flight: Any) -> dict[str, Any]:
+    if not isinstance(in_flight, dict) or not in_flight.get("claimId"):
+        return {"transferStatus": "", "transferIssue": ""}
+    status = str(in_flight.get("status", "") or "")
+    return {"transferStatus": status, "transferIssue": _ISSUE_TEXT.get(status, "")}
 
 
 def _settings_doc(user: dict[str, Any]):

@@ -21,7 +21,9 @@ export function AsterProfitSweepSettingsBridge() {
   const [minimumTransfer, setMinimumTransfer] = useState("1");
   const [pendingSavings, setPendingSavings] = useState<number | null>(null);
   const [todayTransferred, setTodayTransferred] = useState<number | null>(null);
-  const [spotUsdcBalance, setSpotUsdcBalance] = useState<number | null>(null);
+  const [spotBalances, setSpotBalances] = useState<{ USDT: number | null; USDC: number | null }>({ USDT: null, USDC: null });
+  const [lastTransferAsset, setLastTransferAsset] = useState("");
+  const [transferIssue, setTransferIssue] = useState("");
   const [transferInFlight, setTransferInFlight] = useState(false);
   const [automaticTransferEnabled, setAutomaticTransferEnabled] = useState(false);
   const [transferAsset, setTransferAsset] = useState<"USDT" | "USDC">("USDT");
@@ -45,16 +47,24 @@ export function AsterProfitSweepSettingsBridge() {
     setTransferInFlight(result.transferInFlight === true);
     setAutomaticTransferEnabled(result.automaticTransferEnabled === true);
     setTransferAsset(result.transferAsset === "USDC" ? "USDC" : "USDT");
+    setLastTransferAsset(result.lastTransferAsset === "USDC" || result.lastTransferAsset === "USDT" ? result.lastTransferAsset : "");
+    setTransferIssue(typeof result.transferIssue === "string" ? result.transferIssue : "");
   }, []);
 
+  // Build 647: de bot boekt automatisch over in USDT of USDC (waar vrij saldo in Futures staat),
+  // dus het scherm toont het Spot-saldo van allebei.
   const loadSpotBalance = useCallback(async () => {
-    try {
-      const result = await authenticatedRequest("/api/exchanges/aster/spot-balance?asset=USDC", { cache: "no-store" });
-      const total = Number(result.total ?? 0);
-      setSpotUsdcBalance(Number.isFinite(total) ? total : 0);
-    } catch {
-      setSpotUsdcBalance(null);
-    }
+    const read = async (asset: "USDT" | "USDC") => {
+      try {
+        const result = await authenticatedRequest(`/api/exchanges/aster/spot-balance?asset=${asset}`, { cache: "no-store" });
+        const total = Number(result.total ?? 0);
+        return Number.isFinite(total) ? total : 0;
+      } catch {
+        return null;
+      }
+    };
+    const [USDT, USDC] = await Promise.all([read("USDT"), read("USDC")]);
+    setSpotBalances({ USDT, USDC });
   }, []);
 
   const loadSettings = useCallback(async () => {
@@ -204,12 +214,16 @@ export function AsterProfitSweepSettingsBridge() {
             <strong>{money(todayTransferred)}</strong>
           </div>
           <div className="aps-profit-pot-setting-row">
+            <span>Spot saldo (USDT)</span>
+            <strong>{money(spotBalances.USDT)}</strong>
+          </div>
+          <div className="aps-profit-pot-setting-row">
             <span>Spot saldo (USDC)</span>
-            <strong>{money(spotUsdcBalance)}</strong>
+            <strong>{money(spotBalances.USDC)}</strong>
           </div>
           <div className="aps-profit-pot-setting-row">
             <span>Transfer naar</span>
-            <strong>Spot wallet · {transferAsset}</strong>
+            <strong>Spot wallet · automatisch{lastTransferAsset ? ` (laatst ${lastTransferAsset})` : ""}</strong>
           </div>
           <div className="aps-profit-pot-setting-row">
             <span>Alleen positieve winsttrades</span>
@@ -228,7 +242,7 @@ export function AsterProfitSweepSettingsBridge() {
         <div className="aps-profit-pot-simple-info">
           {draft || "0"}% van iedere positieve gesloten nettowinst wordt toegevoegd aan de spaarbuffer. Zodra de spaarpot {money(safeThreshold)} bereikt, wordt één drempelbedrag automatisch naar Spot overgezet.
         </div>
-        {transferInFlight && <div className="aps-profit-pot-message">Een drempeltransfer wordt veilig verwerkt.</div>}
+        {transferInFlight && <div className="aps-profit-pot-message">{transferIssue || "Een drempeltransfer wordt veilig verwerkt."}</div>}
         {loadingSettings && <div className="aps-profit-pot-message">Instellingen laden…</div>}
         {settingsError && <div className="aps-profit-pot-error" role="alert">{settingsError}</div>}
         {savedMessage && <div className="aps-profit-pot-success">{savedMessage}</div>}
